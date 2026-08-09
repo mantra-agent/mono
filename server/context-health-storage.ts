@@ -105,6 +105,17 @@ function average(values: number[]): number | null {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+/** Mean of the best 95% of samples (drop only the slowest 5%). n<20 → no trim. */
+function upperTrimmedMean95(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].filter(Number.isFinite).sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const trimCount = sorted.length >= 20 ? Math.ceil(sorted.length * 0.05) : 0;
+  const ordinary = trimCount > 0 ? sorted.slice(0, -trimCount) : sorted;
+  if (ordinary.length === 0) return null;
+  return ordinary.reduce((sum, value) => sum + value, 0) / ordinary.length;
+}
+
 function max(values: number[]): number | null {
   return values.length ? Math.max(...values) : null;
 }
@@ -491,12 +502,15 @@ export async function getContextHealthSummary(windowHours = 24): Promise<Context
     avgOutputTokens: average(global.outputTokens),
     avgTotalTokens: average(global.totalTokens),
     avgDurationMs: average(global.durations),
+    upperTrimmedMean95DurationMs: upperTrimmedMean95(global.durations),
     p95DurationMs: percentile(global.durations, 0.95),
     ttfpSampleCount: global.ttfps.length,
     avgTtfpMs: average(global.ttfps),
+    upperTrimmedMean95TtfpMs: upperTrimmedMean95(global.ttfps),
     p95TtfpMs: percentile(global.ttfps, 0.95),
     ttftSampleCount: global.ttfts.length,
     avgTtftMs: average(global.ttfts),
+    upperTrimmedMean95TtftMs: upperTrimmedMean95(global.ttfts),
     p95TtftMs: percentile(global.ttfts, 0.95),
     contextTokenDistribution: distributionFromValues(global.contextTokens),
     exclusionReasons: exclusionReasonsFromMap(global.exclusions),

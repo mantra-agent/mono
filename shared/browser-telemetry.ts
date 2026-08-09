@@ -86,6 +86,11 @@ export interface BrowserTelemetryMetricSummary {
   kind: BrowserTelemetryEventKind | string;
   name: string;
   count: number;
+  /**
+   * Ordinary experience: mean after dropping only the slowest 5% of samples.
+   * This is the health decision statistic (Pareto bulk), not the tail.
+   */
+  upperTrimmedMean95: number | null;
   p50: number | null;
   p95: number | null;
   latestAt: string | null;
@@ -95,6 +100,8 @@ export interface NavigationTraceAggregate {
   count: number;
   completedCount: number;
   incompleteCount: number;
+  /** Ordinary experience: mean after dropping only the slowest 5% of completed traces. */
+  upperTrimmedMean95Ms: number | null;
   p50Ms: number | null;
   p95Ms: number | null;
   diagnosisCounts: Record<NavigationTraceDiagnosis, number>;

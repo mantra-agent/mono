@@ -234,8 +234,9 @@ function slowQueryStatus(slowQueries: SystemResourcesData["slowQueries"]): Statu
 function frontendExperienceStatus(frontend: BrowserTelemetrySummary | null): Status {
   if (!frontend || frontend.sampleCount === 0) return "unknown";
   if (frontend.sampleHealth !== "healthy") return "amber";
-  if (frontend.metrics.some(metric => metric.p95 !== null && metric.p95 > frontendMetricBudget(frontend, metric.kind, metric.name))) return "amber";
-  if (frontend.navigationTraces.p95Ms !== null && frontend.navigationTraces.p95Ms > frontend.budgets.navigation.p95Ms) return "amber";
+  // Health = ordinary experience (mean of best 95%) vs target — not the tail.
+  if (frontend.metrics.some(metric => metric.upperTrimmedMean95 !== null && metric.upperTrimmedMean95 > frontendMetricBudget(frontend, metric.kind, metric.name))) return "amber";
+  if (frontend.navigationTraces.upperTrimmedMean95Ms !== null && frontend.navigationTraces.upperTrimmedMean95Ms > frontend.budgets.navigation.p95Ms) return "amber";
   return "ok";
 }
 
@@ -269,13 +270,12 @@ function againstTarget(value: number | null, target: number | null | undefined):
 
 function contextHealthStatus(context: ContextHealthSummary | null): Status {
   if (!context || context.callCount === 0) return "unknown";
-  // Primary felt-latency gate is time-to-first-progress; fall back to first-text
-  // where no progress samples exist yet.
+  // Ordinary experience (best 95% mean) for first progress, else first text.
   const sampleCount = context.ttfpSampleCount || context.ttftSampleCount;
   if (sampleCount === 0) return "unknown";
-  const p95 = context.p95TtfpMs ?? context.p95TtftMs;
+  const ordinary = context.upperTrimmedMean95TtfpMs ?? context.upperTrimmedMean95TtftMs;
   const budget = context.budgets.providerTtfpP95Ms ?? context.budgets.providerTtftP95Ms;
-  if (p95 !== null && p95 > budget) return "amber";
+  if (ordinary !== null && ordinary > budget) return "amber";
   return "ok";
 }
 
@@ -877,13 +877,16 @@ function ResourcesView({
                           <MetricRow
                             key={`${metric.kind}:${metric.name}`}
                             label={formatMetricName(metric.kind, metric.name)}
-                            value={formatFrontendMetricValue(metric.kind, metric.name, metric.p95)}
-                            status={againstTarget(metric.p95, budget)}
+                            value={formatFrontendMetricValue(metric.kind, metric.name, metric.upperTrimmedMean95)}
+                            status={againstTarget(metric.upperTrimmedMean95, budget)}
                             detail={(
                               <DetailList
                                 items={[
-                                  `vs target ${formatFrontendMetricValue(metric.kind, metric.name, budget)}`,
-                                  `p50 ${formatFrontendMetricValue(metric.kind, metric.name, metric.p50)} · p95 ${formatFrontendMetricValue(metric.kind, metric.name, metric.p95)} · n=${metric.count}`,
+                                  `Ordinary experience (mean of best 95%) vs target ${formatFrontendMetricValue(metric.kind, metric.name, budget)}`,
+                                  metric.count < 20
+                                    ? `n=${metric.count} · fewer than 20 samples; no slow samples trimmed`
+                                    : `n=${metric.count} · slowest ${Math.ceil(metric.count * 0.05)} sample(s) excluded`,
+                                  `p50 ${formatFrontendMetricValue(metric.kind, metric.name, metric.p50)} · p95 ${formatFrontendMetricValue(metric.kind, metric.name, metric.p95)}`,
                                   `latest ${formatRelative(metric.latestAt ? new Date(metric.latestAt).getTime() : null, now)}`,
                                 ]}
                               />
@@ -893,14 +896,14 @@ function ResourcesView({
                       })}
                       <MetricRow
                         label="SPA navigation health"
-                        value={formatFrontendMetricValue("navigation", "spa_navigation", frontendExperience.navigationTraces.p95Ms)}
+                        value={formatFrontendMetricValue("navigation", "spa_navigation", frontendExperience.navigationTraces.upperTrimmedMean95Ms)}
                         status={frontendExperience.navigationTraces.incompleteCount > 0
                           ? "amber"
-                          : againstTarget(frontendExperience.navigationTraces.p95Ms, frontendExperience.budgets.navigation.p95Ms)}
+                          : againstTarget(frontendExperience.navigationTraces.upperTrimmedMean95Ms, frontendExperience.budgets.navigation.p95Ms)}
                         detail={(
                           <DetailList
                             items={[
-                              `vs target ${formatMs(frontendExperience.budgets.navigation.p95Ms)}`,
+                              `Ordinary experience (mean of best 95%) vs target ${formatMs(frontendExperience.budgets.navigation.p95Ms)}`,
                               `p50 ${formatFrontendMetricValue("navigation", "spa_navigation", frontendExperience.navigationTraces.p50Ms)} · p95 ${formatFrontendMetricValue("navigation", "spa_navigation", frontendExperience.navigationTraces.p95Ms)}`,
                               `${frontendExperience.navigationTraces.count} traces · ${frontendExperience.navigationTraces.completedCount} completed · ${frontendExperience.navigationTraces.incompleteCount} incomplete`,
                               ...Object.entries(frontendExperience.navigationTraces.diagnosisCounts).map(([diagnosis, count]) => `${formatNavigationDiagnosis(diagnosis)}: ${count}`),
@@ -1021,15 +1024,15 @@ function ResourcesView({
                       />
                       <MetricRow
                         label="Provider TTFP"
-                        value={formatMs(contextHealth.p95TtfpMs)}
+                        value={formatMs(contextHealth.upperTrimmedMean95TtfpMs)}
                         status={contextHealth.ttfpSampleCount === 0
                           ? "unknown"
-                          : againstTarget(contextHealth.p95TtfpMs, contextHealth.budgets.providerTtfpP95Ms)}
+                          : againstTarget(contextHealth.upperTrimmedMean95TtfpMs, contextHealth.budgets.providerTtfpP95Ms)}
                         detail={(
                           <DetailList
                             items={[
                               "Provider request → first progress (thinking/text/tool)",
-                              `vs target ${formatMs(contextHealth.budgets.providerTtfpP95Ms)}`,
+                              `Ordinary experience (mean of best 95%) vs target ${formatMs(contextHealth.budgets.providerTtfpP95Ms)}`,
                               `avg ${formatMs(contextHealth.avgTtfpMs)} · p95 ${formatMs(contextHealth.p95TtfpMs)} · n=${contextHealth.ttfpSampleCount}`,
                             ]}
                           />
@@ -1038,15 +1041,15 @@ function ResourcesView({
                       />
                       <MetricRow
                         label="Provider TTFT"
-                        value={formatMs(contextHealth.p95TtftMs)}
+                        value={formatMs(contextHealth.upperTrimmedMean95TtftMs)}
                         status={contextHealth.ttftSampleCount === 0
                           ? "unknown"
-                          : againstTarget(contextHealth.p95TtftMs, contextHealth.budgets.providerTtftP95Ms)}
+                          : againstTarget(contextHealth.upperTrimmedMean95TtftMs, contextHealth.budgets.providerTtftP95Ms)}
                         detail={(
                           <DetailList
                             items={[
                               "Provider request → first visible text",
-                              `vs target ${formatMs(contextHealth.budgets.providerTtftP95Ms)}`,
+                              `Ordinary experience (mean of best 95%) vs target ${formatMs(contextHealth.budgets.providerTtftP95Ms)}`,
                               `avg ${formatMs(contextHealth.avgTtftMs)} · p95 ${formatMs(contextHealth.p95TtftMs)} · n=${contextHealth.ttftSampleCount}`,
                             ]}
                           />
@@ -1055,11 +1058,11 @@ function ResourcesView({
                       />
                       <MetricRow
                         label="Context tokens"
-                        value={formatTokens(contextHealth.p95ContextTokens)}
+                        value={formatTokens(contextHealth.medianContextTokens)}
                         detail={(
                           <DetailList
                             items={[
-                              "Comparable rows only — no hard target yet",
+                              "Comparable rows only — no hard target yet; median is the ordinary size signal",
                               `median ${formatTokens(contextHealth.medianContextTokens)} · p95 ${formatTokens(contextHealth.p95ContextTokens)} · max ${formatTokens(contextHealth.maxContextTokens)}`,
                               "Only per-call rows with known context windows and in-window context tokens are included.",
                               "Non-comparable CLI cumulative counters are excluded and never displayed as prompt/context size.",
@@ -1077,11 +1080,11 @@ function ResourcesView({
                       />
                       <MetricRow
                         label="Call duration"
-                        value={formatMs(contextHealth.p95DurationMs)}
+                        value={formatMs(contextHealth.upperTrimmedMean95DurationMs)}
                         detail={(
                           <DetailList
                             items={[
-                              "Complete, partial, aborted, and failed tracked inference rows",
+                              "Ordinary experience (mean of best 95%) across complete, partial, aborted, and failed tracked inference rows",
                               `avg ${formatMs(contextHealth.avgDurationMs)} · p95 ${formatMs(contextHealth.p95DurationMs)}`,
                             ]}
                           />
