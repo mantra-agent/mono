@@ -1455,18 +1455,20 @@ function ToolIconStrip({
         return (
           <Tooltip key={step.id}>
             <TooltipTrigger asChild>
-              <div
-                className="relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 bg-warning/15 animate-in fade-in duration-200"
+              <button
+                type="button"
+                className="relative flex items-center justify-center h-7 w-7 rounded-full shrink-0 bg-warning/15 touch-manipulation animate-in fade-in duration-200"
+                aria-label={label}
                 data-testid={`tool-icon-${step.id}`}
               >
                 <ChevronsDownUp className="h-3 w-3 text-warning" />
                 {isActive && (
                   <span className="absolute inset-0 rounded-full animate-ping bg-warning/25" />
                 )}
-              </div>
+              </button>
             </TooltipTrigger>
-            <TooltipContent side="top" className="text-xs max-w-xs">
-              {label}
+            <TooltipContent side="top">
+              <p className="text-sm text-white/90">{label}</p>
             </TooltipContent>
           </Tooltip>
         );
@@ -1505,27 +1507,51 @@ function ToolIconStrip({
         const observationText = typeof step.arguments?.observation === "string"
           ? step.arguments.observation.trim()
           : "";
-        const reasoning = isObservation
+        const toolReasoning =
+          typeof step.arguments?.reasoning === "string" &&
+          step.arguments.reasoning.trim()
+            ? step.arguments.reasoning.trim()
+            : "";
+        const fallbackLabel = step.toolName || "tool call";
+        const ariaLabel = isObservation
           ? `${observationType}: ${observationText || "Observation recorded"}`
-          : typeof step.arguments?.reasoning === "string" && step.arguments.reasoning.trim()
-            ? step.arguments.reasoning
-            : step.toolName || "tool call";
+          : toolReasoning || fallbackLabel;
 
         return (
           <Tooltip key={step.id}>
             <TooltipTrigger asChild>
-              <div
-                className={`relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 ${bgColor} animate-in fade-in duration-200`}
+              <button
+                type="button"
+                className={`relative flex items-center justify-center h-7 w-7 rounded-full shrink-0 ${bgColor} touch-manipulation animate-in fade-in duration-200`}
+                aria-label={ariaLabel}
                 data-testid={`tool-icon-${step.id}`}
               >
                 <ToolIcon className={`h-3 w-3 ${iconColor}`} />
                 {isActive && (
                   <span className="absolute inset-0 rounded-full animate-ping bg-active/20" />
                 )}
-              </div>
+              </button>
             </TooltipTrigger>
-            <TooltipContent side="top" className="text-xs max-w-xs">
-              {reasoning}
+            <TooltipContent side="top">
+              {isObservation ? (
+                <div className="space-y-1">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/55">
+                    {observationType}
+                  </p>
+                  <p className="text-sm leading-snug text-white">
+                    {observationText || "Observation recorded"}
+                  </p>
+                </div>
+              ) : toolReasoning ? (
+                <div className="space-y-1">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/55">
+                    {fallbackLabel}
+                  </p>
+                  <p className="text-sm leading-snug text-white">{toolReasoning}</p>
+                </div>
+              ) : (
+                <p className="text-sm text-white">{fallbackLabel}</p>
+              )}
             </TooltipContent>
           </Tooltip>
         );
