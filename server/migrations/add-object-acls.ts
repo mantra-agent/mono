@@ -19,5 +19,6 @@ export async function addObjectAclsTable(): Promise<void> {
     log.log("Ensured object_acls table exists");
   } catch (err) {
     log.error("Failed to ensure object_acls table", err);
+    throw err;
   }
 }

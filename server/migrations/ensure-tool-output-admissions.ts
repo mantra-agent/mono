@@ -44,5 +44,6 @@ export async function ensureToolOutputAdmissionsTable(): Promise<void> {
     log.log("Ensured tool_output_admissions table exists");
   } catch (err) {
     log.error("Failed to ensure tool_output_admissions table", err);
+    throw err;
   }
 }
