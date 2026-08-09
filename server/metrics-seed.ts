@@ -298,7 +298,7 @@ function sameVaultScope(
 }
 
 async function retireUntouchedLegacyDefaults(
-  activeVaultId: string,
+  visibleVaultIds: readonly string[],
 ): Promise<{
   retiredMetrics: number;
   retiredKpis: number;
@@ -308,51 +308,49 @@ async function retireUntouchedLegacyDefaults(
   let retiredKpis = 0;
   let retiredSamples = 0;
   const metrics = (await metricsStorage.list()).filter((metric) =>
-    sameVaultScope(metric.vaultId, activeVaultId),
+    visibleVaultIds.some((vaultId) => sameVaultScope(metric.vaultId, vaultId)),
   );
   const kpis = (await kpiStorage.list()).filter((kpi) =>
-    sameVaultScope(kpi.vaultId, activeVaultId),
+    visibleVaultIds.some((vaultId) => sameVaultScope(kpi.vaultId, vaultId)),
   );
 
   for (const seed of LEGACY_SEEDS) {
-    const metric = metrics.find((candidate) => candidate.slug === seed.metricSlug);
-    const kpi = kpis.find((candidate) => candidate.slug === seed.kpiSlug);
-    if (
-      !metric ||
-      !kpi ||
-      kpi.metricId !== metric.id ||
-      !isUntouchedLegacyMetric(metric, seed) ||
-      !isUntouchedLegacyKpi(kpi, seed) ||
-      kpis.some(
-        (candidate) => candidate.metricId === metric.id && candidate.id !== kpi.id,
-      )
-    ) {
-      continue;
-    }
+    const candidates = metrics.filter((metric) =>
+      metric.slug === seed.metricSlug && isUntouchedLegacyMetric(metric, seed),
+    );
+    for (const metric of candidates) {
+      const boundKpis = kpis.filter((kpi) => kpi.metricId === metric.id);
+      if (
+        boundKpis.length !== 1 ||
+        !isUntouchedLegacyKpi(boundKpis[0], seed)
+      ) {
+        continue;
+      }
 
-    const samples = await metricsStorage.listSamples(metric.id, 2);
-    if (
-      samples.length > 1 ||
-      (samples.length === 1 && !isLegacyStubSample(samples[0], seed))
-    ) {
-      continue;
-    }
+      const samples = await metricsStorage.listSamples(metric.id, 2);
+      if (
+        samples.length > 1 ||
+        (samples.length === 1 && !isLegacyStubSample(samples[0], seed))
+      ) {
+        continue;
+      }
 
-    await kpiStorage.delete(kpi.id);
-    retiredKpis += 1;
-    for (const sample of samples) {
-      await metricsStorage.deleteSample(sample.id);
-      retiredSamples += 1;
+      await kpiStorage.delete(boundKpis[0].id);
+      retiredKpis += 1;
+      for (const sample of samples) {
+        await metricsStorage.deleteSample(sample.id);
+        retiredSamples += 1;
+      }
+      await metricsStorage.delete(metric.id);
+      retiredMetrics += 1;
     }
-    await metricsStorage.delete(metric.id);
-    retiredMetrics += 1;
   }
 
   return { retiredMetrics, retiredKpis, retiredSamples };
 }
 
 async function retireUntouchedManualStandingShells(
-  activeVaultId: string,
+  visibleVaultIds: readonly string[],
 ): Promise<{
   retiredMetrics: number;
   retiredKpis: number;
@@ -360,10 +358,10 @@ async function retireUntouchedManualStandingShells(
   let retiredMetrics = 0;
   let retiredKpis = 0;
   const metrics = (await metricsStorage.list()).filter((metric) =>
-    sameVaultScope(metric.vaultId, activeVaultId),
+    visibleVaultIds.some((vaultId) => sameVaultScope(metric.vaultId, vaultId)),
   );
   const kpis = (await kpiStorage.list()).filter((kpi) =>
-    sameVaultScope(kpi.vaultId, activeVaultId),
+    visibleVaultIds.some((vaultId) => sameVaultScope(kpi.vaultId, vaultId)),
   );
 
   for (const metric of metrics) {
@@ -400,20 +398,25 @@ export async function seedDefaultMetricsAndKpis(): Promise<{
   skipped: number;
   objectiveKeys: StandingObjectiveKey[];
 }> {
-  const activeVaultId = getCurrentPrincipal().activeVaultId;
+  const principal = getCurrentPrincipal();
+  const activeVaultId = principal.activeVaultId;
   if (!activeVaultId) {
     throw new Error("Metrics/KPI defaults require an active vault");
   }
+  const visibleVaultIds = Array.from(new Set([
+    activeVaultId,
+    ...(principal.visibleVaultIds ?? []),
+  ]));
 
   // Never invent Manual metrics. Standing objectives stay unmeasured until the
   // user authors a real metric and binds a KPI. This pass only retires prior
   // system shells (legacy internal stubs + post-legacy Manual placeholders),
   // including NULL-vault duplicates that still render in the active vault.
-  const retiredLegacy = await retireUntouchedLegacyDefaults(activeVaultId);
-  const retiredShells = await retireUntouchedManualStandingShells(activeVaultId);
+  const retiredLegacy = await retireUntouchedLegacyDefaults(visibleVaultIds);
+  const retiredShells = await retireUntouchedManualStandingShells(visibleVaultIds);
 
   const kpis = (await kpiStorage.list()).filter((kpi) =>
-    sameVaultScope(kpi.vaultId, activeVaultId),
+    visibleVaultIds.some((vaultId) => sameVaultScope(kpi.vaultId, vaultId)),
   );
   const byObjective = new Set(
     kpis

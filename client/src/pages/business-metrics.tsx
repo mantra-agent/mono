@@ -57,12 +57,31 @@ interface RangeSample {
   shippedPrs: number;
   meetings: number;
   newUsers: number;
+  coverage: {
+    status: "provisional" | "finalized";
+    finalizesAt: string;
+  };
   newUsersCoverage: {
     status: "partial";
     availableFrom: string | null;
     historicalRows: "unclassified";
   };
 }
+
+interface DerivedMetricDefinition {
+  key: keyof Pick<RangeSample, "hoursUsed" | "activeUsers" | "currentUsers" | "shippedPrs" | "meetings" | "newUsers">;
+  label: string;
+  unit: string;
+}
+
+const DERIVED_METRICS: readonly DerivedMetricDefinition[] = [
+  { key: "hoursUsed", label: "Hours Used", unit: "hours" },
+  { key: "activeUsers", label: "Active Users", unit: "users" },
+  { key: "currentUsers", label: "Current Users", unit: "users" },
+  { key: "shippedPrs", label: "Shipped PRs", unit: "" },
+  { key: "meetings", label: "Meetings", unit: "" },
+  { key: "newUsers", label: "New Users", unit: "users" },
+];
 
 const DIRECTION_LABEL: Record<MetricDirection, string> = {
   higher_is_better: "Higher is better",
@@ -382,31 +401,30 @@ export default function BusinessMetricsPage() {
       </div>
 
       {usage ? (
-        <div className="grid grid-cols-2 gap-2 py-4 sm:grid-cols-3 lg:grid-cols-6">
-          <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
-            <div className="text-sm text-muted-foreground">Hours Used</div>
-            <div className="text-lg font-semibold">{formatValue(usage.hoursUsed, "hours")}</div>
-          </div>
-          <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
-            <div className="text-sm text-muted-foreground">Active Users</div>
-            <div className="text-lg font-semibold">{formatValue(usage.activeUsers, "users")}</div>
-          </div>
-          <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
-            <div className="text-sm text-muted-foreground">Current Users</div>
-            <div className="text-lg font-semibold">{formatValue(usage.currentUsers, "users")}</div>
-          </div>
-          <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
-            <div className="text-sm text-muted-foreground">Shipped PRs</div>
-            <div className="text-lg font-semibold">{formatValue(usage.shippedPrs, "")}</div>
-          </div>
-          <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
-            <div className="text-sm text-muted-foreground">Meetings</div>
-            <div className="text-lg font-semibold">{formatValue(usage.meetings, "")}</div>
-          </div>
-          <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
-            <div className="text-sm text-muted-foreground">New Users</div>
-            <div className="text-lg font-semibold">{formatValue(usage.newUsers, "users")}</div>
-          </div>
+        <div className="py-4">
+          <HierarchySectionHeader data-testid="metric-section-current">
+            Current · {usage.coverage.status}
+          </HierarchySectionHeader>
+          {DERIVED_METRICS.map((metric) => {
+            const isPartial = metric.key === "newUsers" && usage.newUsersCoverage.status === "partial";
+            return (
+              <ProfileTreeRow
+                key={metric.key}
+                label={metric.label}
+                icon={<Database className="h-3.5 w-3.5" />}
+                hasValue
+                showEmpty
+                mobileLayout="inline"
+                valueLayout="compact"
+                testId={`derived-metric-${metric.key}`}
+              >
+                <span className="whitespace-nowrap font-mono">
+                  {formatValue(usage[metric.key], metric.unit)}
+                  {isPartial ? <span className="ml-2 font-sans text-xs text-warning">partial</span> : null}
+                </span>
+              </ProfileTreeRow>
+            );
+          })}
         </div>
       ) : null}
 
@@ -415,8 +433,8 @@ export default function BusinessMetricsPage() {
           <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading metrics…
         </div>
       ) : metrics.length === 0 ? (
-        <div className="rounded-lg border border-dashed py-16 text-center text-muted-foreground">
-          No metrics yet. Create one to start collecting.
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">
+          No custom metrics yet.
         </div>
       ) : (
         <div className="space-y-2">
