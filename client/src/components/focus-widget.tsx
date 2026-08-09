@@ -498,8 +498,9 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
     lastPatchedContextRef.current = "";
   }, [activeSession]);
 
-  // Sessions list is synchronized by local admission plus persisted realtime
-  // events. Window focus and WebSocket reconnect invalidation are recovery paths.
+  // Process-local events make same-replica writes immediate. A bounded poll
+  // reconciles durable sessions created by another replica, so the canonical
+  // conversation projection never depends on EventBus affinity.
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<Session[]>({
     queryKey: ["/api/sessions"],
     queryFn: async () => {
@@ -507,6 +508,8 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
       if (!response.ok) throw new Error(`Failed to load sessions (${response.status})`);
       return response.json() as Promise<Session[]>;
     },
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
   });
 
