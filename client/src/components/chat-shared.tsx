@@ -1468,7 +1468,7 @@ function ToolIconStrip({
               </button>
             </TooltipTrigger>
             <TooltipContent side="top">
-              <p className="text-sm text-white/90">{label}</p>
+              <p className="text-xs text-white/90">{label}</p>
             </TooltipContent>
           </Tooltip>
         );
@@ -1534,23 +1534,23 @@ function ToolIconStrip({
             </TooltipTrigger>
             <TooltipContent side="top">
               {isObservation ? (
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                   <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/55">
                     {observationType}
                   </p>
-                  <p className="text-sm leading-snug text-white">
+                  <p className="text-xs leading-snug text-white">
                     {observationText || "Observation recorded"}
                   </p>
                 </div>
               ) : toolReasoning ? (
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                   <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/55">
                     {fallbackLabel}
                   </p>
-                  <p className="text-sm leading-snug text-white">{toolReasoning}</p>
+                  <p className="text-xs leading-snug text-white">{toolReasoning}</p>
                 </div>
               ) : (
-                <p className="text-sm text-white">{fallbackLabel}</p>
+                <p className="text-xs text-white">{fallbackLabel}</p>
               )}
             </TooltipContent>
           </Tooltip>
