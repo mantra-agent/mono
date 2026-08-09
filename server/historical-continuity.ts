@@ -41,6 +41,44 @@ interface ContinuityRow {
   assistantMessageId: string | null;
 }
 
+function parseDatabaseDate(value: unknown): Date | null {
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function normalizeContinuityRow(raw: Record<string, unknown>): ContinuityRow | null {
+  const bucketStart = parseDatabaseDate(raw.bucket_start);
+  const bucketEnd = parseDatabaseDate(raw.bucket_end);
+  const sourceStart = parseDatabaseDate(raw.source_start);
+  const sourceEnd = parseDatabaseDate(raw.source_end);
+  const level = String(raw.level);
+  if (!bucketStart || !bucketEnd || !sourceStart || !sourceEnd || (level !== "turn" && !ROLLUP_LEVELS.includes(level as RollupLevel))) {
+    log.warn("continuity.projection.row_skipped", {
+      entryId: typeof raw.id === "string" ? raw.id : null,
+      level,
+      invalidFields: [
+        !bucketStart && "bucket_start",
+        !bucketEnd && "bucket_end",
+        !sourceStart && "source_start",
+        !sourceEnd && "source_end",
+      ].filter(Boolean),
+    });
+    return null;
+  }
+  return {
+    id: String(raw.id),
+    level: level as ContinuityRow["level"],
+    bucketStart,
+    bucketEnd,
+    summary: String(raw.summary),
+    sourceStart,
+    sourceEnd,
+    sourceCount: Number(raw.source_count),
+    sessionId: typeof raw.session_id === "string" ? raw.session_id : null,
+    assistantMessageId: typeof raw.assistant_message_id === "string" ? raw.assistant_message_id : null,
+  };
+}
+
 export async function ensureHistoricalContinuitySchema(): Promise<void> {
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS historical_continuity_entries (
@@ -144,16 +182,21 @@ async function rollupOwner(vaultId: string, timezone: string): Promise<number> {
   for (const level of ROLLUP_LEVELS) {
     const sourceLevel = level === "hour" ? "turn" : ROLLUP_LEVELS[ROLLUP_LEVELS.indexOf(level) - 1];
     const candidates = await db.execute(sql`
-      SELECT date_trunc(${level}, bucket_start AT TIME ZONE ${timezone}) AT TIME ZONE ${timezone} AS bucket_start,
-             (date_trunc(${level}, bucket_start AT TIME ZONE ${timezone}) + ('1 ' || ${level})::interval) AT TIME ZONE ${timezone} AS bucket_end,
-             array_agg(id ORDER BY bucket_start) AS source_ids,
+      WITH bucketed AS (
+        SELECT id, bucket_start AS entry_bucket_start, source_start, source_end, summary,
+               date_trunc(${level}, bucket_start AT TIME ZONE ${timezone}) AT TIME ZONE ${timezone} AS rollup_bucket_start,
+               (date_trunc(${level}, bucket_start AT TIME ZONE ${timezone}) + ('1 ' || ${level})::interval) AT TIME ZONE ${timezone} AS rollup_bucket_end
+        FROM historical_continuity_entries
+        WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND vault_id=${vaultId} AND level=${sourceLevel}
+      )
+      SELECT rollup_bucket_start AS bucket_start, rollup_bucket_end AS bucket_end,
+             array_agg(id ORDER BY entry_bucket_start) AS source_ids,
              min(source_start) AS source_start, max(source_end) AS source_end, count(*)::int AS source_count,
-             string_agg(summary, E'\n\n' ORDER BY bucket_start) AS source_text
-      FROM historical_continuity_entries
-      WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND vault_id=${vaultId} AND level=${sourceLevel}
-      GROUP BY 1, 2
-      HAVING (date_trunc(${level}, bucket_start AT TIME ZONE ${timezone}) + ('1 ' || ${level})::interval) AT TIME ZONE ${timezone} <= NOW()
-      ORDER BY 1 ASC LIMIT 100
+             string_agg(summary, E'\n\n' ORDER BY entry_bucket_start) AS source_text
+      FROM bucketed
+      WHERE rollup_bucket_end <= NOW()
+      GROUP BY rollup_bucket_start, rollup_bucket_end
+      ORDER BY rollup_bucket_start ASC LIMIT 100
     `);
     for (const row of candidates.rows as Array<Record<string, unknown>>) {
       const bucketStart = new Date(String(row.bucket_start));
@@ -186,7 +229,9 @@ export async function renderHistoryProjection(tokenBudget = HISTORY_TOKEN_BUDGET
     FROM ranked WHERE (level='turn' AND rn<=24) OR (level='hour' AND rn<=48) OR (level='day' AND rn<=31) OR (level='week' AND rn<=16) OR (level='month' AND rn<=18) OR (level='quarter' AND rn<=12) OR (level='year' AND rn<=10)
     ORDER BY CASE level WHEN 'year' THEN 1 WHEN 'quarter' THEN 2 WHEN 'month' THEN 3 WHEN 'week' THEN 4 WHEN 'day' THEN 5 WHEN 'hour' THEN 6 ELSE 7 END, bucket_start ASC
   `);
-  const rows = result.rows as unknown as ContinuityRow[];
+  const rows = (result.rows as Array<Record<string, unknown>>)
+    .map(normalizeContinuityRow)
+    .filter((row): row is ContinuityRow => row !== null);
   const header = "# HISTORY.md\n\nModel-derived chronology for continuity. Raw transcripts remain authoritative; memory candidates require independent provenance and validation.\n";
   const sections: string[] = [];
   let used = estimateTokens(header);
@@ -195,7 +240,7 @@ export async function renderHistoryProjection(tokenBudget = HISTORY_TOKEN_BUDGET
     if (!entries.length) continue;
     const lines: string[] = [`\n## ${level[0].toUpperCase()}${level.slice(1)}`];
     for (const entry of entries) {
-      const line = `- ${new Date(entry.bucketStart).toISOString()} — ${entry.summary}`;
+      const line = `- ${entry.bucketStart.toISOString()} — ${entry.summary}`;
       const cost = estimateTokens(line);
       if (used + cost > tokenBudget) break;
       lines.push(line);
