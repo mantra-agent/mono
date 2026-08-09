@@ -44,8 +44,7 @@ import { useEventStream } from "@/hooks/use-event-stream";
 import { SegmentStream, filterStepsByLayer } from "@/components/segment-stream";
 import { useSessionSubscription, type SessionStreamState } from "@/hooks/use-session-subscription";
 import { useVisibilityLayer, type VisibilityLayer } from "@/hooks/use-visibility-layer";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import type { MessageSegment } from "@shared/streaming-types";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
 
@@ -462,9 +461,11 @@ export const CrossSessionAnnotation = memo(function CrossSessionAnnotation({
   sessionTitleById?: Record<string, string>;
 }) {
   const isSender = perspective === "sender";
-  const sessionId = meta.fromSessionId;
-  const sessionTitle = meta.fromLabel ?? sessionTitleById?.[sessionId] ?? shortSessionLabel(sessionId);
-  const directionLabel = "From";
+  const relatedSessionId = isSender ? meta.toSessionId : meta.fromSessionId;
+  const relatedSessionLabel = isSender ? meta.toLabel : meta.fromLabel;
+  const sessionTitle = relatedSessionLabel ?? sessionTitleById?.[relatedSessionId] ?? shortSessionLabel(relatedSessionId);
+  const sessionReference = `@meeting:${relatedSessionId}`;
+  const directionLabel = isSender ? "To" : "From";
   const bubbleTone = isSender
     ? "bg-info/10 border-info/20"
     : "bg-cta/10 border-cta/20";
@@ -481,10 +482,15 @@ export const CrossSessionAnnotation = memo(function CrossSessionAnnotation({
             {directionLabel}
           </span>
           <span className="shrink-0 text-muted-foreground/35">·</span>
-          <span className="min-w-0 truncate" data-testid="text-cross-session-title">{sessionTitle}</span>
+          <InlineReferenceText
+            text={sessionReference}
+            className="min-w-0 truncate"
+            surface="chat-inline"
+          />
+          <span className="sr-only" data-testid="text-cross-session-title">{sessionTitle}</span>
         </div>
         <div className="text-xs text-muted-foreground/85 leading-relaxed prose prose-sm dark:prose-invert max-w-none [&_*]:text-muted-foreground/85 [&_p]:my-0.5 [&_ul]:my-0.5 [&_ol]:my-0.5 [&_li]:my-0 [&_pre]:bg-muted [&_pre]:rounded-md [&_pre]:p-2 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:text-xs [&_code]:font-mono [&_h1]:text-xs [&_h2]:text-xs [&_h3]:text-xs [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold" data-testid="text-cross-session-content">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+          <MarkdownContent content={content} compact />
         </div>
       </div>
     </div>
