@@ -4,6 +4,7 @@ import {
   fetchDeploymentsForEnvironment,
   redeployServiceInstance,
   extractDeploymentMeta,
+  RailwayApiError,
 } from "./client";
 import { resolvePlatformEnvironment, type ResolvedPlatformEnvironment } from "../../platform-environment-resolver";
 import { getEnvironmentBuildLifecycleConfig } from "../../platforms/build-lifecycle-service";
@@ -1220,6 +1221,35 @@ async function sleep(ms: number, signal: AbortSignal): Promise<void> {
 const RAILWAY_TERMINAL_OK = new Set(["SUCCESS"]);
 const RAILWAY_TERMINAL_FAIL = new Set(["FAILED", "CRASHED", "REMOVED"]);
 
+function isRailwayProviderCooldown(err: unknown): err is RailwayApiError {
+  return err instanceof RailwayApiError && err.status === 429;
+}
+
+function completeDeferredProviderVerification(run: PublishRun, err: RailwayApiError): void {
+  const retrySuffix = err.retryAfterSeconds ? ` Retry after ${err.retryAfterSeconds}s.` : "";
+  finishStage(run, "railway_build", {
+    status: "skipped",
+    message: `Live branch promoted; Railway verification deferred by provider rate limiting.${retrySuffix}`,
+  });
+  finishStage(run, "trigger_redeploy_fallback", {
+    status: "skipped",
+    message: "No API redeploy attempted; the live-branch push remains the deployment trigger.",
+  });
+  finishStage(run, "wait_for_success", {
+    status: "skipped",
+    message: "Deployment status verification deferred until Railway API access recovers.",
+  });
+  finishStage(run, "health_check", {
+    status: "skipped",
+    message: "Health verification deferred because the promoted deployment cannot yet be identified.",
+  });
+  startStage(run, "ready");
+  finishStage(run, "ready", {
+    status: "succeeded",
+    message: `Published to '${run.summary.prodBranch}' at ${run.summary.devCommit?.shortSha ?? "the approved commit"}; deployment verification is pending Railway API recovery.`,
+  });
+}
+
 async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> {
   const finalize = (status: PublishRun["status"]) => {
     run.status = status;
@@ -1443,6 +1473,16 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
         }
       } catch (err) {
         if (isCancelled(err)) throw err;
+        if (mergeSha && isRailwayProviderCooldown(err)) {
+          log.warn("Live branch promoted while Railway verification is rate limited", {
+            runId: run.id,
+            promotedCommit: mergeSha.slice(0, 7),
+            retryAfterSeconds: err.retryAfterSeconds ?? null,
+          });
+          completeDeferredProviderVerification(run, err);
+          finalize("succeeded");
+          return;
+        }
         const msg = err instanceof Error ? err.message : String(err);
         finishStage(run, "railway_build", { status: "failed", error: msg, message: msg });
         finalize("failed");
