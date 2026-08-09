@@ -43,19 +43,21 @@ export async function replaceProfileAvatar(
   const objectPath = `/objects/profile-pictures/${filename}`;
   const objectKey = `${PRIVATE_PREFIX}profile-pictures/${filename}`;
 
-  await storageBackend.putObject(objectKey, bytes, { contentType: image.contentType, cacheControl: "private, max-age=31536000, immutable" });
-  await setObjectAclPolicy(objectKey, {
-    owner: principal.userId,
-    ownerUserId: principal.userId,
-    accountId: principal.accountId,
-    createdByUserId: principal.userId,
-    scope: "user",
-    visibility: "private",
-  });
-  const stored = await storageBackend.headObject(objectKey);
-  if (!stored || stored.contentLength !== bytes.length) {
-    await cleanupObject(objectKey);
-    throw new Error("Avatar write verification failed");
+  try {
+    await storageBackend.putObject(objectKey, bytes, { contentType: image.contentType, cacheControl: "private, max-age=31536000, immutable" });
+    await setObjectAclPolicy(objectKey, {
+      owner: principal.userId,
+      ownerUserId: principal.userId,
+      accountId: principal.accountId,
+      createdByUserId: principal.userId,
+      scope: "user",
+      visibility: "private",
+    });
+    const stored = await storageBackend.headObject(objectKey);
+    if (!stored || stored.contentLength !== bytes.length) throw new Error("Avatar write verification failed");
+  } catch (error) {
+    await cleanupObject(objectKey, "upload_setup");
+    throw error;
   }
 
   let previousPath: string | null = null;
@@ -74,13 +76,13 @@ export async function replaceProfileAvatar(
         .where(and(eq(userProfiles.userId, principal.userId!), eq(userProfiles.accountId, principal.accountId!)));
     });
   } catch (error) {
-    await cleanupObject(objectKey);
+    await cleanupObject(objectKey, "profile_swap");
     throw error;
   }
 
   if (previousPath && previousPath !== objectPath) {
     const previousKey = objectKeyFromPath(previousPath);
-    if (previousKey) cleanupObject(previousKey).catch((error) => log.warn("Prior avatar cleanup failed", { errorType: error instanceof Error ? error.name : typeof error }));
+    if (previousKey) void cleanupObject(previousKey, "prior_avatar");
   }
   log.info("Profile avatar replaced", { byteCount: bytes.length, width: image.width, height: image.height, contentType: image.contentType });
   return objectPath;
@@ -92,9 +94,15 @@ function objectKeyFromPath(path: string): string | null {
   return /^[a-f0-9-]+\.(?:jpg|png|webp)$/.test(filename) ? `${PRIVATE_PREFIX}profile-pictures/${filename}` : null;
 }
 
-async function cleanupObject(key: string): Promise<void> {
-  await storageBackend.deleteObject(key);
-  await deleteObjectAclPolicy(key);
+async function cleanupObject(key: string, phase: "upload_setup" | "profile_swap" | "prior_avatar"): Promise<void> {
+  const results = await Promise.allSettled([
+    storageBackend.deleteObject(key),
+    deleteObjectAclPolicy(key),
+  ]);
+  const failedSteps = results.flatMap((result, index) => result.status === "rejected" ? [index === 0 ? "object" : "acl"] : []);
+  if (failedSteps.length > 0) {
+    log.warn("Profile avatar cleanup degraded", { phase, failedSteps });
+  }
 }
 
 function verifyImage(bytes: Buffer, declaredMime: string): VerifiedImage {
