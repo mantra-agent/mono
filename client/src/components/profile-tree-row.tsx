@@ -62,7 +62,8 @@ export function ProfileTreeRow({
       <div className="group last:border-b-0">
         <div
           className={cn(
-            "group relative grid w-full items-center gap-x-2 rounded-md px-2 py-1.5 text-left text-sm select-none transition-colors hover:bg-accent/70",
+            "group relative grid w-full items-center rounded-md px-2 py-1.5 text-left text-sm select-none transition-colors hover:bg-accent/70",
+            mobileLayout === "inline" ? "gap-x-0" : "gap-x-2",
             showValue
               ? mobileLayout === "inline"
                 ? valueLayout === "compact"
