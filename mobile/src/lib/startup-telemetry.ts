@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+import Config from '../config';
 
 export type StartupPhase =
   | 'process_start'
@@ -58,12 +59,10 @@ function getConstantsExtra(constants: Record<string, any> | null): Record<string
   return constants?.expoConfig?.extra || constants?.manifest?.extra || {};
 }
 
-function resolveBackendUrl(): string {
+async function resolveBackendUrl(): Promise<string> {
   if (backendUrl) return backendUrl;
-  const constants = getConfigConstants();
-  const extra = getConstantsExtra(constants);
-  const configured = typeof extra?.apiUrl === 'string' ? extra.apiUrl : null;
-  backendUrl = configured || (__DEV__ ? 'http://localhost:5000' : 'https://mono-prod-8d22.up.railway.app');
+  await Config.load();
+  backendUrl = Config.SERVER_URL;
   return backendUrl;
 }
 
@@ -139,7 +138,8 @@ async function sendTelemetry(event: StartupTelemetryEvent & { occurredAt: string
       mobileSessionId,
       deviceId: id,
     };
-    await fetch(`${resolveBackendUrl().replace(/\/$/, '')}/api/mobile/telemetry/startup`, {
+    const targetUrl = await resolveBackendUrl();
+    await fetch(`${targetUrl}/api/mobile/telemetry/startup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

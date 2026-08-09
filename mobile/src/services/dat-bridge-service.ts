@@ -21,7 +21,7 @@ import {
 } from '../../modules/agent-native/src';
 import { apiFetch } from '../lib/api';
 import { Logger } from '../lib/logger';
-import Config from '../config';
+import { requestServer } from '../lib/network';
 
 const LOG_TAG = 'DATBridge';
 const COMMAND_TIMEOUT_MS = 45_000;
@@ -57,9 +57,7 @@ async function uploadCapture(base64: string, capturedAt?: string): Promise<strin
   const byteEstimate = Math.floor((base64.length * 3) / 4);
   Logger.info(LOG_TAG, 'Capture upload starting', { base64Length: base64.length, byteEstimate, capturedAt: capturedAt ?? null });
   try {
-    await Config.load();
-    Logger.debug(LOG_TAG, 'Capture upload target resolved', { serverUrl: Config.SERVER_URL });
-    const res = await fetch(`${Config.SERVER_URL}/api/mobile/dat-capture/upload`, {
+    const res = await requestServer('/api/mobile/dat-capture/upload', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },

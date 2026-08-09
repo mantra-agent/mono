@@ -1,8 +1,8 @@
-import Config from '../config';
 import { Logger } from './logger';
+import { requestServer } from './network';
 import type { NativeEnvironment } from '../native/glasses-capabilities';
 
-const GLASSES_AGENT_API_BASE = `${Config.SERVER_URL}/api/glasses-agent`;
+const GLASSES_AGENT_API_BASE = '/api/glasses-agent';
 
 export type GlassesSessionRecord = {
   id: string;
@@ -50,7 +50,7 @@ export type GlassesSessionEventInput = {
 };
 
 export async function createGlassesSession(environment?: NativeEnvironment): Promise<GlassesSessionRecord> {
-  const res = await fetch(`${GLASSES_AGENT_API_BASE}/sessions`, {
+  const res = await requestServer(`${GLASSES_AGENT_API_BASE}/sessions`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -75,7 +75,7 @@ export async function updateGlassesSession(
   sessionId: string,
   body: Partial<Pick<GlassesSessionRecord, 'status' | 'deviceId' | 'appVersion' | 'buildNumber' | 'telemetry'>>,
 ): Promise<void> {
-  const res = await fetch(`${GLASSES_AGENT_API_BASE}/sessions/${sessionId}`, {
+  const res = await requestServer(`${GLASSES_AGENT_API_BASE}/sessions/${sessionId}`, {
     method: 'PATCH',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -85,7 +85,7 @@ export async function updateGlassesSession(
 }
 
 export async function appendGlassesSessionEvent(sessionId: string, event: GlassesSessionEventInput): Promise<void> {
-  const res = await fetch(`${GLASSES_AGENT_API_BASE}/sessions/${sessionId}/events`, {
+  const res = await requestServer(`${GLASSES_AGENT_API_BASE}/sessions/${sessionId}/events`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -124,7 +124,7 @@ export async function uploadGlassesVisionFrame(options: {
     type: 'image/jpeg',
   } as unknown as Blob);
 
-  const res = await fetch(`${GLASSES_AGENT_API_BASE}/sessions/${options.sessionId}/vision/frame`, {
+  const res = await requestServer(`${GLASSES_AGENT_API_BASE}/sessions/${options.sessionId}/vision/frame`, {
     method: 'POST',
     credentials: 'include',
     body: form,

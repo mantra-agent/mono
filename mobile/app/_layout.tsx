@@ -13,7 +13,6 @@ import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { VoiceSessionProvider, useVoiceSession } from '../src/contexts/voice-session';
 import { GlassesAgentSessionProvider, useGlassesAgentSession } from '../src/contexts/glasses-agent-session';
 import { InterfaceModeProvider } from '../src/contexts/interface-mode';
-import { AuthProvider } from '../src/contexts/auth';
 import Config from '../src/config';
 import { handleAgentInvocation, parseAgentInvocation } from '../src/lib/agent-invocation';
 import { handleDatUrl } from '../modules/agent-native/src';
@@ -64,11 +63,6 @@ function DeepLinkHandler() {
   return null;
 }
 
-/** Auth is handled by the web app inside the WebView — no native gate needed. */
-function AuthGate({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
-}
-
 export default function RootLayout() {
   const [configLoaded, setConfigLoaded] = useState(false);
 
@@ -95,27 +89,23 @@ export default function RootLayout() {
     <GestureHandlerRootView style={styles.container}>
       <SafeAreaProvider>
         <BottomSheetModalProvider>
-          <AuthProvider>
-            <VoiceSessionProvider>
-              <GlassesAgentSessionProvider>
-                <InterfaceModeProvider>
-                  <View style={styles.container}>
-                    <StatusBar hidden={false} style="light" />
-                    <DeepLinkHandler />
-                    <AuthGate>
-                      <Stack
-                        screenOptions={{
-                          headerShown: false,
-                          contentStyle: { backgroundColor: glassesTheme.colors.canvas },
-                          animation: 'fade',
-                        }}
-                      />
-                    </AuthGate>
-                  </View>
-                </InterfaceModeProvider>
-              </GlassesAgentSessionProvider>
-            </VoiceSessionProvider>
-          </AuthProvider>
+          <VoiceSessionProvider>
+            <GlassesAgentSessionProvider>
+              <InterfaceModeProvider>
+                <View style={styles.container}>
+                  <StatusBar hidden={false} style="light" />
+                  <DeepLinkHandler />
+                  <Stack
+                    screenOptions={{
+                      headerShown: false,
+                      contentStyle: { backgroundColor: glassesTheme.colors.canvas },
+                      animation: 'fade',
+                    }}
+                  />
+                </View>
+              </InterfaceModeProvider>
+            </GlassesAgentSessionProvider>
+          </VoiceSessionProvider>
         </BottomSheetModalProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
