@@ -24,6 +24,10 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   // future write/generate actions fail closed until explicitly classified.
   pdf: { default: 2, actions: { open: 0, extract: 0, list: 0 } },
   shell: { default: 1 },
+  // Python runs arbitrary model-supplied code inside a constrained diagnostic boundary.
+  // Keep it tier 2 so autonomous/timer/hook origins fail closed unless trusted engineering
+  // delegation has been established and independently authorized.
+  python: { default: 2 },
   // Dependency mutation changes repository source and may resolve registry metadata.
   // Keep it tier 2 so autonomous/timer/hook origins remain default-denied unless
   // they carry server-validated trusted engineering delegation.

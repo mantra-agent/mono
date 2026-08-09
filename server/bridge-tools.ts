@@ -13783,6 +13783,43 @@ function formatContextHealthSummary(summary: import("@shared/context-health").Co
 }
 
 const systemTools: Record<string, ToolHandler> = {
+  async python(args) {
+    try {
+      const { runConstrainedPython } = await import("./python-runner");
+      const run = await runConstrainedPython({
+        repositoryDirectory: String(args.repositoryDirectory || ""),
+        source: String(args.source || ""),
+        timeoutMs: typeof args.timeoutMs === "number" ? args.timeoutMs : undefined,
+        sessionId: String(args._sessionId || ""),
+      });
+      const output = [run.stdout.trim(), run.stderr.trim()].filter(Boolean).join("\n");
+      if (run.timedOut) {
+        return {
+          result: `Python execution timed out after ${run.durationMs}ms${output ? `\n${output}` : ""}`,
+          error: true,
+          failure: transientFailure("python_execution_timeout", `durationMs=${run.durationMs}`),
+        };
+      }
+      if (run.outputLimitExceeded) {
+        return {
+          result: `Python execution exceeded the 256KB output limit${output ? `\n${output}` : ""}`,
+          error: true,
+          failure: inputFailure("python_output_limit_exceeded"),
+        };
+      }
+      const header = run.exitCode === 0
+        ? "Python execution completed"
+        : `Python execution failed (exit ${run.exitCode ?? "?"}${run.signal ? `, signal ${run.signal}` : ""})`;
+      return { result: `${header}${output ? `\n${output}` : ""}` };
+    } catch (error) {
+      return {
+        result: `Python execution rejected: ${error instanceof Error ? error.message : String(error)}`,
+        error: true,
+        failure: inputFailure("python_execution_rejected"),
+      };
+    }
+  },
+
   async npm_dependencies(args) {
     if (args.action !== "set_package") {
       return { result: "Unknown npm_dependencies action. Available: set_package", error: true };
@@ -17540,7 +17577,7 @@ type EngineeringContextRoot = {
   reason: string;
 };
 
-const ENGINEERING_TOOL_NAMES = new Set(["code", "shell", "git", "npm_dependencies", "system", "railway", "sentry"]);
+const ENGINEERING_TOOL_NAMES = new Set(["code", "shell", "python", "git", "npm_dependencies", "system", "railway", "sentry"]);
 const ENGINEERING_REF_CACHE = new Map<string, Set<string>>();
 const ENGINEERING_CONTEXT_LOAD_QUEUE = new Map<string, Promise<string | null>>();
 const ENGINEERING_ROOT_REPO_HINTS = ["repos/", "AGENTS.md", "DESIGN.md", "npm run build", "git ", "server/", "client/", "mobile/", "shared/"];
