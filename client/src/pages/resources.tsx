@@ -259,6 +259,14 @@ function frontendMetricBudget(frontend: BrowserTelemetrySummary, kind: string, n
   return Number.POSITIVE_INFINITY;
 }
 
+/** Headline shows the decision measurement; color is measurement vs target. */
+function againstTarget(value: number | null, target: number | null | undefined): Status {
+  if (value === null || value === undefined || target === null || target === undefined || !Number.isFinite(target)) {
+    return value === null || value === undefined ? "unknown" : "ok";
+  }
+  return value > target ? "amber" : "ok";
+}
+
 function contextHealthStatus(context: ContextHealthSummary | null): Status {
   if (!context || context.callCount === 0) return "unknown";
   // Primary felt-latency gate is time-to-first-progress; fall back to first-text
@@ -863,23 +871,38 @@ function ResourcesView({
                         detail={<DetailText>{frontendExperience.windowHours}h window · raw retention {frontendExperience.rawRetentionDays}d · {frontendExperience.hiddenSampleCount} hidden-tab samples filtered where throttling invalidates the metric · same summary used by system.frontend_performance.</DetailText>}
                         testId="tile-frontend-sample-health"
                       />
-                      {frontendExperience.metrics.slice(0, 8).map(metric => (
-                        <MetricRow
-                          key={`${metric.kind}:${metric.name}`}
-                          label={formatMetricName(metric.kind, metric.name)}
-                          value={`${formatFrontendMetricValue(metric.kind, metric.name, metric.p50)} / ${formatFrontendMetricValue(metric.kind, metric.name, metric.p95)}`}
-                          status={metric.p95 !== null && metric.p95 > frontendMetricBudget(frontendExperience, metric.kind, metric.name) ? "amber" : "ok"}
-                          detail={<DetailText>p50 / p95 · n={metric.count} · budget {formatFrontendMetricValue(metric.kind, metric.name, frontendMetricBudget(frontendExperience, metric.kind, metric.name))} · latest {formatRelative(metric.latestAt ? new Date(metric.latestAt).getTime() : null, now)}</DetailText>}
-                        />
-                      ))}
+                      {frontendExperience.metrics.slice(0, 8).map(metric => {
+                        const budget = frontendMetricBudget(frontendExperience, metric.kind, metric.name);
+                        return (
+                          <MetricRow
+                            key={`${metric.kind}:${metric.name}`}
+                            label={formatMetricName(metric.kind, metric.name)}
+                            value={formatFrontendMetricValue(metric.kind, metric.name, metric.p95)}
+                            status={againstTarget(metric.p95, budget)}
+                            detail={(
+                              <DetailList
+                                items={[
+                                  `vs target ${formatFrontendMetricValue(metric.kind, metric.name, budget)}`,
+                                  `p50 ${formatFrontendMetricValue(metric.kind, metric.name, metric.p50)} · p95 ${formatFrontendMetricValue(metric.kind, metric.name, metric.p95)} · n=${metric.count}`,
+                                  `latest ${formatRelative(metric.latestAt ? new Date(metric.latestAt).getTime() : null, now)}`,
+                                ]}
+                              />
+                            )}
+                          />
+                        );
+                      })}
                       <MetricRow
                         label="SPA navigation health"
-                        value={`${frontendExperience.navigationTraces.count} traces · ${formatFrontendMetricValue("navigation", "spa_navigation", frontendExperience.navigationTraces.p50Ms)} / ${formatFrontendMetricValue("navigation", "spa_navigation", frontendExperience.navigationTraces.p95Ms)}`}
-                        status={frontendExperience.navigationTraces.incompleteCount > 0 || (frontendExperience.navigationTraces.p95Ms ?? 0) > frontendExperience.budgets.navigation.p95Ms ? "amber" : "ok"}
+                        value={formatFrontendMetricValue("navigation", "spa_navigation", frontendExperience.navigationTraces.p95Ms)}
+                        status={frontendExperience.navigationTraces.incompleteCount > 0
+                          ? "amber"
+                          : againstTarget(frontendExperience.navigationTraces.p95Ms, frontendExperience.budgets.navigation.p95Ms)}
                         detail={(
                           <DetailList
                             items={[
-                              `p50 / p95 · ${frontendExperience.navigationTraces.completedCount} completed · ${frontendExperience.navigationTraces.incompleteCount} incomplete`,
+                              `vs target ${formatMs(frontendExperience.budgets.navigation.p95Ms)}`,
+                              `p50 ${formatFrontendMetricValue("navigation", "spa_navigation", frontendExperience.navigationTraces.p50Ms)} · p95 ${formatFrontendMetricValue("navigation", "spa_navigation", frontendExperience.navigationTraces.p95Ms)}`,
+                              `${frontendExperience.navigationTraces.count} traces · ${frontendExperience.navigationTraces.completedCount} completed · ${frontendExperience.navigationTraces.incompleteCount} incomplete`,
                               ...Object.entries(frontendExperience.navigationTraces.diagnosisCounts).map(([diagnosis, count]) => `${formatNavigationDiagnosis(diagnosis)}: ${count}`),
                             ]}
                           />
@@ -900,28 +923,18 @@ function ResourcesView({
                         testId="tile-navigation-incidents"
                       />
                       <MetricRow
-                        label="Budgets"
-                        value="p95 guarded"
-                        detail={(
-                          <DetailList
-                            items={[
-                              `Navigation ${formatMs(frontendExperience.budgets.navigation.p95Ms)}`,
-                              `Chat ack ${formatMs(frontendExperience.budgets.chatLatency.submitToAckP95Ms)} · first progress ${formatMs(frontendExperience.budgets.chatLatency.submitToFirstTokenP95Ms)} · complete ${formatMs(frontendExperience.budgets.chatLatency.submitToCompleteP95Ms)}`,
-                              `Vitals LCP ${formatMs(frontendExperience.budgets.webVital.lcpGoodMs)} · INP ${formatMs(frontendExperience.budgets.webVital.inpGoodMs)} · CLS ${frontendExperience.budgets.webVital.clsGoodScore}`,
-                              `Long task ${formatMs(frontendExperience.budgets.longTaskP95Ms)} · frame contention ${formatMs(frontendExperience.budgets.frameContentionP95Ms)}`,
-                            ]}
-                          />
-                        )}
-                        testId="tile-frontend-budgets"
-                      />
-                      <MetricRow
                         label="Recent degradation history"
                         value={String(frontendExperience.recentDegradations.length)}
                         status="ok"
                         detail={(
                           <DetailList
                             items={frontendExperience.recentDegradations.length
-                              ? ["Informational history only; current p95 budget guards determine section health.", ...frontendExperience.recentDegradations.slice(0, 7).map(item => `${formatMetricName(item.kind, item.name)} · ${formatMs(item.value)}${item.routeKey ? ` · ${item.routeKey}` : ""} · ${formatRelative(new Date(item.occurredAt).getTime(), now)}`)]
+                              ? [
+                                "Informational history only; each metric row colors against its target.",
+                                `Targets · navigation ${formatMs(frontendExperience.budgets.navigation.p95Ms)} · long task ${formatMs(frontendExperience.budgets.longTaskP95Ms)} · frame ${formatMs(frontendExperience.budgets.frameContentionP95Ms)}`,
+                                `Chat · ack ${formatMs(frontendExperience.budgets.chatLatency.submitToAckP95Ms)} · first progress ${formatMs(frontendExperience.budgets.chatLatency.submitToFirstTokenP95Ms)} · complete ${formatMs(frontendExperience.budgets.chatLatency.submitToCompleteP95Ms)}`,
+                                ...frontendExperience.recentDegradations.slice(0, 7).map(item => `${formatMetricName(item.kind, item.name)} · ${formatMs(item.value)}${item.routeKey ? ` · ${item.routeKey}` : ""} · ${formatRelative(new Date(item.occurredAt).getTime(), now)}`),
+                              ]
                               : ["No threshold-only frontend degradations in this window."]}
                           />
                         )}
@@ -1008,36 +1021,48 @@ function ResourcesView({
                       />
                       <MetricRow
                         label="Provider TTFP"
-                        value={`${formatMs(contextHealth.avgTtfpMs)} / ${formatMs(contextHealth.p95TtfpMs)}`}
+                        value={formatMs(contextHealth.p95TtfpMs)}
                         status={contextHealth.ttfpSampleCount === 0
                           ? "unknown"
-                          : contextHealth.p95TtfpMs !== null && contextHealth.p95TtfpMs > contextHealth.budgets.providerTtfpP95Ms
-                            ? "amber"
-                            : "ok"}
-                        detail={<DetailText>first progress (thinking/text/tool) · avg / p95 · n={contextHealth.ttfpSampleCount} · primary felt budget {formatMs(contextHealth.budgets.providerTtfpP95Ms)}.</DetailText>}
+                          : againstTarget(contextHealth.p95TtfpMs, contextHealth.budgets.providerTtfpP95Ms)}
+                        detail={(
+                          <DetailList
+                            items={[
+                              "Provider request → first progress (thinking/text/tool)",
+                              `vs target ${formatMs(contextHealth.budgets.providerTtfpP95Ms)}`,
+                              `avg ${formatMs(contextHealth.avgTtfpMs)} · p95 ${formatMs(contextHealth.p95TtfpMs)} · n=${contextHealth.ttfpSampleCount}`,
+                            ]}
+                          />
+                        )}
                         testId="tile-context-ttfp"
                       />
                       <MetricRow
                         label="Provider TTFT"
-                        value={`${formatMs(contextHealth.avgTtftMs)} / ${formatMs(contextHealth.p95TtftMs)}`}
+                        value={formatMs(contextHealth.p95TtftMs)}
                         status={contextHealth.ttftSampleCount === 0
                           ? "unknown"
-                          : contextHealth.p95TtftMs !== null && contextHealth.p95TtftMs > contextHealth.budgets.providerTtftP95Ms
-                            ? "amber"
-                            : "ok"}
-                        detail={<DetailText>first visible text · avg / p95 · n={contextHealth.ttftSampleCount} · budget {formatMs(contextHealth.budgets.providerTtftP95Ms)} (secondary to TTFP).</DetailText>}
+                          : againstTarget(contextHealth.p95TtftMs, contextHealth.budgets.providerTtftP95Ms)}
+                        detail={(
+                          <DetailList
+                            items={[
+                              "Provider request → first visible text",
+                              `vs target ${formatMs(contextHealth.budgets.providerTtftP95Ms)}`,
+                              `avg ${formatMs(contextHealth.avgTtftMs)} · p95 ${formatMs(contextHealth.p95TtftMs)} · n=${contextHealth.ttftSampleCount}`,
+                            ]}
+                          />
+                        )}
                         testId="tile-context-ttft"
                       />
                       <MetricRow
                         label="Context tokens"
-                        value={`${formatTokens(contextHealth.medianContextTokens)} / ${formatTokens(contextHealth.p95ContextTokens)} / ${formatTokens(contextHealth.maxContextTokens)}`}
+                        value={formatTokens(contextHealth.p95ContextTokens)}
                         detail={(
                           <DetailList
                             items={[
-                              "median / p95 / max across comparable rows only",
+                              "Comparable rows only — no hard target yet",
+                              `median ${formatTokens(contextHealth.medianContextTokens)} · p95 ${formatTokens(contextHealth.p95ContextTokens)} · max ${formatTokens(contextHealth.maxContextTokens)}`,
                               "Only per-call rows with known context windows and in-window context tokens are included.",
                               "Non-comparable CLI cumulative counters are excluded and never displayed as prompt/context size.",
-                              contextHealth.measurementContract.budgets,
                               ...contextHealth.contextTokenDistribution.map(bucket => `${bucket.label}: ${bucket.count}`),
                             ]}
                           />
@@ -1052,8 +1077,15 @@ function ResourcesView({
                       />
                       <MetricRow
                         label="Call duration"
-                        value={`${formatMs(contextHealth.avgDurationMs)} / ${formatMs(contextHealth.p95DurationMs)}`}
-                        detail={<DetailText>avg / p95 across complete, partial, aborted, and failed tracked inference rows.</DetailText>}
+                        value={formatMs(contextHealth.p95DurationMs)}
+                        detail={(
+                          <DetailList
+                            items={[
+                              "Complete, partial, aborted, and failed tracked inference rows",
+                              `avg ${formatMs(contextHealth.avgDurationMs)} · p95 ${formatMs(contextHealth.p95DurationMs)}`,
+                            ]}
+                          />
+                        )}
                         testId="tile-context-duration"
                       />
                       <MetricRow
