@@ -262,7 +262,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
       return payload;
     },
     refetchInterval: (query) =>
-      query.state.data?.draft.status === "draft" || query.state.data?.draft.status === "sending"
+      query.state.data?.draft?.status === "draft" || query.state.data?.draft?.status === "sending"
         ? 3_000
         : false,
   });
