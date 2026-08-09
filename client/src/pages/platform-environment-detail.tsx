@@ -2008,9 +2008,11 @@ function EnvironmentSection({
     if (stored === "false") return false;
     return defaultOpen;
   });
+  const [hasOpened, setHasOpened] = useState(open);
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
+    if (nextOpen) setHasOpened(true);
     if (storageKey && typeof window !== "undefined") {
       window.localStorage.setItem(storageKey, String(nextOpen));
     }
@@ -2028,7 +2030,7 @@ function EnvironmentSection({
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="pt-1 pb-2">
-          {children}
+          {hasOpened ? children : null}
         </div>
       </CollapsibleContent>
     </Collapsible>
