@@ -22,7 +22,8 @@ import {
   fetchEnvironmentDeployments,
   resolveRailwayEnvironmentControl,
 } from "../integrations/railway/environment-control";
-import { hasActiveBuildAccess } from "./build-access";
+import { hasActiveModAccess } from "./mod-access";
+const hasActiveBuildAccess = (principal: Principal) => hasActiveModAccess(principal, "build");
 import {
   recordSuccessfulRailwayDeployments,
   type BuildDeploymentEnvironmentIdentity,

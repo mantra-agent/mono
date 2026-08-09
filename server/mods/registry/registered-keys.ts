@@ -173,8 +173,34 @@ export const REGISTERED_WORKFLOW_KEYS = ["build-v1"] as const;
 export type RegisteredWorkflowKey = (typeof REGISTERED_WORKFLOW_KEYS)[number];
 
 // Code-owned built-in Skill definitions referenced by Mod contributions.
-export const REGISTERED_SKILL_KEYS = ["self-heal"] as const;
+export const REGISTERED_SKILL_KEYS = [
+  "self-heal",
+  "sentry",
+  "guard",
+  "regression",
+  "reflect",
+  "affirmations",
+  "coach",
+] as const;
 export type RegisteredSkillKey = (typeof REGISTERED_SKILL_KEYS)[number];
+
+// Public Unified Tool Registry names owned by optional Mods.
+export const REGISTERED_MOD_TOOL_KEYS = [
+  "code",
+  "git",
+  "platforms",
+  "railway",
+  "sentry",
+  "expo",
+  "npm_dependencies",
+  "regression",
+  "issues",
+  "health",
+  "jobs",
+  "companies",
+  "scenarios",
+] as const;
+export type RegisteredToolKey = (typeof REGISTERED_MOD_TOOL_KEYS)[number];
 
 // Code-owned managed Timer templates. These keys are lifecycle identities,
 // never permission or credential grants.
@@ -193,7 +219,17 @@ export type RegisteredTimerTemplateKey = (typeof REGISTERED_TIMER_TEMPLATE_KEYS)
 // Phase 4 concern; no first-party definition declares one yet, so this catalog
 // is intentionally empty but present so validation can enforce membership when
 // the first group is added.
-export const REGISTERED_ROUTE_GROUP_KEYS = [] as const;
+export const REGISTERED_ROUTE_GROUP_KEYS = [
+  "build.platforms",
+  "build.issues",
+  "build.db-sync",
+  "build.railway",
+  "business.api",
+  "wellness.api",
+  "wellness.oura",
+  "network.companies",
+  "planning.scenarios",
+] as const;
 export type RegisteredRouteGroupKey = (typeof REGISTERED_ROUTE_GROUP_KEYS)[number];
 
 // Semantic command keys (spec §4.2 command targets). None registered yet.
@@ -223,6 +259,7 @@ export const REGISTERED_KEY_CATALOGS = {
   collector: new Set<string>(REGISTERED_COLLECTOR_KEYS),
   workflow: new Set<string>(REGISTERED_WORKFLOW_KEYS),
   skill: new Set<string>(REGISTERED_SKILL_KEYS),
+  tool: new Set<string>(REGISTERED_MOD_TOOL_KEYS),
   timerTemplate: new Set<string>(REGISTERED_TIMER_TEMPLATE_KEYS),
   routeGroup: new Set<string>(REGISTERED_ROUTE_GROUP_KEYS),
   command: new Set<string>(REGISTERED_COMMAND_KEYS),

@@ -1440,20 +1440,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   async function resolveAuthorityToolDefinitions(sessionId: string): Promise<ToolDefinition[]> {
     const { filterToolSchemasForAuthority } = await import("../../agent-authority");
     const { requireCurrentPrincipal } = await import("../../principal-context");
-    const { filterBuildToolSchemas } = await import("../../mods/build-tool-access");
-    const { filterWellnessToolSchemas } = await import("../../mods/wellness-tool-access");
-    const { filterBusinessToolSchemas } = await import("../../mods/business-tool-access");
-    const { filterNetworkToolSchemas } = await import("../../mods/network-tool-access");
-    const { filterPlanningToolSchemas } = await import("../../mods/planning-tool-access");
+    const { filterModToolSchemas } = await import("../../mods/mod-access");
     const authorityTools = filterToolSchemasForAuthority(getToolDefinitions(), {
       origin: "interactive",
       sessionId,
     });
-    const buildScopedTools = await filterBuildToolSchemas(requireCurrentPrincipal(), authorityTools);
-    const wellnessScopedTools = await filterWellnessToolSchemas(requireCurrentPrincipal(), buildScopedTools);
-    const businessScopedTools = await filterBusinessToolSchemas(requireCurrentPrincipal(), wellnessScopedTools);
-    const networkScopedTools = await filterNetworkToolSchemas(requireCurrentPrincipal(), businessScopedTools);
-    const modScopedTools = await filterPlanningToolSchemas(requireCurrentPrincipal(), networkScopedTools);
+    const modScopedTools = await filterModToolSchemas(requireCurrentPrincipal(), authorityTools);
     return modScopedTools.map((tool) => ({
       name: tool.name,
       description: tool.description,

@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { requireAuth } from "./auth";
-import { requireActiveNetwork } from "./mods/network-route-access";
+import { requireModRouteGroup } from "./mods/mod-access";
+const requireActiveNetwork = requireModRouteGroup("network.companies", { failOpenWhenPlatformDisabled: true });
 import { companyStorage } from "./company-storage";
 import { createLogger } from "./log";
 

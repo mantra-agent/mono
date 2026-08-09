@@ -24,7 +24,8 @@ import type {
 } from "../integrations/oura";
 import { OURA_PROVIDER } from "../integrations/oura";
 import { requireAuth } from "../auth";
-import { requireActiveWellness } from "../mods/wellness-route-access";
+import { requireModRouteGroup } from "../mods/mod-access";
+const requireActiveWellness = requireModRouteGroup("wellness.oura", { failOpenWhenPlatformDisabled: true });
 
 const log = createLogger("OuraRoutes");
 

@@ -4,7 +4,8 @@ import { businessModelStorage } from "./business-model-storage";
 import { assumptionsPatchSchema } from "@shared/models/business-model";
 import { createLogger } from "./log";
 import { requirePermission } from "./permissions";
-import { requireActiveBusiness } from "./mods/business-route-access";
+import { requireModRouteGroup } from "./mods/mod-access";
+const requireActiveBusiness = requireModRouteGroup("business.api", { failOpenWhenPlatformDisabled: true });
 
 const log = createLogger("BusinessModelRoutes");
 

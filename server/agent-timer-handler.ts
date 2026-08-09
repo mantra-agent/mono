@@ -82,17 +82,9 @@ export class AgentTimerHandler implements TimerHandler {
     }
     const { filterToolSchemasForAuthority } = await import("./agent-authority");
     const { requireCurrentPrincipal } = await import("./principal-context");
-    const { filterBuildToolSchemas } = await import("./mods/build-tool-access");
-    const { filterWellnessToolSchemas } = await import("./mods/wellness-tool-access");
-    const { filterBusinessToolSchemas } = await import("./mods/business-tool-access");
-    const { filterNetworkToolSchemas } = await import("./mods/network-tool-access");
-    const { filterPlanningToolSchemas } = await import("./mods/planning-tool-access");
+    const { filterModToolSchemas } = await import("./mods/mod-access");
     const authorityToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), { origin: "timer", sessionId, sessionKey });
-    const buildScopedTools = await filterBuildToolSchemas(requireCurrentPrincipal(), authorityToolDefs);
-    const wellnessScopedTools = await filterWellnessToolSchemas(requireCurrentPrincipal(), buildScopedTools);
-    const businessScopedTools = await filterBusinessToolSchemas(requireCurrentPrincipal(), wellnessScopedTools);
-    const networkScopedTools = await filterNetworkToolSchemas(requireCurrentPrincipal(), businessScopedTools);
-    const allToolDefs = await filterPlanningToolSchemas(requireCurrentPrincipal(), networkScopedTools);
+    const allToolDefs = await filterModToolSchemas(requireCurrentPrincipal(), authorityToolDefs);
     const toolDefs = allToolDefs.map(
       (t: { name: string; description: string; parameters: unknown }) => ({
         name: t.name,

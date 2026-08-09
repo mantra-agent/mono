@@ -106,6 +106,7 @@ export function validateModRegistry(registry: ModRegistry): string[] {
   // ── First pass: identity indexes ─────────────────────────────────────────
   const contributionIdCounts = new Map<string, number>();
   const heatmapSeriesKeyCounts = new Map<string, number>();
+  const executableKeyCounts = new Map<string, number>();
   const clientRouteIds = new Set<string>();
   const clientRoutePaths = new Map<string, string>();
   const routePaths = new Map<string, number>();
@@ -122,6 +123,18 @@ export function validateModRegistry(registry: ModRegistry): string[] {
       if (actionIds.has(contribution.id)) push(`Duplicate semantic action ID "${contribution.id}".`);
       actionIds.add(contribution.id);
     }
+    if (["tool", "skill", "workflow", "hook-template", "timer-template", "server-route-group", "search-provider", "notification"].includes(contribution.kind)) {
+      const key = contribution.kind === "tool" ? contribution.toolName
+        : contribution.kind === "skill" ? contribution.skillKey
+        : contribution.kind === "workflow" ? contribution.workflowKey
+        : contribution.kind === "hook-template" ? contribution.templateKey
+        : contribution.kind === "timer-template" ? contribution.templateKey
+        : contribution.kind === "server-route-group" ? contribution.routeGroupKey
+        : contribution.kind === "search-provider" ? contribution.providerKey
+        : contribution.notificationKind;
+      const identity = `${contribution.kind}:${key}`;
+      executableKeyCounts.set(identity, (executableKeyCounts.get(identity) ?? 0) + 1);
+    }
     if (contribution.kind === "dashboard-heatmap") {
       heatmapSeriesKeyCounts.set(
         contribution.seriesKey,
@@ -135,6 +148,9 @@ export function validateModRegistry(registry: ModRegistry): string[] {
   }
   for (const [path, count] of routePaths) {
     if (count > 1) push(`Duplicate client route path "${path}" (appears ${count} times).`);
+  }
+  for (const [identity, count] of executableKeyCounts) {
+    if (count > 1) push(`Duplicate executable contribution "${identity}" (appears ${count} times).`);
   }
   for (const [seriesKey, count] of heatmapSeriesKeyCounts) {
     if (count > 1) {
@@ -252,8 +268,10 @@ function validateContribution(owner: string, c: AnyContribution, ctx: Contributi
       requireKey("routeGroup", c.routeGroupKey, c.id, ctx);
       break;
     case "tool":
+      requireKey("tool", c.toolName, c.id, ctx);
+      break;
     case "hook-template":
-      push(`Contribution "${c.id}" of kind "${c.kind}" is not supported in the Phase 1 registry.`);
+      push(`Contribution "${c.id}" declares hook template "${c.templateKey}" without a registered hook-template catalog.`);
       break;
     default:
       break;

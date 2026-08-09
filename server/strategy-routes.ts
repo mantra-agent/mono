@@ -1,7 +1,8 @@
 // Use createLogger for logging ONLY
 import type { Express } from "express";
 import { requireAuth } from "./auth";
-import { requireActivePlanning } from "./mods/planning-route-access";
+import { requireModRouteGroup } from "./mods/mod-access";
+const requireActivePlanning = requireModRouteGroup("planning.scenarios", { failOpenWhenPlatformDisabled: true });
 import { strategyStorage, migrateStrategySchema } from "./strategy-storage";
 import { peopleStorage } from "./people-storage";
 import {

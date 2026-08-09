@@ -15,6 +15,8 @@ import type {
   WorkflowContribution,
   TimerTemplateContribution,
   SkillContribution,
+  ToolContribution,
+  ServerRouteGroupContribution,
 } from "@shared/models/mod-registry";
 import type { UiInteractionTarget } from "@shared/ui-interaction";
 import type {
@@ -27,6 +29,8 @@ import type {
   RegisteredWorkflowKey,
   RegisteredTimerTemplateKey,
   RegisteredSkillKey,
+  RegisteredToolKey,
+  RegisteredRouteGroupKey,
 } from "./registered-keys";
 
 interface RouteOpts {
@@ -142,4 +146,15 @@ export function skillRef(
   skillKey: RegisteredSkillKey,
 ): SkillContribution {
   return { kind: "skill", id, skillKey, audience: "diagnostic" };
+}
+
+export function toolRef(id: string, toolName: RegisteredToolKey): ToolContribution {
+  return { kind: "tool", id, toolName, audience: "diagnostic" };
+}
+
+export function serverRouteGroupRef(
+  id: string,
+  routeGroupKey: RegisteredRouteGroupKey,
+): ServerRouteGroupContribution {
+  return { kind: "server-route-group", id, routeGroupKey, audience: "diagnostic" };
 }

@@ -6,7 +6,8 @@ import type { HealthMetric, InsertHealthMetric, WellnessActivity, WellnessLog, A
 import { desc, eq, gte, lte, isNull, and, sql, asc, type SQL } from "drizzle-orm";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
-import { requireActiveWellness } from "../mods/wellness-route-access";
+import { requireModRouteGroup } from "../mods/mod-access";
+const requireActiveWellness = requireModRouteGroup("wellness.api", { failOpenWhenPlatformDisabled: true });
 import { requireCurrentPrincipal } from "../principal-context";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "../sensitive-scope";
 import { userDateStr, userDayBounds, userNoon, userPeriodBounds } from "../utils/user-time";

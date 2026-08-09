@@ -37,7 +37,8 @@ import {
   type PublishCommit,
 } from "../github-pr";
 import { storage } from "../../storage";
-import { requireActiveBuild } from "../../mods/build-route-access";
+import { requireModRouteGroup } from "../../mods/mod-access";
+const requireActiveBuild = requireModRouteGroup("build.railway");
 interface PublishCommitHead {
   sha: string;
   shortSha: string;

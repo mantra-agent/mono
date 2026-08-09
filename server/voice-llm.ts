@@ -25,7 +25,7 @@ import { writeJournal } from "./chat-journal";
 import { runWithPrincipal } from "./principal-context";
 import { eventBus } from "./event-bus";
 import { extractProviderSystemTools, mergeVoiceTools } from "./voice/provider-system-tools";
-import { filterBuildToolSchemas } from "./mods/build-tool-access";
+import { filterModToolSchemas } from "./mods/mod-access";
 
 // ── Voice submodules ──────────────────────────────────────────────
 import type { VoiceSession, VoiceMessage, VoiceToolCall, TurnContext } from "./voice/types";
@@ -657,25 +657,9 @@ async function executeVoiceTurnBody(
     const providerSystemTools = session.toolMode === "none"
       ? []
       : extractProviderSystemTools((req.body as Record<string, unknown> | undefined)?.tools);
-    const { filterWellnessToolSchemas } = await import("./mods/wellness-tool-access");
-    const { filterBusinessToolSchemas } = await import("./mods/business-tool-access");
-    const { filterNetworkToolSchemas } = await import("./mods/network-tool-access");
-    const { filterPlanningToolSchemas } = await import("./mods/planning-tool-access");
-    const buildVoiceTools = session.toolMode === "none"
-      ? []
-      : await filterBuildToolSchemas(session.principal, getVoiceTools());
-    const wellnessVoiceTools = session.toolMode === "none"
-      ? []
-      : await filterWellnessToolSchemas(session.principal, buildVoiceTools);
-    const businessVoiceTools = session.toolMode === "none"
-      ? []
-      : await filterBusinessToolSchemas(session.principal, wellnessVoiceTools);
-    const networkVoiceTools = session.toolMode === "none"
-      ? []
-      : await filterNetworkToolSchemas(session.principal, businessVoiceTools);
     const voiceTools = session.toolMode === "none"
       ? []
-      : await filterPlanningToolSchemas(session.principal, networkVoiceTools);
+      : await filterModToolSchemas(session.principal, getVoiceTools());
     const tools = session.toolMode === "none"
       ? []
       : mergeVoiceTools(voiceTools, providerSystemTools);

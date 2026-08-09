@@ -54,7 +54,7 @@ import { chatFileStorage } from "../chat-file-storage";
 import { getArtifactsBySession } from "../session-artifacts";
 import { canonicalExecutionArtifactAddress } from "../execution-provenance-address";
 import { linkWorkflowArtifactProduced } from "../execution-provenance-links";
-import { hasActiveBuildAccess } from "../mods/build-access";
+import { requireModWorkflowAccess } from "../mods/mod-access";
 import { createNamedSystemPrincipal, createUserPrincipalFromUser } from "../principal";
 
 const log = createLogger("WorkflowService");
@@ -1080,11 +1080,9 @@ export async function recoverInterruptedWorkflows(): Promise<number> {
 export const BUILD_WORKFLOW_TEMPLATE_ID = "build-v1";
 
 async function assertBuildWorkflowAccess(templateId: string): Promise<void> {
-  if (templateId !== BUILD_WORKFLOW_TEMPLATE_ID) return;
   const principal = getCurrentPrincipal();
-  if (!principal || !(await hasActiveBuildAccess(principal))) {
-    throw new Error("Build Mod is inactive; build-v1 Workflow mutation is blocked");
-  }
+  if (!principal) throw new Error(`Workflow ${templateId} requires an explicit user principal`);
+  await requireModWorkflowAccess(principal, templateId);
 }
 
 const buildDefinition = workflowTemplateDefinitionSchema.parse({

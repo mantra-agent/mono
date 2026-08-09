@@ -5,7 +5,8 @@ import { documentStorage } from "../memory";
 import { requireAuth, requireAdmin } from "../auth";
 import { listRecentApplicationErrors } from "../error-telemetry";
 import { createLogger } from "../log";
-import { requireActiveBuild } from "../mods/build-route-access";
+import { requireModRouteGroup } from "../mods/mod-access";
+const requireActiveBuild = requireModRouteGroup("build.issues");
 
 const log = createLogger("IssueRoutes");
 

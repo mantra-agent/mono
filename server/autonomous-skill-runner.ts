@@ -18,8 +18,7 @@ import { isAgentType } from "@shared/instance-config";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { getCurrentPrincipal } from "./principal-context";
 import type { TrustedEngineeringDelegation } from "./agent-authority";
-import { filterBuildToolSchemas } from "./mods/build-tool-access";
-import { hasActiveBuildAccess } from "./mods/build-access";
+import { filterModToolSchemas, requireModSkillAccess } from "./mods/mod-access";
 import { buildStructuralRunEvidence, evaluateStructuralItem } from "./skill-scoring";
 import { BUILD_OWNED_SKILL_FALLBACK_INSTRUCTIONS, BUILD_OWNED_SKILL_NAME_SET, resolveSkillRunName, type BuildOwnedSkillName } from "./skill-identities";
 import type { ChecklistItem } from "@shared/schema";
@@ -594,16 +593,8 @@ async function getSkillTools(
   };
   const principal = getCurrentPrincipal();
   if (!principal) throw new Error("Skill tool discovery requires an explicit user principal");
-  const { filterWellnessToolSchemas } = await import("./mods/wellness-tool-access");
-  const { filterBusinessToolSchemas } = await import("./mods/business-tool-access");
-  const { filterNetworkToolSchemas } = await import("./mods/network-tool-access");
-  const { filterPlanningToolSchemas } = await import("./mods/planning-tool-access");
   const authorityToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), authority);
-  const buildScopedTools = await filterBuildToolSchemas(principal, authorityToolDefs);
-  const wellnessScopedTools = await filterWellnessToolSchemas(principal, buildScopedTools);
-  const businessScopedTools = await filterBusinessToolSchemas(principal, wellnessScopedTools);
-  const networkScopedTools = await filterNetworkToolSchemas(principal, businessScopedTools);
-  const allToolDefs = await filterPlanningToolSchemas(principal, networkScopedTools);
+  const allToolDefs = await filterModToolSchemas(principal, authorityToolDefs);
   const tools = allToolDefs.map((t: AgentToolDefinition) => ({
     name: t.name,
     description: t.description,
@@ -774,19 +765,10 @@ export async function executeAutonomousSkillRun(
     }
   } // end skill-based config resolution
 
-  if (!isSkillless && BUILD_OWNED_SKILL_NAME_SET.has(config.skillId)) {
+  if (!isSkillless) {
     const principal = getCurrentPrincipal();
-    if (!principal || !(await hasActiveBuildAccess(principal))) {
-      throw new Error(`Build Mod is inactive; Skill ${config.skillId} cannot run`);
-    }
-  }
-  const wellnessOwnedSkillNames = new Set(["reflect", "affirmations", "coach"]);
-  if (!isSkillless && wellnessOwnedSkillNames.has(config.skillId)) {
-    const principal = getCurrentPrincipal();
-    const { hasActiveWellnessAccess } = await import("./mods/wellness-access");
-    if (!principal || !(await hasActiveWellnessAccess(principal))) {
-      throw new Error(`Wellness Mod is inactive; Skill ${config.skillId} cannot run`);
-    }
+    if (!principal) throw new Error(`Skill ${config.skillId} requires an explicit user principal`);
+    await requireModSkillAccess(principal, config.skillId);
   }
 
   // Global per-skill dedupe is for top-level autoruns (e.g. cron-triggered
