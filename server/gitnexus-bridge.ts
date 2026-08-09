@@ -979,32 +979,49 @@ export async function searchCodebase(query: string): Promise<{
         ? `RETURN n.id AS id, n.name AS name, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine`
         : `RETURN n.id AS id, n.name AS name, n.filePath AS filePath`;
 
+      const appendRows = (rows: Record<string, string>[]) => {
+        for (const row of rows) {
+          const name = row.name ?? "";
+          const filePath = row.filePath ?? "";
+          logger.log(`[search] ${label} row: name="${name}" filePath="${filePath}" id="${row.id}"`);
+          if (!name && !filePath) {
+            logger.warn(`[search] ${label} skipping row with empty name AND filePath`);
+            continue;
+          }
+          allResults.push({
+            id: row.id ?? "",
+            name,
+            type: label,
+            filePath,
+            ...(hasLines && row.startLine ? { startLine: Number(row.startLine) || undefined } : {}),
+            ...(hasLines && row.endLine ? { endLine: Number(row.endLine) || undefined } : {}),
+          });
+        }
+      };
+
+      // Retrieve every named token before the bounded fuzzy query. Applying LIMIT to
+      // the combined CONTAINS set first can discard an exact symbol arbitrarily.
+      for (const token of tokens) {
+        const exactWhere = [
+          `n.name = '${token}'`,
+          `n.name = '${token}.ts'`,
+          `n.name = '${token}.tsx'`,
+          `n.filePath = '${token}'`,
+          `n.filePath ENDS WITH '/${token}.ts'`,
+          `n.filePath ENDS WITH '/${token}.tsx'`,
+        ].join(" OR ");
+        const exactCypher = `MATCH (n:${label}) WHERE ${exactWhere} ${returnClause} LIMIT 1`;
+        const exactRaw = await callTool("cypher", { query: exactCypher });
+        appendRows(parseCypherMarkdownTable(typeof exactRaw === "string" ? exactRaw : JSON.stringify(exactRaw), `${label}:exact`));
+      }
+
       const whereClauses = tokens.map(t => `n.name CONTAINS '${t}' OR n.filePath CONTAINS '${t}'`).join(" OR ");
       const cypher = `MATCH (n:${label}) WHERE ${whereClauses} ${returnClause} LIMIT ${perType}`;
       logger.log(`[search] ${label} cypher="${cypher}"`);
-
       const raw = await callTool("cypher", { query: cypher });
-      const rawStr = typeof raw === "string" ? raw : JSON.stringify(raw);
-      const rows = parseCypherMarkdownTable(rawStr, label);
-
+      const rows = parseCypherMarkdownTable(typeof raw === "string" ? raw : JSON.stringify(raw), label);
       logger.log(`[search] ${label} rows=${rows.length}`);
-      for (const row of rows) {
-        const name = row.name ?? "";
-        const filePath = row.filePath ?? "";
-        logger.log(`[search] ${label} row: name="${name}" filePath="${filePath}" id="${row.id}"`);
-        if (!name && !filePath) {
-          logger.warn(`[search] ${label} skipping row with empty name AND filePath`);
-          continue;
-        }
-        allResults.push({
-          id: row.id ?? "",
-          name,
-          type: label,
-          filePath,
-          ...(hasLines && row.startLine ? { startLine: Number(row.startLine) || undefined } : {}),
-          ...(hasLines && row.endLine   ? { endLine:   Number(row.endLine)   || undefined } : {}),
-        });
-      }
+      appendRows(rows);
     } catch (e) {
       logger.warn(`[search] ${label} error: ${e instanceof Error ? e.message : String(e)}`);
     }
