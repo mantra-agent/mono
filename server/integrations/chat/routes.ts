@@ -26,11 +26,7 @@ import type {
 import { randomUUID } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
-import {
-  storageBackend,
-} from "../../object_storage/s3-backend";
-import { setObjectAclPolicy } from "../../object_storage/objectAcl";
-import { vaultObjectKeyFromPrincipal } from "../../object_storage/vault-keys";
+import { ObjectStorageService } from "../../object_storage/objectStorage";
 import multer from "multer";
 import {
   writeJournal,
@@ -83,6 +79,7 @@ import { resolveQuestionResponse } from "../../question-response";
 import { emailDraftStorage } from "../../email-draft-storage";
 
 const chatLog = createLogger("ChatStream");
+const objectStorageService = new ObjectStorageService();
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
 function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planScopeColumns, predicate); }
 
@@ -1337,45 +1334,46 @@ export async function registerChatRoutes(app: Express): Promise<void> {
               }
             }
 
-            // Upload to R2 for persistence across deploys
-            let objectPath: string | undefined;
-            try {
-              const objectId = randomUUID();
-              const suffix = ext || "";
-              const principal = getPrincipal(req);
-              const key = vaultObjectKeyFromPrincipal(principal, "uploads", `${objectId}${suffix}`);
-              const fileBuffer = fs.readFileSync(f.path);
-              await storageBackend.putObject(key, fileBuffer, {
-                contentType: f.mimetype || "application/octet-stream",
-              });
-              await setObjectAclPolicy(key, {
-                owner: req.session.userId || "system",
-                visibility: "public",
-                vaultId: principal?.activeVaultId ?? undefined,
-              });
-              objectPath = `/objects/uploads/${objectId}${suffix}`;
-              chatLog.log(
-                `[Upload] R2 OK: name="${f.originalname}" key=${key} objectPath=${objectPath}`,
-              );
-            } catch (err) {
-              chatLog.error(
-                `[Upload] R2 upload failed for ${f.originalname}, falling back to local path:`,
-                err,
-              );
+            const principal = getPrincipal(req);
+            if (!principal?.userId || !principal.accountId) {
+              throw new Error("User principal required for attachment persistence");
             }
 
-            // Clean up local temp file (R2 has the durable copy now)
             try {
-              await fsPromises.unlink(f.path);
-            } catch {}
-
-            return {
-              name: f.originalname,
-              path: objectPath || `uploads/${f.filename}`,
-              size: f.size,
-              isText,
-              content,
-            };
+              const fileBuffer = await fsPromises.readFile(f.path);
+              const uploadedObject = await objectStorageService.uploadObjectEntity(fileBuffer, {
+                extension: ext || undefined,
+                contentType: f.mimetype || "application/octet-stream",
+                category: "uploads",
+                principal,
+                acl: {
+                  owner: principal.userId,
+                  ownerUserId: principal.userId,
+                  accountId: principal.accountId,
+                  createdByUserId: principal.userId,
+                  scope: "user",
+                  visibility: "private",
+                },
+              });
+              chatLog.log(
+                `[Upload] R2 OK: name="${f.originalname}" objectPath=${uploadedObject.objectPath}`,
+              );
+              return {
+                name: f.originalname,
+                path: uploadedObject.objectPath,
+                size: f.size,
+                isText,
+                content,
+              };
+            } finally {
+              try {
+                await fsPromises.unlink(f.path);
+              } catch (cleanupError) {
+                chatLog.warn(
+                  `[Upload] temp cleanup failed: name="${f.originalname}" error=${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+                );
+              }
+            }
           }),
         );
 

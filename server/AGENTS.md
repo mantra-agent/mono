@@ -254,6 +254,7 @@ Access control is server-owned and permission-based. Future code must plug into 
 - When adding a privileged capability, first add the permission string/type in `permissions.ts`, then expose it through `/api/auth/me`, then gate routes/tools with that permission.
 - Client-side permission checks are display affordances only. Server routes remain authoritative.
 - Object/file access uses principal-aware ACL helpers; do not bypass them with raw object-storage reads for user-visible data.
+- `ObjectStorageService.uploadObjectEntity(...)` is the sole ordinary server-side byte-upload boundary. It derives the Vault key, persists the caller-supplied principal ACL, verifies object existence/size, and compensates partial bytes/ACL state on failure. Request routes must not split `putObject` from ACL persistence, return local temp paths, or broaden uploaded user files to public visibility.
 - Migration note: legacy `requireAdmin`, `role`, `isAdmin`, and scope-string gates may remain only as compatibility wrappers or privileged-mode audit checks. New user-triggered authorization must be expressed as named permissions plus principal ownership predicates.
 
 

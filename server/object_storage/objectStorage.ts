@@ -8,6 +8,7 @@ import {
   ObjectPermission,
   canAccessObject,
   canAccessObjectForPrincipal,
+  deleteObjectAclPolicy,
   getObjectAclPolicy,
   setObjectAclPolicy,
 } from "./objectAcl";
@@ -175,8 +176,9 @@ export class ObjectStorageService {
   // Writes bytes directly to object storage through the canonical vault-aware
   // key path, records the ACL on the actual key, and verifies the write before
   // returning the `/objects/<category>/<filename>` entity path. This is the
-  // single server-side upload boundary: it throws on any failure so callers
-  // never hand out entity paths that were not durably persisted.
+  // single server-side upload boundary: it throws on any failure and removes
+  // partial bytes/ACL state so callers never hand out an unowned or missing
+  // entity path.
   async uploadObjectEntity(
     body: Buffer | string,
     opts: {
@@ -198,23 +200,40 @@ export class ObjectStorageService {
     const objectKey = vaultObjectKeyFromPrincipal(principal, category, filename);
     const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body, "utf-8");
 
-    await storageBackend.putObject(objectKey, buffer, { contentType: opts.contentType });
+    let objectWritten = false;
+    try {
+      await storageBackend.putObject(objectKey, buffer, { contentType: opts.contentType });
+      objectWritten = true;
 
-    if (opts.acl) {
-      await setObjectAclPolicy(objectKey, {
-        ...opts.acl,
-        vaultId: principal?.activeVaultId ?? undefined,
+      if (opts.acl) {
+        await setObjectAclPolicy(objectKey, {
+          ...opts.acl,
+          vaultId: principal?.activeVaultId ?? undefined,
+        });
+      }
+
+      const meta = await storageBackend.headObject(objectKey);
+      if (!meta) {
+        throw new Error(`Object storage write verification failed: ${objectKey} not found after upload`);
+      }
+      if (typeof meta.contentLength === "number" && meta.contentLength !== buffer.length) {
+        throw new Error(
+          `Object storage write verification failed: ${objectKey} size mismatch (expected ${buffer.length} bytes, got ${meta.contentLength})`,
+        );
+      }
+    } catch (error) {
+      const cleanup = await Promise.allSettled([
+        opts.acl ? deleteObjectAclPolicy(objectKey) : Promise.resolve(),
+        objectWritten ? storageBackend.deleteObject(objectKey) : Promise.resolve(),
+      ]);
+      const cleanupFailed = cleanup.some((result) => result.status === "rejected");
+      log.error("uploadObjectEntity: persistence failed", {
+        category,
+        byteCount: buffer.length,
+        cleanupFailed,
+        error: error instanceof Error ? error.message : String(error),
       });
-    }
-
-    const meta = await storageBackend.headObject(objectKey);
-    if (!meta) {
-      throw new Error(`Object storage write verification failed: ${objectKey} not found after upload`);
-    }
-    if (typeof meta.contentLength === "number" && meta.contentLength !== buffer.length) {
-      throw new Error(
-        `Object storage write verification failed: ${objectKey} size mismatch (expected ${buffer.length} bytes, got ${meta.contentLength})`,
-      );
+      throw error;
     }
 
     log.info("uploadObjectEntity: persisted object", {
