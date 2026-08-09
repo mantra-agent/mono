@@ -11041,6 +11041,11 @@ ${refs}` : ""),
       if (!cfg.hasToken) missing.push("SENTRY_AUTH_TOKEN");
       if (!cfg.org) missing.push("SENTRY_ORG");
       if (!cfg.project) missing.push("SENTRY_PROJECT");
+      if (action === "status") {
+        return {
+          result: JSON.stringify({ configured: false, status: "not_configured", missing }),
+        };
+      }
       const detail = missing.join(", ");
       return {
         result: `Sentry not configured. Missing: ${detail}. Add them via the Integrations page.`,
