@@ -38,12 +38,14 @@ function parseRateLimitCooldownMs(headers: Headers, now: number): number {
   return DEFAULT_RATE_LIMIT_COOLDOWN_MS;
 }
 
-function assertRailwayRequestAllowed(now: number): void {
+function assertRailwayRequestAllowed(now: number, requestClass: RailwayRequestClass): void {
   if (rateLimitCooldownUntil <= now) return;
   const retryAfterSeconds = Math.max(1, Math.ceil((rateLimitCooldownUntil - now) / 1_000));
   throw new RailwayApiError(
-    `Railway API rate-limit cooldown active; retry after ${retryAfterSeconds}s`,
+    `Railway API provider cooldown active for ${requestClass} request; retry after ${retryAfterSeconds}s`,
     429,
+    { source: "provider_cooldown", requestClass },
+    retryAfterSeconds,
   );
 }
 
@@ -125,22 +127,36 @@ export interface RailwayLogEntry {
   severity?: string | null;
 }
 
+export type RailwayRequestClass = "observation" | "release";
+
+export interface RailwayRequestOptions {
+  requestClass?: RailwayRequestClass;
+}
+
 export class RailwayApiError extends Error {
   status: number;
   details?: unknown;
-  constructor(message: string, status = 500, details?: unknown) {
+  retryAfterSeconds?: number;
+  constructor(message: string, status = 500, details?: unknown, retryAfterSeconds?: number) {
     super(message);
     this.name = "RailwayApiError";
     this.status = status;
     this.details = details;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
-async function railwayRequest<T>(query: string, variables?: Record<string, unknown>, token?: string): Promise<T> {
+async function railwayRequest<T>(
+  query: string,
+  variables?: Record<string, unknown>,
+  token?: string,
+  options: RailwayRequestOptions = {},
+): Promise<T> {
   if (!token) {
     throw new RailwayApiError("A Railway provider connector credential is required", 400);
   }
-  assertRailwayRequestAllowed(Date.now());
+  const requestClass = options.requestClass ?? "observation";
+  assertRailwayRequestAllowed(Date.now(), requestClass);
   let res: Response;
   try {
     res = await fetch(RAILWAY_GRAPHQL_ENDPOINT, {
@@ -160,9 +176,12 @@ async function railwayRequest<T>(query: string, variables?: Record<string, unkno
     const now = Date.now();
     const cooldownMs = parseRateLimitCooldownMs(res.headers, now);
     rateLimitCooldownUntil = Math.max(rateLimitCooldownUntil, now + cooldownMs);
+    const retryAfterSeconds = Math.ceil(cooldownMs / 1_000);
     throw new RailwayApiError(
-      `Railway API rate limited requests; cooldown active for ${Math.ceil(cooldownMs / 1_000)}s`,
+      `Railway API rate limited ${requestClass} request; retry after ${retryAfterSeconds}s`,
       429,
+      { source: "provider_response", requestClass },
+      retryAfterSeconds,
     );
   }
 
@@ -672,6 +691,7 @@ export async function redeployServiceInstance(
     SERVICE_INSTANCE_REDEPLOY_MUTATION,
     { serviceId, environmentId },
     token,
+    { requestClass: "release" },
   );
   log.log(`Triggered service instance redeploy for service=${serviceId} env=${environmentId}`);
   return !!data.serviceInstanceRedeploy;
@@ -756,13 +776,14 @@ export async function fetchDeploymentsForEnvironment(
   environmentId: string,
   limit = 20,
   token?: string,
+  options: RailwayRequestOptions = {},
 ): Promise<RailwayDeployment[]> {
   const data = await railwayRequest<RawDeploymentsResponse>(DEPLOYMENTS_FOR_ENV_QUERY, {
     projectId,
     serviceId,
     environmentId,
     first: limit,
-  }, token);
+  }, token, options);
   return (data.deployments?.edges || []).map(({ node }) => ({
     id: node.id,
     status: node.status,

@@ -8,7 +8,7 @@ const ACTIVE_REFRESH_MS = 15_000;
 const STABLE_REFRESH_MS = 5 * 60_000;
 const MAX_STALE_MS = 24 * 60 * 60_000;
 const REQUEST_WINDOW_MS = 60 * 60_000;
-const REQUEST_BUDGET = 900;
+const OBSERVATION_REQUEST_BUDGET = 800;
 const ACTIVE_STATUSES = new Set(["BUILDING", "DEPLOYING", "WAITING", "QUEUED", "INITIALIZING"]);
 
 export interface RailwayDeploymentSnapshot {
@@ -67,7 +67,7 @@ export async function getSharedRailwayDeploymentSnapshot(
     if (!due || !locked) return projectSnapshot(current, now, due && !locked);
 
     const budget = normalizeBudget(current, now);
-    if ((!options.forceRefresh && current?.cooldown_until && current.cooldown_until > now) || budget.count >= REQUEST_BUDGET) {
+    if ((current?.cooldown_until && current.cooldown_until > now) || budget.count >= OBSERVATION_REQUEST_BUDGET) {
       return projectSnapshot(current, now, false);
     }
 

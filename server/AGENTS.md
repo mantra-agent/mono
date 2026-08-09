@@ -1,5 +1,9 @@
 # Authority
 
+## Railway request priority boundary
+
+`server/integrations/railway/client.ts` is the single outbound Railway API boundary and every request is classified as `observation` or `release`. The shared deployment snapshot may spend only the observation budget and must preserve hourly capacity for a human-approved release; `forceRefresh` never bypasses that guard. Publish-owned deployment reads and redeploy mutations use the release class, remain bounded and identity-fenced, and do not fail because an observation budget is exhausted. Railway-issued `Retry-After` / reset guidance remains authoritative across both classes: release priority reserves local capacity but never bypasses provider cooldown. Platform binding, connector credential, permissions, manual production approval, idempotency, and rollback remain independent gates.
+
 ## Git clone source identity
 
 Normal `git.clone` has no caller-owned repository coordinates. `server/git-source-resolver.ts` resolves the canonical `Mantra / Web / stage` source binding. A positive `platformEnvironmentId` on either `clone` or `clone_from_environment` selects that Platform Environment through the same resolver (transitional `clone + platformEnvironmentId` is absorbed, not rejected). Clone URL, provider connection, credential, branch, and destination identity must remain derived from the authorized source binding with no legacy credential fallback and no caller-owned `url`.
