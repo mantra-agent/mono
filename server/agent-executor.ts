@@ -1181,6 +1181,7 @@ interface RunIterationContext {
   iteration: number;
   emergencyCompactionRetries: number;
   emptyFinalTurnRetries: number;
+  streamIdleRecoveryAttempts: number;
   aborted: boolean;
   abortReason?: AbortReason;
   abortDetails?: AbortDetails;
@@ -3339,7 +3340,7 @@ export class AgentExecutor extends EventEmitter {
       totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       preflightRawEstimateTokens: 0,
       resolvedModel: modelString, resolvedProvider: routingDecision.provider, routingDecision, routingTier,
-      iteration: 0, emergencyCompactionRetries: 0, emptyFinalTurnRetries: 0, aborted: false,
+      iteration: 0, emergencyCompactionRetries: 0, emptyFinalTurnRetries: 0, streamIdleRecoveryAttempts: 0, aborted: false,
       iterationThinking: "", iterationText: "",
       iterationUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       pendingToolCalls: [],
@@ -3686,6 +3687,11 @@ export class AgentExecutor extends EventEmitter {
     let streamEventCount = 0;
     let lastEventType = "none";
     let idleExtendedForPartialContent = false;
+    let streamIdleRecoveryRequested = false;
+    const streamAttemptController = new AbortController();
+    const abortStreamAttemptFromRun = () => streamAttemptController.abort(abortController.signal.reason);
+    if (abortController.signal.aborted) abortStreamAttemptFromRun();
+    else abortController.signal.addEventListener("abort", abortStreamAttemptFromRun, { once: true });
     const streamLoopStart = Date.now();
 
     const thinkingInfo = getThinkingInfo(modelString);
@@ -3739,29 +3745,34 @@ export class AgentExecutor extends EventEmitter {
           return;
         }
 
-        log.error(
-          "executor.stream_idle_timeout",
-          attributableExecutorError(
-            `stream idle timeout idleTimeoutMs=${idleTimeoutMs} iteration=${ctx.iteration} streamEvents=${streamEventCount} elapsedMs=${elapsedMs}`,
-            "EXECUTOR_STREAM_IDLE_TIMEOUT",
-          ),
-          {
-            operation: "stream_idle_timeout",
-            runId: ctx.runId,
-            iteration: ctx.iteration,
-            idleTimeoutMs,
-            streamEvents: streamEventCount,
-            elapsedMs,
-            lastEventType,
-            tokensAccumulated,
-            hasPartialContent,
-            pendingToolCalls: ctx.pendingToolCalls.length,
-            resolvedToolCalls: ctx.resolvedToolCalls.length,
-          },
-        );
+        const canRecover = !hasPartialContent
+          && pendingToolCallCount === 0
+          && activeToolUseStepCount === 0
+          && ctx.streamIdleRecoveryAttempts === 0;
+        const diagnostics = {
+          operation: "stream_idle_timeout",
+          runId: ctx.runId,
+          iteration: ctx.iteration,
+          idleTimeoutMs,
+          streamEvents: streamEventCount,
+          elapsedMs,
+          lastEventType,
+          tokensAccumulated,
+          hasPartialContent,
+          pendingToolCalls: pendingToolCallCount,
+          resolvedToolCalls: ctx.resolvedToolCalls.length,
+          recoveryAttempt: ctx.streamIdleRecoveryAttempts + 1,
+        };
         ctx.lastStreamDiagnostics = { eventCount: streamEventCount, elapsedMs, lastEventType };
-        ctx.abortReason = "stream_idle_timeout";
-        abortController.abort(ctx.abortReason);
+        if (canRecover) {
+          streamIdleRecoveryRequested = true;
+          log.warn("executor.stream_idle_recovery", diagnostics);
+          streamAttemptController.abort("stream_idle_recovery");
+        } else {
+          log.warn("executor.stream_idle_exhausted", diagnostics);
+          ctx.abortReason = "stream_idle_timeout";
+          abortController.abort(ctx.abortReason);
+        }
         if (streamGenerator) {
           // Force-close the generator and HAND THE CLEANUP CHAIN to the run's
           // background-work registry. Previously we used .catch(() => {}) here,
@@ -3897,7 +3908,7 @@ export class AgentExecutor extends EventEmitter {
         thinkingBudget,
         thinking,
         routingTier,
-        signal: abortController.signal,
+        signal: streamAttemptController.signal,
         // Adapter cleanup chains (interrupt acks, force-abort iterator-return)
         // are now owned by the run via this registry. The run's finally awaits
         // the registry before releasing the admission slot, so abort can no
@@ -3938,6 +3949,21 @@ export class AgentExecutor extends EventEmitter {
         if (!ctx.abortReason) {
           ctx.abortReason = getAbortReason(abortController.signal);
         }
+      }
+      if (streamIdleRecoveryRequested && !abortController.signal.aborted) {
+        ctx.streamIdleRecoveryAttempts++;
+        ctx.iterationThinking = "";
+        ctx.thinkingBuf = "";
+        ctx.chronologyThinkingBuf = "";
+        ctx.publish("attempt_reset", {});
+        log.warn("executor.stream_idle_recovered", {
+          operation: "stream_idle_recovered",
+          runId: ctx.runId,
+          iteration: ctx.iteration,
+          recoveryAttempt: ctx.streamIdleRecoveryAttempts,
+          nextAction: "retry_routed_stream",
+        });
+        return { finalContent: "", shouldContinue: true, hasRunMidTurnHistoryHardTrim };
       }
       const responseStatus = ctx.aborted ? "error" : "done";
       this.finishResponsePhase(ctx, responseStatus);
@@ -4005,6 +4031,21 @@ export class AgentExecutor extends EventEmitter {
         sessionKey: options.sessionKey,
       });
     } catch (streamErr: unknown) {
+      if (streamIdleRecoveryRequested && !abortController.signal.aborted) {
+        ctx.streamIdleRecoveryAttempts++;
+        ctx.iterationThinking = "";
+        ctx.thinkingBuf = "";
+        ctx.chronologyThinkingBuf = "";
+        ctx.publish("attempt_reset", {});
+        log.warn("executor.stream_idle_recovered", {
+          operation: "stream_idle_recovered",
+          runId: ctx.runId,
+          iteration: ctx.iteration,
+          recoveryAttempt: ctx.streamIdleRecoveryAttempts,
+          nextAction: "retry_routed_stream",
+        });
+        return { finalContent: "", shouldContinue: true, hasRunMidTurnHistoryHardTrim };
+      }
       const providerFailure = streamErr instanceof ModelProviderError
         ? streamErr.providerFailure
         : undefined;
@@ -4058,6 +4099,7 @@ export class AgentExecutor extends EventEmitter {
       throw streamErr;
     } finally {
       if (idleTimer) clearTimeout(idleTimer);
+      abortController.signal.removeEventListener("abort", abortStreamAttemptFromRun);
       if (runEntry) runEntry.streamIdleDeadlineAt = undefined;
     }
 
