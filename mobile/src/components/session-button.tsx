@@ -1,17 +1,19 @@
 import React from 'react';
-import { Pressable, Text, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
+import { glassesTheme } from '../theme/glasses';
 
 type Status = 'disconnected' | 'connecting' | 'connected' | 'error';
 
-interface Props {
+interface SessionButtonProps {
   status: Status;
   onPress: () => void;
   onLongPress?: () => void;
 }
 
-export function SessionButton({ status, onPress, onLongPress }: Props) {
+export function SessionButton({ status, onPress, onLongPress }: SessionButtonProps) {
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
+  const label = isConnecting ? 'Connecting' : isConnected ? 'End session' : 'Start session';
 
   return (
     <Pressable
@@ -25,45 +27,42 @@ export function SessionButton({ status, onPress, onLongPress }: Props) {
       onLongPress={onLongPress}
       delayLongPress={600}
       disabled={isConnecting}
-      accessibilityLabel={isConnected ? 'End session' : 'Start session'}
+      accessibilityLabel={label}
       accessibilityRole="button"
+      accessibilityState={{ busy: isConnecting, disabled: isConnecting }}
     >
-      <Text style={[styles.text, isConnected && styles.textActive]}>
-        {isConnecting ? '...' : isConnected ? 'End' : 'Start'}
-      </Text>
+      <Text style={styles.text}>{isConnecting ? 'Connecting…' : isConnected ? 'End' : 'Start'}</Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   button: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#1a1a1a',
-    borderWidth: 2,
-    borderColor: '#333',
+    minWidth: 112,
+    minHeight: 56,
+    borderRadius: glassesTheme.radius.button,
+    backgroundColor: glassesTheme.colors.actionPrimary,
+    borderWidth: 1,
+    borderColor: glassesTheme.colors.actionPrimary,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 24,
   },
   buttonActive: {
-    backgroundColor: '#dc2626',
-    borderColor: '#dc2626',
+    backgroundColor: glassesTheme.colors.status.error,
+    borderColor: glassesTheme.colors.status.error,
   },
   buttonConnecting: {
-    borderColor: '#f59e0b',
-    opacity: 0.6,
+    backgroundColor: glassesTheme.colors.actionSecondary,
+    borderColor: glassesTheme.colors.status.warning,
+    opacity: 0.8,
   },
   buttonPressed: {
-    opacity: 0.7,
+    opacity: 0.75,
   },
   text: {
-    color: '#fff',
-    fontSize: 18,
+    color: glassesTheme.colors.actionPrimaryText,
+    fontSize: 16,
     fontWeight: '600',
-    letterSpacing: 0.5,
-  },
-  textActive: {
-    color: '#fff',
   },
 });
