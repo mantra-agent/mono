@@ -506,19 +506,21 @@ Provider-bound inference payload captures are durable diagnostic evidence, not p
 
 ## Tool Architecture
 
-Public tool identity has one source: `tool-registry.ts`. Handler composition remains concentrated in `bridge-tools.ts`, but a handler-table key is never registration or authority; every invocation must resolve a registered canonical name before dispatch. Chat, voice, autonomous, Hook, and authenticated HTTP callers converge on one `executeTool()` entry point.
+Public tool identity has one source: `tool-registry.ts`. `tools/domain-adapters.ts` is the exhaustive ownership/composition boundary: each registered public name belongs to exactly one domain adapter and resolves from exactly one handler source. Adapter metadata names the family's authorization dependencies, normalization extensions, artifact kinds, and provider boundaries; it never grants any of them. `bridge-tools.ts#executeTool` remains the singular invocation path and may host legacy private implementation helpers, but exact registry parity prevents those helpers from becoming hidden dispatch or authority. Chat, voice, autonomous, Hook, and authenticated HTTP callers converge there.
 
 ### Key Files
 - `tool-registry.ts` — Public tool names, compatibility aliases, metadata, schemas, readiness projection, and `resolveRegisteredTool()`
 - `tools/contracts.ts` — Dependency-light handler, invocation-context, and result interfaces for domain adapters
+- `tools/domain-adapters.ts` — Exhaustive domain ownership manifest, native domain handlers, and exactly-one-source composition
 - `tools/invocation.ts` — Canonical sparse-input normalization plus schema validation; optional empty values mean omission and explicit edit empties are narrowly allowlisted
-- `bridge-tools.ts` — Handler composition, canonical `executeTool()` dispatch, authority/Mod gates, engineering preflight, telemetry, and remaining legacy domain handlers
+- `tools/registry-validation.ts` — Exact public registry-to-dispatch parity; hidden dispatch keys fail closed
+- `bridge-tools.ts` — Canonical `executeTool()` invocation, authority/Mod gates, engineering preflight, telemetry, and remaining legacy private implementations
 - `tool-details.ts` (358 lines) — Extended per-tool documentation
 - `cli-sdk-adapter.ts` (1,005 lines) — Claude Agent SDK/MCP bridge, Zod schema conversion
 - `agent-executor.ts` (1,771 lines) — `AgentExecutor` class: multi-iteration LLM loop, write-ordering, compaction
 
 ### Architecture
-- **DISPATCH_MAP** merges `localHandlers` + `bridgeHandlers` (126 named async handlers)
+- **DISPATCH_MAP** is composed from the public registry through `composeToolDomainHandlers(...)`; every registered name has one domain owner and exactly one executable source, while private implementation keys are excluded.
 - **Umbrella pattern:** Most LLM-facing tools take an `action` parameter and route internally (e.g., `memory`, `gmail`, `people`)
 - **Every tool gets a `reasoning` parameter** injected automatically for audit trail. Schema still marks it required so models are prompted to supply it, but `normalizeToolArgs` autofills a deterministic placeholder when omitted/blank — missing reasoning must never reject execution or pollute `agent.tool_outcome`. It is audit metadata, not a load-bearing input.
 - **Argument validation:** Checks required params + rejects unknown keys. No type/range validation. Universal `reasoning` is filled before validation (see above).
@@ -587,11 +589,11 @@ The `gitWriteOverride` field on session metadata is retained as an admin escape 
 ### When Working Here
 - Treat tool arguments as sparse patches, not full records. Optional empty strings, empty arrays, and empty objects are absence unless a handler explicitly allows empties. Destructive clears must flow through an explicit clear contract, never through schema-default blank values.
 - Every umbrella tool exposed to autonomous runs must have an explicit `autonomy-tiers.ts` entry. Keep the tool default at tier 2 and allowlist verified read actions at tier 0 so future actions fail closed instead of silently inheriting observation authority.
-- **Never add a handler without also adding it to `TOOLS` in `tool-registry.ts`** — unregistered handler keys are private implementation details and canonical dispatch rejects them. Internal producers call registered umbrella tools or the owning domain service, never hidden handler names.
+- **Never add a public handler without updating both `TOOLS` and its one `TOOL_DOMAIN_ADAPTERS` owner.** Exact composition rejects unowned, unknown, duplicate-owner, missing-source, duplicate-source, and hidden dispatch keys. Private helpers stay behind the owning umbrella adapter; internal producers call that registered tool or the domain service, never a hidden implementation name.
 - **New `TOOLS` entries must be top-level keys** — inserting inside an existing tool's object literal silently nests the new entry as a property of that tool instead of registering it. Always verify the new entry is a direct child of the `TOOLS` object (same indentation as `meta:`, `expo:`, `railway:`, etc.) and that the preceding entry's `},` is closed before the new key starts.
 - Tool handlers use lazy dynamic imports for storage modules — `const { foo } = await import("./bar")`
 - DOCX reads accept workspace files and canonical `/objects/...` attachment paths. Object-backed reads must resolve through `ObjectStorageService`, require the current user principal, enforce the existing object ACL before download, and parse from the authorized buffer without minting a public URL or raw storage key.
-- Person ID resolution at `bridge-tools.ts:78` is reused by all people-related handlers (fuzzy match, Levenshtein)
+- People identity resolution remains domain-local legacy implementation behind the registered `people` adapter until that implementation moves wholesale; no other domain may call its private helper.
 - The monolith is the biggest codebase risk — a syntax error breaks all tools
 
 ---
