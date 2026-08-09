@@ -339,7 +339,9 @@ const FORBIDDEN_SHELL_TOKEN_CLASSES: ReadonlyArray<{ pattern: RegExp; reason: st
   { pattern: /\b(?:curl|wget|nc|ncat|netcat|ssh|scp|sftp|ftp|telnet)\b/i, reason: "forbidden:network_binary", maskPolicy: "all" },
   { pattern: /\b(?:python|python3|node|deno|bun|perl|ruby|php|lua|eval|source)\b/i, reason: "forbidden:interpreter", maskPolicy: "all" },
   // Path-consuming classes: never masked. See ShellMaskPolicy "none" doc above.
-  { pattern: /\/(?:proc|sys|dev|root|home)\//i, reason: "forbidden:sensitive_path", maskPolicy: "none" },
+  // Absolute system roots only. Unanchored `/home/` falsely blocked product paths like
+  // `client/src/components/home/**` during ordinary clone inspection.
+  { pattern: /(?:^|[\s"'=\\])\/(?:proc|sys|dev|root|home)(?:\/|$)/i, reason: "forbidden:sensitive_path", maskPolicy: "none" },
   { pattern: /(?:^|[\s/])\.(?:env|npmrc|netrc|gitconfig|git-credentials|aws|ssh|config)(?:[\s/]|$)/i, reason: "forbidden:dotfile_secret", maskPolicy: "none" },
 ];
 
