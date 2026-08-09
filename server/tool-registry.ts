@@ -233,7 +233,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   python: {
-    description: "Run bounded Python diagnostics inside the current session-owned repository clone. This is a separate constrained execution boundary: build:write plus trusted engineering provenance are required; server secrets are absent; filesystem access is read-only and limited to the repository and Python standard library; network, subprocess, native-extension loading, and filesystem mutation are denied; wall time, CPU, memory, file size, descriptors, source size, and output are capped. Raw python remains blocked in shell.",
+    description: "Run bounded Python diagnostics inside the current session-owned repository clone. This is a separate constrained execution boundary: build:write plus trusted engineering provenance are required; server secrets are absent; Landlock limits filesystem reads to the repository and Python standard library while seccomp denies network creation; subprocess, native-extension loading, and filesystem mutation are denied; wall time, CPU, memory, file size, descriptors, source size, and output are capped. Raw python remains blocked in shell.",
     category: "system",
     parameters: {
       type: "object",

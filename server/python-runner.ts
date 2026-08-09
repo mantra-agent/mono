@@ -9,7 +9,6 @@ const log = createLogger("PythonRunner");
 
 const PYTHON_BINARY = "/usr/bin/python3";
 const PRLIMIT_BINARY = "/usr/bin/prlimit";
-const BWRAP_BINARY = "/usr/bin/bwrap";
 const MAX_SOURCE_CHARS = 50_000;
 const MAX_OUTPUT_BYTES = 256_000;
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -19,13 +18,138 @@ const FILE_SIZE_LIMIT_BYTES = 1 * 1024 * 1024;
 
 const PYTHON_SANDBOX_BOOTSTRAP = String.raw`
 import builtins
+import ctypes
+import errno
 import os
+import platform
 import sys
 
 _root = os.path.realpath(sys.argv[1])
-_stdlib_roots = tuple(os.path.realpath(path) for path in {sys.base_prefix, sys.exec_prefix} if path)
+_stdlib_roots = tuple(
+    os.path.realpath(path)
+    for path in sys.path
+    if path and os.path.exists(path)
+)
 _realpath = os.path.realpath
 _fspath = os.fspath
+_libc = ctypes.CDLL(None, use_errno=True)
+
+_PR_SET_NO_NEW_PRIVS = 38
+_LANDLOCK_CREATE_RULESET_VERSION = 1
+_LANDLOCK_RULE_PATH_BENEATH = 1
+_LANDLOCK_ACCESS_FS_EXECUTE = 1 << 0
+_LANDLOCK_ACCESS_FS_WRITE_FILE = 1 << 1
+_LANDLOCK_ACCESS_FS_READ_FILE = 1 << 2
+_LANDLOCK_ACCESS_FS_READ_DIR = 1 << 3
+_LANDLOCK_ACCESS_FS_REMOVE_DIR = 1 << 4
+_LANDLOCK_ACCESS_FS_REMOVE_FILE = 1 << 5
+_LANDLOCK_ACCESS_FS_MAKE_CHAR = 1 << 6
+_LANDLOCK_ACCESS_FS_MAKE_DIR = 1 << 7
+_LANDLOCK_ACCESS_FS_MAKE_REG = 1 << 8
+_LANDLOCK_ACCESS_FS_MAKE_SOCK = 1 << 9
+_LANDLOCK_ACCESS_FS_MAKE_FIFO = 1 << 10
+_LANDLOCK_ACCESS_FS_MAKE_BLOCK = 1 << 11
+_LANDLOCK_ACCESS_FS_MAKE_SYM = 1 << 12
+_LANDLOCK_ACCESS_FS_REFER = 1 << 13
+_LANDLOCK_ACCESS_FS_TRUNCATE = 1 << 14
+_LANDLOCK_ACCESS_FS_IOCTL_DEV = 1 << 15
+_LANDLOCK_READ = _LANDLOCK_ACCESS_FS_READ_FILE | _LANDLOCK_ACCESS_FS_READ_DIR
+_LANDLOCK_ALL = (1 << 16) - 1
+
+
+class _RulesetAttr(ctypes.Structure):
+    _fields_ = [("handled_access_fs", ctypes.c_uint64)]
+
+
+class _PathBeneathAttr(ctypes.Structure):
+    _fields_ = [("allowed_access", ctypes.c_uint64), ("parent_fd", ctypes.c_int32)]
+
+
+def _syscall_number(name):
+    machine = platform.machine().lower()
+    numbers = {
+        "x86_64": {"create": 444, "add": 445, "restrict": 446},
+        "amd64": {"create": 444, "add": 445, "restrict": 446},
+        "aarch64": {"create": 444, "add": 445, "restrict": 446},
+        "arm64": {"create": 444, "add": 445, "restrict": 446},
+    }.get(machine)
+    if not numbers:
+        raise RuntimeError("unsupported kernel architecture: " + machine)
+    return numbers[name]
+
+
+def _checked_syscall(number, *args):
+    result = _libc.syscall(number, *args)
+    if result < 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code))
+    return result
+
+
+def _restrict_filesystem():
+    version = _checked_syscall(_syscall_number("create"), 0, 0, _LANDLOCK_CREATE_RULESET_VERSION)
+    handled = (1 << 13) - 1
+    if version >= 2:
+        handled |= _LANDLOCK_ACCESS_FS_REFER
+    if version >= 3:
+        handled |= _LANDLOCK_ACCESS_FS_TRUNCATE
+    if version >= 5:
+        handled |= _LANDLOCK_ACCESS_FS_IOCTL_DEV
+    ruleset_attr = _RulesetAttr(handled)
+    ruleset_fd = _checked_syscall(
+        _syscall_number("create"), ctypes.byref(ruleset_attr), ctypes.sizeof(ruleset_attr), 0
+    )
+    try:
+        for path in (_root,) + _stdlib_roots:
+            parent_fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
+            try:
+                rule = _PathBeneathAttr(_LANDLOCK_READ & handled, parent_fd)
+                _checked_syscall(
+                    _syscall_number("add"), ruleset_fd, _LANDLOCK_RULE_PATH_BENEATH,
+                    ctypes.byref(rule), 0
+                )
+            finally:
+                os.close(parent_fd)
+        if _libc.prctl(_PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+            code = ctypes.get_errno()
+            raise OSError(code, os.strerror(code))
+        _checked_syscall(_syscall_number("restrict"), ruleset_fd, 0)
+    finally:
+        os.close(ruleset_fd)
+
+
+def _install_seccomp_network_deny():
+    # Classic BPF over seccomp_data: load syscall number, deny socket/socketpair,
+    # otherwise allow. exec/fork remain denied independently by the Python audit hook
+    # and RLIMIT_NPROC; the kernel filter carries the network boundary.
+    machine = platform.machine().lower()
+    syscall_numbers = {
+        "x86_64": (41, 53), "amd64": (41, 53),
+        "aarch64": (198, 199), "arm64": (198, 199),
+    }.get(machine)
+    if not syscall_numbers:
+        raise RuntimeError("unsupported seccomp architecture: " + machine)
+
+    class _SockFilter(ctypes.Structure):
+        _fields_ = [("code", ctypes.c_ushort), ("jt", ctypes.c_ubyte), ("jf", ctypes.c_ubyte), ("k", ctypes.c_uint32)]
+
+    class _SockFprog(ctypes.Structure):
+        _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(_SockFilter))]
+
+    deny = 0x00050000 | errno.EPERM
+    allow = 0x7FFF0000
+    filters = (_SockFilter * 6)(
+        _SockFilter(0x20, 0, 0, 0),
+        _SockFilter(0x15, 0, 1, syscall_numbers[0]),
+        _SockFilter(0x06, 0, 0, deny),
+        _SockFilter(0x15, 0, 1, syscall_numbers[1]),
+        _SockFilter(0x06, 0, 0, deny),
+        _SockFilter(0x06, 0, 0, allow),
+    )
+    program = _SockFprog(len(filters), filters)
+    if _libc.prctl(22, 2, ctypes.byref(program), 0, 0) != 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code))
 
 
 def _inside(path, roots):
@@ -41,6 +165,8 @@ def _deny(message):
 
 
 def _audit(event, args):
+    if event == "import" and args and args[0] in {"ctypes", "_ctypes"}:
+        _deny("native foreign-function access is disabled")
     if event.startswith("socket.") or event.startswith("ssl."):
         _deny("network access is disabled")
     if event in {
@@ -73,8 +199,14 @@ def _audit(event, args):
         _deny("filesystem mutation is disabled")
 
 
-sys.addaudithook(_audit)
 _source = sys.stdin.read()
+sys.addaudithook(_audit)
+_restrict_filesystem()
+_install_seccomp_network_deny()
+for _module_name in ("ctypes", "_ctypes"):
+    sys.modules.pop(_module_name, None)
+del ctypes
+del _libc
 exec(compile(_source, "<mantra-python>", "exec"), {"__name__": "__main__", "__builtins__": builtins.__dict__})
 `;
 
@@ -134,21 +266,7 @@ export async function runConstrainedPython(input: PythonRunInput): Promise<Pytho
   });
 
   return await new Promise<PythonRunResult>((resolveResult, reject) => {
-    const child = spawn(BWRAP_BINARY, [
-      "--die-with-parent",
-      "--new-session",
-      "--unshare-all",
-      "--ro-bind", "/usr", "/usr",
-      "--ro-bind", "/bin", "/bin",
-      "--ro-bind", "/lib", "/lib",
-      "--ro-bind", "/lib64", "/lib64",
-      "--ro-bind", repositoryRoot, "/workspace",
-      "--proc", "/proc",
-      "--dev", "/dev",
-      "--tmpfs", "/tmp",
-      "--chdir", "/workspace",
-      "--",
-      PRLIMIT_BINARY,
+    const child = spawn(PRLIMIT_BINARY, [
       `--as=${MEMORY_LIMIT_BYTES}`,
       `--cpu=${Math.max(1, Math.ceil(timeoutMs / 1000))}`,
       `--fsize=${FILE_SIZE_LIMIT_BYTES}`,
@@ -161,7 +279,7 @@ export async function runConstrainedPython(input: PythonRunInput): Promise<Pytho
       "-S",
       "-c",
       PYTHON_SANDBOX_BOOTSTRAP,
-      "/workspace",
+      repositoryRoot,
     ], {
       cwd: repositoryRoot,
       env: {
