@@ -39,6 +39,7 @@ export interface PipelineAction {
   href?: string | null;
   testId?: string;
   tooltip?: string;
+  showLabel?: boolean;
 }
 
 export interface PipelineSummaryItem {
@@ -265,22 +266,29 @@ function PipelineActionButton({ action }: { action: PipelineAction }) {
   ) : (
     action.icon
   );
+  const size = action.showLabel ? "sm" : "icon";
+  const className = action.showLabel ? "h-7 gap-1.5 px-2.5" : "h-7 w-7";
+  const content = (
+    <>
+      {icon}
+      <span className={action.showLabel ? undefined : "sr-only"}>{action.label}</span>
+    </>
+  );
 
   if (action.href) {
     return (
       <Button
         asChild
-        size="icon"
+        size={size}
         variant={action.variant ?? "outline"}
         disabled={action.disabled}
         data-testid={action.testId}
-        className="h-7 w-7"
+        className={className}
         title={action.tooltip ?? action.label}
         aria-label={action.label}
       >
         <a href={action.href} target="_blank" rel="noopener noreferrer">
-          {icon}
-          <span className="sr-only">{action.label}</span>
+          {content}
         </a>
       </Button>
     );
@@ -288,17 +296,16 @@ function PipelineActionButton({ action }: { action: PipelineAction }) {
 
   return (
     <Button
-      size="icon"
+      size={size}
       variant={action.variant ?? "default"}
       onClick={action.onClick}
       disabled={action.disabled || action.pending}
       data-testid={action.testId}
-      className="h-7 w-7"
+      className={className}
       title={action.tooltip ?? action.label}
       aria-label={action.label}
     >
-      {icon}
-      <span className="sr-only">{action.label}</span>
+      {content}
     </Button>
   );
 }

@@ -1516,6 +1516,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
         variant: "outline" as const,
         icon: <XCircle className="h-4 w-4" />,
         testId: "button-primary-action",
+        showLabel: appearance === "tree",
       }
     : canRetry
       ? {
@@ -1525,6 +1526,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
           variant: "outline" as const,
           icon: <RotateCw className="h-4 w-4" />,
           testId: "button-primary-action",
+          showLabel: appearance === "tree",
         }
       : {
           label: "Publish",
@@ -1534,6 +1536,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
           icon: <Play className="h-4 w-4" />,
           testId: "button-primary-action",
           tooltip: inSyncReason ?? disabledReason ?? undefined,
+          showLabel: appearance === "tree",
         };
 
   const secondaryActions = (
