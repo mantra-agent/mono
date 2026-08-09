@@ -431,9 +431,9 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
     activity: ACTIVITY_WORK,
     temperature: 0.2,
     timeoutMs: 3 * 60 * 60 * 1000,
-    // Self Heal remains a separate autonomous execution, but its result is a
-    // user-facing Agent conversation rather than hidden SYSTEM maintenance.
-    sessionType: "agent",
+    // Orchestrator files under SYSTEM. Canonical Plan children still receive
+    // trusted engineering provenance and build:write through plan.execute.
+    sessionType: "autonomous",
     admissionTier: "background",
   },
   "enrich-email": {
