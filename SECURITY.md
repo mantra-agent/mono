@@ -1,3 +1,11 @@
+<!-- 2026-08-09 principal-scoped reliability query availability boundary:
+- Assets/data: principal-owned S2 chat documents and bounded reliability diagnostics (A01/A03/A07); no chat content or principal identity is newly logged or exposed.
+- Flow/boundary: authorized system.reliability tool -> ambient user Principal -> account-scoped document_store_documents chat/time-window read -> in-process bounded outcome projection.
+- Failure/threat: the 720-hour query combined document_type, updated_at, and account_id but storage exposed only independent indexes, so PostgreSQL repeatedly exceeded the 10-second statement budget despite an idle pool (SQLSTATE 57014). An availability failure at this diagnostic boundary could blind autonomous repair and operator review; removing account scope to gain speed would create a cross-account disclosure risk (STRIDE availability/information-disclosure; DATA-01/OBS-01).
+- Controls/owner: Core Reliability retains the canonical account-derived visible-scope predicate and bounded window. Document Storage now owns a partial composite `(account_id, updated_at) WHERE document_type = 'chat'` index converged at boot, matching the exact principal/time query contract without widening rows or authority. Owner: Core Reliability + Document Storage. Severity: high availability with confidentiality boundary preserved. SLA: immediate. Status: repaired in source pending build/merge/stage deploy.
+- Residual/rollback: index creation uses ordinary pre-readiness convergence and may add bounded deployment-time I/O on a large table; no data rows, permissions, Vaults, or production state are mutated by this source change. Roll back the index declaration/bootstrap statement and this record; the index may remain harmless until explicitly retired through a later schema change.
+-->
+
 <!-- 2026-08-09 product-surface composition and action accessibility boundary:
 - Assets/data: principal-resolved Mod route availability and named permissions (A01/S1), canonical product object identifiers (S1/S2), and user-triggered relationship/scenario mutations (A03/A07).
 - Flow/boundary: authenticated app route -> resolved product composition route ID -> independent permission/server authorization; keyboard/pointer activation -> native control -> existing domain mutation route. Client composition and control visibility never grant server authority.
