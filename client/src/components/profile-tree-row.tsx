@@ -55,12 +55,53 @@ export function ProfileTreeRow({
   const showValue = hasRenderableChildren(children);
   const showAction = Boolean(actionContent);
   const showMenu = Boolean(menuContent);
+  // Trailing control count: expand + action + menu. Class names must stay
+  // fully static so Tailwind emits the grid templates.
   const trailingCount = (canExpand ? 1 : 0) + (showAction ? 1 : 0) + (showMenu ? 1 : 0);
-  const trailingCols =
-    trailingCount > 0 ? ` ${Array.from({ length: trailingCount }, () => "auto").join(" ")}` : "";
   const usesSessionMenuControls = mobileLayout === "inline";
   const sessionDisclosureControlClassName = "h-5 min-h-5 w-5 min-w-5 rounded [&_svg]:size-3";
   const sessionOverflowControlClassName = "h-6 min-h-6 w-6 min-w-6 rounded-md [&_svg]:size-3.5";
+
+  const inlineCompactGrid =
+    trailingCount === 3
+      ? "grid-cols-[max-content_minmax(0,1fr)_auto_auto_auto] gap-y-0"
+      : trailingCount === 2
+        ? "grid-cols-[max-content_minmax(0,1fr)_auto_auto] gap-y-0"
+        : trailingCount === 1
+          ? "grid-cols-[max-content_minmax(0,1fr)_auto] gap-y-0"
+          : "grid-cols-[max-content_minmax(0,1fr)] gap-y-0";
+  const inlineDefaultGrid =
+    trailingCount === 3
+      ? "grid-cols-[max-content_minmax(0,1fr)_12rem_auto_auto_auto] gap-y-0"
+      : trailingCount === 2
+        ? "grid-cols-[max-content_minmax(0,1fr)_12rem_auto_auto] gap-y-0"
+        : trailingCount === 1
+          ? "grid-cols-[max-content_minmax(0,1fr)_12rem_auto] gap-y-0"
+          : "grid-cols-[max-content_minmax(0,1fr)_12rem] gap-y-0";
+  const inlineNoValueGrid =
+    trailingCount === 3
+      ? "grid-cols-[max-content_auto_auto_auto] gap-y-0"
+      : trailingCount === 2
+        ? "grid-cols-[max-content_auto_auto] gap-y-0"
+        : trailingCount === 1
+          ? "grid-cols-[max-content_auto] gap-y-0"
+          : "grid-cols-[max-content] gap-y-0";
+  const stackedValueGrid =
+    trailingCount === 3
+      ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto_auto] sm:gap-y-1"
+      : trailingCount === 2
+        ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] sm:gap-y-1"
+        : trailingCount === 1
+          ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto] sm:gap-y-1"
+          : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)] sm:gap-y-1";
+  const stackedNoValueGrid =
+    trailingCount === 3
+      ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:gap-y-1"
+      : trailingCount === 2
+        ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:gap-y-1"
+        : trailingCount === 1
+          ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-y-1"
+          : "grid-cols-[minmax(0,1fr)] gap-y-1 sm:grid-cols-[minmax(0,1fr)] sm:gap-y-1";
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
@@ -72,12 +113,12 @@ export function ProfileTreeRow({
             showValue
               ? mobileLayout === "inline"
                 ? valueLayout === "compact"
-                  ? `grid-cols-[max-content_minmax(0,1fr)${trailingCols}] gap-y-0`
-                  : `grid-cols-[max-content_minmax(0,1fr)_12rem${trailingCols}] gap-y-0`
-                : `grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)${trailingCols}] sm:gap-y-1`
+                  ? inlineCompactGrid
+                  : inlineDefaultGrid
+                : stackedValueGrid
               : mobileLayout === "inline"
-                ? `grid-cols-[max-content${trailingCols}] gap-y-0`
-                : `grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)${trailingCols}] sm:gap-y-1`,
+                ? inlineNoValueGrid
+                : stackedNoValueGrid,
           )}
         >
           <div
@@ -145,7 +186,14 @@ export function ProfileTreeRow({
             </CollapsibleTrigger>
           ) : null}
           {showAction ? (
-            <div className="flex shrink-0 items-center justify-end">
+            <div
+              className={cn(
+                "flex shrink-0 items-center justify-end",
+                usesSessionMenuControls
+                  ? "h-6 min-h-6 w-6 min-w-6"
+                  : "min-h-11 min-w-11 sm:min-h-5 sm:min-w-5",
+              )}
+            >
               {actionContent}
             </div>
           ) : null}
