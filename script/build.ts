@@ -7,6 +7,8 @@ import { createHash } from "crypto";
 import { join } from "path";
 import { safeEsmHelperPlugin } from "./safe-esm-helper-plugin";
 import { validateRepositoryCompliance } from "./repository-compliance";
+import { validateServerStandardsDisposition } from "./server-standards-disposition";
+import { validateClientMobileStandardsDisposition } from "./client-mobile-standards-disposition";
 
 // Dev mode (set via BUILD_DEV_MODE=true in Dockerfile.dev) skips the heavy
 // production-only steps: gitnexus runtime bundling+patches, claude CLI
@@ -655,7 +657,19 @@ async function bundleClaudeCliRuntime() {
 }
 
 async function buildAll() {
-  await validateRepositoryCompliance();
+  const compliance = await validateRepositoryCompliance();
+  const serverDisposition = await validateServerStandardsDisposition(process.cwd(), compliance.files);
+  console.log(
+    `server standards disposition valid: ${serverDisposition.totalFiles} files (${Object.entries(serverDisposition.counts)
+      .map(([key, value]) => `${key}=${value}`)
+      .join(", ")})`,
+  );
+  const clientMobileDisposition = await validateClientMobileStandardsDisposition(process.cwd(), compliance.files);
+  console.log(
+    `client/mobile standards disposition valid: ${clientMobileDisposition.totalFiles} files (${Object.entries(clientMobileDisposition.counts)
+      .map(([key, value]) => `${key}=${value}`)
+      .join(", ")})`,
+  );
 
   if (DEV_MODE) {
     console.log("BUILD_DEV_MODE=true — skipping GitHub push, DB cleanup, gitnexus runtime bundle, and claude CLI bundle.");

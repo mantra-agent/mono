@@ -24,15 +24,29 @@ interface ComplianceManifest {
   classes: Record<Exclude<RepositoryFileClass, "ordinary_authored">, ExceptionalEntry[]>;
 }
 
+export interface RepositoryFileRecord {
+  path: string;
+  fileClass: RepositoryFileClass;
+}
+
 export interface ComplianceBaseline {
   totalFiles: number;
   counts: Record<RepositoryFileClass, number>;
+  files: RepositoryFileRecord[];
 }
 
 const SOURCE_EXTENSIONS = new Set([".cjs", ".css", ".html", ".js", ".jsx", ".mjs", ".sh", ".sql", ".ts", ".tsx"]);
 const PROHIBITED_FILE_NAME = /(^|\.)(spec|test)(\.|$)/i;
 const PROHIBITED_DIRECTORY = /(^|\/)(__tests__|fixtures?|snapshots?)(\/|$)/i;
-const COMPLIANCE_FILES = new Set(["repository-compliance.json", "REPOSITORY_COMPLIANCE.md", "script/repository-compliance.ts"]);
+const COMPLIANCE_FILES = new Set([
+  "repository-compliance.json",
+  "REPOSITORY_COMPLIANCE.md",
+  "script/repository-compliance.ts",
+  "server-standards-disposition.json",
+  "script/server-standards-disposition.ts",
+  "client-mobile-standards-disposition.json",
+  "script/client-mobile-standards-disposition.ts",
+]);
 
 function normalizePath(path: string): string {
   return path.split(sep).join("/").replace(/^\.\//, "");
@@ -108,8 +122,10 @@ export async function validateRepositoryCompliance(root = fileURLToPath(new URL(
   };
 
   const violations: string[] = [];
+  const classifiedFiles: RepositoryFileRecord[] = [];
   for (const path of files) {
     const fileClass = classByPath.get(path) ?? "ordinary_authored";
+    classifiedFiles.push({ path, fileClass });
     counts[fileClass] += 1;
     if (fileClass !== "ordinary_authored") continue;
     const extension = extname(path);
@@ -127,7 +143,7 @@ export async function validateRepositoryCompliance(root = fileURLToPath(new URL(
   }
 
   console.log(`repository compliance valid: ${files.length} files (${Object.entries(counts).map(([key, value]) => `${key}=${value}`).join(", ")})`);
-  return { totalFiles: files.length, counts };
+  return { totalFiles: files.length, counts, files: classifiedFiles };
 }
 
 if (process.argv[1] && normalizePath(process.argv[1]) === normalizePath(fileURLToPath(import.meta.url))) {

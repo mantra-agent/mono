@@ -38,6 +38,7 @@ import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
 import { resolveRegisteredTool } from "./tool-registry";
 import { prepareToolInvocation } from "./tools/invocation";
 import { assertRegisteredToolHandlers } from "./tools/registry-validation";
+import { composeToolDomainHandlers } from "./tools/domain-adapters";
 import type {
   ToolExecutionResult as ToolResult,
   ToolHandler,
@@ -4340,36 +4341,6 @@ async function buildWarmStartBrief(opts: {
 }
 
 export const bridgeHandlers: Record<string, ToolHandler> = {
-
-  async ui(args) {
-    const { handleUiInteraction } = await import("./tools/ui");
-    return handleUiInteraction(args);
-  },
-
-  async question(args) {
-    const { handleQuestion } = await import("./tools/question");
-    return handleQuestion(args);
-  },
-
-  async agendas(args) {
-    const { handleAgendas } = await import("./tools/agendas");
-    return handleAgendas(args);
-  },
-
-  async business(args) {
-    const { handleBusiness } = await import("./tools/business-plans");
-    return handleBusiness(args);
-  },
-
-  async plan(args) {
-    const { handlePlan } = await import("./tools/plan");
-    return handlePlan(args);
-  },
-
-  async workflows(args) {
-    const { handleWorkflows } = await import("./tools/workflows");
-    return handleWorkflows(args);
-  },
 
   async message_sibling(args) {
     return handleCrossSessionMessage(args, "sibling");
@@ -17455,10 +17426,10 @@ const localHandlers: Record<string, ToolHandler> = {
   ...cognitionTools,
 };
 
-const DISPATCH_MAP: Record<string, ToolHandler> = {
-  ...localHandlers,
-  ...bridgeHandlers,
-};
+const DISPATCH_MAP = composeToolDomainHandlers([
+  localHandlers,
+  bridgeHandlers,
+]);
 
 assertRegisteredToolHandlers(DISPATCH_MAP);
 
