@@ -601,6 +601,13 @@ function PhoneCallConfirmationChip({
   );
 }
 
+function isObservationStep(step: ExecutionStep): boolean {
+  return (
+    (step.toolName === "cognition" && step.arguments?.action === "observe") ||
+    step.toolName === "observe"
+  );
+}
+
 function ToolStepRow({
   step,
   iconOverrides,
@@ -617,7 +624,11 @@ function ToolStepRow({
   depth?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const ToolIcon = resolveToolIcon(step.toolName || "", iconOverrides);
+  const isObservation = isObservationStep(step);
+  const ToolIcon = resolveToolIcon(
+    isObservation ? "observation" : step.toolName || "",
+    iconOverrides,
+  );
   const isActive = step.status === "active";
   const isDone = step.status === "done";
   const isError = step.status === "error";
@@ -637,18 +648,22 @@ function ToolStepRow({
   const failureTone = isError ? toolFailureTone(step.failureKind) : null;
   const iconColor = isError
     ? failureTone!.iconColor
-    : isDone
-      ? "text-success"
-      : isActive
-        ? "text-active"
-        : "text-info";
+    : isObservation
+      ? "text-cta"
+      : isDone
+        ? "text-success"
+        : isActive
+          ? "text-active"
+          : "text-info";
   const bgColor = isError
     ? failureTone!.bgColor
-    : isDone
-      ? "bg-success/10"
-      : isActive
-        ? "bg-active/15"
-        : "bg-info/15";
+    : isObservation
+      ? "bg-cta/15"
+      : isDone
+        ? "bg-success/10"
+        : isActive
+          ? "bg-active/15"
+          : "bg-info/15";
   const canExpand = !summaryOnly && (isDone || isError) && !isDetailLayer;
 
   const phoneConfirmation =
@@ -1457,26 +1472,33 @@ function ToolIconStrip({
         );
       })}
       {toolSteps.map((step) => {
-        const isObservation = step.toolName === "cognition" && step.arguments?.action === "observe";
-        const ToolIcon = resolveToolIcon(isObservation ? "observation" : step.toolName || "", iconOverrides);
+        const isObservation = isObservationStep(step);
+        const ToolIcon = resolveToolIcon(
+          isObservation ? "observation" : step.toolName || "",
+          iconOverrides,
+        );
         const isActive = step.status === "active";
         const isDone = step.status === "done";
         const isError = step.status === "error";
         const failureTone = isError ? toolFailureTone(step.failureKind) : null;
         const iconColor = isError
           ? failureTone!.iconColor
-          : isDone
-            ? "text-success"
-            : isActive
-              ? "text-active"
-              : "text-info";
+          : isObservation
+            ? "text-cta"
+            : isDone
+              ? "text-success"
+              : isActive
+                ? "text-active"
+                : "text-info";
         const bgColor = isError
           ? failureTone!.bgColor
-          : isDone
-            ? "bg-success/10"
-            : isActive
-              ? "bg-active/15"
-              : "bg-info/15";
+          : isObservation
+            ? "bg-cta/15"
+            : isDone
+              ? "bg-success/10"
+              : isActive
+                ? "bg-active/15"
+                : "bg-info/15";
         const observationType = typeof step.arguments?.observation_type === "string"
           ? step.arguments.observation_type
           : "observation";
