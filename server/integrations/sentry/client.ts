@@ -1,5 +1,6 @@
 import { getSecret } from "../../secrets-store";
 import { createLogger } from "../../log";
+import { providerFetch, readBoundedProviderBody } from "../provider-http";
 
 const log = createLogger("SentryClient");
 
@@ -55,7 +56,7 @@ async function sentryFetch(
   const url = `${SENTRY_API_BASE}${path}`;
   log.debug(`${options.method ?? "GET"} ${path}`);
 
-  const res = await fetch(url, {
+  const res = await providerFetch(url, {
     ...options,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -65,13 +66,10 @@ async function sentryFetch(
   });
 
   if (!res.ok) {
-    let detail: unknown;
-    try {
-      detail = await res.json();
-    } catch {
-      detail = await res.text().catch(() => null);
-    }
-    log.error(`Sentry API error: ${res.status} ${res.statusText}`, { detail });
+    const detail = await readBoundedProviderBody(res).catch(() => null);
+    log.error(`Sentry API error: ${res.status} ${res.statusText}`, {
+      detailPreview: detail?.slice(0, 500) || undefined,
+    });
     throw new SentryApiError(
       `Sentry API ${res.status}: ${res.statusText}`,
       res.status,

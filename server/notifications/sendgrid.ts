@@ -1,5 +1,6 @@
 import { createLogger } from "../log";
 import { getSecretSync } from "../secrets-store";
+import { providerFetch, readBoundedProviderBody } from "../integrations/provider-http";
 import type { NotificationSendInput, NotificationSendResult } from "./types";
 
 const log = createLogger("SendGridNotifications");
@@ -105,7 +106,7 @@ export async function sendSendGridEmail(input: NotificationSendInput): Promise<N
     };
   }
 
-  const response = await fetch(SENDGRID_MAIL_SEND_URL, {
+  const response = await providerFetch(SENDGRID_MAIL_SEND_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
@@ -130,7 +131,7 @@ export async function sendSendGridEmail(input: NotificationSendInput): Promise<N
     };
   }
 
-  const errorText = await response.text().catch(() => "");
+  const errorText = await readBoundedProviderBody(response).catch(() => "");
   log.error("SendGrid email send failed", {
     status: response.status,
     to: redactEmail(input.to),

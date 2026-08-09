@@ -1,7 +1,7 @@
 import { eq, desc, ilike, and, sql, type SQL } from "drizzle-orm";
 import { mediaItems, type MediaItem, type InsertMediaItem } from "@shared/schema";
 import { createLogger } from "../log";
-import type { Principal } from "../principal";
+import { createNamedSystemPrincipal, type Principal } from "../principal";
 import { visibleScopePredicate, writableScopePredicate } from "../scoped-storage";
 
 const log = createLogger("MediaStorage");
@@ -14,32 +14,41 @@ export interface ListMediaOptions {
   offset?: number;
 }
 
-export async function registerMediaItem(item: InsertMediaItem, principal?: Principal | null): Promise<MediaItem> {
+export async function registerMediaItem(item: InsertMediaItem, principal: Principal): Promise<MediaItem> {
   const { db } = await import("../db");
+  const ownedItem = withMediaOwner(item, principal);
   const [row] = await db.insert(mediaItems)
-    .values(withMediaOwner(item, principal))
+    .values(ownedItem)
     .onConflictDoNothing()
     .returning();
   if (!row) {
-    // Conflict on objectPath — return existing
     const [existing] = await db.select().from(mediaItems)
-      .where(eq(mediaItems.objectPath, item.objectPath));
+      .where(and(eq(mediaItems.objectPath, item.objectPath), mediaVisiblePredicate(principal) ?? sql`FALSE`));
     if (existing) return existing;
-    throw new Error("Failed to register media item");
+    throw new Error("Media object path is already registered outside the current principal scope");
   }
   log.log(`registered media item: ${row.id} (${row.mediaType}, ${row.source})`);
   return row;
 }
 
-function withMediaOwner(item: InsertMediaItem, principal?: Principal | null): InsertMediaItem {
-  if (!principal?.userId || !principal.accountId) return item;
+function withMediaOwner(item: InsertMediaItem, principal: Principal): InsertMediaItem {
+  if (!principal.userId || !principal.accountId) {
+    return {
+      ...item,
+      scope: "system",
+      ownerUserId: null,
+      accountId: null,
+      createdByUserId: null,
+      updatedByUserId: null,
+    } as InsertMediaItem;
+  }
   return {
     ...item,
     scope: "user",
-    ownerUserId: item.ownerUserId ?? principal.userId,
-    accountId: item.accountId ?? principal.accountId,
-    createdByUserId: item.createdByUserId ?? principal.userId,
-    updatedByUserId: item.updatedByUserId ?? principal.userId,
+    ownerUserId: principal.userId,
+    accountId: principal.accountId,
+    createdByUserId: principal.userId,
+    updatedByUserId: principal.userId,
   } as InsertMediaItem;
 }
 
@@ -108,6 +117,7 @@ export async function updateMediaItem(id: string, updates: Partial<InsertMediaIt
  */
 export async function backfillMediaFromStorage(): Promise<{ scanned: number; registered: number }> {
   const { storageBackend } = await import("../object_storage/s3-backend");
+  const backfillPrincipal = createNamedSystemPrincipal("media-backfill");
   if (!storageBackend.isConfigured()) {
     log.log("backfill skipped: S3 not configured");
     return { scanned: 0, registered: 0 };
@@ -167,7 +177,7 @@ export async function backfillMediaFromStorage(): Promise<{ scanned: number; reg
           height: null,
           duration: null,
           metadata: null,
-        });
+        }, backfillPrincipal);
         registered++;
       } catch (err: any) {
         // onConflictDoNothing handles dupes, this catches other errors
