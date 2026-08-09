@@ -232,6 +232,19 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["command"],
     },
   },
+  python: {
+    description: "Run bounded Python diagnostics inside the current session-owned repository clone. This is a separate constrained execution boundary: build:write plus trusted engineering provenance are required; server secrets are absent; filesystem access is read-only and limited to the repository and Python standard library; network, subprocess, native-extension loading, and filesystem mutation are denied; wall time, CPU, memory, file size, descriptors, source size, and output are capped. Raw python remains blocked in shell.",
+    category: "system",
+    parameters: {
+      type: "object",
+      properties: {
+        repositoryDirectory: { type: "string", description: "Exact directory name of the current session-owned clone inside repos/, for example mono-env-11-ms123456" },
+        source: { type: "string", description: "Python source to execute (max 50,000 characters)" },
+        timeoutMs: { type: "number", description: "Wall timeout in milliseconds (default 10000, hard cap 30000)" },
+      },
+      required: ["repositoryDirectory", "source"],
+    },
+  },
   npm_dependencies: {
     description: "Safely set one exact npm package version in a repository-root or nested package.json and regenerate that package's existing package-lock.json without mutating node_modules or running lifecycle scripts. Root packages must use the session clone's immutable workspace toolchain symlink. Restricted to the current session-owned repos/ clone and trusted engineering sessions with build:write. This is the only approved dependency-mutation path; general npm install remains blocked.",
     category: "system",

@@ -29,7 +29,7 @@ export type ToolAuthorityDecision =
   | { allowed: true }
   | { allowed: false; reason: string };
 
-const ENGINEERING_TOOLS = new Set(["shell", "git", "code", "npm_dependencies", "railway", "expo", "sentry", "platforms"]);
+const ENGINEERING_TOOLS = new Set(["shell", "python", "git", "code", "npm_dependencies", "railway", "expo", "sentry", "platforms"]);
 const ENGINEERING_WRITE_ACTIONS: Record<string, ReadonlySet<string>> = {
   git: new Set(["clone", "pull", "branch", "checkout", "add", "commit", "push", "create_pr", "merge_pr", "delete_branch"]),
   npm_dependencies: new Set(["set_package"]),
@@ -103,7 +103,7 @@ function requiresPermission(
   if (toolName === "jobs") return ["list", "get"].includes(action || "") ? "system:read" : "system:write";
   if (isRepositoryScratchWrite(toolName, action, args)) return "build:write";
   if (!ENGINEERING_TOOLS.has(toolName)) return null;
-  if (toolName === "shell") return "build:write";
+  if (toolName === "shell" || toolName === "python") return "build:write";
   if (ENGINEERING_WRITE_ACTIONS[toolName]?.has(action || "")) return "build:write";
   return "build:read";
 }
@@ -161,7 +161,7 @@ export function authorizeToolInvocation(
     return { allowed: false, reason: "session_owned_repository_required" };
   }
 
-  if ((toolName === "shell" || repositoryScratchWrite) && !isTrustedEngineeringDelegation(context)) {
+  if ((toolName === "shell" || toolName === "python" || repositoryScratchWrite) && !isTrustedEngineeringDelegation(context)) {
     return { allowed: false, reason: "trusted_engineering_delegation_required" };
   }
 
@@ -174,7 +174,7 @@ export function authorizeToolInvocation(
     const key = `${toolName}:${action || "*"}`;
     const wildcardKey = `${toolName}:*`;
     const trustedEngineeringWrite = isTrustedEngineeringDelegation(context)
-      && ENGINEERING_WRITE_ACTIONS[toolName]?.has(action || "");
+      && (toolName === "python" || ENGINEERING_WRITE_ACTIONS[toolName]?.has(action || ""));
     const trustedWorkflowStageAction = context.trustedDelegation === "workflow"
       && toolName === "workflows"
       && isWorkflowStageAction(action);

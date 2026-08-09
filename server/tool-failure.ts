@@ -21,6 +21,9 @@ export type ToolFailureCode =
   | "orient_persona_required"
   | "orient_no_session"
   | "shell_policy_denied"
+  | "python_execution_rejected"
+  | "python_execution_timeout"
+  | "python_output_limit_exceeded"
   | "tool_schema_invalid"
   // Plan contract rejects
   | "plan_input_invalid"
