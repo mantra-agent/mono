@@ -127,7 +127,8 @@ export async function emitCompletedTurnSummary(input: TurnSummaryInput): Promise
   if (!input.vaultId || !input.assistantMessageId || !input.sessionId) throw new Error("Turn summary requires vault, session, and assistant message provenance");
   const exists = await db.execute(sql`SELECT 1 FROM historical_continuity_entries WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND session_id=${input.sessionId} AND assistant_message_id=${input.assistantMessageId} AND level='turn' LIMIT 1`);
   if (exists.rows.length) return;
-  const completedAt = new Date(input.completedAt);
+  const completedAt = parseDatabaseDate(input.completedAt);
+  if (!completedAt) throw new Error("Turn summary requires a valid completedAt timestamp");
   const renderedTools = input.toolCalls.map((tool) => `${tool.toolName}: ${tool.status}${tool.outcome ? ` (${tool.outcome})` : ""}${tool.error ? ` error=${tool.error}` : ""}`).join("\n");
   const source = `USER\n${input.userContent}\n\nTOOLS (completed before this summary)\n${renderedTools || "none"}\n\nASSISTANT\n${input.assistantContent}`.slice(-TURN_MAX_INPUT_CHARS);
   const result = await chatCompletion({
