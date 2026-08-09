@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "scopeRoots": ["server", "shared", "script", "scripts", "migrations"],
+  "entries": [
+    {
+      "id": "issue-route-structured-logging",
+      "status": "cured",
+      "paths": ["server/routes/issue-routes.ts"],
+      "owner": "Build Issues",
+      "principles": ["Observability", "Fail Loudly, Degrade Gracefully"],
+      "evidence": "Reachable through registerDomainRoutes; application-error list and dismiss failures now use createLogger with bounded error-type metadata.",
+      "reviewTrigger": "Issue route, error telemetry, or server logging boundary changes"
+    },
+    {
+      "id": "server-root",
+      "status": "reviewed",
+      "directDirectory": "server",
+      "excludePaths": ["server/skill-defaults.ts", "server/prompt-module-defaults.ts"],
+      "owner": "Server Core",
+      "principles": ["Architecture", "Security", "Ownership", "Async I/O", "Structured Logging", "Bounded Operations", "References", "Dead Code"],
+      "evidence": "Reviewed composition, canonical boundaries, runtime/boot actors, storage authorities, provider entry points, and static heuristic leads under root and server AGENTS; retained synchronous calls are boot/build/supervisor or explicitly bounded execution boundaries, not ordinary request-path filesystem state.",
+      "reviewTrigger": "Server root composition, authority, persistence, or runtime-boundary changes"
+    },
+    {
+      "id": "server-memory",
+      "status": "reviewed",
+      "prefixes": ["server/memory/"],
+      "owner": "Memory",
+      "principles": ["Canonical Mutation Path", "Principal Scope", "Bounded Retrieval", "Provenance", "Observability"],
+      "evidence": "Reviewed under server/memory/AGENTS.md against vNext source, claim, retrieval, lifecycle, provenance, and legacy-quarantine ownership.",
+      "reviewTrigger": "Memory source, claim, retrieval, lifecycle, or compatibility changes"
+    },
+    {
+      "id": "server-council",
+      "status": "reviewed",
+      "prefixes": ["server/council/"],
+      "owner": "Council",
+      "principles": ["Session Ownership", "Principal Scope", "Bounded Deliberation", "Observability"],
+      "evidence": "Reviewed under server/council/AGENTS.md against session-tree messaging and council execution boundaries.",
+      "reviewTrigger": "Council or session-tree execution changes"
+    },
+    {
+      "id": "server-voice",
+      "status": "reviewed",
+      "prefixes": ["server/voice/"],
+      "owner": "Voice",
+      "principles": ["Single Engine", "Async I/O", "Backpressure", "Provider Authority", "Observability"],
+      "evidence": "Reviewed under server/voice/AGENTS.md against the single custom-LLM pipeline, provider transport, turn lifecycle, and bounded streaming ownership.",
+      "reviewTrigger": "Voice session, provider, streaming, or speech ownership changes"
+    },
+    {
+      "id": "server-routes",
+      "status": "reviewed",
+      "prefixes": ["server/routes/"],
+      "excludePaths": ["server/routes/issue-routes.ts"],
+      "owner": "HTTP and WebSocket Domains",
+      "principles": ["Central Authorization", "Safe Partial Updates", "Input Validation", "Structured Logging", "Bounded Responses"],
+      "evidence": "Reviewed route registration and mutation/read boundaries against principal permissions, sparse-patch semantics, bounded inputs/results, canonical storage ownership, and peer route shape.",
+      "reviewTrigger": "Route registration, request schema, permission, or mutation changes"
+    },
+    {
+      "id": "server-runtime-tools",
+      "status": "reviewed",
+      "prefixes": ["server/runtime/", "server/tools/", "server/workflows/", "server/sessions/"],
+      "owner": "Agent Runtime",
+      "principles": ["Single Source of Truth", "Fenced Execution", "Replayability", "Tool Ownership", "Bounded Operations"],
+      "evidence": "Reviewed Runtime, tool-domain composition, workflows, and sessions against canonical registry/handler ownership, fenced attempts, idempotency, terminal receipts, and bounded operations after Steps 4–6.",
+      "reviewTrigger": "Runtime handler, tool registry/domain, workflow, or session execution changes"
+    },
+    {
+      "id": "server-integrations-platforms",
+      "status": "reviewed",
+      "prefixes": ["server/integrations/", "server/platforms/", "server/glasses/", "server/phone/", "server/speech-recognition/"],
+      "owner": "Provider Integrations",
+      "principles": ["Least Privilege", "Provider Origin", "Timeouts", "Bounded Bodies", "Idempotency", "Structured Outcomes"],
+      "evidence": "Reviewed provider adapters and platform bindings against credential isolation, fixed origins, request budgets, bounded payloads, replay-safe effects, and explicit outcome discriminants. Synchronous Expo filesystem/process work is retained as an isolated build adapter, not ordinary request I/O.",
+      "reviewTrigger": "Provider SDK, credential, endpoint, build adapter, or binding changes"
+    },
+    {
+      "id": "server-persistence-domains",
+      "status": "reviewed",
+      "prefixes": ["server/file-storage/", "server/object_storage/", "server/media/", "server/meeting/", "server/meetings/", "server/work/", "server/relationships/", "server/strategy/", "server/simple/"],
+      "owner": "Domain Storage Owners",
+      "principles": ["Canonical Mutation Path", "Principal and Vault Scope", "Transactions", "Safe Partial Updates", "References"],
+      "evidence": "Reviewed storage and aggregate services against scoped helpers, canonical mutations, transaction/lock ownership, sparse patches, bounded reads, and shared canonical references.",
+      "reviewTrigger": "Domain storage, aggregate, ownership, or reference changes"
+    },
+    {
+      "id": "server-mods-operations",
+      "status": "reviewed",
+      "prefixes": ["server/mods/", "server/notifications/", "server/regression/", "server/services/", "server/utils/", "server/lib/", "server/scripts/", "server/migrations/"],
+      "owner": "Server Composition and Operations",
+      "principles": ["Core and Mod Ownership", "Composition", "Bounded Operations", "Observability", "Schema Delegation"],
+      "evidence": "Reviewed Mod composition, operational helpers, notifications, regression, utilities, and delegated schema actors against single ownership, bounded execution, structured observability, and schema-convergence authority.",
+      "reviewTrigger": "Mod registry, operational helper, schema actor, or background service changes"
+    },
+    {
+      "id": "shared-contracts",
+      "status": "reviewed",
+      "prefixes": ["shared/"],
+      "owner": "Shared Protocol",
+      "principles": ["Interfaces Before Implementation", "Names Are Interfaces", "Dependency-Light Contracts", "Canonical References", "Safe Partial Updates"],
+      "evidence": "Reviewed shared protocol and model files as dependency-light cross-runtime contracts; schemas, discriminants, reference grammar, permission vocabulary, and sparse mutation semantics remain owned by their canonical registries/boundaries.",
+      "reviewTrigger": "Cross-runtime schema, reference, permission, or protocol changes"
+    },
+    {
+      "id": "build-and-ops-scripts",
+      "status": "reviewed",
+      "prefixes": ["script/", "scripts/"],
+      "owner": "Build and Operations",
+      "principles": ["Reproducible Build", "Bounded Execution", "Explicit Side Effects", "No Runtime Authority"],
+      "evidence": "Reviewed production build and operational scripts. Console output and synchronous filesystem/process calls are retained where the process is itself a bounded CLI/build/supervisor operation; scripts do not become application state or request-path authority.",
+      "reviewTrigger": "Build gate, deployment script, diagnostic harness, or process lifecycle changes"
+    },
+    {
+      "id": "compatibility-fixtures",
+      "status": "exempted",
+      "paths": ["server/skill-defaults.ts", "server/prompt-module-defaults.ts"],
+      "owner": "Agent Runtime",
+      "principles": ["Compatibility Fixture Shape"],
+      "evidence": "Classified compatibility fixtures in repository-compliance.json; database-backed Skills and Prompt Modules remain live authority and reconciliation is bounded/monotonic.",
+      "reviewTrigger": "Fixture schema, database authority, reconciliation, or fallback changes"
+    },
+    {
+      "id": "immutable-migrations",
+      "status": "exempted",
+      "glob": "migrations/*.sql",
+      "owner": "Data Platform",
+      "principles": ["Immutable Migration History"],
+      "evidence": "Classified immutable applied history; present-day corrections require additive forward migrations through schema-convergence ownership.",
+      "reviewTrigger": "Migration addition, runner change, or proof a migration was never applied"
+    },
+    {
+      "id": "generated-migration-metadata",
+      "status": "exempted",
+      "prefixes": ["migrations/meta/"],
+      "owner": "Data Platform",
+      "principles": ["Generated Artifact Shape"],
+      "evidence": "Classified Drizzle-generated snapshots/journal; regeneration belongs to the migration tool and metadata never owns deployed schema.",
+      "reviewTrigger": "Migration generator, Drizzle version, or schema snapshot changes"
+    }
+  ]
+}

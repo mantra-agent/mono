@@ -158,7 +158,9 @@ export function registerIssueRoutes(app: Express) {
     try {
       res.json(await listRecentApplicationErrors(limit, 0));
     } catch (error) {
-      console.error("Failed to list recent application errors:", error instanceof Error ? error.name : "UnknownError");
+      log.error("issue_errors.list_failed", {
+        errorType: error instanceof Error ? error.name : "UnknownError",
+      });
       res.status(500).json({ error: "Failed to list recent application errors" });
     }
   });
@@ -172,7 +174,9 @@ export function registerIssueRoutes(app: Express) {
       }
       res.json({ ok: true });
     } catch (error) {
-      console.error("Failed to dismiss application error:", error instanceof Error ? error.name : "UnknownError");
+      log.error("issue_errors.dismiss_failed", {
+        errorType: error instanceof Error ? error.name : "UnknownError",
+      });
       res.status(500).json({ error: "Failed to dismiss application error" });
     }
   });
