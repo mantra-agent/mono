@@ -10,6 +10,7 @@ import {
   noteNavigationLongTask,
   noteNavigationSlowFrame,
 } from "@/lib/navigation-trace";
+import { homeAttributionMetadata } from "@/lib/home-performance-attribution";
 
 const log = createLogger("BrowserTelemetry");
 
@@ -278,7 +279,14 @@ function observeLongTasks(): void {
         const now = Date.now();
         if (now - lastLongTaskAt < LONG_TASK_MIN_INTERVAL_MS) continue;
         lastLongTaskAt = now;
-        recordBrowserTelemetry({ kind: "long_task", name: "main_thread_blocked", value: entry.duration, unit: "ms", bucket: bucketDuration(entry.duration) });
+        recordBrowserTelemetry({
+          kind: "long_task",
+          name: "main_thread_blocked",
+          value: entry.duration,
+          unit: "ms",
+          bucket: bucketDuration(entry.duration),
+          metadata: homeAttributionMetadata(),
+        });
       }
     });
     observer.observe({ type: "longtask", buffered: true });
@@ -308,7 +316,7 @@ function observeEventLoopResponsiveness(): void {
         value: lag,
         unit: "ms",
         bucket: bucketDuration(lag),
-        metadata: { resumeGeneration },
+        metadata: { resumeGeneration, ...homeAttributionMetadata() },
       });
     }
   }, interval);
@@ -340,7 +348,7 @@ function observeFrameContention(): void {
         value: delta,
         unit: "ms",
         bucket: bucketDuration(delta),
-        metadata: { resumeGeneration },
+        metadata: { resumeGeneration, ...homeAttributionMetadata() },
       });
     }
     window.requestAnimationFrame(tick);

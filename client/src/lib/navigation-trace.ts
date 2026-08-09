@@ -1,6 +1,7 @@
 import type { Query } from "@tanstack/react-query";
 import type { NavigationTraceDiagnosis, NavigationTraceOutcome } from "@shared/browser-telemetry";
 import { queryClient } from "@/lib/queryClient";
+import { homeAttributionMetadata } from "@/lib/home-performance-attribution";
 
 const TRACE_DEADLINE_MS = 15_000;
 const COMMIT_SETTLE_GRACE_MS = 100;
@@ -8,6 +9,23 @@ const READY_COMMIT_GAP_MS = 250;
 const MAIN_THREAD_TASK_MS = 75;
 const MAIN_THREAD_FRAME_MS = 120;
 const NAVIGATION_BUDGET_MS = 2_500;
+
+const QUERY_CATEGORIES = ["home_feed", "library", "sessions", "shell", "other"] as const;
+type QueryCategory = typeof QUERY_CATEGORIES[number];
+
+function emptyQueryCategoryRecord(): Record<QueryCategory, number> {
+  return { home_feed: 0, library: 0, sessions: 0, shell: 0, other: 0 };
+}
+
+function queryCategory(query: Query): QueryCategory {
+  const firstKey = query.queryKey[0];
+  if (typeof firstKey !== "string") return "other";
+  if (firstKey === "/api/home/feed") return "home_feed";
+  if (firstKey.startsWith("/api/info/library")) return "library";
+  if (firstKey.startsWith("/api/sessions")) return "sessions";
+  if (firstKey === "/api/gateway/status" || firstKey.startsWith("/api/product-composition")) return "shell";
+  return "other";
+}
 
 interface NavigationTrace {
   id: string;
@@ -21,7 +39,9 @@ interface NavigationTrace {
   firstCommitAt?: number;
   queryStartedCount: number;
   querySettledCount: number;
-  trackedQueries: Map<string, number>;
+  trackedQueries: Map<string, { startedAt: number; category: QueryCategory }>;
+  queryCategoryCounts: Record<QueryCategory, number>;
+  queryCategoryMaxMs: Record<QueryCategory, number>;
   lastQuerySettledAt?: number;
   peakQueries: number;
   longTaskCount: number;
@@ -94,6 +114,8 @@ function beginNavigation(toRoute: string): void {
     queryStartedCount: 0,
     querySettledCount: 0,
     trackedQueries: new Map(),
+    queryCategoryCounts: emptyQueryCategoryRecord(),
+    queryCategoryMaxMs: emptyQueryCategoryRecord(),
     peakQueries: 0,
     longTaskCount: 0,
     longTaskMaxMs: 0,
@@ -180,6 +202,11 @@ function finalizeNavigation(outcome: NavigationTraceOutcome): void {
       streamSubscribedMax: trace.streamSubscribedMax,
       streamActiveMax: trace.streamActiveMax,
       streamSegmentsMax: trace.streamSegmentsMax,
+      ...Object.fromEntries(QUERY_CATEGORIES.flatMap((category) => [
+        [`query.${category}.count`, trace.queryCategoryCounts[category]],
+        [`query.${category}.maxMs`, trace.queryCategoryMaxMs[category]],
+      ])),
+      ...homeAttributionMetadata(),
     },
   });
 }
@@ -224,15 +251,23 @@ function observeQueries(): () => void {
       // forced outcome=deadline, and mis-attributed unrelated long tasks /
       // slow frames as main_thread_contention while inflating peakQueries.
       if (isInitialLoadFetch(query) && !trace.trackedQueries.has(queryHash)) {
-        trace.trackedQueries.set(queryHash, now());
+        const category = queryCategory(query);
+        trace.trackedQueries.set(queryHash, { startedAt: now(), category });
+        trace.queryCategoryCounts[category] += 1;
         trace.queryStartedCount += 1;
         trace.peakQueries = Math.max(trace.peakQueries, trace.trackedQueries.size);
       }
       return;
     }
-    if (trace.trackedQueries.delete(queryHash)) {
+    const tracked = trace.trackedQueries.get(queryHash);
+    if (tracked && trace.trackedQueries.delete(queryHash)) {
+      const settledAt = now();
+      trace.queryCategoryMaxMs[tracked.category] = Math.max(
+        trace.queryCategoryMaxMs[tracked.category],
+        settledAt - tracked.startedAt,
+      );
       trace.querySettledCount += 1;
-      trace.lastQuerySettledAt = now();
+      trace.lastQuerySettledAt = settledAt;
       scheduleCompletedFinalization();
     }
   });
@@ -269,6 +304,8 @@ function installHistoryObserver(): void {
         queryStartedCount: 0,
         querySettledCount: 0,
         trackedQueries: new Map(),
+        queryCategoryCounts: emptyQueryCategoryRecord(),
+        queryCategoryMaxMs: emptyQueryCategoryRecord(),
         peakQueries: 0,
         longTaskCount: 0,
         longTaskMaxMs: 0,

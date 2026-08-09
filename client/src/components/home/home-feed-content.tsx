@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useHomeFeed } from "@/hooks/use-home-feed";
 import { usePageActivity } from "@/hooks/use-page-activity";
 import { SimpleFeedView } from "./home-feed";
+import { markHomeLoading, markHomeRenderable } from "@/lib/home-performance-attribution";
 
 const PULL_THRESHOLD = 64;
 const MAX_PULL_DISTANCE = 96;
@@ -62,10 +63,21 @@ export function SimpleFeedContent() {
   };
 
   useEffect(() => {
-    if (query.isFetching) startActivity("home-feed");
-    else endActivity("home-feed");
+    if (query.isFetching) {
+      startActivity("home-feed");
+      if (!query.data) markHomeLoading();
+    } else {
+      endActivity("home-feed");
+    }
     return () => endActivity("home-feed");
-  }, [endActivity, query.isFetching, startActivity]);
+  }, [endActivity, query.data, query.isFetching, startActivity]);
+
+  useEffect(() => {
+    if (!query.data) return;
+    const visibleSections = query.data.sections.filter((section) => section.items.length > 0 || section.planArtifact !== undefined);
+    const itemCount = visibleSections.reduce((count, section) => count + section.items.length, 0);
+    markHomeRenderable(visibleSections.length, itemCount);
+  }, [query.data]);
 
   return (
     <div

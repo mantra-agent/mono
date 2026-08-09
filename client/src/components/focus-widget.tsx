@@ -28,6 +28,7 @@ import { useSessionActivityState } from "@/components/thought-indicator";
 import { emitSessionListChanged, emitSessionChanged } from "@/hooks/use-data-sync";
 import { useToast } from "@/hooks/use-toast";
 import { useSidebar } from "@/components/ui/sidebar";
+import { markFocusShellMounted } from "@/lib/home-performance-attribution";
 
 const log = createLogger("FocusWidget");
 
@@ -156,6 +157,12 @@ export function FocusWidget({ contained = false }: { contained?: boolean } = {})
       setWidgetOpen(true);
     }
   }, [route, widgetOpen, setWidgetOpen, sidebarIsMobile, openMobile]);
+
+  const focusShellMounted = !HIDDEN_ROUTES.has(route) && (isDesktop || widgetOpen);
+  useEffect(() => {
+    markFocusShellMounted(focusShellMounted);
+    return () => markFocusShellMounted(false);
+  }, [focusShellMounted]);
 
   if (HIDDEN_ROUTES.has(route)) return null;
 
