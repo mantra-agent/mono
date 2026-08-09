@@ -318,6 +318,7 @@ function toolTransfersExecutionToChild(name: string, args: Record<string, unknow
  */
 function toolRequiresNestedRuntimeScheduler(name: string, args: Record<string, unknown>): boolean {
   if (name === "skills" && args.action === "run") return false;
+  if (name === "plan" && args.action === "execute") return false;
   return toolTransfersExecutionToChild(name, args);
 }
 

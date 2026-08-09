@@ -93,13 +93,14 @@ class RuntimeDispatcher {
     const started = await startRuntimeAttempt(fence, "in_process_trusted");
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let heartbeatFailure: unknown = null;
+    const abortController = new AbortController();
     let heartbeatQueue = Promise.resolve();
     const heartbeat = (usageDelta: Record<string, number> = {}): Promise<void> => {
       const operation = heartbeatQueue.then(async () => {
         try {
           const state = await heartbeatRuntimeAttempt(fence, usageDelta);
-          if (state.cancellationRequested) {
-            heartbeatFailure = Object.assign(new Error("Runtime cancellation requested"), { code: "cancellation_requested" });
+          if (state.cancellationRequested && !abortController.signal.aborted) {
+            abortController.abort("cancelled");
           }
         } catch (error) {
           heartbeatFailure = error;
@@ -111,6 +112,7 @@ class RuntimeDispatcher {
     };
     const context: RuntimeExecutionContext = {
       fence,
+      signal: abortController.signal,
       effectIdempotencyKey: (effectName) => `${started.run.accountId}/${started.run.id}/${effectName}`,
       heartbeat,
       appendEvidence: (input) => appendRuntimeEvidence(fence, input).then(() => undefined),

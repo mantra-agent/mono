@@ -616,6 +616,21 @@ async function handleExecute(
   const sessionId = (args._sessionId as string) || plan.originSessionId;
   const planTitle = (page?.title || "Untitled Plan").replace(/^Plan:\s*/, "");
 
+  const authority = args._authorityContext as import("../agent-authority").AgentAuthorityContext | undefined;
+  if (authority?.runtimeRunId && authority.runtimeAttemptId) {
+    const principal = requireCurrentPrincipal();
+    const { enqueuePlanExecutionRuntimeRun } = await import("../runtime/proof-path-handlers");
+    const handoff = await enqueuePlanExecutionRuntimeRun(principal, {
+      planId,
+      originSessionId: sessionId,
+      planTitle,
+      parentRuntimeRunId: authority.runtimeRunId,
+    });
+    return {
+      result: `Plan **${planTitle}** accepted for independent Runtime execution.\n\nPlan DB ID: ${plan.id}\nRuntime Run ID: ${handoff.run.id}\nPage ID: ${plan.pageId} @plan:${plan.id}${page ? ` @page:${page.slug}` : ""}`,
+    };
+  }
+
   const { executePlan } = await import("../plan-executor");
 
   if (!plan.blocking) {
