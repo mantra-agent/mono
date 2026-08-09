@@ -1457,7 +1457,7 @@ function ToolIconStrip({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                className="relative flex items-center justify-center h-7 w-7 rounded-full shrink-0 bg-warning/15 touch-manipulation animate-in fade-in duration-200"
+                className="relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 bg-warning/15 touch-manipulation animate-in fade-in duration-200"
                 aria-label={label}
                 data-testid={`tool-icon-${step.id}`}
               >
@@ -1522,7 +1522,7 @@ function ToolIconStrip({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                className={`relative flex items-center justify-center h-7 w-7 rounded-full shrink-0 ${bgColor} touch-manipulation animate-in fade-in duration-200`}
+                className={`relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 ${bgColor} touch-manipulation animate-in fade-in duration-200`}
                 aria-label={ariaLabel}
                 data-testid={`tool-icon-${step.id}`}
               >
