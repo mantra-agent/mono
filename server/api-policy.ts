@@ -108,6 +108,7 @@ const PERSONAL_RULES: ApiPolicyRule[] = [
       "/api/twitter",
       "/api/triage-log",
       "/api/email-drafts",
+      "/api/meeting-drafts",
       "/api/email-sync",
       "/api/session",
       "/api/home",
