@@ -348,6 +348,19 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
 
 
   {
+    id: "history",
+    layer: "reference",
+    title: "Historical Continuity",
+    parentId: null,
+    sourceType: "dynamic",
+    freshnessPolicy: "real-time",
+    priority: 8.5,
+    includedIn: ["full", "world"],
+    defaultIncluded: true,
+    maxDefaultTokens: 2400,
+  },
+
+  {
     id: "memory",
     title: "Memory",
     parentId: null,

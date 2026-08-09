@@ -306,6 +306,10 @@ const sectionResolvers: Record<string, SectionResolver> = {
   "world_model.theses": resolveActiveTheses,
   "world_model.calendar": resolveCalendar,
   "world_model.meeting": async (request) => request.meetingContext ?? "",
+  "history": async () => {
+    const { renderHistoryProjection } = await import("./historical-continuity");
+    return renderHistoryProjection();
+  },
   "memory": async () => "",
   "memory.recent_sessions": resolveRecentSessions,
   "memory.graph": resolveGraphMemory,

@@ -797,6 +797,8 @@ export async function runSchemaBootstrap(
   await ensurePrincipleRevisionSchema(pool);
   await ensureWorkflowAttemptLeaseSchema(pool);
   await ensureBrowserPerformanceTelemetrySchema(pool);
+  const { ensureHistoricalContinuitySchema } = await import("./historical-continuity");
+  await ensureHistoricalContinuitySchema();
 
   // Signal/news schema is ensured on the canonical boot path — not lazily on the
   // first read via autoHeal. Lazy healing failed in prod: a modeled column

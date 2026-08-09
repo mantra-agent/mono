@@ -411,12 +411,25 @@ export async function runBetweenTurnCompaction(
     // The deterministic capsule is grounding input and the degraded fallback;
     // summarizer failure never blocks compaction.
     let summaryBody = capsuleContent;
-    let summaryKind: "narrative" | "capsule" = "capsule";
+    let summaryKind: "narrative" | "capsule" | "turn_summaries" = "capsule";
     let degradedSegments: number | undefined;
     let segmentCount = 0;
     let modelCallCount = 0;
     let summarizationInputTokens = 0;
     try {
+      const removedAssistantIds = removed
+        .filter((message) => message.role === "assistant")
+        .map((message) => message.id);
+      const { getTurnSummariesForCompaction } = await import("./historical-continuity");
+      const accumulatedTurnSummaries = await getTurnSummariesForCompaction(
+        sessionId,
+        removedAssistantIds,
+      );
+      if (removedAssistantIds.length > 0 && accumulatedTurnSummaries) {
+        summaryBody = accumulatedTurnSummaries;
+        summaryKind = "turn_summaries";
+        segmentCount = removedAssistantIds.length;
+      } else {
       const { summarizeCompactedMessages } = await import("./compaction-summarizer");
       const narrative = await summarizeCompactedMessages({
         sessionId,
@@ -446,6 +459,7 @@ export async function runBetweenTurnCompaction(
         summarizationInputTokens = narrative.inputTokens;
       } else {
         log.warn(`betweenTurnCompaction: narrative summary unavailable, using capsule fallback sessionId=${sessionId}`);
+      }
       }
     } catch (summaryError: unknown) {
       log.warn(`betweenTurnCompaction: narrative summarizer error, using capsule fallback sessionId=${sessionId} error=${summaryError instanceof Error ? summaryError.message : String(summaryError)}`);
