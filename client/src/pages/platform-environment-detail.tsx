@@ -279,41 +279,52 @@ function useDevStatus(platformEnvironmentId: number) {
 function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmentId: number }) {
   const { data: status, isLoading, error, refetch, isFetching } = useDevStatus(platformEnvironmentId);
 
-  if (isLoading && !status) return <Skeleton className="h-96 w-full" />;
+  if (isLoading && !status) {
+    return (
+      <EnvironmentSection label="Build" storageKey={`platform-environment:${platformEnvironmentId}:section:build`}>
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading build status…</div>
+      </EnvironmentSection>
+    );
+  }
 
   if (!status) {
     return (
-      <ConfigCard title="Development" description="Stage deployment status is unavailable.">
-        <div className="flex items-center justify-between gap-3 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
-          <span>Couldn't reach Mantra's Railway proxy: {(error as Error)?.message ?? "unknown error"}</span>
-          <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching}>
-            {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Retry"}
+      <EnvironmentSection label="Build" storageKey={`platform-environment:${platformEnvironmentId}:section:build`}>
+        <ProfileTreeRow label="Status unavailable" icon={<AlertCircle className="h-3.5 w-3.5 text-warning" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" actionContent={(
+          <Button variant="ghost" size="icon" className="h-6 min-h-6 w-6 min-w-6" onClick={() => refetch()} disabled={isFetching} aria-label="Retry build status">
+            {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
           </Button>
-        </div>
-      </ConfigCard>
+        )}>
+          <span className="truncate text-warning">{(error as Error)?.message ?? "Unknown error"}</span>
+        </ProfileTreeRow>
+      </EnvironmentSection>
     );
   }
 
   if (!status.configured || !status.deployment) {
     return (
-      <ConfigCard title="Development" description="Stage deployment status is not configured yet.">
-        <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-          Development environment not configured.
-        </div>
-      </ConfigCard>
+      <EnvironmentSection label="Build" storageKey={`platform-environment:${platformEnvironmentId}:section:build`}>
+        <ProfileTreeRow label="Status" icon={<Rocket className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
+          <span className="text-muted-foreground">Not configured</span>
+        </ProfileTreeRow>
+      </EnvironmentSection>
     );
   }
 
-  return <BuildStatusPanel
-    deployment={status.deployment}
-    buildLogsUrl={`/api/railway/environments/${platformEnvironmentId}/build-logs`}
-    retryUrl={`/api/railway/environments/${platformEnvironmentId}/redeploy`}
-    environmentLabel="stage"
-    invalidateOnRetry={[
-      ["/api/railway/environments", String(platformEnvironmentId), "status"],
-      ["/api/railway/environments", String(platformEnvironmentId), "deployments"],
-    ]}
-  />;
+  return (
+    <EnvironmentSection label="Build" storageKey={`platform-environment:${platformEnvironmentId}:section:build`}>
+      <BuildStatusPanel
+        deployment={status.deployment}
+        buildLogsUrl={`/api/railway/environments/${platformEnvironmentId}/build-logs`}
+        retryUrl={`/api/railway/environments/${platformEnvironmentId}/redeploy`}
+        environmentLabel="stage"
+        invalidateOnRetry={[
+          ["/api/railway/environments", String(platformEnvironmentId), "status"],
+          ["/api/railway/environments", String(platformEnvironmentId), "deployments"],
+        ]}
+      />
+    </EnvironmentSection>
+  );
 }
 
 function EnvironmentPipelineCard({ details, environmentId, sourceEnvironmentId }: { details: EnvironmentDetails; environmentId: number; sourceEnvironmentId: number | null }) {
