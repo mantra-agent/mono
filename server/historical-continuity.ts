@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "crypto";
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { db } from "./db";
 import { chatCompletion } from "./model-client";
 import { ACTIVITY_FRAMING } from "./job-profiles";
@@ -180,7 +180,7 @@ export async function renderHistoryProjection(tokenBudget = HISTORY_TOKEN_BUDGET
     WITH ranked AS (
       SELECT *, row_number() OVER (PARTITION BY level ORDER BY bucket_start DESC) AS rn
       FROM historical_continuity_entries
-      WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND vault_id = ANY(${vaultIds}::text[])
+      WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND vault_id = ANY(${textArray(vaultIds)})
     )
     SELECT id, level, bucket_start, bucket_end, summary, source_start, source_end, source_count, session_id, assistant_message_id
     FROM ranked WHERE (level='turn' AND rn<=24) OR (level='hour' AND rn<=48) OR (level='day' AND rn<=31) OR (level='week' AND rn<=16) OR (level='month' AND rn<=18) OR (level='quarter' AND rn<=12) OR (level='year' AND rn<=10)
@@ -214,10 +214,10 @@ export async function getCompletedTurnSummaryMap(sessionId: string, assistantMes
     FROM historical_continuity_entries
     WHERE owner_user_id=${principal.userId}
       AND account_id=${principal.accountId}
-      AND vault_id = ANY(${principal.visibleVaultIds ?? []}::text[])
+      AND vault_id = ANY(${textArray(principal.visibleVaultIds ?? [])})
       AND session_id=${sessionId}
       AND level='turn'
-      AND assistant_message_id = ANY(${assistantMessageIds}::text[])
+      AND assistant_message_id = ANY(${textArray(assistantMessageIds)})
   `);
   return new Map(
     (result.rows as Array<Record<string, unknown>>)
@@ -229,9 +229,13 @@ export async function getCompletedTurnSummaryMap(sessionId: string, assistantMes
 export async function getTurnSummariesForCompaction(sessionId: string, assistantMessageIds: string[]): Promise<string | null> {
   const principal = requireCurrentUserPrincipal();
   if (!assistantMessageIds.length) return null;
-  const result = await db.execute(sql`SELECT assistant_message_id, bucket_start, summary FROM historical_continuity_entries WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND session_id=${sessionId} AND level='turn' AND assistant_message_id = ANY(${assistantMessageIds}::text[]) ORDER BY bucket_start`);
+  const result = await db.execute(sql`SELECT assistant_message_id, bucket_start, summary FROM historical_continuity_entries WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND session_id=${sessionId} AND level='turn' AND assistant_message_id = ANY(${textArray(assistantMessageIds)}) ORDER BY bucket_start`);
   if (result.rows.length !== assistantMessageIds.length) return null;
   return (result.rows as Array<Record<string, unknown>>).map((row) => `[${new Date(String(row.bucket_start)).toISOString()}] ${String(row.summary)}`).join("\n\n");
+}
+
+function textArray(values: string[]): SQL {
+  return sql`ARRAY[${sql.join(values.map((value) => sql`${value}`), sql`, `)}]::text[]`;
 }
 
 function deterministicId(...parts: string[]): string { return `hc_${createHash("sha256").update(parts.join("\u001f")).digest("hex").slice(0, 32)}`; }
