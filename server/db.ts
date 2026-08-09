@@ -1,5 +1,5 @@
 // Use createLogger for logging ONLY
-import { Pool, Client, types as pgTypes } from "pg";
+import { type Pool, types as pgTypes } from "pg";
 import { createHash } from "crypto";
 
 // Treat `timestamp without time zone` (OID 1114) as UTC.
@@ -151,16 +151,19 @@ export function getInFlightHighThreshold(): number {
 }
 
 import { getAppNamePrefix } from "@shared/instance-config";
-import { appPoolConfig, assertRawDatabaseCallerAllowed } from "./database-authority";
+import {
+  closeManagedDatabasePools,
+  createDedicatedDatabaseClient,
+  createManagedDatabasePool,
+} from "./database-adapters";
 export const APP_NAME_PREFIX = getAppNamePrefix();
 export const BOOT_ID =
   process.env.WATCHDOG_BOOT_ID ||
   `${Date.now().toString(36)}-${process.pid}`;
 export const APP_NAME = `${APP_NAME_PREFIX}-${BOOT_ID}`;
 
-assertRawDatabaseCallerAllowed("app", "server/db.ts");
-export const pool = new Pool({
-  ...appPoolConfig(process.env.DATABASE_URL ?? ""),
+const generalPoolAdapter = createManagedDatabasePool("general", {
+  connectionString: process.env.DATABASE_URL,
   max: GENERAL_DB_POOL_MAX,
   min: GENERAL_DB_POOL_MIN,
   idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,
@@ -170,8 +173,9 @@ export const pool = new Pool({
   keepAliveInitialDelayMillis: 10_000,
   application_name: APP_NAME,
 } as any);
+export const pool = generalPoolAdapter.pool;
 
-export const voicePool = new Pool({
+const voicePoolAdapter = createManagedDatabasePool("voice", {
   connectionString: process.env.DATABASE_URL,
   max: VOICE_DB_POOL_MAX,
   min: VOICE_DB_POOL_MIN,
@@ -182,6 +186,7 @@ export const voicePool = new Pool({
   keepAliveInitialDelayMillis: 10_000,
   application_name: `${APP_NAME}-voice`,
 } as any);
+export const voicePool = voicePoolAdapter.pool;
 
 type ConnectionIncidentLane = "general" | "voice";
 
@@ -483,7 +488,7 @@ let _wedgeTriggered = false;
 export async function dumpPgStatActivity(timeoutMs = 5_000): Promise<string> {
   // Use a dedicated short-lived client so we don't compete for the wedged
   // pool's connections.
-  const dedicated = new Client({
+  const dedicated = createDedicatedDatabaseClient("watchdog", {
     connectionString: process.env.DATABASE_URL,
     application_name: `${APP_NAME}-watchdog`,
     statement_timeout: timeoutMs,
@@ -1026,7 +1031,7 @@ export async function closeDatabasePools(): Promise<void> {
   stopPoolHeartbeat();
   stopPoolSaturationMonitor();
   stopPoolWedgeWatchdog();
-  await Promise.allSettled([pool.end(), voicePool.end()]);
+  await closeManagedDatabasePools();
 }
 
 

@@ -8,7 +8,8 @@ import {
 } from "express";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import { createManagedDatabasePool } from "./database-adapters";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { storage } from "./storage";
@@ -557,12 +558,13 @@ export function setupAuth(app: Express) {
     app.set("trust proxy", 1);
   }
 
-  const pool = new Pool({
+  const pool = createManagedDatabasePool("auth-session", {
     connectionString: process.env.DATABASE_URL,
     max: 5,
     connectionTimeoutMillis: 5000,
     statement_timeout: 10000,
-  });
+    application_name: "mantra-auth-session",
+  }).pool;
 
   const capabilityMigrationReady = (async () => {
     for (const user of await storage.getUsers()) {

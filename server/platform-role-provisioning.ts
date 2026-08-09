@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "crypto";
-import { Client } from "pg";
+import { createDedicatedDatabaseClient } from "./database-adapters";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { privilegedAccessAudit } from "@shared/schema";
@@ -89,7 +89,12 @@ export async function provisionDatabaseRoles(args: {
   if (!adminUrl) throw new Error("Bound Railway service does not expose DATABASE_URL");
 
   const passwords = { mantra_app: secret(), mantra_system: secret(), mantra_migrator: secret() };
-  const client = new Client({ connectionString: adminUrl, application_name: "mantra-role-provisioner" });
+  const client = createDedicatedDatabaseClient("role-provisioning", {
+    connectionString: adminUrl,
+    application_name: "mantra-role-provisioner",
+    connectionTimeoutMillis: 5_000,
+    statement_timeout: 30_000,
+  });
   try {
     await client.connect();
     await client.query("BEGIN");
