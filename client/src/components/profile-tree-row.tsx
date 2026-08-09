@@ -54,8 +54,8 @@ export function ProfileTreeRow({
   const canExpand = Boolean(expandedContent);
   const showValue = hasRenderableChildren(children);
   const usesSessionMenuControls = mobileLayout === "inline";
-  const sessionDisclosureControlClassName = "h-5 min-h-5 w-5 min-w-5 rounded [&_svg]:size-3";
-  const sessionOverflowControlClassName = "h-6 min-h-6 w-6 min-w-6 rounded-md [&_svg]:size-3.5";
+  const sessionDisclosureControlClassName = "h-5 min-h-5 w-5 min-w-5 rounded p-0 [&_svg]:size-3";
+  const sessionOverflowControlClassName = "h-5 min-h-5 w-5 min-w-5 rounded p-0 [&_svg]:size-3.5";
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
