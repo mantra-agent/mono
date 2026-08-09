@@ -1,7 +1,7 @@
-import { db } from "./db";
-import { systemHooks, systemHookExecutions } from "@shared/schema";
+import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import type { SystemHook, SystemHookExecution } from "@shared/schema";
-import { and, eq, desc, sql, type SQL } from "drizzle-orm";
+import { systemHookExecutions, systemHooks } from "@shared/schema";
+import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db } from "./db";
 import { requireCurrentPrincipal, requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 
@@ -14,8 +14,15 @@ const hookScopeColumns = {
 function visible(predicate?: SQL): SQL {
   return combineWithVisibleScope(requireCurrentUserPrincipal(), hookScopeColumns, predicate);
 }
+
 function writable(predicate?: SQL): SQL {
   return combineWithWritableScope(requireCurrentUserPrincipal(), hookScopeColumns, predicate);
+}
+
+function schedulerVisibleHookPredicate(id: number): SQL {
+  const principal = requireCurrentPrincipal();
+  if (principal.actorType === "system" && principal.jobName) return eq(systemHooks.id, id);
+  return combineWithVisibleScope(requireCurrentUserPrincipal(), hookScopeColumns, eq(systemHooks.id, id));
 }
 
 export async function listHooks(): Promise<SystemHook[]> {
@@ -43,9 +50,9 @@ export async function createHook(data: {
   name: string;
   description?: string;
   eventPattern: string;
-  condition?: any;
+  condition?: unknown;
   actionType: string;
-  actionConfig: any;
+  actionConfig: unknown;
   cooldownSeconds?: number;
   enabled?: boolean;
   maxFirings?: number | null;
@@ -71,9 +78,9 @@ export async function updateHook(id: number, data: Partial<{
   name: string;
   description: string | null;
   eventPattern: string;
-  condition: any;
+  condition: unknown;
   actionType: string;
-  actionConfig: any;
+  actionConfig: unknown;
   cooldownSeconds: number;
   enabled: boolean;
   maxFirings: number | null;
@@ -89,25 +96,82 @@ export async function deleteHook(id: number): Promise<void> {
   await db.delete(systemHooks).where(writable(eq(systemHooks.id, id)));
 }
 
-export async function recordExecution(data: {
+export async function claimHookExecution(data: {
   hookId: number;
-  eventDbId?: number;
+  eventIdentity: string;
   actionType: string;
-  actionConfigResolved?: any;
-  status: string;
+  actionConfigResolved: unknown;
+}): Promise<SystemHookExecution | null> {
+  return db.transaction(async (tx) => {
+    await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.HOOK_EXECUTION, String(data.hookId));
+    const [hook] = await tx.select().from(systemHooks).where(schedulerVisibleHookPredicate(data.hookId)).limit(1);
+    if (!hook?.enabled) return null;
+
+    const [lastExecution] = await tx.select({ createdAt: systemHookExecutions.createdAt })
+      .from(systemHookExecutions)
+      .where(eq(systemHookExecutions.hookId, hook.id))
+      .orderBy(desc(systemHookExecutions.createdAt))
+      .limit(1);
+    if (hook.cooldownSeconds > 0 && lastExecution) {
+      const elapsedMs = Date.now() - lastExecution.createdAt.getTime();
+      if (elapsedMs < hook.cooldownSeconds * 1_000) return null;
+    }
+
+    if (hook.maxFirings != null) {
+      const [countRow] = await tx.select({ count: sql<number>`count(*)::int` })
+        .from(systemHookExecutions)
+        .where(eq(systemHookExecutions.hookId, hook.id));
+      if ((countRow?.count ?? 0) >= hook.maxFirings) {
+        await tx.update(systemHooks).set({ enabled: false, updatedAt: new Date() }).where(eq(systemHooks.id, hook.id));
+        return null;
+      }
+    }
+
+    const [execution] = await tx.insert(systemHookExecutions).values({
+      hookId: hook.id,
+      eventIdentity: data.eventIdentity,
+      actionType: data.actionType,
+      actionConfigResolved: data.actionConfigResolved,
+      status: "running",
+    }).onConflictDoNothing({
+      target: [systemHookExecutions.hookId, systemHookExecutions.eventIdentity],
+    }).returning();
+    return execution ?? null;
+  });
+}
+
+export async function completeHookExecution(data: {
+  hookId: number;
+  executionId: number;
+  status: "dispatched" | "success" | "error";
   errorMessage?: string;
-  durationMs?: number;
-}): Promise<void> {
-  const hook = await getHook(data.hookId);
-  if (!hook) throw new Error("Hook not visible to current principal");
-  await db.insert(systemHookExecutions).values({
-    hookId: data.hookId,
-    eventDbId: data.eventDbId || null,
-    actionType: data.actionType,
-    actionConfigResolved: data.actionConfigResolved || null,
-    status: data.status,
-    errorMessage: data.errorMessage || null,
-    durationMs: data.durationMs || null,
+  durationMs: number;
+}): Promise<{ disabled: boolean }> {
+  return db.transaction(async (tx) => {
+    await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.HOOK_EXECUTION, String(data.hookId));
+    const [completed] = await tx.update(systemHookExecutions).set({
+      status: data.status,
+      errorMessage: data.errorMessage ?? null,
+      durationMs: data.durationMs,
+      completedAt: new Date(),
+    }).where(and(
+      eq(systemHookExecutions.id, data.executionId),
+      eq(systemHookExecutions.hookId, data.hookId),
+      eq(systemHookExecutions.status, "running"),
+    )).returning({ id: systemHookExecutions.id });
+    if (!completed) return { disabled: false };
+
+    const [hook] = await tx.select({ maxFirings: systemHooks.maxFirings, enabled: systemHooks.enabled })
+      .from(systemHooks)
+      .where(schedulerVisibleHookPredicate(data.hookId))
+      .limit(1);
+    if (!hook?.enabled || hook.maxFirings == null) return { disabled: false };
+    const [countRow] = await tx.select({ count: sql<number>`count(*)::int` })
+      .from(systemHookExecutions)
+      .where(eq(systemHookExecutions.hookId, data.hookId));
+    if ((countRow?.count ?? 0) < hook.maxFirings) return { disabled: false };
+    await tx.update(systemHooks).set({ enabled: false, updatedAt: new Date() }).where(eq(systemHooks.id, data.hookId));
+    return { disabled: true };
   });
 }
 
@@ -130,6 +194,6 @@ export async function countExecutions(hookId: number): Promise<number> {
   if (!hook) return 0;
   const rows = await db.select({ count: sql<number>`count(*)::int` })
     .from(systemHookExecutions)
-    .where(and(eq(systemHookExecutions.hookId, hookId)));
+    .where(eq(systemHookExecutions.hookId, hookId));
   return rows[0]?.count ?? 0;
 }
