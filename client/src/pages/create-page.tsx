@@ -932,34 +932,19 @@ function CalendarView({
 
 function EmptyState({ onNewPost }: { onNewPost: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center py-12 text-center" data-testid="empty-state">
-      <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-        <Megaphone className="h-6 w-6 text-primary" />
-      </div>
-      <h3 className="text-lg font-semibold mb-2">Your content pipeline is ready</h3>
-      <p className="text-sm text-muted-foreground max-w-md mb-6">
-        Agent drafts posts from your manifesto and voice standard. They queue here for your review. Approve with a single click, and they publish automatically at optimal times.
-      </p>
-      <div className="flex gap-3">
-        <Button onClick={onNewPost} data-testid="button-create-first-post">
-          <Plus className="h-4 w-4 mr-1" /> Create a Post
-        </Button>
-      </div>
-      <p className="text-xs text-muted-foreground mt-4">
-        Or ask Agent to draft posts from your manifesto
-      </p>
+    <div className="space-y-2" data-testid="empty-state">
+      <div className="px-2 py-1.5 text-sm text-muted-foreground">No posts in queue.</div>
+      <Button onClick={onNewPost} data-testid="button-create-first-post">
+        <Plus className="h-4 w-4 mr-1" /> Create a Post
+      </Button>
     </div>
   );
 }
 
-function ComingSoonTab({ title, icon: Icon }: { title: string; icon: typeof BarChart3 }) {
+function ComingSoonTab({ title }: { title: string; icon?: typeof BarChart3 }) {
   return (
-    <div className="flex flex-col items-center justify-center py-12 text-center" data-testid={`coming-soon-${title.toLowerCase()}`}>
-      <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
-        <Icon className="h-6 w-6 text-muted-foreground" />
-      </div>
-      <h3 className="text-lg font-semibold mb-2">{title}</h3>
-      <p className="text-sm text-muted-foreground">Coming soon</p>
+    <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid={`coming-soon-${title.toLowerCase()}`}>
+      {title} coming soon.
     </div>
   );
 }

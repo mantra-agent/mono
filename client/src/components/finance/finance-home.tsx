@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useCallback, useMemo, useState } from "react";
-import { Wallet, DollarSign, CreditCard, PiggyBank, Landmark, AlertCircle, ArrowRight, CalendarRange } from "lucide-react";
+import { DollarSign, CreditCard, PiggyBank, Landmark, AlertCircle, ArrowRight, CalendarRange } from "lucide-react";
 import { SummaryMetricCard, SummaryMetricCardSkeleton } from "./summary-metric-card";
 import { AttentionCard, type AttentionItem } from "./attention-card";
 import { CategoryBar, CategoryBarSkeleton } from "./category-bar";
@@ -1033,7 +1033,7 @@ function AmortizeSuggestionCard({
           <button
             type="button"
             onClick={onToggle}
-            className="h-7 px-2.5 text-xs rounded-md bg-primary text-primary-foreground hover:opacity-90 inline-flex items-center gap-1"
+            className="h-7 px-2.5 text-xs rounded-md bg-cta text-cta-foreground hover:opacity-90 inline-flex items-center gap-1"
             data-testid={`button-amortize-suggest-${txn.transactionId}`}
           >
             <CalendarRange className="h-3 w-3" />
@@ -1078,7 +1078,7 @@ function AmortizeSuggestionCard({
               type="button"
               disabled={isPending}
               onClick={onApply}
-              className="h-7 px-2.5 text-xs rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              className="h-7 px-2.5 text-xs rounded-md bg-cta text-cta-foreground hover:opacity-90 disabled:opacity-50"
               data-testid={`button-confirm-suggest-${txn.transactionId}`}
             >
               Apply
@@ -1117,26 +1117,17 @@ function SectionError({ message, testId }: { message: string; testId: string }) 
 
 function EmptyState({ onGoToAccounts }: { onGoToAccounts: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center py-12 px-4 text-center" data-testid="finance-empty-state">
-      <div className="rounded-full bg-primary/10 p-4 mb-4">
-        <Wallet className="h-8 w-8 text-primary" />
-      </div>
-      <h2 className="text-lg font-semibold text-foreground mb-1">Welcome to Finance</h2>
-      <p className="text-sm text-muted-foreground max-w-sm mb-6">
-        Connect your bank accounts or add manual entries to see your complete financial picture — net worth, spending, liabilities, and goals all in one place.
-      </p>
-      <div className="flex flex-col gap-2">
-        <button
-          type="button"
-          onClick={onGoToAccounts}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity"
-          data-testid="button-get-started"
-        >
-          <Landmark className="h-4 w-4" />
-          Get Started
-        </button>
-        <span className="text-xs text-muted-foreground">Connect a bank or add assets manually</span>
-      </div>
+    <div className="space-y-2" data-testid="finance-empty-state">
+      <div className="px-2 py-1.5 text-sm text-muted-foreground">No accounts connected.</div>
+      <button
+        type="button"
+        onClick={onGoToAccounts}
+        className="inline-flex h-11 items-center gap-2 rounded-md bg-cta px-4 text-sm font-medium text-cta-foreground"
+        data-testid="button-get-started"
+      >
+        <Landmark className="h-4 w-4" />
+        Connect accounts
+      </button>
     </div>
   );
 }

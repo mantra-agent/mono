@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Logger from '../lib/logger';
+import { productTheme } from '../theme/glasses';
 
 const LOG_TAG = 'VoiceDiag';
 
@@ -287,24 +288,24 @@ export function VoiceDiagnostics({ visible, onClose }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0a0a', paddingTop: 60 },
+  container: { flex: 1, backgroundColor: productTheme.colors.viewport, paddingTop: 60 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 12 },
-  title: { color: '#fff', fontSize: 20, fontWeight: '700' },
-  closeBtn: { padding: 8 },
-  closeTxt: { color: '#888', fontSize: 22 },
-  runAllBtn: { marginHorizontal: 20, backgroundColor: '#1d4ed8', borderRadius: 12, padding: 14, alignItems: 'center', marginBottom: 16 },
-  runAllTxt: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  title: { color: productTheme.colors.textPrimary, fontSize: 20, fontWeight: '700' },
+  closeBtn: { padding: 8, minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  closeTxt: { color: productTheme.colors.textQuiet, fontSize: 22 },
+  runAllBtn: { marginHorizontal: 20, backgroundColor: productTheme.colors.cta, borderRadius: 12, padding: 14, alignItems: 'center', marginBottom: 16, minHeight: 44 },
+  runAllTxt: { color: productTheme.colors.textPrimary, fontSize: 15, fontWeight: '700' },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 20, paddingBottom: 40 },
-  testBtn: { backgroundColor: '#1a1a1a', borderRadius: 10, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: '#2a2a2a' },
-  testLabel: { color: '#ddd', fontSize: 14, fontWeight: '600' },
+  testBtn: { backgroundColor: productTheme.colors.surfaceMuted, borderRadius: 10, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: productTheme.colors.borderStrong, minHeight: 44 },
+  testLabel: { color: productTheme.colors.textSubtle, fontSize: 14, fontWeight: '600' },
   resultsSection: { marginTop: 24 },
-  resultsHeader: { color: '#888', fontSize: 13, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 },
+  resultsHeader: { color: productTheme.colors.textQuiet, fontSize: 13, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 },
   result: { borderRadius: 10, padding: 12, marginBottom: 10, borderWidth: 1 },
-  resultPass: { backgroundColor: 'rgba(34,197,94,0.08)', borderColor: 'rgba(34,197,94,0.3)' },
+  resultPass: { backgroundColor: productTheme.colors.status.successFill, borderColor: 'rgba(34,197,94,0.3)' },
   resultFail: { backgroundColor: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.3)' },
   resultInfo: { backgroundColor: 'rgba(59,130,246,0.08)', borderColor: 'rgba(59,130,246,0.3)' },
-  resultName: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 6 },
-  resultDetail: { color: '#bbb', fontSize: 12, fontFamily: 'monospace', lineHeight: 18 },
-  resultTs: { color: '#555', fontSize: 10, marginTop: 4 },
+  resultName: { color: productTheme.colors.textPrimary, fontSize: 14, fontWeight: '700', marginBottom: 6 },
+  resultDetail: { color: productTheme.colors.textSoft, fontSize: 12, fontFamily: 'monospace', lineHeight: 18 },
+  resultTs: { color: productTheme.colors.textFaint, fontSize: 10, marginTop: 4 },
 });

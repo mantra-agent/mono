@@ -17,9 +17,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, Trash2, Loader2, Briefcase } from "lucide-react";
+import { Plus, Trash2, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { getInstanceName } from "@/lib/instance-config";
 
 interface ExecSkill {
   id: number;
@@ -477,12 +476,7 @@ export default function ExecSkillsTab() {
         </div>
 
         {skills.length === 0 && !isLoading && (
-          <EmptyState
-            icon={Briefcase}
-            title="No skills yet"
-            message={`Add your first skill above, or talk to ${getInstanceName()} to fill this in.`}
-            testId="profile-skills-empty"
-          />
+          <EmptyState message="No skills yet." testId="profile-skills-empty" />
         )}
       </div>
 
