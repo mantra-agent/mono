@@ -264,6 +264,10 @@ Teams are account-scoped grant subjects. `TeamService` is their sole ordinary mu
 
 `SessionManager` is the sole per-Session runtime activity authority. Its `visibleAssistantActivity` discriminant is content-free and priority ordered as `tool > thinking > streaming > none`; active tool execution must outrank simultaneous thinking or previously emitted content so app-shell consumers never reconstruct activity from transcript segments or last-event ordering.
 
+### Agent executor work budgets
+
+`AgentExecutor` owns one per-run work envelope in addition to wall-clock watchdogs: bounded provider iterations and actual tool executions. Both SDK-owned and executor-owned tool paths spend the tool budget at `executeToolWithRecovery(...)` before any side effect; callers may narrow but never exceed the Core hard ceilings. Exhaustion preserves completed work and terminalizes through exactly one degradation discriminant (`iteration_budget_exhausted` or `tool_call_budget_exhausted`), never as cancellation, provider failure, or clean success. Runtime capacity, principal/tool authority, idempotency, and human gates remain independent.
+
 ### Background Document Repair
 
 Background chat-document repair must never write as a system principal or infer ownership from the caller. The named `chat-recovery` job may enumerate only bounded streaming ordinary-user text-chat identifiers, owner/account/vault identity, and active runtime owner metadata. It must re-enter that user principal before reading content. Active text work persists `<runtime-instance>@<boot-id>` ownership on both the session and streaming assistant draft; startup reconciles only legacy ownerless work or a prior boot on the same runtime instance, never another live instance. Inside the same bounded transaction, lock and validate the current user/account authorization before locking and mutating the exact document row. Preserve the last assistant checkpoint, persist one replay-safe interruption notice, and settle the session once. Normal writes and ACL changes serialize behind repair. Malformed rows fail per-document without blocking boot.

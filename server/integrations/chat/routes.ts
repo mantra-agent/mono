@@ -302,6 +302,16 @@ function buildSystemNotice(result: ExecutorRunResult): SystemNotice {
     errorType = "processing_stopped";
     description = "A tool returned a non-retryable failure. Completed work before the failure was preserved.";
     actionHint = "Send another message with corrected input or permission and I'll continue.";
+  } else if (
+    result.status === "degraded" &&
+    (result.degradationReason === "iteration_budget_exhausted" || result.degradationReason === "tool_call_budget_exhausted")
+  ) {
+    severity = "warning";
+    errorType = "processing_stopped";
+    description = result.degradationReason === "iteration_budget_exhausted"
+      ? "This run reached its model-iteration budget. Completed work was preserved."
+      : "This run reached its tool-call budget. No additional tool was executed, and completed work was preserved.";
+    actionHint = "Send another message and I'll continue from the saved state.";
   } else if (result.abortReason) {
     switch (result.abortReason) {
       case "stream_idle_timeout":
