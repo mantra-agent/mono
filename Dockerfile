@@ -65,12 +65,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     chromium \
     python3 \
-    bubblewrap \
     util-linux \
     && ln -sf /usr/bin/python3 /usr/local/bin/python \
     && python3 --version \
     && python --version \
-    && bwrap --version \
     && prlimit --version \
     && rm -rf /var/lib/apt/lists/*
 
