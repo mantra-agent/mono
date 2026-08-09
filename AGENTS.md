@@ -303,26 +303,32 @@ These are the correct way to enforce ownership. Do not write raw queries against
 
 Procedural coding workflows, diagnostic workflow, git/PR workflow, verification workflow, and final coding report checklist live in root `CODING.md`.
 
-## Runtime Architecture (6 Layers)
+## Architecture Audit Standard
+
+Architecture claims are verified only when current source demonstrates both the behavior and its owning composition or mutation boundary. Use exact repository search for identifiers and registrations, GitNexus for callers/flows/impact, and read the authoritative implementation before recording a finding. A principle violation must name the principle, concrete source locations, reachable flow, failed invariant, and smallest coherent cure. Heuristics, file size, naming, or an isolated code smell are leads, not findings.
+
+Dead code requires stronger proof: no static imports/callers; no route, tool, Mod, Skill, Workflow, Hook, Timer, boot, script, native/plugin, provider-callback, or dynamic lookup registration; and no persisted identifier, migration, rollback, or supported compatibility contract that can still reach it. Search strings and graph results are evidence, not proof by themselves. If any dynamic or compatibility path remains plausible, retain the code and state what proof is missing. Do not turn uncertainty into a backlog.
+
+Root `AGENTS.md` records repository-wide truths only. The nearest subtree `AGENTS.md` owns local contracts; source composition roots remain the runtime authority. Update guidance in the same PR when source proves it stale, but do not duplicate detailed subsystem law at root.
+
+## Runtime Architecture
 
 ```
-Layer 6: Intelligence    — Skills, prompt modules, scoring, campaigns, council deliberation
-Layer 5: Interface       — Chat streaming, voice (ElevenLabs), 56 UI pages, Focus widget
-Layer 4: Orchestration   — Agent executor, timer scheduler, admission controller, hooks
-Layer 3: Domain Services — Memory, people, finance, wellness, library, email, social
-Layer 2: Storage         — PostgreSQL SQL tables + PostgreSQL document store, S3 object storage, process-local TTL caches
-Layer 1: Infrastructure  — Express server, WebSocket, event bus, PostgreSQL pools, auth
+Interface      — `client/` web application and `mobile/` Expo application
+Shared protocol — `shared/` cross-runtime contracts, schemas, references, permissions, Mod contracts
+Server         — `server/` HTTP/WebSocket composition, domain services, Agent/LLM execution, autonomy, integrations
+Persistence    — PostgreSQL relational/document state, object storage, bounded process-local caches
+Operations     — `script/` production build plus `scripts/`, `migrations/`, and provider-backed Platform lifecycle
 ```
 
 ## Composition Roots
 
-**Route registration** (`server/routes.ts`): `registerRoutes()` delegates to:
-
-`registerDomainRoutes()` — 26 domain routers: setup, gateway, workspace, system, identity, inference, events, integrations, voice, brain, work, ooda, plaid, finance, spec, health, info, captures, email, session-display, content, hooks, session-reminder, cognition, secrets, provider-backed environment operations
-
-Plus: `registerChatRoutes`, `registerPeopleRoutes`, `registerGoalRoutes`, `registerTagRoutes`, `registerCalendarRoutes`, `registerTimerRoutes`, `registerMemoryRoutes`, `registerMigrationRoutes`, `registerContextRoutes`, `registerThoughtRoutes`, `registerStrategyRoutes`, `registerObjectStorageRoutes`, `registerSkillRoutes`
-
-**Boot hooks** (`server/index.ts`): Timer scheduler, content publisher, nightly vNext sleep cycle (2 AM CT)
+- `server/index.ts` owns process boot, ordered schema/service readiness, route registration, post-ready workers, and graceful shutdown.
+- `server/routes.ts#registerRoutes` owns WebSocket upgrades and the complete top-level HTTP composition. It delegates one evolving route family to `server/routes/index.ts#registerDomainRoutes` and registers additional root routers directly; do not copy router counts or exhaustive lists here because those files are authoritative.
+- `client/src/main.tsx` and `client/src/App.tsx` own web bootstrap and route composition. Mod/product composition may filter declared surfaces but does not replace those roots.
+- `mobile/app/_layout.tsx` owns Expo provider/navigation composition; `mobile/metro.config.js` is the cross-repository shared-contract bridge.
+- `shared/` has no runtime composition root. It contains dependency-light contracts consumed by server, web, mobile, and build validation.
+- `script/build.ts` is the required production build gate. Root `package.json`, Dockerfile, and Platform Environment bindings own package, image, and deployment entrypoints.
 
 ## Canonical State Stores
 
@@ -354,7 +360,7 @@ Plus: `registerChatRoutes`, `registerPeopleRoutes`, `registerGoalRoutes`, `regis
 
 ### PostgreSQL Runtime Shape
 
-`server/db.ts` is the ordinary application boundary: one instrumented Drizzle proxy selects a 26-connection general pool or reserved 4-connection voice pool by AsyncLocalStorage (30 configured connections per app process). Authentication adds a separate 5-connection `connect-pg-simple` pool, and diagnosed export/watchdog operations may open short-lived dedicated clients. Raw SQL remains common for DDL, catalog queries, PostgreSQL-specific operators, bulk SQL, and migrations; Drizzle is not an exclusive abstraction. See `server/AGENTS.md` § Database Architecture for the current access paths, timeout model, workload classes, operating rules, and explicitly labeled gaps.
+`server/db.ts` is the ordinary application boundary: one instrumented Drizzle proxy selects the general or reserved voice lane through AsyncLocalStorage. Authentication retains a separate `connect-pg-simple` pool, and diagnosed export/watchdog operations may open bounded dedicated clients. Raw SQL remains valid for DDL, catalog queries, PostgreSQL-specific operators, bulk SQL, and migrations; Drizzle is the default mapper, not an exclusive abstraction. Pool sizes and operational limits are runtime policy: read `server/db.ts` and `server/AGENTS.md` § Database Architecture rather than copying numeric budgets into root guidance.
 
 Schema ownership is currently distributed: `runSchemaBootstrap()` performs extensive blocking pre-readiness DDL and repair, several subsystem schema owners run in ordered boot phases, Library still performs compatibility DDL during route registration, and document-search trigram indexes converge after readiness with concurrent index operations. Do not describe the migration-file directory or Drizzle schema declarations as the sole deployed-schema authority.
 
@@ -390,20 +396,27 @@ Skills are runnable workflows with run identity, sessions, scoring, and operator
 
 Never file an Issue without explicit **repro steps** plus **platform environment** and **build** linkage. `storage.createIssue` is the sole create path and rejects title-only shells; when env/build are omitted it fills them from runtime identity. Prefer evidence-rich bugs over volume. Full boundary: `server/AGENTS.md` → **Issue create boundary**.
 
-## Known Structural Gaps
+## Verified Structural Gaps
 
-1. **`bridge-tools.ts` is a 587KB monolith** — 126 handlers, no domain isolation
-2. **Fragmented PostgreSQL access** — Ordinary work crosses the `db` proxy, but raw general-pool calls, a separate auth pool, route-time DDL, and exceptional dedicated clients remain; instrumentation, lane selection, and shutdown ownership are not universal
-3. **Session blob storage** — `document_store_documents.content` rewrites the full session JSON under a per-session advisory transaction lock; no message-row pagination
-4. **Distributed schema convergence** — Migration SQL, `runSchemaBootstrap`, subsystem ensures, route registration, and post-ready index maintenance all participate in deployed schema state
-5. **Autonomy Runtime migration is partial** — Weekly Ideas and settled memory-source extraction use native fenced Runtime attempts, but other Timers, Hooks, Plans, Workflows, Regression, and Council execution still retain compatibility schedulers or domain lifecycle owners until later cutovers.
-6. **Timer execution is serial per app process except Weekly Ideas** — Legacy Timer handlers still share one process queue; Weekly Ideas exits after idempotent Runtime enqueue and executes under the native background-agent dispatcher.
+These are current source-backed conditions, not a speculative backlog. Re-verify the owning source before citing or curing one.
 
-## Subdirectory Context
+1. **Tool dispatch concentration** — `server/bridge-tools.ts` remains the dominant handler/dispatch module; `server/tool-registry.ts`, `server/agent-authority.ts`, and `server/tool-execution.ts` are independent canonical boundaries that any decomposition must preserve.
+2. **Fragmented PostgreSQL access** — ordinary work crosses the `db` proxy, while raw pool calls, the separate auth pool, route-time DDL, and exceptional dedicated clients retain incomplete instrumentation/lane/shutdown ownership. Detailed evidence lives in `server/AGENTS.md` § Database Architecture.
+3. **Whole-session persistence** — `document_store_documents.content` rewrites the complete session document under session serialization; indexed metadata and search segments are projections, not message-row authority.
+4. **Distributed schema convergence** — migration SQL, `runSchemaBootstrap`, ordered subsystem ensures, compatibility route registration, and post-ready index maintenance all participate in deployed schema state.
+5. **Partial Runtime migration** — the fenced Runtime kernel is canonical for capacity/attempt physics, while named legacy producers still cross compatibility admission or retain domain lifecycle owners as documented in `server/AGENTS.md`.
 
-- `server/AGENTS.md` — Server subsystems: context, tools, autonomous execution, skills, email, social, supporting systems
-- `server/memory/AGENTS.md` — Memory architecture: tiers, ingestion, consolidation, retrieval, graph, sleep cycle
-- `server/council/AGENTS.md` — Session tree, cross-session messaging, council multi-model deliberation
-- `server/voice/AGENTS.md` — Voice pipeline: module structure, tool middleware, session lifecycle, turn flow
-- `server/voice-v3/AGENTS.md` — Voice architecture: v2/v2.5/v3 engines, ElevenLabs integration
-- `client/AGENTS.md` — Client: React app shell, routing, state management, chat streaming, voice UI, components
+## Owned Subsystems and Instruction Boundaries
+
+Instruction boundaries are inherited: always load root `AGENTS.md` and `CODING.md`, then every nearest `AGENTS.md` for a subtree inspected, changed, or relied upon. Absence of a nested file means the nearest ancestor owns the guidance; it does not mean the subsystem is unowned.
+
+| Boundary | Owned scope |
+|---|---|
+| `server/AGENTS.md` | Server root, storage/schema, auth/principals, HTTP/WebSocket composition, Agent/model/context/tools, autonomy/runtime, Mods, integrations, and domain services unless a deeper boundary exists |
+| `server/memory/AGENTS.md` | vNext memory ingestion, retrieval, graph, lifecycle, provenance, and legacy-memory compatibility |
+| `server/council/AGENTS.md` | Session tree messaging and council deliberation |
+| `server/voice/AGENTS.md` | Current ElevenLabs/custom-LLM voice pipeline and voice-local middleware/lifecycle |
+| `client/AGENTS.md` | Web shell, routes/pages/components, React Query/state, references, streaming projection, voice UI, and design-system application |
+| `mobile/AGENTS.md` | Expo Router app, native modules/plugins, WebViews, auth/voice, telemetry, and shared-contract integration |
+
+Repository-owned subsystems without deeper instructions remain under `server/AGENTS.md`: `runtime`, `tools`, `mods`, `workflows`, `sessions`, `meeting`/`meetings`, `speech-recognition`, `platforms`, `integrations`, `file-storage`, `object_storage`, `relationships`, `strategy`, `simple`, `media`, `notifications`, `phone`, `glasses`, routes, and root-level domain services. `shared/`, `migrations/`, `script/`, and `scripts/` remain root-governed. Create a nested `AGENTS.md` only when a durable local contract cannot stay concise and truthful in its current owner.
