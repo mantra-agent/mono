@@ -217,7 +217,21 @@ function sendCallbackHtml(res: Response, input: { ok: boolean; title: string; bo
   const safeTitle = escapeHtml(input.title);
   const safeBody = escapeHtml(input.body);
   const heading = input.ok ? "Oura Connected" : "Authorization Failed";
-  const html = `<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#e0e0e0"><h2>${heading}</h2><p><strong>${safeTitle}</strong></p><p>${safeBody}</p><p>You can close this tab.</p><script>setTimeout(()=>window.close(),3000)</script></body></html>`;
+  const callbackPayload = JSON.stringify({
+    type: "mantra:oura-oauth",
+    status: input.ok ? "connected" : "failed",
+    message: input.body,
+  }).replace(/</g, "\\u003c");
+  const html = `<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#e0e0e0"><h2>${heading}</h2><p><strong>${safeTitle}</strong></p><p>${safeBody}</p><p>You can close this tab.</p><script>
+(function () {
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage(${callbackPayload}, window.location.origin);
+    }
+  } catch (e) {}
+  setTimeout(function () { window.close(); }, 1200);
+})();
+</script></body></html>`;
   res.status(input.status || (input.ok ? 200 : 500)).send(html);
 }
 
