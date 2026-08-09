@@ -703,18 +703,15 @@ interface ActionBarProps {
   data: PublishSummary;
   isRunning: boolean;
   canStart: boolean;
-  canRetry: boolean;
   disabledReason: string | null;
   prodDeploying: boolean;
   isFetching: boolean;
   onPublish: () => void;
   onCancel: () => void;
-  onRetry: () => void;
   onRedeploy: () => void;
   onRefresh: () => void;
   publishPending: boolean;
   cancelPending: boolean;
-  retryPending: boolean;
   redeployPending: boolean;
 }
 
@@ -722,18 +719,15 @@ function PublishActionBar({
   data,
   isRunning,
   canStart,
-  canRetry,
   disabledReason,
   prodDeploying,
   isFetching,
   onPublish,
   onCancel,
-  onRetry,
   onRedeploy,
   onRefresh,
   publishPending,
   cancelPending,
-  retryPending,
   redeployPending,
 }: ActionBarProps) {
   const devSha = data.devCommit?.shortSha ?? "???";
@@ -757,16 +751,6 @@ function PublishActionBar({
     );
     buttonAction = onCancel;
     buttonDisabled = cancelPending;
-    buttonVariant = "outline";
-  } else if (canRetry) {
-    buttonLabel = "Retry";
-    buttonIcon = retryPending ? (
-      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-    ) : (
-      <RotateCw className="h-3.5 w-3.5" />
-    );
-    buttonAction = onRetry;
-    buttonDisabled = retryPending;
     buttonVariant = "outline";
   } else {
     buttonLabel = "Publish";
@@ -808,7 +792,7 @@ function PublishActionBar({
       </span>
 
       <div className="flex items-center gap-2 shrink-0">
-        {disabledReason && !isRunning && !canRetry ? (
+        {disabledReason && !isRunning ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <span tabIndex={0}>{primaryButton}</span>
@@ -1205,26 +1189,6 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
     },
   });
 
-  const retryMut = useMutation<unknown, Error, void>({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/railway/publish/retry", { sourcePlatformEnvironmentId, targetPlatformEnvironmentId });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: [summaryPath],
-      });
-      toast({ title: "Retrying from failed stage" });
-    },
-    onError: (err) => {
-      toast({
-        title: "Couldn't retry",
-        description: errorMessage(err),
-        variant: "destructive",
-      });
-    },
-  });
-
   const redeployMut = useMutation<unknown, Error, void>({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/railway/environments/${targetPlatformEnvironmentId}/redeploy`, {});
@@ -1252,7 +1216,6 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
   const run = data?.run ?? null;
   const isRunning = run?.status === "running";
   const canStart = !!data?.ready && data.aheadBy > 0 && !isRunning;
-  const canRetry = run?.status === "failed" && !isRunning;
 
   let disabledReason: string | null = null;
   let inSyncReason: string | null = null;
@@ -1517,24 +1480,15 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
         icon: <XCircle className="h-3.5 w-3.5" />,
         testId: "button-primary-action",
       }
-    : canRetry
-      ? {
-          label: "Retry",
-          onClick: () => retryMut.mutate(),
-          pending: retryMut.isPending,
-          variant: "outline" as const,
-          icon: <RotateCw className="h-3.5 w-3.5" />,
-          testId: "button-primary-action",
-        }
-      : {
-          label: "Publish",
-          onClick: openPublishModal,
-          disabled: !canStart || publishBusy,
-          pending: publishBusy,
-          icon: <Play className="h-3.5 w-3.5" />,
-          testId: "button-primary-action",
-          tooltip: inSyncReason ?? disabledReason ?? undefined,
-        };
+    : {
+        label: "Publish",
+        onClick: openPublishModal,
+        disabled: !canStart || publishBusy,
+        pending: publishBusy,
+        icon: <Play className="h-3.5 w-3.5" />,
+        testId: "button-primary-action",
+        tooltip: inSyncReason ?? disabledReason ?? undefined,
+      };
 
   const overflowMenuItems = (
     <>
@@ -1585,7 +1539,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
         title="Production"
         status={pipelineStatus}
         statusDetail={
-          disabledReason && disabledReason !== inSyncReason && !isRunning && !canRetry
+          disabledReason && disabledReason !== inSyncReason && !isRunning
             ? disabledReason
             : undefined
         }
@@ -1641,7 +1595,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
         ]}
         steps={publishSteps}
         emptyState={
-          data.aheadBy === 0 && !isRunning && !canRetry
+          data.aheadBy === 0 && !isRunning
             ? {
                 icon: CheckCircle2,
                 title: "Live is current",
