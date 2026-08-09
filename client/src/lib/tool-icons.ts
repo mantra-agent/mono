@@ -51,6 +51,7 @@ import {
   Layers,
   Layers3,
   LibraryBig,
+  Lightbulb,
   Link,
   ListChecks,
   ListOrdered,
@@ -207,6 +208,7 @@ export const ICON_PALETTE: Record<string, LucideIcon> = {
   Workflow,
   ListOrdered,
   Layers3,
+  Lightbulb,
 };
 
 export const ICON_PALETTE_NAMES = Object.keys(ICON_PALETTE);
@@ -278,6 +280,7 @@ export const TOOL_ICON_MAP: Record<string, string> = {
   // Compatibility aliases advertised by the registry.
   projects: "FolderOpen",
   observations: "Eye",
+  observation: "Lightbulb",
   create: "FileEdit",
 
   // Legacy namespaces preserved for historical Session Window steps.
