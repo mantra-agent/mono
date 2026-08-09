@@ -40,7 +40,6 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
 
     // Server-authoritative session subscriptions (by sessionId).
     const subscribedSessionIds = new Set<string>();
-    const subscriptionEpochs = new Map<string, Map<string, number>>();
     const accountId = principal.accountId;
 
     const pingTimer = setInterval(() => {
@@ -131,18 +130,11 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
               : 0,
           };
           const ownerId = identity.handlerId || "connection";
-          let epochsByOwner = subscriptionEpochs.get(subSessionId);
-          if (!epochsByOwner) {
-            epochsByOwner = new Map();
-            subscriptionEpochs.set(subSessionId, epochsByOwner);
-          }
           const subscriptionEpoch = identity.subscriptionEpoch ?? 0;
-          const priorEpoch = epochsByOwner.get(ownerId) ?? -1;
-          if (subscriptionEpoch < priorEpoch) return;
-          epochsByOwner.set(ownerId, subscriptionEpoch);
+          if (!sessionManager.beginSubscriptionMutation(subSessionId, ws, identity)) return;
           void runWithPrincipal(principal, async () => {
             const visibleSession = await chatFileStorage.getSession(subSessionId);
-            if (subscriptionEpochs.get(subSessionId)?.get(ownerId) !== subscriptionEpoch) {
+            if (!sessionManager.isSubscriptionMutationCurrent(subSessionId, ws, identity)) {
               eventsLog.debug("WS:SESSION:SUBSCRIBE_STALE_EPOCH", { connectionId, sessionId: subSessionId, ownerId, subscriptionEpoch });
               return;
             }
@@ -167,7 +159,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
                 });
                 return null;
               });
-            if (subscriptionEpochs.get(subSessionId)?.get(ownerId) !== subscriptionEpoch || ws.readyState !== WebSocket.OPEN) {
+            if (!sessionManager.isSubscriptionMutationCurrent(subSessionId, ws, identity) || ws.readyState !== WebSocket.OPEN) {
               eventsLog.debug("WS:SESSION:SUBSCRIBE_STALE_AFTER_HYDRATION", { connectionId, sessionId: subSessionId, ownerId, subscriptionEpoch });
               return;
             }
@@ -243,16 +235,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
               ? msg.subscriptionEpoch
               : 0,
           };
-          const ownerId = identity.handlerId || "connection";
-          let epochsByOwner = subscriptionEpochs.get(unsubSessionId);
-          if (!epochsByOwner) {
-            epochsByOwner = new Map();
-            subscriptionEpochs.set(unsubSessionId, epochsByOwner);
-          }
-          const subscriptionEpoch = identity.subscriptionEpoch ?? 0;
-          const priorEpoch = epochsByOwner.get(ownerId) ?? -1;
-          if (subscriptionEpoch < priorEpoch) return;
-          epochsByOwner.set(ownerId, subscriptionEpoch);
+          if (!sessionManager.beginSubscriptionMutation(unsubSessionId, ws, identity)) return;
           const hadSubscription = subscribedSessionIds.has(unsubSessionId);
           eventsLog.debug("WS:SESSION:UNSUBSCRIBE", { sessionId: unsubSessionId, subscriptions: subscribedSessionIds.size, hadSubscription, ...identity });
           const remainsSubscribed = sessionManager.unsubscribe(unsubSessionId, ws, identity);
@@ -276,12 +259,9 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
       unregisterSocketPresence(ws);
       cancelUiInteractionsForSocket(ws);
 
-      // Unsubscribe from all server-authoritative sessions on disconnect
-      if (subscribedSessionIds.size > 0) {
-        sessionManager.unsubscribeAll(ws);
-        subscribedSessionIds.clear();
-      }
-      subscriptionEpochs.clear();
+      // Clear committed and authorization-pending Session subscription state.
+      sessionManager.unsubscribeAll(ws);
+      subscribedSessionIds.clear();
     });
 
     ws.send(JSON.stringify({ type: "connected", message: "Event stream connected" }));
