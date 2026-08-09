@@ -1,6 +1,6 @@
 import { safeStringify } from "../utils/safe-stringify";
 import { agendaDefinitionStorage } from "../agenda-storage";
-import type { ToolHandler } from "../bridge-tools";
+import type { ToolHandler } from "./contracts";
 
 export const handleAgendas: ToolHandler = async (args) => {
   const action = String(args.action || "list");

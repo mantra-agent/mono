@@ -35,7 +35,15 @@ import {
 } from "./tool-failure";
 import { extractToolFailureKind, inferFailureKind } from "@shared/tool-failure";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
-import type { ToolSchema } from "./tool-registry";
+import { resolveRegisteredTool } from "./tool-registry";
+import { prepareToolInvocation } from "./tools/invocation";
+import { assertRegisteredToolHandlers } from "./tools/registry-validation";
+import type {
+  ToolExecutionResult as ToolResult,
+  ToolHandler,
+  ToolHandlerResult,
+  ToolInvocationContext as BridgeToolContext,
+} from "./tools/contracts";
 import { getSecretSync } from "./secrets-store";
 import { searchVnextMemory, type VnextSearchOptions } from "./memory/vnext-search";
 import { sensitiveOwnershipValues } from "./sensitive-scope";
@@ -91,33 +99,12 @@ function isSpecChildSpawnRequest(...values: unknown[]): boolean {
     );
 }
 
-export interface BridgeToolContext {
-  sessionKey: string;
-  sessionId: string;
-  clientId?: string;
-  uiNarrationState?: import("@shared/ui-interaction").UiInteractionNarrationState;
-  orientationPersonaPolicy?: "replace" | "preserve_existing";
-  authority?: import("./agent-authority").AgentAuthorityContext;
-}
-
-export interface ToolResult extends import("./agent-executor").ToolExecutorResult {
-  durationMs: number;
-}
-
-export type ToolHandler = (args: Record<string, any>) => Promise<{
-  result: string;
-  error?: boolean;
-  failure?: ToolFailure;
-  continuation?: import("./agent-executor").ToolContinuation;
-  normalizedArguments?: Record<string, unknown>;
-}>;
-type ToolHandlerResult = {
-  result: string;
-  error?: boolean;
-  failure?: ToolFailure;
-  data?: Record<string, unknown>;
-  continuation?: import("./agent-executor").ToolContinuation;
-};
+export type {
+  ToolExecutionResult as ToolResult,
+  ToolHandler,
+  ToolHandlerResult,
+  ToolInvocationContext as BridgeToolContext,
+} from "./tools/contracts";
 
 /** Contract reject → amber input failure (same discriminant path as shell_policy_denied). */
 function contractReject(result: string, code: ToolFailureCode, detail?: string): ToolHandlerResult {
@@ -12911,10 +12898,6 @@ ${refs}` : ""),
 
 };
 
-export function isBridgeTool(toolName: string): boolean {
-  return bridgeHandlers.hasOwnProperty(toolName);
-}
-
 export async function executeBridgeTool(
   toolName: string,
   toolCallId: string,
@@ -17457,87 +17440,7 @@ const DISPATCH_MAP: Record<string, ToolHandler> = {
   ...bridgeHandlers,
 };
 
-
-function isEmptyToolArgumentValue(value: unknown): boolean {
-  if (value === undefined || value === null) return true;
-  if (typeof value === "string") return value.trim() === "";
-  if (Array.isArray(value)) return value.length === 0;
-  if (typeof value === "object") {
-    const values = Object.values(value as Record<string, unknown>);
-    return values.length === 0 || values.every(isEmptyToolArgumentValue);
-  }
-  return false;
-}
-
-function preservesEmptyString(toolName: string, args: Record<string, any>, key: string, value: unknown): boolean {
-  if (value !== "" || key !== "new_string") return false;
-  const action = String(args.action || "");
-  return (toolName === "scratch" && action === "edit")
-    || (toolName === "skills" && action === "edit")
-    || (toolName === "library" && ["edit", "edit_library_page"].includes(action));
-}
-
-/** Audit-trail only. Models omit this under volume; fill at the boundary so a docs field never blocks execution. */
-const DEFAULT_TOOL_REASONING = "No model reasoning provided.";
-
-function normalizeToolArgs(
-  toolName: string,
-  args: Record<string, any>,
-  schemas: ToolSchema[],
-): Record<string, any> {
-  const schema = schemas.find(s => s.name === toolName);
-  const required = new Set(schema?.parameters?.required ?? []);
-
-  const normalized: Record<string, any> = {};
-  for (const [key, value] of Object.entries(args ?? {})) {
-    if (required.has(key) || preservesEmptyString(toolName, args, key, value)) {
-      normalized[key] = value;
-      continue;
-    }
-    if (isEmptyToolArgumentValue(value)) {
-      continue;
-    }
-    normalized[key] = value;
-  }
-
-  // Universal reasoning is schema-required for audit, not a load-bearing input.
-  // Encode the invariant here: missing/blank reasoning never rejects the call.
-  if (required.has("reasoning")) {
-    const reasoning = normalized.reasoning;
-    if (typeof reasoning !== "string" || reasoning.trim().length === 0) {
-      normalized.reasoning = DEFAULT_TOOL_REASONING;
-    }
-  }
-
-  return normalized;
-}
-
-function validateToolArgs(
-  toolName: string,
-  args: Record<string, any>,
-  schemas: ToolSchema[],
-): { valid: boolean; error?: string } {
-  const schema = schemas.find(s => s.name === toolName);
-  if (!schema?.parameters) return { valid: true };
-
-  const { required, properties } = schema.parameters;
-  if (required) {
-    const missing = required.filter(p => args[p] === undefined || args[p] === null);
-    if (missing.length > 0) {
-      return { valid: false, error: `Missing required parameter(s): ${missing.join(", ")}` };
-    }
-  }
-
-  if (properties) {
-    const knownKeys = new Set(Object.keys(properties));
-    const unknownKeys = Object.keys(args).filter(k => !knownKeys.has(k));
-    if (unknownKeys.length > 0) {
-      return { valid: false, error: `Unknown parameter(s) for ${toolName}: ${unknownKeys.join(", ")}. Allowed: ${[...knownKeys].join(", ")}` };
-    }
-  }
-
-  return { valid: true };
-}
+assertRegisteredToolHandlers(DISPATCH_MAP);
 
 const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   session: new Set(["set_status", "end", "send_message"]),
@@ -17842,18 +17745,37 @@ export async function executeTool(
 ): Promise<ToolResult> {
   const startTime = Date.now();
 
-  // Resolve tool metadata lazily after bridge-tools has finished initializing.
-  // tool-registry imports bridgeHandlers, so a static import here creates a TDZ cycle.
-  const { TOOL_ALIASES, getToolSchemas } = await import("./tool-registry");
-  const resolvedName = TOOL_ALIASES[toolName] || toolName;
-  const toolSchemas = getToolSchemas();
+  const registeredTool = resolveRegisteredTool(toolName);
+  if (!registeredTool) {
+    const durationMs = Date.now() - startTime;
+    toolExec.log(`rejected tool=${toolName} callId=${toolCallId} reason=unregistered_tool`);
+    return { result: `Unknown tool: ${toolName}`, error: true, sideEffectOnly: true, durationMs };
+  }
+  const resolvedName = registeredTool.name;
   const handler = DISPATCH_MAP[resolvedName];
   if (!handler) {
     const durationMs = Date.now() - startTime;
-    toolExec.log(`rejected tool=${toolName} callId=${toolCallId} reason=unknown_tool`);
-    return { result: `Unknown tool: ${toolName}`, error: true, sideEffectOnly: true, durationMs };
+    toolExec.error(`rejected tool=${toolName} callId=${toolCallId} reason=registered_handler_missing`);
+    return {
+      result: `Registered tool unavailable: ${resolvedName}`,
+      error: true,
+      sideEffectOnly: true,
+      durationMs,
+      failure: internalFailure("tool_registered_handler_missing", resolvedName),
+    };
   }
-  const normalizedArgs = normalizeToolArgs(resolvedName, args, toolSchemas);
+  const prepared = prepareToolInvocation(resolvedName, args, registeredTool.schema);
+  if (prepared.outcome === "invalid") {
+    const durationMs = Date.now() - startTime;
+    toolExec.log(`rejected tool=${toolName} callId=${toolCallId} reason=${prepared.error}`);
+    return {
+      result: prepared.error,
+      error: true,
+      durationMs,
+      failure: inputFailure("tool_schema_invalid", prepared.error),
+    };
+  }
+  const normalizedArgs = prepared.args;
   const { authorizeToolInvocation } = await import("./agent-authority");
   const authority = authorizeToolInvocation(resolvedName, normalizedArgs, {
     ...context?.authority,
@@ -17916,21 +17838,8 @@ export async function executeTool(
     toolExec.warn(`rejected tool=${toolName} callId=${toolCallId} reason=planning_mod_inactive`);
     return { result: "Tool execution denied: Planning Mod is inactive", error: true, sideEffectOnly: true, durationMs, failure: authorityDenialFailure("planning_mod_inactive", { resourceKey: resolvedName }) };
   }
-  const droppedEmptyKeys = Object.keys(args ?? {}).filter((key) => !(key in normalizedArgs));
-  if (droppedEmptyKeys.length > 0) {
-    toolExec.verbose(() => `normalized tool=${toolName} callId=${toolCallId} droppedEmptyKeys=${droppedEmptyKeys.join(",")}`);
-  }
-
-  const validation = validateToolArgs(resolvedName, normalizedArgs, toolSchemas);
-  if (!validation.valid) {
-    const durationMs = Date.now() - startTime;
-    toolExec.log(`rejected tool=${toolName} callId=${toolCallId} reason=${validation.error}`);
-    return {
-      result: validation.error!,
-      error: true,
-      durationMs,
-      failure: inputFailure("tool_schema_invalid", validation.error),
-    };
+  if (prepared.droppedEmptyKeys.length > 0) {
+    toolExec.verbose(() => `normalized tool=${toolName} callId=${toolCallId} droppedEmptyKeys=${prepared.droppedEmptyKeys.join(",")}`);
   }
 
   toolExec.verbose(() => `dispatch tool=${toolName} callId=${toolCallId} argKeys=${Object.keys(normalizedArgs).join(",")}`);

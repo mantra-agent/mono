@@ -3,7 +3,7 @@ import { businessPlanStorage } from "../business-plan-storage";
 import { kpiStorage, metricsStorage } from "../metrics-storage";
 import type { BusinessPlan } from "@shared/schema";
 import type { Kpi, Metric, MetricSample } from "@shared/models/metrics";
-import type { ToolHandler } from "../bridge-tools";
+import type { ToolHandler } from "./contracts";
 import { internalFailure } from "../tool-failure";
 
 // The `business` tool owns three separate action groups behind one bounded

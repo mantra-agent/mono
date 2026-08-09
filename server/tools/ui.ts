@@ -1,4 +1,4 @@
-import type { ToolHandler } from "../bridge-tools";
+import type { ToolHandler } from "./contracts";
 import {
   isUiInteractionMode,
   isUiInteractionNarrationState,
