@@ -1,3 +1,11 @@
+<!-- 2026-08-10 admin identity-foundation repair:
+- Assets/data: user identity, personal Account ownership, default Vault, membership, active/visible Vault state, and authenticated sessions (A01/A03/A07; S1 account metadata).
+- Flow/boundary: authenticated Users administrator -> users:write-gated repair mutation -> canonical transactional ensureUserIdentityFoundation -> target-user session revocation. User IDs and existing identity rows remain untrusted persisted input and never grant authority.
+- Abuse/failure case: an administrator could target another user to force session revocation, while a partial or duplicate repair could create conflicting ownership or Vaults (STRIDE denial-of-service/tampering/elevation; IAM-01/IAM-02/DATA-01).
+- Deterministic controls/owner: requireAuth plus users:write independently gates the mutation; the canonical advisory-lock transaction idempotently resolves exactly one personal Account, owner membership, profile, default Vault, and visible/active state; target sessions are revoked after commit; the privileged action logs actor, target, Account, and Vault IDs without content. Owner: Core Identity + Users Administration. Severity: high integrity/availability. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: repair intentionally signs the target user out, and the repaired user must authenticate again to receive a fresh Principal; an underlying database constraint failure remains fail-closed and observable. Revert the route, Users affordance, and this record to remove manual repair without changing existing identity data.
+-->
+
 <!-- 2026-08-10 bounded reliability diagnostics reads:
 - Assets/data: principal/account/Vault-scoped Session metadata, S2/S3 conversation messages, and content-free reliability aggregates/failure excerpts (A01/A03/A07/A08).
 - Flow/boundary: authenticated system/performance diagnostics -> principal-scoped recent Session anchors -> canonical incremental conversation messages, with legacy transcript fallback only for Sessions not yet adopted into canonical storage. Persisted payloads remain untrusted diagnostic evidence and never grant tool, Session, or cross-account authority.

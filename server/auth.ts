@@ -1358,6 +1358,42 @@ export function setupAuth(app: Express) {
     },
   );
 
+  app.post(
+    "/api/auth/users/:id/identity-foundation",
+    requireAuth,
+    requirePermission("users:write"),
+    async (req: Request, res: Response) => {
+      try {
+        const targetId = req.params.id as string;
+        const user = await storage.getUser(targetId);
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        const foundation = await ensureUserIdentityFoundation(user);
+        await pool.query(`DELETE FROM "session" WHERE sess->>'userId' = $1`, [targetId]);
+        log.info("admin repaired user identity foundation", {
+          actorUserId: req.principal?.userId,
+          targetUserId: targetId,
+          accountId: foundation.accountId,
+          activeVaultId: foundation.activeVaultId,
+        });
+        res.json({
+          userId: targetId,
+          accountId: foundation.accountId,
+          activeVaultId: foundation.activeVaultId,
+          identityIncomplete: false,
+          sessionsRevoked: true,
+        });
+      } catch (error) {
+        log.error("Failed to repair user identity foundation", {
+          actorUserId: req.principal?.userId,
+          targetUserId: req.params.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        res.status(500).json({ error: "Failed to repair user setup" });
+      }
+    },
+  );
+
   // Active HTTP session inventory for admin user detail (SEC-2026-015).
   app.get(
     "/api/auth/users/:id/sessions",
