@@ -119,7 +119,6 @@ const SECTION_GROUPS: SectionGroup[] = [
     label: "Memory",
     sections: [
       { id: "memory.graph", label: "Graph" },
-      { id: "memory.recent_sessions", label: "Recent Sessions" },
     ],
   },
   {
