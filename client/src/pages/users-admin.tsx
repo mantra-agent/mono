@@ -365,6 +365,17 @@ function UserDetail({ user, availablePermissions, canWrite, draft, onDraftChange
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
     },
   });
+  const repairIdentityMutation = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/auth/users/${user.id}/identity-foundation`)).json(),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/users"] });
+      await queryClient.invalidateQueries({ queryKey: sessionsQueryKey });
+      toast({ title: "Account setup repaired", description: `${user.email} can sign in again with a personal Vault.` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Could not repair account setup", description: error.message, variant: "destructive" });
+    },
+  });
   const revokeSessionMutation = useMutation({
     mutationFn: async (sid: string) => {
       setRevokingSid(sid);
@@ -397,6 +408,25 @@ function UserDetail({ user, availablePermissions, canWrite, draft, onDraftChange
         <Button size="sm" disabled={!canWrite || !dirty || mutation.isPending} onClick={() => mutation.mutate(Array.from(draft))}>{mutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}</Button>
       </div>
       <div className="space-y-0">
+        {user.identityIncomplete ? (
+          <ProfileTreeRow
+            label="Account Setup"
+            icon={<Shield className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            expandedContent={
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-muted-foreground">Creates the missing personal account and Vault, then revokes stale sessions.</p>
+                <Button size="sm" disabled={!canWrite || repairIdentityMutation.isPending} onClick={() => repairIdentityMutation.mutate()}>
+                  {repairIdentityMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                  Repair Setup
+                </Button>
+              </div>
+            }
+          >
+            <span className="text-amber-500">Incomplete</span>
+          </ProfileTreeRow>
+        ) : null}
         <ProfileTreeRow label="Status" icon={<User className="h-3.5 w-3.5" />} hasValue showEmpty><span className={user.presence.length > 0 ? "text-foreground" : "text-muted-foreground"}>{user.presence.length > 0 ? "Active" : "Inactive"}</span></ProfileTreeRow>
         <ProfileTreeRow label="Last Active" icon={<Clock className="h-3.5 w-3.5" />} hasValue={!!user.lastActiveAt} showEmpty><span className={user.lastActiveAt ? "text-foreground" : "text-muted-foreground"}>{formatDateTime(user.lastActiveAt)}</span></ProfileTreeRow>
         <ProfileTreeRow label="Connections" icon={<Globe2 className="h-3.5 w-3.5" />} hasValue={user.presence.length > 0} showEmpty><UserPresence presence={user.presence} showLabels /></ProfileTreeRow>
