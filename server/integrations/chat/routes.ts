@@ -2922,7 +2922,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
       // Only invent plain assistant text when there is no system_notice to own
       // the empty outcome. Degraded/failed empty turns render the notice widget.
-      if (responseContent.trim() === "" && !isSuperseded && !systemNotice) {
+      if (
+        responseContent.trim() === "" &&
+        !isSuperseded &&
+        !systemNotice &&
+        !result.intentionalStopReason
+      ) {
         const parts = ["I wasn't able to generate a response."];
         const errorDetail = result.error
           ? sanitizeErrorForUser(result.error)

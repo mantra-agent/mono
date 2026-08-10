@@ -358,6 +358,8 @@ export interface ExecutorRunResult {
   /** Source-owned terminal truth; consumers must not infer mission completion from tools or Session lifecycle. */
   childMissionOutcome: ChildMissionTerminalOutcome;
   degradationReason?: TerminalDegradationReason;
+  /** Successful intentional stop that does not require visible assistant prose. */
+  intentionalStopReason?: "awaiting_user" | "session_complete";
   lastStopReason?: string;
   content: string;
   thinking: string;
@@ -3183,6 +3185,11 @@ export class AgentExecutor extends EventEmitter {
       status,
       childMissionOutcome,
       degradationReason,
+      intentionalStopReason: ctx.intentionallyAwaitingUser
+        ? "awaiting_user"
+        : ctx.intentionallyCompletedSession
+          ? "session_complete"
+          : undefined,
       lastStopReason,
       content: finalContent,
       thinking: allThinkingContent,
