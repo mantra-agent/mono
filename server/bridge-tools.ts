@@ -14929,6 +14929,23 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       read: workspaceTools.read_scratch,
       write: workspaceTools.write_scratch,
       edit: workspaceTools.edit_scratch,
+      patch: async (input) => {
+        try {
+          const { applyScratchRepositoryPatch } = await import("./tools/scratch-patch");
+          const result = await applyScratchRepositoryPatch({
+            repositoryDirectory: String(input.repositoryDirectory || ""),
+            patch: String(input.patch || ""),
+            sessionId: String(input._sessionId || ""),
+          });
+          return { result: JSON.stringify(result) };
+        } catch (error) {
+          return {
+            result: `Repository patch rejected: ${error instanceof Error ? error.message : String(error)}`,
+            error: true,
+            failure: inputFailure("scratch_patch_rejected"),
+          };
+        }
+      },
       list: workspaceTools.list_scratch,
       search: workspaceTools.search_scratch,
     };
