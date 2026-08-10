@@ -349,10 +349,12 @@ export interface RepeatedToolFailureDetails {
 
 export type AbortDetails = RepeatedToolFailureDetails;
 export type { TerminationReason } from "@shared/models/chat";
-import type { TerminationReason } from "@shared/models/chat";
+import type { ChildMissionTerminalOutcome, TerminationReason } from "@shared/models/chat";
 
 export interface ExecutorRunResult {
   status: "succeeded" | "degraded" | "failed" | "yielded";
+  /** Source-owned terminal truth; consumers must not infer mission completion from tools or Session lifecycle. */
+  childMissionOutcome: ChildMissionTerminalOutcome;
   degradationReason?: TerminalDegradationReason;
   lastStopReason?: string;
   content: string;
@@ -3080,8 +3082,18 @@ export class AgentExecutor extends EventEmitter {
       : terminationReason === "yield_to_interactive" ? "yielded"
       : terminationReason === "complete" ? "succeeded"
       : "failed";
+    const childMissionOutcome: ChildMissionTerminalOutcome =
+      degradationReason === "iteration_budget_exhausted" || degradationReason === "tool_call_budget_exhausted"
+        ? "resumable_budget_exhausted"
+        : status === "succeeded" && ctx.intentionallyCompletedSession
+          ? "mission_completed"
+          : status === "yielded" || (ctx.aborted && ctx.abortReason === "cancelled")
+            ? "cancelled"
+            : status === "failed"
+              ? "failed"
+              : "abandoned";
 
-    log.log(`run complete runId=${ctx.runId} status=${status} iterations=${ctx.iteration} terminationReason=${terminationReason} degradationReason=${degradationReason ?? "none"} thinkingLen=${allThinkingContent.length} toolCallsCount=${ctx.resolvedToolCalls.length} contentLen=${finalContent.length} model=${ctx.resolvedModel}`);
+    log.log(`run complete runId=${ctx.runId} status=${status} childMissionOutcome=${childMissionOutcome} iterations=${ctx.iteration} terminationReason=${terminationReason} degradationReason=${degradationReason ?? "none"} thinkingLen=${allThinkingContent.length} toolCallsCount=${ctx.resolvedToolCalls.length} contentLen=${finalContent.length} model=${ctx.resolvedModel}`);
     if (degradationReason) {
       log.warn(`agent.run.degraded runId=${ctx.runId} sessionId=${options.sessionId || "none"} reason=${degradationReason} lastStopReason=${lastStopReason} iterations=${ctx.iteration} toolCallsCount=${ctx.resolvedToolCalls.length}`);
     }
@@ -3100,6 +3112,7 @@ export class AgentExecutor extends EventEmitter {
       runId: ctx.runId,
       sessionId: options.sessionId || null,
       status,
+      childMissionOutcome,
       reason: degradationReason ?? (ctx.aborted ? (ctx.abortReason ?? terminationReason) : terminationReason),
       iterations: ctx.iteration,
       durationMs: terminalDurationMs,
@@ -3164,6 +3177,7 @@ export class AgentExecutor extends EventEmitter {
 
     return {
       status,
+      childMissionOutcome,
       degradationReason,
       lastStopReason,
       content: finalContent,

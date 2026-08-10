@@ -1130,6 +1130,15 @@ export async function executeAutonomousSkillRun(
     }
 
     if (await conversationExists(sessionId)) {
+      let childMissionOutcome = result.childMissionOutcome;
+      if (options.planId && options.stepId) {
+        const { getPlanSteps } = await import("./plan-service");
+        const terminalStep = (await getPlanSteps(options.planId)).find((step) => step.id === options.stepId);
+        if (terminalStep?.status === "blocked" || terminalStep?.status === "needs_review") {
+          childMissionOutcome = terminalStep.status;
+        }
+      }
+      await chatFileStorage.setChildMissionOutcome(sessionId, childMissionOutcome);
       const finalSessionStatus = result.status === "succeeded" || result.status === "degraded" ? "saved" : "failed";
       if (result.status === "failed") {
         await chatFileStorage.setErrorSeverity(sessionId, "error").catch((e: unknown) => {
