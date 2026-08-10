@@ -43,7 +43,7 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { BusinessSelector } from "@/components/business/business-selector";
+import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { useSelectedBusiness } from "@/hooks/use-selected-business";
 
 interface MetricsResponse {
@@ -398,9 +398,12 @@ export default function BusinessMetricsPage() {
 
   return (
     <div className="p-4">
-      <div className="pb-4">
-        <BusinessSelector businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} />
-      </div>
+      <BusinessPageHeader
+        page="Metrics"
+        businesses={businesses}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+      />
       <div className={HIERARCHY_TREE_STACK_CLASS}>
         <HierarchySearchInput
           value={query}

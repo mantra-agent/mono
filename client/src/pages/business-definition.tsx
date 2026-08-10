@@ -1,22 +1,22 @@
-import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Loader2, Plus } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Building2, ChevronDown, Loader2, Plus, Shield } from "lucide-react";
+import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { Button } from "@/components/ui/button";
-import {
-  HierarchySectionHeader,
-  HIERARCHY_TREE_STACK_CLASS,
-} from "@/components/hierarchy-section-header";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { HierarchySectionHeader, HIERARCHY_TREE_STACK_CLASS } from "@/components/hierarchy-section-header";
 import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
-import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useVaults } from "@/hooks/use-vaults";
 import {
   BUSINESS_QUERY_KEY,
   useSelectedBusiness,
   type BusinessDefinition,
   type NarrativePageRef,
 } from "@/hooks/use-selected-business";
-import { BusinessSelector } from "@/components/business/business-selector";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 const NARRATIVE_SLOTS = [
   { slot: "values", label: "Values", page: (b: BusinessDefinition) => b.valuesPage },
@@ -24,7 +24,6 @@ const NARRATIVE_SLOTS = [
   { slot: "mission", label: "Mission", page: (b: BusinessDefinition) => b.missionPage },
 ] as const;
 
-/** Inline scalar field that persists on blur when the value actually changed. */
 function ScalarField({
   label,
   value,
@@ -36,23 +35,33 @@ function ScalarField({
   placeholder?: string;
   onSave: (next: string) => void;
 }) {
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
-
   return (
-    <label className="flex flex-col gap-1">
-      <span className="text-xs text-muted-foreground">{label}</span>
+    <ProfileTreeRow
+      label={label}
+      icon={<Building2 className="h-3.5 w-3.5" />}
+      hasValue={Boolean(value)}
+      showEmpty
+      mobileLayout="inline"
+      testId={`business-row-${label.toLowerCase().replace(/\s+/g, "-")}`}
+    >
       <Input
-        value={draft}
+        key={value}
+        defaultValue={value}
         placeholder={placeholder}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          const next = draft.trim();
+        onBlur={(event) => {
+          const next = event.target.value.trim();
           if (next !== value.trim()) onSave(next);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") {
+            event.currentTarget.value = value;
+            event.currentTarget.blur();
+          }
         }}
         data-testid={`business-field-${label.toLowerCase().replace(/\s+/g, "-")}`}
       />
-    </label>
+    </ProfileTreeRow>
   );
 }
 
@@ -86,16 +95,12 @@ function NarrativeSlot({
     },
   });
 
-  if (page) {
-    return (
-      <ExpandableLibraryPage page={page} defaultOpen={false} />
-    );
-  }
+  if (page) return <ExpandableLibraryPage page={page} defaultOpen={false} />;
 
   return (
     <button
       type="button"
-      className="flex min-h-8 items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
       onClick={() => create.mutate()}
       disabled={create.isPending}
       data-testid={`business-narrative-add-${slot}`}
@@ -108,6 +113,7 @@ function NarrativeSlot({
 
 function DefinitionEditor({ business }: { business: BusinessDefinition }) {
   const { toast } = useToast();
+  const { vaults } = useVaults();
   const patch = useMutation({
     mutationFn: async (body: Record<string, unknown>) => {
       const res = await apiRequest("PATCH", `/api/business/definition/${business.id}`, body);
@@ -124,10 +130,10 @@ function DefinitionEditor({ business }: { business: BusinessDefinition }) {
   });
 
   return (
-    <div className="space-y-6 py-4">
+    <div className="space-y-2 py-2">
       <div className={HIERARCHY_TREE_STACK_CLASS}>
         <HierarchySectionHeader>Identity</HierarchySectionHeader>
-        <div className="grid max-w-xl gap-3 sm:grid-cols-2">
+        <div>
           <ScalarField
             label="Public Name"
             value={business.publicName}
@@ -140,20 +146,56 @@ function DefinitionEditor({ business }: { business: BusinessDefinition }) {
             placeholder="Legal entity"
             onSave={(entityName) => patch.mutate({ entityName: entityName || null })}
           />
+          <ProfileTreeRow
+            label="Vaults"
+            icon={<Shield className="h-3.5 w-3.5" />}
+            hasValue={business.vaultIds.length > 0}
+            showEmpty
+            mobileLayout="inline"
+            testId="business-row-vaults"
+          >
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" className="h-5 max-w-48 justify-end px-1.5 text-right text-xs font-normal" data-testid="button-edit-business-vaults">
+                  <span className="truncate">
+                    {vaults.filter((vault) => business.vaultIds.includes(vault.id)).map((vault) => vault.name).join(", ") || "Choose Vaults"}
+                  </span>
+                  <ChevronDown className="ml-1 h-3 w-3 shrink-0 text-muted-foreground" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-64 p-1" data-testid="popover-business-vaults">
+                {vaults.map((vault) => {
+                  const checked = business.vaultIds.includes(vault.id);
+                  const onlyMembership = checked && business.vaultIds.length === 1;
+                  return (
+                    <label key={vault.id} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent sm:min-h-9">
+                      <Checkbox
+                        checked={checked}
+                        disabled={onlyMembership || patch.isPending}
+                        onCheckedChange={(nextChecked) => {
+                          const next = nextChecked
+                            ? [...new Set([...business.vaultIds, vault.id])]
+                            : business.vaultIds.filter((id) => id !== vault.id);
+                          patch.mutate({ vaultIds: next });
+                        }}
+                        aria-label={`${checked ? "Remove from" : "Add to"} ${vault.name}`}
+                        data-testid={`checkbox-business-vault-${vault.id}`}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{vault.name}</span>
+                    </label>
+                  );
+                })}
+              </PopoverContent>
+            </Popover>
+          </ProfileTreeRow>
         </div>
       </div>
 
       <div className={HIERARCHY_TREE_STACK_CLASS}>
         <HierarchySectionHeader>Narrative</HierarchySectionHeader>
-        <div className="space-y-2">
+        <div>
           {NARRATIVE_SLOTS.map(({ slot, label, page }) => (
-            <NarrativeSlot
-              key={slot}
-              business={business}
-              slot={slot}
-              label={label}
-              page={page(business)}
-            />
+            <NarrativeSlot key={slot} business={business} slot={slot} label={label} page={page(business)} />
           ))}
         </div>
       </div>
@@ -166,8 +208,12 @@ export default function BusinessDefinitionPage() {
 
   return (
     <div className="p-4">
-      <BusinessSelector businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} />
-
+      <BusinessPageHeader
+        page="Identity"
+        businesses={businesses}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+      />
       {isLoading ? (
         <div className="flex items-center justify-center py-16 text-muted-foreground">
           <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading businesses…
