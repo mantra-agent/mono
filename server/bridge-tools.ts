@@ -15,6 +15,7 @@ import { createGmailReadHandlers } from "./tools/handlers/gmail-read";
 import { gmailDraftHandlers } from "./tools/handlers/gmail-drafts";
 import { createGmailProviderHandlers } from "./tools/handlers/gmail-provider";
 import { handleGmailTriageLog } from "./tools/handlers/gmail-triage";
+import { handleGmailPipelineAction } from "./tools/handlers/gmail-pipeline";
 export { handleGmailDraftFromReview } from "./tools/handlers/gmail-drafts";
 export { diagnoseGmailBatchRead } from "./tools/handlers/gmail-provider";
 import { isSimilarText } from "./utils/text-similarity";
@@ -419,6 +420,8 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
   const { createLogger } = await import("./log");
   const log = createLogger("EmailCache");
   const subAction = args.cache_action || "get_untriaged";
+  const pipelineResult = await handleGmailPipelineAction(args);
+  if (pipelineResult) return pipelineResult;
 
   if (subAction === "get_untriaged") {
     const limit = Math.min(args.limit || 5000, 5000);
@@ -520,20 +523,6 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
 
     log.debug(`mark_triaged: updated ${entries.length} emails, recorded ${triageLogEntries.length} audit log entries, queued ${importQueued} imports, logged ${interactionsLogged} interactions`);
     return { result: `Marked ${entries.length} email(s) as triaged and recorded audit log entries.${importQueued > 0 ? ` Queued ${importQueued} unknown sender(s) for import review.` : ""}${interactionsLogged > 0 ? ` Logged ${interactionsLogged} interaction(s) on matched people.` : ""}` };
-  }
-
-  if (subAction === "sync_status") {
-    const { getEmailPipelineHealth } = await import("./email-sync");
-    const health = await getEmailPipelineHealth();
-    if (health.accounts.length === 0) {
-      return { result: "No email sync history found. Sync has not run yet." };
-    }
-    const lines = health.accounts.map(account => {
-      const staleWarning = account.stale ? " ⚠️ STALE" : "";
-      const lastSuccessStr = account.lastGoodAt || "never";
-      return `- **${account.accountId}**: status=${account.status}, last success=${lastSuccessStr}${staleWarning}, total synced=${account.totalSynced}, total reconciled (Superhuman/done sweeps)=${account.totalReconciled}${account.currentError ? `, current error: ${account.currentError}` : ""}`;
-    });
-    return { result: `Email sync health: ${health.status}\n${lines.join("\n")}` };
   }
 
   if (subAction === "search") {
@@ -713,11 +702,6 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
     return { result: `Enrichment stored for thread=${thread_id}${shouldDismiss ? " (dismissed)" : ""}.` };
   }
 
-  if (subAction === "pipeline_counts") {
-    const counts = await storage.getEmailPipelineCounts();
-    return { result: safeStringify({ ...counts, description: "Pipeline counts from getEmailPipelineCounts(). untriaged=non-outbound emails with triageStatus='untriaged' (last 30 days), matching get_untriaged candidate scope. awaitingEnrichment=triageStatus='triaged' with no/stale enrichment (last 30 days). reviewReady=triageStatus='triaged' with current enrichment (last 30 days). triageStatus='dismissed' emails (auto-dismissed noise/FYI) are excluded from enrichment/review counts." }, { label: "bridge.gmail.pipeline_counts" }) };
-  }
-
   if (subAction === "resolve" || subAction === "get_thread") {
     const rawRef = String(args.ref || args.query || args.thread_id || "").trim();
     const explicitAccountId = typeof args.account_id === "string" && args.account_id.trim() ? args.account_id.trim() : null;
@@ -872,68 +856,6 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
         createdAt: enrichment.createdAt,
       } : null,
     }, { label: "bridge.gmail.message_detail" }) };
-  }
-
-  if (subAction === "diagnose") {
-    const counts = await storage.getEmailPipelineCounts();
-    const sampleLimit = Math.min(Number(args.limit) || 50, 200);
-    const unenriched = await storage.getUnenrichedTriagedEmails(sampleLimit);
-    const unenrichedSummary = unenriched.map(e => ({
-      id: e.id,
-      providerThreadId: e.providerThreadId,
-      providerMessageId: e.providerMessageId,
-      accountId: e.accountId,
-      triageStatus: e.triageStatus,
-      triageTier: e.triageTier,
-      isDone: e.isDone,
-      subject: e.subject?.slice(0, 80),
-    }));
-
-    const exactComparison = counts.awaitingEnrichment <= sampleLimit && unenriched.length < sampleLimit;
-    const divergence = exactComparison && counts.awaitingEnrichment !== unenriched.length;
-    const sampleNote = !exactComparison
-      ? `Sample only: getUnenrichedTriagedEmails returned ${unenriched.length}/${sampleLimit} rows from ${counts.awaitingEnrichment} awaiting. No divergence conclusion from a capped sample.`
-      : "Exact comparison: sample covers the full awaiting set.";
-
-    return { result: safeStringify({
-      pipelineCounts: counts,
-      unenrichedQuery: { sampleCount: unenriched.length, sampleLimit, emails: unenrichedSummary },
-      exactComparison,
-      divergence,
-      divergenceNote: divergence
-        ? `DIVERGENCE: getEmailPipelineCounts says ${counts.awaitingEnrichment} awaiting, getUnenrichedTriagedEmails returns ${unenriched.length}. These should agree when the sample is complete.`
-        : sampleNote,
-    }, { label: "bridge.gmail.diagnose" }) };
-  }
-
-  if (subAction === "run_downstream") {
-    log.log(`Manual run_downstream triggered via tool`);
-    const counts = await storage.getEmailPipelineCounts();
-    log.log(`run_downstream counts: untriaged=${counts.untriaged} awaitingEnrichment=${counts.awaitingEnrichment} reviewReady=${counts.reviewReady}`);
-
-    let triageResult = null;
-    if (counts.untriaged > 0) {
-      const { runTriagePipeline } = await import("./triage-runner");
-      triageResult = await runTriagePipeline();
-      log.log(`run_downstream triage: processed=${triageResult.processed} triaged=${triageResult.triaged} status=${triageResult.status}`);
-    }
-
-    const afterCounts = await storage.getEmailPipelineCounts();
-    let enrichmentResult = null;
-    if (afterCounts.awaitingEnrichment > 0) {
-      const { runEnrichment } = await import("./email-enrichment");
-      enrichmentResult = await runEnrichment();
-      log.log(`run_downstream enrichment: dismissed=${enrichmentResult.dismissed} runStatus=${enrichmentResult.runStatus}`);
-    }
-
-    const finalCounts = await storage.getEmailPipelineCounts();
-    return { result: safeStringify({
-      beforeCounts: counts,
-      triageResult: triageResult ? { processed: triageResult.processed, triaged: triageResult.triaged, status: triageResult.status } : "skipped (untriaged=0)",
-      afterTriageCounts: afterCounts,
-      enrichmentResult: enrichmentResult ? { dismissed: enrichmentResult.dismissed, runStatus: enrichmentResult.runStatus } : "skipped (awaitingEnrichment=0)",
-      finalCounts,
-    }, { label: "bridge.gmail.run_downstream" }) };
   }
 
   return { result: `Unknown cache_action "${subAction}". Use "get_untriaged", "mark_triaged", "get_unenriched", "store_enrichment", "search", "sync_status", "pipeline_counts", "get_message", "diagnose", or "run_downstream".`, error: true };
