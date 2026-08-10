@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Gauge, Loader2, Plus, Target } from "lucide-react";
+import { BusinessPageHeader } from "@/components/business/business-page-header";
+import { useSelectedBusiness } from "@/hooks/use-selected-business";
 import {
   METRIC_DIRECTIONS,
   type Kpi,
@@ -22,7 +24,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -96,8 +97,7 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/business/kpis"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/business/kpis/standing-scores"] });
+      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/business/kpis") });
       toast({ title: "KPI created", description: name });
       setOpen(false);
       setName("");
@@ -166,11 +166,13 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
 }
 
 export default function BusinessKpisPage() {
-  usePageHeader({ title: "KPIs" });
+  const { businesses, selectedId, setSelectedId } = useSelectedBusiness();
   const [query, setQuery] = useState("");
+  const kpisUrl = selectedId ? `/api/business/kpis?businessId=${encodeURIComponent(selectedId)}` : "/api/business/kpis";
+  const metricsUrl = selectedId ? `/api/business/metrics?businessId=${encodeURIComponent(selectedId)}` : "/api/business/metrics";
 
-  const { data, isLoading } = useQuery<KpisResponse>({ queryKey: ["/api/business/kpis"] });
-  const { data: metricsData } = useQuery<MetricsResponse>({ queryKey: ["/api/business/metrics"] });
+  const { data, isLoading } = useQuery<KpisResponse>({ queryKey: [kpisUrl], enabled: Boolean(selectedId) });
+  const { data: metricsData } = useQuery<MetricsResponse>({ queryKey: [metricsUrl], enabled: Boolean(selectedId) });
 
   const kpis = useMemo(() => {
     const list = data?.kpis ?? [];
@@ -180,7 +182,8 @@ export default function BusinessKpisPage() {
   }, [data, query]);
 
   return (
-    <div className="mx-auto max-w-4xl p-4">
+    <div className="p-4">
+      <BusinessPageHeader page="KPIs" businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} />
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-semibold">

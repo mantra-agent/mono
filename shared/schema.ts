@@ -4,6 +4,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { libraryPages } from "./models/info";
 import { vaults } from "./models/vaults";
+import { businesses } from "./models/businesses";
 import { DEFAULT_AGENT_NAME } from "./instance-config";
 import { PLAN_REVIEW_DECISIONS } from "./plan-review";
 
@@ -1118,12 +1119,12 @@ export const companyIdentityKeys = pgTable("company_identity_keys", {
 export type CompanyIdentityKeyRow = typeof companyIdentityKeys.$inferSelect;
 
 // ── Financial Models (investor-facing business model) ─────────────
-// User-owned. One model per account in v1 (enforced by a partial unique
-// index on account_id). Assumptions are stored as a normalized jsonb blob;
-// shared/models/business-model.ts owns the shape, defaults, and clamps.
+// User-owned. One model per Business. Assumptions are stored as a normalized
+// jsonb blob; shared/models/business-model.ts owns the shape, defaults, and clamps.
 export const financialModels = pgTable("financial_models", {
   id: text("id").primaryKey(),
-  name: text("name").notNull().default("Mantra Model"),
+  businessId: text("business_id").references(() => businesses.id, { onDelete: "restrict" }),
+  name: text("name").notNull().default("Business Model"),
   assumptions: jsonb("assumptions").notNull().default({}),
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
@@ -1132,6 +1133,7 @@ export const financialModels = pgTable("financial_models", {
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
+  uniqueIndex("uq_financial_models_business").on(table.businessId),
   index("idx_financial_models_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_financial_models_account").on(table.accountId),
 ]);

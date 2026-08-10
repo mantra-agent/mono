@@ -542,7 +542,7 @@ export const metricsStorage = {
 };
 
 export const kpiStorage = {
-  async list(query?: string): Promise<Kpi[]> {
+  async list(query?: string, businessId?: string): Promise<Kpi[]> {
     const principal = currentPrincipal();
     const needle = query?.trim();
     const filter = needle
@@ -554,13 +554,19 @@ export const kpiStorage = {
         )
       : undefined;
     const rows = await db
-      .select()
+      .select({ kpi: kpis })
       .from(kpis)
-      .where(combineWithVisibleScope(principal, kpiScope, filter))
+      .innerJoin(metrics, eq(metrics.id, kpis.metricId))
+      .innerJoin(businesses, eq(businesses.id, metrics.businessId))
+      .where(and(
+        combineWithVisibleScope(principal, kpiScope, filter),
+        visibleBusinessPredicate(principal, businessId ? eq(businesses.id, businessId) : undefined),
+        businessId ? eq(metrics.businessId, businessId) : undefined,
+      ))
       .orderBy(asc(kpis.name));
 
     const out: Kpi[] = [];
-    for (const row of rows) {
+    for (const { kpi: row } of rows) {
       let metric: Metric | null = null;
       let sample: MetricSample | null = null;
       try {
@@ -711,8 +717,8 @@ export const kpiStorage = {
   },
 
   /** Score map for all active KPIs bound to standing objectives. */
-  async standingObjectiveScores(): Promise<Record<string, Kpi>> {
-    const list = await this.list();
+  async standingObjectiveScores(businessId?: string): Promise<Record<string, Kpi>> {
+    const list = await this.list(undefined, businessId);
     const map: Record<string, Kpi> = {};
     for (const kpi of list) {
       if (kpi.status !== "active" || !kpi.standingObjectiveKey) continue;

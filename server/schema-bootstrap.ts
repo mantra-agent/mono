@@ -6430,7 +6430,8 @@ export async function runSchemaBootstrap(
     await pool.query(`
       CREATE TABLE IF NOT EXISTS financial_models (
         id TEXT PRIMARY KEY,
-        name TEXT NOT NULL DEFAULT 'Mantra Model',
+        business_id TEXT REFERENCES businesses(id) ON DELETE RESTRICT,
+        name TEXT NOT NULL DEFAULT 'Business Model',
         assumptions JSONB NOT NULL DEFAULT '{}'::jsonb,
         scope TEXT NOT NULL DEFAULT 'user',
         owner_user_id TEXT,
@@ -6440,10 +6441,18 @@ export async function runSchemaBootstrap(
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await pool.query(`ALTER TABLE financial_models ADD COLUMN IF NOT EXISTS business_id TEXT REFERENCES businesses(id) ON DELETE RESTRICT`);
+    await pool.query(`
+      UPDATE financial_models fm SET business_id = b.id
+      FROM businesses b
+      WHERE fm.business_id IS NULL
+        AND fm.account_id = b.account_id
+        AND b.is_platform_instrument = true
+    `);
+    await pool.query(`DROP INDEX IF EXISTS uq_financial_models_account`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_financial_models_business ON financial_models(business_id) WHERE business_id IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_financial_models_scope_owner ON financial_models(scope, owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_financial_models_account ON financial_models(account_id)`);
-    // One model per account in v1: enforce structurally so concurrent get-or-create cannot duplicate.
-    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_financial_models_account ON financial_models(account_id) WHERE account_id IS NOT NULL`);
   });
 
   await heal("job roles domain", async () => {

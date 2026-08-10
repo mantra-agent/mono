@@ -1,9 +1,8 @@
 import { randomBytes } from "crypto";
-import { asc, eq } from "drizzle-orm";
-import { financialModels } from "@shared/schema";
+import { and, eq } from "drizzle-orm";
+import { businesses, financialModels } from "@shared/schema";
 import {
   assertWritable,
-  combineWithVisibleScope,
   combineWithWritableScope,
   ownedInsertValues,
 } from "./scoped-storage";
@@ -17,6 +16,7 @@ import {
 import { db } from "./db";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { createLogger } from "./log";
+import { visibleBusinessPredicate, writableBusinessPredicate } from "./business-vault-access";
 
 const log = createLogger("BusinessModelStorage");
 
@@ -31,8 +31,10 @@ function newModelId(): string {
 }
 
 function mapModel(row: typeof financialModels.$inferSelect, assumptions = normalizeAssumptions(row.assumptions)): FinancialModel {
+  if (!row.businessId) throw new Error("Financial model is missing its owning Business");
   return {
     id: row.id,
+    businessId: row.businessId,
     name: row.name,
     assumptions,
     createdAt: row.createdAt.toISOString(),
@@ -45,35 +47,42 @@ function needsNormalization(row: typeof financialModels.$inferSelect, normalized
 }
 
 export class BusinessModelStorage {
-  private async firstVisible() {
+  private async assertVisibleBusiness(businessId: string): Promise<void> {
     const principal = requireCurrentUserPrincipal();
-    const rows = await db
-      .select()
-      .from(financialModels)
-      .where(combineWithVisibleScope(principal, modelScope))
-      .orderBy(asc(financialModels.createdAt))
+    const [business] = await db
+      .select({ id: businesses.id })
+      .from(businesses)
+      .where(visibleBusinessPredicate(principal, eq(businesses.id, businessId)))
       .limit(1);
-    return rows[0] ?? null;
+    if (!business) throw Object.assign(new Error("Business not found or not visible"), { status: 404 });
   }
 
-  /**
-   * One model per account in v1. Returns the principal's model, creating it
-   * with default assumptions if none exists. The insert is replay-safe: the
-   * partial unique index on account_id plus onConflictDoNothing means a
-   * concurrent create resolves to a single row on re-read.
-   */
-  async getOrCreate(): Promise<FinancialModel> {
-    const existing = await this.firstVisible();
+  private async findByBusiness(businessId: string) {
+    const principal = requireCurrentUserPrincipal();
+    const [row] = await db
+      .select({ model: financialModels })
+      .from(financialModels)
+      .innerJoin(businesses, eq(businesses.id, financialModels.businessId))
+      .where(and(
+        visibleBusinessPredicate(principal, eq(businesses.id, businessId)),
+        eq(financialModels.businessId, businessId),
+      ))
+      .limit(1);
+    return row?.model ?? null;
+  }
+
+  async getOrCreate(businessId: string): Promise<FinancialModel> {
+    await this.assertVisibleBusiness(businessId);
+    const existing = await this.findByBusiness(businessId);
     if (existing) {
       const principal = requireCurrentUserPrincipal();
       const normalized = normalizeAssumptions(existing.assumptions);
       if (needsNormalization(existing, normalized)) {
-        const rows = await db
+        const [updated] = await db
           .update(financialModels)
           .set({ assumptions: normalized, updatedAt: new Date() })
           .where(combineWithWritableScope(principal, modelScope, eq(financialModels.id, existing.id)))
           .returning();
-        const updated = rows[0];
         if (updated) {
           log.info("normalized financial model assumptions", { modelId: updated.id, modelVersion: normalized.modelVersion });
           return mapModel(updated, normalized);
@@ -83,38 +92,50 @@ export class BusinessModelStorage {
     }
 
     const principal = requireCurrentUserPrincipal();
+    const [writableBusiness] = await db
+      .select({ id: businesses.id, publicName: businesses.publicName })
+      .from(businesses)
+      .where(writableBusinessPredicate(principal, eq(businesses.id, businessId)))
+      .limit(1);
+    if (!writableBusiness) throw Object.assign(new Error("Business not found or not writable"), { status: 403 });
+
     const now = new Date();
-    const row = {
+    await db.insert(financialModels).values({
       id: newModelId(),
+      businessId,
       ...ownedInsertValues(principal, modelScope),
       createdByUserId: principal.userId ?? null,
-      name: "Mantra Model",
+      name: `${writableBusiness.publicName} Model`,
       assumptions: defaultAssumptions(),
       createdAt: now,
       updatedAt: now,
-    };
-    await db.insert(financialModels).values(row).onConflictDoNothing();
+    }).onConflictDoNothing();
 
-    const settled = await this.firstVisible();
-    if (!settled) {
-      log.error("financial model missing after get-or-create insert");
-      throw new Error("Failed to create financial model");
-    }
+    const settled = await this.findByBusiness(businessId);
+    if (!settled) throw new Error("Failed to create financial model");
     return mapModel(settled);
   }
 
-  /** Apply a partial assumptions patch (omitted fields unchanged) and persist the normalized result. */
-  async updateAssumptions(patch: AssumptionsPatch): Promise<FinancialModel> {
+  async updateAssumptions(businessId: string, patch: AssumptionsPatch): Promise<FinancialModel> {
     const principal = requireCurrentUserPrincipal();
-    const current = await this.getOrCreate();
+    const [business] = await db
+      .select({ id: businesses.id })
+      .from(businesses)
+      .where(writableBusinessPredicate(principal, eq(businesses.id, businessId)))
+      .limit(1);
+    if (!business) throw Object.assign(new Error("Business not found or not writable"), { status: 403 });
+
+    const current = await this.getOrCreate(businessId);
     const nextAssumptions = mergeAssumptions(current.assumptions, patch);
-    const rows = await db
+    const [row] = await db
       .update(financialModels)
       .set({ assumptions: nextAssumptions, updatedAt: new Date() })
-      .where(combineWithWritableScope(principal, modelScope, eq(financialModels.id, current.id)))
+      .where(combineWithWritableScope(principal, modelScope, and(
+        eq(financialModels.id, current.id),
+        eq(financialModels.businessId, businessId),
+      )))
       .returning();
-    const updated = assertWritable(principal, rows[0], "Financial model");
-    return mapModel(updated);
+    return mapModel(assertWritable(principal, row, "Financial model"));
   }
 }
 

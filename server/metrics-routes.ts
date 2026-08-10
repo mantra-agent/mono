@@ -228,7 +228,8 @@ export function registerMetricsRoutes(app: Express): void {
         await ensureReady();
         await ensureSeeded();
         const query = typeof req.query.query === "string" ? req.query.query : undefined;
-        const list = await kpiStorage.list(query);
+        const businessId = typeof req.query.businessId === "string" ? req.query.businessId : undefined;
+        const list = await kpiStorage.list(query, businessId);
         res.json({ kpis: list });
       } catch (error) {
         respondError(res, "list kpis", error);
@@ -240,11 +241,12 @@ export function registerMetricsRoutes(app: Express): void {
     "/api/business/kpis/standing-scores",
     requireAuth,
     requirePermission("system:read"),
-    async (_req: Request, res: Response) => {
+    async (req: Request, res: Response) => {
       try {
         await ensureReady();
         await ensureSeeded();
-        const scores = await kpiStorage.standingObjectiveScores();
+        const businessId = typeof req.query.businessId === "string" ? req.query.businessId : undefined;
+        const scores = await kpiStorage.standingObjectiveScores(businessId);
         res.json({ scores });
       } catch (error) {
         respondError(res, "standing kpi scores", error);

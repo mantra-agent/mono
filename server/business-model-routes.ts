@@ -16,24 +16,29 @@ export function registerBusinessModelRoutes(app: Express): void {
   // Wellness `app.use("/api/wellness", requireAuth, requireActiveWellness)` seam.
   app.use("/api/business", requireAuth, requireActiveBusiness);
 
-  // GET → get-or-create the principal's model with default assumptions.
-  app.get("/api/business/model", requirePermission("system:read"), async (_req, res) => {
+  // GET → get-or-create the selected Business's model with default assumptions.
+  app.get("/api/business/model", requirePermission("system:read"), async (req, res) => {
     try {
-      res.json(await businessModelStorage.getOrCreate());
+      const businessId = typeof req.query.businessId === "string" ? req.query.businessId.trim() : "";
+      if (!businessId) return res.status(400).json({ error: "businessId is required" });
+      res.json(await businessModelStorage.getOrCreate(businessId));
     } catch (error) {
-      log.error("get business model failed", error);
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      const status = typeof (error as { status?: number })?.status === "number" ? (error as { status: number }).status : 500;
+      log.error("get business model failed", { status, error: error instanceof Error ? error.message : String(error) });
+      res.status(status).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
 
   // PATCH → zod-validated partial assumptions update (omitted fields unchanged).
   app.patch("/api/business/model", requirePermission("system:write"), async (req, res) => {
     try {
+      const businessId = typeof req.query.businessId === "string" ? req.query.businessId.trim() : "";
+      if (!businessId) return res.status(400).json({ error: "businessId is required" });
       const patch = assumptionsPatchSchema.parse(req.body ?? {});
-      res.json(await businessModelStorage.updateAssumptions(patch));
+      res.json(await businessModelStorage.updateAssumptions(businessId, patch));
     } catch (error) {
       const status = typeof (error as { status?: number })?.status === "number" ? (error as { status: number }).status : 400;
-      log.error("update business model failed", error);
+      log.error("update business model failed", { status, error: error instanceof Error ? error.message : String(error) });
       res.status(status).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });

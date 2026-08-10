@@ -276,7 +276,7 @@ async function handlePlanAction(action: string, args: Record<string, unknown>) {
 
 async function handleKpiAction(action: string, args: Record<string, unknown>) {
   if (action === "list_kpis") {
-    const kpis = await kpiStorage.list(optionalStr(args, "query"));
+    const kpis = await kpiStorage.list(optionalStr(args, "query"), optionalStr(args, "businessId"));
     return { result: safeStringify({ total: kpis.length, kpis: kpis.map(kpiResult) }, { label: "bridge.business.kpis.list" }) };
   }
   if (action === "get_kpi") {
