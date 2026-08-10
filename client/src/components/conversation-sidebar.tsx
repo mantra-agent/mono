@@ -986,9 +986,35 @@ export function ConversationSidebar({
     togglePin.mutate({ id, isPinned: pinned });
   }, [togglePin]);
 
+  const isSearching = searchQuery.trim().length > 0;
+
+  // Session search must cover the full corpus, not only the primary working
+  // set. Past/Snooze/Archive load lazily for the menu; when the user searches,
+  // warm those same view caches and merge them so search is never silently
+  // scoped to recently-active sessions. These reuse the DeferredSessionGroup
+  // query keys, so the corpus is one source of truth and expanding a section
+  // after searching is instant.
+  const pastSearchQuery = useQuery<ChatSession[]>({ queryKey: ["/api/sessions?view=past"], enabled: isSearching, staleTime: 30_000 });
+  const snoozeSearchQuery = useQuery<ChatSession[]>({ queryKey: ["/api/sessions?view=snooze"], enabled: isSearching, staleTime: 30_000 });
+  const archiveSearchQuery = useQuery<ChatSession[]>({ queryKey: ["/api/sessions?view=archive"], enabled: isSearching, staleTime: 30_000 });
+
+  const searchCorpus = useMemo(() => {
+    if (!isSearching) return sessions;
+    // Primary rows win on id collision — they carry the route's live enrichment.
+    const byId = new Map(sessions.map((session) => [session.id, session]));
+    for (const session of [
+      ...(pastSearchQuery.data ?? []),
+      ...(snoozeSearchQuery.data ?? []),
+      ...(archiveSearchQuery.data ?? []),
+    ]) {
+      if (!byId.has(session.id)) byId.set(session.id, session);
+    }
+    return [...byId.values()];
+  }, [isSearching, sessions, pastSearchQuery.data, snoozeSearchQuery.data, archiveSearchQuery.data]);
+
   const vaultVisibleSessions = useMemo(
-    () => sessions.filter((session) => Boolean(session.vaultId && visibleVaultIdSet.has(session.vaultId))),
-    [sessions, visibleVaultIdSet],
+    () => searchCorpus.filter((session) => Boolean(session.vaultId && visibleVaultIdSet.has(session.vaultId))),
+    [searchCorpus, visibleVaultIdSet],
   );
 
   const sessionsWithChildCounts = useMemo(() => {
@@ -1090,6 +1116,26 @@ export function ConversationSidebar({
               <MessageSquare className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
               <p className="text-xs text-muted-foreground">No matching sessions</p>
             </div>
+          ) : isSearching ? (
+            <div className="space-y-0 mt-0">
+              {[...filteredConversations].sort(sortByUpdated).map((conv) => (
+                <SessionTreeNode
+                  key={conv.id}
+                  conv={conv}
+                  sessions={sessionsWithChildCounts}
+                  depth={0}
+                  activeSession={activeSession}
+                  liveVoiceConversationId={liveVoiceConversationId}
+                  onSelect={onSelect}
+                  onDelete={onDelete}
+                  onRename={onRename}
+                  onArchive={onArchive}
+                  onTogglePin={handleTogglePin}
+                  vaultById={vaultById}
+                  activeVaultId={activeVaultId}
+                />
+              ))}
+            </div>
           ) : (
             <>
               {immediateGroups.map((group) => (
@@ -1108,7 +1154,7 @@ export function ConversationSidebar({
                   activeVaultId={activeVaultId}
                 />
               ))}
-              {!searchQuery.trim() && ([
+              {([
                 ["Past", "past"],
                 ["Snooze", "snooze"],
                 ["Archive", "archive"],
@@ -1132,7 +1178,7 @@ export function ConversationSidebar({
             </>
           )}
           {/* System sessions group at the bottom */}
-          {!convsLoading && vaultVisibleSessions.length > 0 && (
+          {!isSearching && !convsLoading && vaultVisibleSessions.length > 0 && (
             <AutoSessionsGroup
               sessions={sessionsWithChildCounts}
               activeSession={activeSession}
