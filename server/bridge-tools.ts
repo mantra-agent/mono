@@ -9,12 +9,13 @@ import { ObjectPermission, setObjectAclPolicy } from "./object_storage/objectAcl
 import {
   checkGmailPermission,
   createGmailHandler,
-  resolveGmailAccountId,
   type GmailSubHandler,
 } from "./tools/handlers/gmail-boundary";
 import { createGmailReadHandlers } from "./tools/handlers/gmail-read";
 import { gmailDraftHandlers } from "./tools/handlers/gmail-drafts";
+import { createGmailProviderHandlers } from "./tools/handlers/gmail-provider";
 export { handleGmailDraftFromReview } from "./tools/handlers/gmail-drafts";
+export { diagnoseGmailBatchRead } from "./tools/handlers/gmail-provider";
 import { isSimilarText } from "./utils/text-similarity";
 import { safeStringify } from "./utils/safe-stringify";
 import { eventBus } from "./event-bus";
@@ -36,7 +37,7 @@ import {
   type ToolFailure,
 } from "./tool-failure";
 import { extractToolFailureKind, inferFailureKind } from "@shared/tool-failure";
-import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
+import { TRIAGE_LOOKBACK_HOURS } from "./skill-defaults";
 import { resolveRegisteredTool } from "./tool-registry";
 import { prepareToolInvocation } from "./tools/invocation";
 import { assertRegisteredToolHandlers } from "./tools/registry-validation";
@@ -287,8 +288,6 @@ interface GmailMessage {
   [key: string]: unknown;
 }
 
-const BATCH_READ_MAX_RESULTS = TRIAGE_MAX_RESULTS;
-
 function extractHeaders(msg: GmailMessage): { from: string; subject: string; date: string; headers: GmailHeader[] } {
   const headers = msg.payload?.headers || [];
   return {
@@ -326,25 +325,6 @@ function resolveTargetAccounts(
     return [accounts[0]];
   }
   return accounts;
-}
-
-export async function diagnoseGmailBatchRead(query = "newer_than:3d"): Promise<void> {
-  const { listMessages, listGmailAccounts } = await import("./gmail");
-  const accounts = await listGmailAccounts();
-  if (accounts.length === 0) {
-    toolExec.log(`[GmailDiag] No Gmail accounts connected — skipping diagnostic`);
-    return;
-  }
-  toolExec.log(`[GmailDiag] Running batch_read diagnostic: query="${query}" accounts=${accounts.length}`);
-  for (const acct of accounts) {
-    try {
-      const results = await listMessages(query, 5, acct.id);
-      toolExec.log(`[GmailDiag] acct=${acct.id} label="${acct.email || acct.id}" query="${query}" results=${results.length}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toolExec.error(`[GmailDiag] acct=${acct.id} query="${query}" ERROR: ${msg}`);
-    }
-  }
 }
 
 interface ListMultiAccountOptions {
@@ -432,175 +412,6 @@ function findAttachments(payload: GmailMessagePayload | undefined): GmailAttachm
   }
   if (payload.parts) payload.parts.forEach(walk);
   return attachments;
-}
-
-async function handleGmailDownloadAttachment(args: Record<string, any>): Promise<ToolHandlerResult> {
-  const permCheck = await checkGmailPermission(args.account, "gmailDownloadAttachments", "download attachments");
-  if (permCheck.denied) return permCheck.result;
-
-  const { getAttachment, listGmailAccounts } = await import("./gmail");
-  const messageId = args.id;
-  const attachmentId = args.attachmentId;
-  if (!messageId || !attachmentId) return { result: "Missing message id or attachmentId", error: true };
-  let dlAccountId = permCheck.resolvedAccountId || await resolveGmailAccountId(args.account);
-
-  let attData: { data: string; size: number } | null = null;
-  if (dlAccountId) {
-    attData = await getAttachment(messageId, attachmentId, dlAccountId);
-  } else {
-    const accts = await listGmailAccounts();
-    for (const acct of accts) {
-      try {
-        attData = await getAttachment(messageId, attachmentId, acct.id);
-        dlAccountId = acct.id;
-        break;
-      } catch (err) { toolExec.debug("gmail attachment account fallback", acct.id, err); }
-    }
-    if (!attData) return { result: `Attachment not found in any connected account`, error: true };
-  }
-
-  const rawData = attData.data.replace(/-/g, '+').replace(/_/g, '/');
-  const buffer = Buffer.from(rawData, 'base64');
-  const attachFileName = args.fileName || `attachment-${Date.now()}`;
-
-  const { promises: fs } = await import("fs");
-  const { join, extname } = await import("path");
-  const { WORKSPACE_DIR } = await import("./paths");
-  const uploadsDir = join(WORKSPACE_DIR, "uploads");
-  await fs.mkdir(uploadsDir, { recursive: true });
-  const safeName = attachFileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const filePath = join(uploadsDir, `${Date.now()}-${safeName}`);
-  await fs.writeFile(filePath, buffer);
-  const workspacePath = filePath.replace(WORKSPACE_DIR + "/", "");
-
-  const textExts = [".txt", ".md", ".csv", ".json", ".xml", ".yaml", ".yml", ".html", ".css", ".js", ".ts", ".py", ".sh", ".log", ".ini", ".cfg", ".toml", ".rst", ".tex", ".svg"];
-  const ext = extname(attachFileName).toLowerCase();
-  const isText = textExts.includes(ext);
-
-  if (isText && buffer.length <= 100000) {
-    const content = buffer.toString("utf-8");
-    if (content.length > 5000) {
-      const { indexAndArchiveWithFallback } = await import("./content-indexer");
-      const refBlock = await indexAndArchiveWithFallback({
-        content,
-        sourceType: "file",
-        sourceLabel: attachFileName,
-      });
-      return { result: `Downloaded "${attachFileName}" (${buffer.length} bytes, saved to ${workspacePath})\n\n${refBlock}` };
-    }
-    return { result: `Downloaded "${attachFileName}" (${buffer.length} bytes, saved to ${workspacePath})\n\n**Content:**\n${content}` };
-  }
-
-  return { result: `Downloaded "${attachFileName}" (${buffer.length} bytes) to workspace: ${workspacePath}\n\nTo attach this file to a project, use the work tool: { "action": "add_file", "id": PROJECT_ID, "workspacePath": "${workspacePath}" }` };
-}
-
-interface MessageStub { id: string; acctId: string; acctLabel: string }
-
-function filterExcluded(stubs: MessageStub[], excludeSet: Set<string>): MessageStub[] {
-  const filtered = stubs.filter(s => !excludeSet.has(s.id));
-  const excludedCount = stubs.length - filtered.length;
-  if (excludedCount > 0) {
-    toolExec.log(`batch_read excluded ${excludedCount} already-triaged messages`);
-  }
-  return filtered;
-}
-
-async function fetchFullMessages(
-  stubs: MessageStub[],
-  getMessage: (id: string, format: 'full' | 'metadata' | 'minimal', accountId?: string) => Promise<any>,
-): Promise<string[]> {
-  const results: string[] = [];
-  for (const stub of stubs) {
-    try {
-      const msg = await getMessage(stub.id, 'full', stub.acctId);
-      const { from, subject, headers } = extractHeaders(msg);
-
-      let body = findTextBody(msg.payload);
-      if (!body && msg.payload?.body?.data) {
-        body = Buffer.from(msg.payload.body.data, 'base64').toString('utf-8');
-      }
-      if (body.length > 3000) {
-        const { indexAndArchive, formatReferenceBlock } = await import("./content-indexer");
-        const ref = await indexAndArchive({ content: body, sourceType: "email", sourceLabel: `${msg.payload?.headers?.find((h: any) => h.name === "Subject")?.value || "email"} (${stub.id})` });
-        if (ref) {
-          body = formatReferenceBlock(ref);
-        }
-      }
-
-      const headerLines = headers.map(h => `- **${h.name}:** ${h.value}`).join('\n');
-      const entry = `### [${stub.acctLabel}] ${subject}\n- **Message ID:** ${stub.id}\n- **Account:** ${stub.acctId}\n\n**Headers:**\n${headerLines}\n\n**Body:**\n${body}`;
-      results.push(entry);
-    } catch (err) {
-      toolExec.error(`batch_read getMessage failed id=${stub.id} acct=${stub.acctId}`, err);
-      results.push(`### Message ${stub.id} — ERROR: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  return results;
-}
-
-async function handleGmailBatchRead(args: Record<string, any>): Promise<ToolHandlerResult> {
-  const { createLogger } = await import("./log");
-  const log = createLogger("BridgeTools:batch_read");
-
-  log.debug(`called args.account=${args.account} args.query=${args.query} args.maxResults=${args.maxResults} excludeCount=${(args.excludeMessageIds || []).length} hasIds=${!!args.ids}`);
-
-  const permCheck = await checkGmailPermission(args.account, "gmailRead", "read emails");
-  if (permCheck.denied) return permCheck.result;
-
-  const { getMessage, listGmailAccounts } = await import("./gmail");
-  const ids: string[] | undefined = args.ids;
-  const query: string | undefined = args.query;
-  log.debug(`effective query: "${query}"`);
-  const excludeSet = new Set<string>(args.excludeMessageIds || []);
-  const maxResults = Math.min(args.maxResults || BATCH_READ_MAX_RESULTS, BATCH_READ_MAX_RESULTS);
-
-  if (!ids && !query) return { result: "Provide either 'ids' (array of message IDs) or 'query' (search string) for batch_read", error: true };
-
-  const accounts = await listGmailAccounts();
-  if (accounts.length === 0) {
-    log.error(`failed: no Gmail accounts connected`);
-    return { result: "No Gmail accounts connected. Connect an account in Settings → Connections.", error: true };
-  }
-
-  const resolvedAccountId = permCheck.resolvedAccountId || await resolveGmailAccountId(args.account);
-  const targets = resolveTargetAccounts(resolvedAccountId, accounts);
-
-  if (targets.length === 0) {
-    log.error(`failed: resolveTargetAccounts returned empty for resolvedAccountId=${resolvedAccountId}`);
-    return { result: "Could not resolve target Gmail account. Check that the account is still connected in Settings → Connections.", error: true };
-  }
-
-  log.debug(`resolvedAccountId=${resolvedAccountId} targets=${targets.map(t => t.id + '(' + t.label + ')').join(', ')}`);
-
-  let messageStubs: MessageStub[] = [];
-  let listErrors: string[] = [];
-
-  if (ids) {
-    messageStubs = filterExcluded(
-      ids.map(mid => ({ id: mid, acctId: targets[0].id, acctLabel: targets[0].label })),
-      excludeSet,
-    );
-  } else if (query) {
-    const listResult = await listMessagesMultiAccount(query, maxResults, targets, "batch_read", {
-      paginate: true,
-      paginationCap: BATCH_READ_MAX_RESULTS,
-    });
-    listErrors.push(...listResult.errors);
-    log.debug(`listMulti stubs=${listResult.stubs.length} errors=${listResult.errors.length} query="${query}" targetAccounts=${targets.length}${listResult.errors.length > 0 ? ` errDetails=${listResult.errors.join('; ')}` : ''}`);
-    messageStubs = filterExcluded(listResult.stubs, excludeSet);
-  }
-
-  messageStubs = messageStubs.slice(0, maxResults);
-  log.debug(`final stubs=${messageStubs.length} excludeSetSize=${excludeSet.size} listErrors=${listErrors.length}`);
-
-  if (messageStubs.length === 0) {
-    log.warn(`returning empty — query="${query}" targets=${targets.length} excludeSetSize=${excludeSet.size} listErrors=${listErrors.length}${listErrors.length > 0 ? ` errors: ${listErrors.join('; ')}` : ''}`);
-    return formatListErrors(listErrors, "No messages found (or all excluded)", true);
-  }
-
-  const results = await fetchFullMessages(messageStubs, getMessage);
-  const errorSuffix = listErrors.length > 0 ? `\n\n⚠️ Errors encountered for some accounts:\n${listErrors.join("\n")}` : "";
-  return { result: `Batch read ${results.length} messages:\n\n${results.join("\n\n---\n\n")}${errorSuffix}` };
 }
 
 async function handleGmailTriageLog(args: Record<string, any>): Promise<ToolHandlerResult> {
@@ -1168,22 +979,27 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
   return { result: `Unknown cache_action "${subAction}". Use "get_untriaged", "mark_triaged", "get_unenriched", "store_enrichment", "search", "sync_status", "pipeline_counts", "get_message", "diagnose", or "run_downstream".`, error: true };
 }
 
-const gmailReadHandlers = createGmailReadHandlers({
+const gmailSharedDependencies = {
   resolveTargetAccounts,
   listMessagesMultiAccount,
   formatListErrors,
-  formatMessageLine,
   extractHeaders,
   findTextBody,
+};
+
+const gmailReadHandlers = createGmailReadHandlers({
+  ...gmailSharedDependencies,
+  formatMessageLine,
   findAttachments,
   logReadFallback: (accountId, error) => toolExec.debug("gmail read account fallback", accountId, error),
 });
 
+const gmailProviderHandlers = createGmailProviderHandlers(gmailSharedDependencies);
+
 const gmailSubHandlers: Record<string, GmailSubHandler> = {
   ...gmailReadHandlers,
-  batch_read: handleGmailBatchRead,
+  ...gmailProviderHandlers,
   ...gmailDraftHandlers,
-  download_attachment: handleGmailDownloadAttachment,
   triage_log: handleGmailTriageLog,
   email_cache: handleGmailEmailCache,
 };
