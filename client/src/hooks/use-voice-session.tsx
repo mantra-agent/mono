@@ -450,6 +450,19 @@ export function VoiceSessionProvider({
   const recentAssistantTextRef = useRef("");
   const echoAdmissionSequenceRef = useRef(0);
 
+  const stopThinkingAudioPlayback = useCallback((immediate: boolean) => {
+    if (thinkingAudioGraceTimerRef.current !== null) {
+      clearTimeout(thinkingAudioGraceTimerRef.current);
+      thinkingAudioGraceTimerRef.current = null;
+    }
+    thinkingAudioPlayingRef.current = false;
+    if (isNative) {
+      sendToNative({ type: "voice.thinkingAudio", active: false });
+    } else {
+      stopVoiceThinkingLoop({ immediate });
+    }
+  }, [isNative]);
+
   useEffect(() => {
     // Grace period before the sound may fade in. Fast turns that resolve inside
     // this window never play it at all, so the bed only signals a genuinely long
@@ -473,18 +486,8 @@ export function VoiceSessionProvider({
     };
 
     const stopPlayback = (immediate: boolean) => {
-      if (thinkingAudioGraceTimerRef.current !== null) {
-        clearTimeout(thinkingAudioGraceTimerRef.current);
-        thinkingAudioGraceTimerRef.current = null;
-      }
-      if (!thinkingAudioPlayingRef.current) return;
-      thinkingAudioPlayingRef.current = false;
-      if (isNative) {
-        // Native stopThinkingAudioLoop() halts immediately, satisfying barge-in.
-        sendToNative({ type: "voice.thinkingAudio", active: false });
-      } else {
-        stopVoiceThinkingLoop({ immediate });
-      }
+      if (!thinkingAudioPlayingRef.current && thinkingAudioGraceTimerRef.current === null) return;
+      stopThinkingAudioPlayback(immediate);
     };
 
     if (shouldPlayThinkingAudio) {
@@ -511,7 +514,7 @@ export function VoiceSessionProvider({
     // User speech demands an instant kill; other stops (agent speaking, session
     // ending) may use the gentler fade.
     stopPlayback(userSpeaking);
-  }, [agentMode, isNative, nativeInputActivityAvailable, status, voiceThinking, userSpeaking]);
+  }, [agentMode, isNative, nativeInputActivityAvailable, status, stopThinkingAudioPlayback, voiceThinking, userSpeaking]);
 
   useEffect(() => {
     if (isNative || status !== "active" || isMuted) {
@@ -546,14 +549,8 @@ export function VoiceSessionProvider({
   }, [isMuted, isNative, status]);
 
   useEffect(() => () => {
-    if (thinkingAudioGraceTimerRef.current !== null) {
-      clearTimeout(thinkingAudioGraceTimerRef.current);
-      thinkingAudioGraceTimerRef.current = null;
-    }
-    thinkingAudioPlayingRef.current = false;
-    stopVoiceThinkingLoop({ immediate: true });
-    if (isNative) sendToNative({ type: "voice.thinkingAudio", active: false });
-  }, [isNative]);
+    stopThinkingAudioPlayback(true);
+  }, [stopThinkingAudioPlayback]);
 
   const playDisconnectChimeOnce = useCallback(() => {
     if (disconnectChimePlayedRef.current) return;
@@ -868,6 +865,9 @@ export function VoiceSessionProvider({
 
   const cleanupSession = useCallback((reason: string, errorMessage?: string) => {
     log.info("VOICE:CLEANUP", { reason, hasError: Boolean(errorMessage) });
+    // iOS may throttle React effects after screen lock. Stop the persistent
+    // media element synchronously before any asynchronous finalization path.
+    stopThinkingAudioPlayback(true);
     reconnectVisibilityCleanupRef.current?.();
     reconnectVisibilityCleanupRef.current = null;
     reconnectInProgressRef.current = false;
@@ -894,7 +894,7 @@ export function VoiceSessionProvider({
       nativeListenerCleanupRef.current();
       nativeListenerCleanupRef.current = null;
     }
-  }, [finalizeSession, invalidateVoiceRelatedQueries, resetEphemeralVoiceState]);
+  }, [finalizeSession, invalidateVoiceRelatedQueries, resetEphemeralVoiceState, stopThinkingAudioPlayback]);
 
   const applyVoiceStartPhase = useCallback((event: VoiceStartPhaseEvent) => {
     setConnectionPhases((previous) => {
@@ -2108,6 +2108,7 @@ export function VoiceSessionProvider({
     if (conversationRef.current) {
       log.info("VOICE:END_SESSION:INITIATED", { reason: "user" });
       intentionalEndRef.current = true;
+      stopThinkingAudioPlayback(true);
       if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
       if (heartbeatIntervalRef.current) { clearInterval(heartbeatIntervalRef.current); heartbeatIntervalRef.current = null; }
       stopUIRefresh();
@@ -2118,7 +2119,7 @@ export function VoiceSessionProvider({
 
       cleanupSession("user-end");
     }
-  }, [queryClient, stopUIRefresh, finalizeSession, cleanupSession, playDisconnectChimeOnce]);
+  }, [queryClient, stopUIRefresh, finalizeSession, cleanupSession, playDisconnectChimeOnce, stopThinkingAudioPlayback]);
 
   const clearTranscript = useCallback(() => {
     setTranscript([]);
