@@ -1,3 +1,11 @@
+<!-- 2026-08-10 bounded reliability diagnostics reads:
+- Assets/data: principal/account/Vault-scoped Session metadata, S2/S3 conversation messages, and content-free reliability aggregates/failure excerpts (A01/A03/A07/A08).
+- Flow/boundary: authenticated system/performance diagnostics -> principal-scoped recent Session anchors -> canonical incremental conversation messages, with legacy transcript fallback only for Sessions not yet adopted into canonical storage. Persisted payloads remain untrusted diagnostic evidence and never grant tool, Session, or cross-account authority.
+- Failure/threat: long-window reliability reads selected every complete legacy transcript blob from `document_store_documents`, exceeding the ordinary bounded query contract and repeatedly failing diagnostics; replacing it with an unscoped message scan could expose another user's tool failures (STRIDE information disclosure/availability plus OBS-01/DATA-01).
+- Controls/owner: Core Reliability Diagnostics first pages lightweight principal-visible chat anchors, then reads only those Session IDs from principal/Vault-scoped `conversation_messages`; it fetches legacy `content` only for anchored Sessions with neither canonical rows nor canonical-storage metadata. Existing authenticated `system:read` tool/route authority, account/Vault scope, bounded windows, batch size, excerpts, and output limits remain independent. Owner: Core Reliability Diagnostics. Severity: high availability/confidentiality. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: a legacy Session still requires one bounded blob read until its first canonical write, and a very large number of canonical messages may still make diagnostics expensive even though the pathological whole-document scan is removed. Revert the canonical-message loader and this record to restore prior behavior; no schema, permission, credential, or user-data migration is involved.
+-->
+
 <!-- 2026-08-10 iPhone voice startup compensation boundary:
 - Assets/data: authenticated voice session identity, conversation ownership, microphone-session lifecycle.
 - Boundary/flow: a browser that received a completed voice lease but whose SDK startup throws may request compensation using exact session + chat IDs.

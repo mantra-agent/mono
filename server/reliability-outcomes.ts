@@ -1,4 +1,5 @@
-import { and, desc, eq, gte, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
+import { conversationMessages } from "@shared/models/chat";
 import { documentStoreDocuments } from "@shared/models/memory";
 import { planSteps, workflowRuns } from "@shared/schema";
 import {
@@ -20,6 +21,13 @@ import { combineWithVisibleScope, type ScopeColumns } from "./scoped-storage";
 
 const RELIABILITY_CHAT_SCOPE: ScopeColumns = {
   accountId: documentStoreDocuments.accountId,
+};
+
+const RELIABILITY_MESSAGE_SCOPE: ScopeColumns = {
+  scope: conversationMessages.scope,
+  ownerUserId: conversationMessages.ownerUserId,
+  accountId: conversationMessages.accountId,
+  vaultId: conversationMessages.vaultId,
 };
 
 const PLAN_SCOPE: ScopeColumns = {
@@ -95,6 +103,12 @@ type ReliabilityChatDocument = {
   updatedAt: Date;
 };
 
+type ReliabilityChatAnchor = {
+  documentId: string;
+  metadata: unknown;
+  updatedAt: Date;
+};
+
 function emptyCounts(): OutcomeCounts {
   return { succeeded: 0, failed: 0, amberFailures: 0, unclassifiedErrors: 0, excluded: 0 };
 }
@@ -121,7 +135,7 @@ async function loadReliabilityChatDocuments(
   start: Date,
 ): Promise<ReliabilityChatDocument[]> {
   const documents: ReliabilityChatDocument[] = [];
-  let cursor: Pick<ReliabilityChatDocument, "documentId" | "updatedAt"> | null = null;
+  let cursor: Pick<ReliabilityChatAnchor, "documentId" | "updatedAt"> | null = null;
 
   for (;;) {
     const cursorPredicate = cursor
@@ -136,7 +150,7 @@ async function loadReliabilityChatDocuments(
     const rows = await db
       .select({
         documentId: documentStoreDocuments.documentId,
-        content: documentStoreDocuments.content,
+        metadata: documentStoreDocuments.metadata,
         updatedAt: documentStoreDocuments.updatedAt,
       })
       .from(documentStoreDocuments)
@@ -152,11 +166,65 @@ async function loadReliabilityChatDocuments(
       )
       .limit(RELIABILITY_CHAT_BATCH_SIZE);
 
-    documents.push(...rows);
+    const sessionIds = rows.map((row) => row.documentId);
+    const canonicalRows = sessionIds.length > 0
+      ? await db
+          .select({
+            sessionId: conversationMessages.sessionId,
+            ordinal: conversationMessages.ordinal,
+            payload: conversationMessages.payload,
+          })
+          .from(conversationMessages)
+          .where(combineWithVisibleScope(
+            principal,
+            RELIABILITY_MESSAGE_SCOPE,
+            inArray(conversationMessages.sessionId, sessionIds),
+          ))
+          .orderBy(asc(conversationMessages.sessionId), asc(conversationMessages.ordinal))
+      : [];
+    const messagesBySession = new Map<string, unknown[]>();
+    for (const row of canonicalRows) {
+      const messages = messagesBySession.get(row.sessionId) ?? [];
+      messages.push(row.payload);
+      messagesBySession.set(row.sessionId, messages);
+    }
+
+    const legacyIds = rows
+      .filter((row) => !messagesBySession.has(row.documentId) && !isCanonicalConversationMetadata(row.metadata))
+      .map((row) => row.documentId);
+    const legacyRows = legacyIds.length > 0
+      ? await db
+          .select({
+            documentId: documentStoreDocuments.documentId,
+            content: documentStoreDocuments.content,
+          })
+          .from(documentStoreDocuments)
+          .where(and(
+            reliabilityChatPredicate(principal, start),
+            inArray(documentStoreDocuments.documentId, legacyIds),
+          ))
+      : [];
+    const legacyContentBySession = new Map(
+      legacyRows.map((row) => [row.documentId, row.content] as const),
+    );
+
+    for (const row of rows) {
+      const messages = messagesBySession.get(row.documentId);
+      documents.push({
+        documentId: row.documentId,
+        content: messages ? { messages } : legacyContentBySession.get(row.documentId) ?? {},
+        updatedAt: row.updatedAt,
+      });
+    }
     if (rows.length < RELIABILITY_CHAT_BATCH_SIZE) return documents;
     const last = rows[rows.length - 1];
     cursor = { documentId: last.documentId, updatedAt: last.updatedAt };
   }
+}
+
+function isCanonicalConversationMetadata(raw: unknown): boolean {
+  const metadata = asRecord(raw);
+  return metadata?.conversationStorageVersion === 1;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
