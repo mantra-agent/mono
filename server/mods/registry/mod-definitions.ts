@@ -161,7 +161,7 @@ const business: ModDefinition = {
       clientRoute("business.route.metrics", "/business/metrics", "business-metrics", { requiredPermissions: ["system:read"] }),
     ],
     navigation: [
-      nav("business.nav.definition", "Business", "Definition", "FileText", "navigation.definition.open", "business.route.definition", 0, { requiredPermissions: ["system:read"] }),
+      nav("business.nav.definition", "Business", "Identity", "FileText", "navigation.definition.open", "business.route.definition", 0, { requiredPermissions: ["system:read"] }),
       nav("business.nav.advantage", "Business", "Plan", "Target", "navigation.advantage.open", "business.route.advantage", 1),
       nav("business.nav.business-model", "Business", "Model", "LineChart", "navigation.businessModel.open", "business.route.business-model", 3, { requiredPermissions: ["system:read"] }),
       nav("business.nav.job-roles", "Business", "Roles", "Briefcase", "navigation.roles.open", "business.route.job-roles", 4, { requiredPermissions: ["system:read"] }),
