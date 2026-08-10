@@ -3,6 +3,7 @@ import { db } from "../../db";
 import { getProviderCredential } from "../../provider-credential-store";
 import { providerConnections } from "@shared/models/platforms";
 import { createLogger } from "../../log";
+import { beginRailwayDispatch, settleRailwayDispatch } from "./request-attribution";
 
 const log = createLogger("RailwayClient");
 
@@ -157,6 +158,8 @@ async function railwayRequest<T>(
   }
   const requestClass = options.requestClass ?? "observation";
   assertRailwayRequestAllowed(Date.now(), requestClass);
+  const operation = query.match(/\b(?:query|mutation)\s+([A-Za-z0-9_]+)/)?.[1] ?? "anonymous_graphql";
+  const receipt = await beginRailwayDispatch({ token, operation, requestClass });
   let res: Response;
   try {
     res = await fetch(RAILWAY_GRAPHQL_ENDPOINT, {
@@ -168,9 +171,11 @@ async function railwayRequest<T>(
       body: JSON.stringify({ query, variables }),
     });
   } catch (err: unknown) {
+    await settleRailwayDispatch(receipt, "transport_error");
     const msg = err instanceof Error ? err.message : String(err);
     throw new RailwayApiError(`Railway request failed: ${msg}`, 502);
   }
+  await settleRailwayDispatch(receipt, res.ok ? "succeeded" : "provider_error", res);
 
   if (res.status === 429) {
     const now = Date.now();
@@ -408,6 +413,35 @@ export function resolveServiceInstanceMemoryMB(limits: RailwayServiceInstanceLim
     if (fromContainer !== null) return fromContainer;
     for (const container of Object.values(containers)) {
       const fromNestedContainer = resolveMemoryMBFromValue(container);
+      if (fromNestedContainer !== null) return fromNestedContainer;
+    }
+  }
+  return null;
+}
+
+function resolveCpuLimitFromValue(value: unknown): number | null {
+  if (!isPlainObject(value)) return null;
+  const vCpus = typeof value.vCPUs === "number" ? value.vCPUs : value.cpu;
+  return typeof vCpus === "number" && Number.isFinite(vCpus) && vCpus > 0 ? vCpus : null;
+}
+
+export function resolveServiceInstanceCpuLimit(limits: RailwayServiceInstanceLimits): number | null {
+  const direct = resolveCpuLimitFromValue(limits);
+  if (direct !== null) return direct;
+
+  const containers = limits.containers;
+  if (Array.isArray(containers)) {
+    for (const container of containers) {
+      const fromContainer = resolveCpuLimitFromValue(container);
+      if (fromContainer !== null) return fromContainer;
+    }
+    return null;
+  }
+  if (isPlainObject(containers)) {
+    const fromContainer = resolveCpuLimitFromValue(containers);
+    if (fromContainer !== null) return fromContainer;
+    for (const container of Object.values(containers)) {
+      const fromNestedContainer = resolveCpuLimitFromValue(container);
       if (fromNestedContainer !== null) return fromNestedContainer;
     }
   }

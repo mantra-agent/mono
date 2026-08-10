@@ -54,6 +54,12 @@ const rpsHistory: TimestampedSample[] = [];
 
 let lastCpuUsage = process.cpuUsage();
 let lastCpuTime = process.hrtime.bigint();
+let cpuLimitVcpus: number | null = null;
+let currentCpuCoreEquivalents = 0;
+
+export function setCpuAllocationLimit(vCpus: number): void {
+  cpuLimitVcpus = Number.isFinite(vCpus) && vCpus > 0 ? vCpus : null;
+}
 
 let requestCount = 0;
 let lastRpsCheck = Date.now();
@@ -81,10 +87,13 @@ function sampleCpu() {
   if (elapsedUs <= 0) return;
   const userDelta = usage.user - lastCpuUsage.user;
   const sysDelta = usage.system - lastCpuUsage.system;
-  const cpuPct = ((userDelta + sysDelta) / elapsedUs) * 100;
+  currentCpuCoreEquivalents = (userDelta + sysDelta) / elapsedUs;
   lastCpuUsage = usage;
   lastCpuTime = now;
-  pushSample(cpuHistory, Math.round(cpuPct * 10) / 10);
+  if (cpuLimitVcpus !== null) {
+    const utilizationPct = (currentCpuCoreEquivalents / cpuLimitVcpus) * 100;
+    pushSample(cpuHistory, Math.round(utilizationPct * 10) / 10);
+  }
 }
 
 function sampleMemory() {
@@ -308,6 +317,7 @@ export function getPerformanceDiagnostics() {
     },
     system: {
       cpuCores: os.cpus().length,
+      cpuLimitVcpus,
       loadAvg: loadAvg.map(l => Math.round(l * 100) / 100),
       totalMemory: totalSystemMemory,
       freeMemory: freeSystemMemory,
@@ -316,7 +326,8 @@ export function getPerformanceDiagnostics() {
     },
     realtime: {
       cpu: {
-        current: cpuHistory.length > 0 ? cpuHistory[cpuHistory.length - 1].value : 0,
+        current: cpuLimitVcpus !== null && cpuHistory.length > 0 ? cpuHistory[cpuHistory.length - 1].value : null,
+        coreEquivalents: Math.round(currentCpuCoreEquivalents * 100) / 100,
         history: cpuHistory.map(s => s.value),
       },
       rss: {

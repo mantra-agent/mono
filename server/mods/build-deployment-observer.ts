@@ -18,6 +18,7 @@ import {
 import { runWithPrincipal } from "../principal-context";
 import { combineWithVisibleScope, type ScopeColumns } from "../scoped-storage";
 import { extractDeploymentMeta } from "../integrations/railway/client";
+import { runWithRailwayAttribution } from "../integrations/railway/request-attribution";
 import {
   fetchEnvironmentDeployments,
   resolveRailwayEnvironmentControl,
@@ -141,7 +142,8 @@ async function observeEnvironment(
   // Canonical Railway binding + credential come from the shared resolver, not
   // the discovery join. That keeps observer I/O aligned with platforms status.
   const control = await resolveRailwayEnvironmentControl(environment.platformEnvironmentId);
-  const deployments = await fetchEnvironmentDeployments(control, DEPLOYMENT_LIMIT);
+  const deployments = await runWithRailwayAttribution({ caller: "build_deployment_observer" }, () =>
+    fetchEnvironmentDeployments(control, DEPLOYMENT_LIMIT));
   const successful = deployments.flatMap((deployment) => {
     if (deployment.status !== "SUCCESS") return [];
     const deployedAtValue = deployment.updatedAt ?? deployment.createdAt;

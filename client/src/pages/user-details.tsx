@@ -1,13 +1,14 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Bot, Check, Clock, KeyRound, Loader2, LogOut, Mail, Monitor, Save, X } from "lucide-react";
+import { Bot, Check, Clock, Image, KeyRound, Loader2, LogOut, Mail, Monitor, Save, X } from "lucide-react";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAuth, useLogout } from "@/hooks/use-auth";
+import { useAuth, useLogout, type AuthPrincipal, type AuthUser } from "@/hooks/use-auth";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { useUiScale } from "@/hooks/use-ui-scale";
@@ -23,6 +24,7 @@ export default function UserDetailsPage() {
   const logout = useLogout();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [email, setEmail] = useState(user?.email || "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -38,6 +40,33 @@ export default function UserDetailsPage() {
       toast({ title: "Profile updated" });
     },
     onError: () => toast({ title: "Failed to update profile", variant: "destructive" }),
+  });
+
+  const uploadPhoto = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch("/api/auth/profile-picture", {
+        method: "POST",
+        body: form,
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error || "Profile picture upload failed");
+      }
+      return await response.json() as { avatarObjectPath: string };
+    },
+    onSuccess: ({ avatarObjectPath }) => {
+      queryClient.setQueryData<{ user: AuthUser; principal?: AuthPrincipal | null } | null>(["/api/auth/me"], (current) =>
+        current ? { ...current, user: { ...current.user, avatarObjectPath } } : current,
+      );
+    },
+    onError: (error: Error) => toast({
+      title: "Upload failed",
+      description: error.message,
+      variant: "destructive",
+    }),
   });
 
   const changePassword = useMutation({
@@ -69,6 +98,8 @@ export default function UserDetailsPage() {
 
   if (!user) return null;
 
+  const initials = user.email.slice(0, 2).toUpperCase();
+
   return (
     <div className="flex h-full min-w-0 flex-col overflow-auto bg-background" data-testid="account-page">
       <div className="flex items-center justify-end p-2">
@@ -78,6 +109,54 @@ export default function UserDetailsPage() {
       </div>
 
       <div className="space-y-0 px-2 pb-4">
+        <ProfileTreeRow
+          label="Profile photo"
+          icon={<Image className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          testId="account-profile-photo-row"
+          expandedContent={(
+            <div className="flex min-w-0 flex-wrap items-center gap-4 py-1">
+              <Avatar className="h-16 w-16 shrink-0">
+                {user.avatarObjectPath && (
+                  <AvatarImage src={user.avatarObjectPath} alt="Profile photo" className="object-cover" />
+                )}
+                <AvatarFallback className="text-base font-semibold">{initials}</AvatarFallback>
+              </Avatar>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) uploadPhoto.mutate(file);
+                  event.target.value = "";
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-h-11"
+                disabled={uploadPhoto.isPending}
+                onClick={() => fileInputRef.current?.click()}
+                data-testid="button-upload-profile-photo"
+              >
+                {uploadPhoto.isPending && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin text-active" />}
+                Upload photo
+              </Button>
+            </div>
+          )}
+        >
+          <Avatar className="h-8 w-8 shrink-0">
+            {user.avatarObjectPath && (
+              <AvatarImage src={user.avatarObjectPath} alt="Profile photo" className="object-cover" />
+            )}
+            <AvatarFallback className="text-xs font-semibold">{initials}</AvatarFallback>
+          </Avatar>
+        </ProfileTreeRow>
+
         <ProfileTreeRow
           label="Email"
           icon={<Mail className="h-3.5 w-3.5" />}

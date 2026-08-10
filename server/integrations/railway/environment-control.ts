@@ -15,6 +15,7 @@ import {
   type RailwayLogEntry,
 } from "./client";
 import { getSharedRailwayDeploymentSnapshot, type RailwayDeploymentSnapshot } from "./deployment-state";
+import { getRailwayAttribution, runWithRailwayAttribution } from "./request-attribution";
 
 const IN_FLIGHT_STATUSES = new Set(["BUILDING", "DEPLOYING", "WAITING", "QUEUED", "INITIALIZING"]);
 
@@ -25,6 +26,14 @@ export interface RailwayEnvironmentControl {
   serviceId: string;
   publicUrl: string | null;
   token: string;
+}
+
+function attributed<T>(control: RailwayEnvironmentControl, fallbackCaller: string, fn: () => T): T {
+  return runWithRailwayAttribution({
+    caller: getRailwayAttribution()?.caller ?? fallbackCaller,
+    platformEnvironmentId: control.environment.platformEnvironmentId,
+    providerConnectionId: control.environment.connectionId,
+  }, fn);
 }
 
 function positiveInteger(value: number): boolean {
@@ -76,7 +85,7 @@ export async function fetchEnvironmentDeploymentSnapshot(
   limit = 20,
   options: { forceRefresh?: boolean } = {},
 ): Promise<RailwayDeploymentSnapshot> {
-  return getSharedRailwayDeploymentSnapshot(control, limit, options);
+  return attributed(control, "deployment_snapshot", () => getSharedRailwayDeploymentSnapshot(control, limit, options));
 }
 
 export async function fetchEnvironmentDeployments(
@@ -100,7 +109,7 @@ export async function fetchEnvironmentRuntimeLogs(
   deploymentId: string,
   limit = 200,
 ): Promise<RailwayLogEntry[]> {
-  return fetchDeploymentLogs(deploymentId, limit, control.token);
+  return attributed(control, "runtime_logs", () => fetchDeploymentLogs(deploymentId, limit, control.token));
 }
 
 export async function fetchEnvironmentBuildLogs(
@@ -108,10 +117,10 @@ export async function fetchEnvironmentBuildLogs(
   deploymentId: string,
   limit = 200,
 ): Promise<RailwayLogEntry[]> {
-  const [buildResult, deployResult] = await Promise.allSettled([
+  const [buildResult, deployResult] = await attributed(control, "build_logs", () => Promise.allSettled([
     fetchBuildLogs(deploymentId, limit, control.token),
     fetchDeploymentLogs(deploymentId, limit, control.token),
-  ]);
+  ]));
   const build = buildResult.status === "fulfilled" ? buildResult.value : [];
   const deploy = deployResult.status === "fulfilled" ? deployResult.value : [];
   return [...build, ...deploy].sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
