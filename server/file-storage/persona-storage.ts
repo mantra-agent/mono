@@ -15,11 +15,13 @@ import {
 } from "../scoped-storage";
 
 const log = createLogger("PersonaStorage");
+// Personas are user/account identity and configuration, never Vault content.
+// Keep vault_id as an inert compatibility column in the physical schema during
+// rolling deployment, but exclude it from every read/write scope decision.
 const personaScopeColumns = {
   scope: personas.scope,
   ownerUserId: personas.ownerUserId,
   accountId: personas.accountId,
-  vaultId: personas.vaultId,
 };
 
 export class PersonaReservedNameError extends Error {
@@ -1102,7 +1104,6 @@ class PersonaStorageClass {
           scope: "global",
           ownerUserId: null,
           accountId: null,
-          vaultId: null,
         })
         .onConflictDoNothing();
     }

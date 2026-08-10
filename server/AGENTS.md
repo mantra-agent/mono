@@ -28,6 +28,8 @@ Normal `git.clone` has no caller-owned repository coordinates. `server/git-sourc
 
 A user session must never be bound to, or edit, a read-only seed. `PersonaStorage.ensureOwnedCopy(id)` is the canonical copy-on-write materialization: for a user principal it resolves an ordinary global seed (even one already shadowed by the user's copy) to that user's own lineage copy, creating it if needed; system principals and system seeds are returned unchanged. Orientation persona selection, the `cognition.update_persona` tool, and the persona editor PUT route all fork through it, and `activate()` shares the same copy shape via `insertOwnedCopy`. Seeds carry empty bundles; a user configures their copy as data.
 
+Persona ownership and identity are user/account-wide, never Vault-scoped. Vaults control content visibility and must not multiply or hide persona configuration. All Persona reads, writes, activation, copy resolution, and uniqueness use `owner_user_id`/`account_id` without `vault_id`; the physical `personas.vault_id` column is inert rolling-deployment compatibility only and schema convergence neutralizes legacy values.
+
 
 Root `AGENTS.md` is mandatory and authoritative for Engineering Principles, architecture, and repository constraints. Root `CODING.md` is mandatory and authoritative for engineering workflow, Coding Task Gate, git policy, verification, and final reporting. This file adds local constraints only. Load this file before touching files under `server/`. For UI/product-facing work, also load root `DESIGN.md`. If instructions conflict, follow root `AGENTS.md` for principles/architecture and root `CODING.md` for procedure unless Ray explicitly overrides.
 

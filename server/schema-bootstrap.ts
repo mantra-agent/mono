@@ -5372,6 +5372,9 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'user'`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS owner_user_id TEXT`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS account_id TEXT`);
+    // Retained only so mixed-version deployments can read the same table shape;
+    // Persona scope never derives from this compatibility column.
+    await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS vault_id TEXT`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS template_persona_id INTEGER`);
     // Persona-owned context-section bundle and tool bundle (introduced with the
     // schema in #1109). seedDefaults() runs right after schema bootstrap and inserts
@@ -5380,6 +5383,10 @@ export async function runSchemaBootstrap(
     // in the self-heal path before seeding. Defaults mirror shared/models/cognition.ts.
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS context_sections JSONB DEFAULT '{}'::jsonb`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS tool_bundle JSONB DEFAULT '[]'::jsonb`);
+    // Persona identity/configuration belongs to the user across all Vaults. Keep
+    // the physical column inert for rolling-deployment compatibility, but
+    // neutralize legacy assignments before ordinary reads and writes begin.
+    await pool.query(`UPDATE personas SET vault_id = NULL WHERE vault_id IS NOT NULL`);
     await pool.query(`ALTER TABLE personas DROP CONSTRAINT IF EXISTS personas_name_key`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_personas_global_name_unique ON personas (LOWER(name)) WHERE scope = 'global'`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_personas_user_name_unique ON personas (owner_user_id, LOWER(name)) WHERE scope = 'user' AND owner_user_id IS NOT NULL`);

@@ -92,7 +92,9 @@ export async function ensureVaults(): Promise<void> {
       "document_store_documents",
       "library_pages",
       "emotional_states",
-      "personas",
+      // Personas are user/account-scoped identity configuration, not Vault content.
+      // Their legacy vault_id remains inert during rolling deployment and must
+      // never be recreated or backfilled here.
       "skills",
       "skill_runs",
       "theses",
@@ -309,7 +311,7 @@ export async function ensureVaults(): Promise<void> {
       { table: "document_store_documents", accountCol: "account_id" },
       { table: "library_pages", accountCol: "account_id" },
       { table: "emotional_states", accountCol: "account_id" },
-      { table: "personas", accountCol: "account_id" },
+      // Personas deliberately remain absent: persona identity spans all Vaults.
       { table: "skills", accountCol: "account_id" },
       { table: "skill_runs", accountCol: "account_id" },
       { table: "theses", accountCol: "account_id" },
