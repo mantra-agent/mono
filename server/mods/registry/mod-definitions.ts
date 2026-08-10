@@ -153,6 +153,7 @@ const business: ModDefinition = {
     serverRouteGroups: [serverRouteGroupRef("business.routes.api", "business.api")],
     tools: [toolRef("business.tool.jobs", "jobs")],
     clientRoutes: [
+      clientRoute("business.route.definition", "/business/definition", "business-definition", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.business-model", "/business/model", "business-model", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.advantage", "/business/advantage", "business-advantage"),
       clientRoute("business.route.job-roles", "/business/roles", "job-roles", { requiredPermissions: ["system:read"] }),
@@ -160,6 +161,7 @@ const business: ModDefinition = {
       clientRoute("business.route.metrics", "/business/metrics", "business-metrics", { requiredPermissions: ["system:read"] }),
     ],
     navigation: [
+      nav("business.nav.definition", "Business", "Definition", "FileText", "navigation.definition.open", "business.route.definition", 0, { requiredPermissions: ["system:read"] }),
       nav("business.nav.advantage", "Business", "Plan", "Target", "navigation.advantage.open", "business.route.advantage", 1),
       nav("business.nav.business-model", "Business", "Model", "LineChart", "navigation.businessModel.open", "business.route.business-model", 3, { requiredPermissions: ["system:read"] }),
       nav("business.nav.job-roles", "Business", "Roles", "Briefcase", "navigation.roles.open", "business.route.job-roles", 4, { requiredPermissions: ["system:read"] }),

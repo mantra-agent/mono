@@ -17,6 +17,7 @@ import { registerBusinessModelRoutes } from "./business-model-routes";
 import { registerBusinessPlanRoutes } from "./business-plan-routes";
 import { registerJobRoleRoutes } from "./job-role-routes";
 import { registerMetricsRoutes } from "./metrics-routes";
+import { registerBusinessDefinitionRoutes } from "./business-definition-routes";
 import { peopleStorage } from "./people-storage";
 import { registerGoalRoutes } from "./goal-routes";
 import { registerTagRoutes } from "./tag-routes";
@@ -213,6 +214,7 @@ export async function registerRoutes(
   registerBusinessPlanRoutes(app);
   registerJobRoleRoutes(app);
   registerMetricsRoutes(app);
+  registerBusinessDefinitionRoutes(app);
   registerGoalRoutes(app);
   registerReferenceRoutes(app);
   registerLifeAddressingCutoverRoutes(app);

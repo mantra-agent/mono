@@ -42,6 +42,7 @@ export const REGISTERED_SURFACE_KEYS = [
   "companies",
   "business-model",
   "business-advantage",
+  "business-definition",
   "job-roles",
   "business-kpis",
   "business-metrics",
