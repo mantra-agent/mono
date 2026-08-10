@@ -54,6 +54,14 @@ import type {
 import type { QuestionPrompt } from "@shared/question-prompt";
 import type { ContextPressureSnapshot } from "@shared/streaming-types";
 import { decisionsStorage } from "./decisions-storage";
+import {
+  deleteConversations,
+  hasCanonicalConversation,
+  moveConversationToVault,
+  readConversationMessages,
+  writeConversationRevision,
+  type ConversationMessagePayload,
+} from "./conversation-persistence";
 
 const log = createLogger("ChatStorage");
 const treeLog = createLogger("SessionTree");
@@ -771,6 +779,11 @@ async function readConv(id: string): Promise<SessionData | null> {
   if (!doc) return null;
   const data = parseConvDocument(id, doc);
   if (!data) return null;
+  const principal = requireCurrentPrincipal();
+  const canonicalMessages = await readConversationMessages(principal, id);
+  if (canonicalMessages.length > 0 || await hasCanonicalConversation(principal, id)) {
+    data.messages = canonicalMessages as FileMessage[];
+  }
   await applySessionTreeOverlay(data);
   return data;
 }
@@ -876,6 +889,7 @@ function normalizeDurableRevision(value: unknown): number {
 
 function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
   return {
+    conversationStorageVersion: 1,
     durableRevision: normalizeDurableRevision(data.durableRevision),
     title: data.title,
     manualTitle: data.manualTitle || undefined,
@@ -940,8 +954,14 @@ async function resolveSessionWriteVaultId(data: SessionData): Promise<string> {
 }
 
 function serializeSessionContent(data: SessionData): string {
-  const { vaultId: _canonicalDocumentVaultId, ...content } = data;
-  return JSON.stringify(content);
+  const {
+    vaultId: _canonicalDocumentVaultId,
+    messages: _canonicalConversationMessages,
+    ...content
+  } = data;
+  // The aggregate blob is compatibility metadata only. Transcript authority is
+  // conversation_messages; active writes never rewrite the whole transcript.
+  return JSON.stringify({ ...content, messages: [] });
 }
 
 function shouldProjectSessionSearch(data: SessionData): boolean {
@@ -971,8 +991,14 @@ async function enqueueSearchProjectionAfterCanonicalWrite(
 async function writeConvInAmbientTransaction(data: SessionData): Promise<number> {
   const vaultId = await resolveSessionWriteVaultId(data);
   data.vaultId = vaultId;
-  data.durableRevision = normalizeDurableRevision(data.durableRevision) + 1;
   const principal = requireCurrentPrincipal();
+  data.durableRevision = normalizeDurableRevision(data.durableRevision) + 1;
+  await writeConversationRevision(principal, {
+    sessionId: data.id,
+    vaultId,
+    revision: data.durableRevision,
+    messages: data.messages as ConversationMessagePayload[],
+  });
   const writePrincipal = principal.activeVaultId === vaultId
     ? principal
     : { ...principal, activeVaultId: vaultId };
@@ -991,7 +1017,6 @@ async function writeConvInAmbientTransaction(data: SessionData): Promise<number>
     && data.sessionType !== "meeting"
     && !data.messages.some(message => message.assistantState === "streaming")
   ) {
-    const principal = requireCurrentPrincipal();
     if (principal.actorType === "user") {
       const { indexSettledSessionReferences } = await import("./session-reference-index");
       await indexSettledSessionReferences(principal, data);
@@ -1078,6 +1103,7 @@ async function deleteSessionSubtree(rootSessionId: string): Promise<SessionDelet
   }
 
   await db.transaction(async (tx) => {
+    await deleteConversations(principal, deletedSessionIds);
     const deletedDocuments = await tx
       .delete(documentStoreDocuments)
       .where(
@@ -3144,6 +3170,7 @@ export const chatFileStorage: IChatFileStorage = {
       data.updatedAt = new Date().toISOString();
       data.durableRevision = normalizeDurableRevision(data.durableRevision) + 1;
       const destinationPrincipal = { ...principal, activeVaultId: destinationVaultId };
+      await moveConversationToVault(principal, sessionId, destinationVaultId);
       const document = await runWithPrincipal(destinationPrincipal, () =>
         documentStorage.moveDocumentToVault("chat", sessionId, destinationVaultId, {
           title: data.title,
