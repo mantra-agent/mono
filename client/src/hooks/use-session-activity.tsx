@@ -16,8 +16,6 @@ import {
 } from "@/hooks/use-session-subscription";
 import { isDurablyActiveSession, type ChatSession } from "@shared/models/chat";
 
-const MAX_LIVE_SESSION_SUBSCRIPTIONS = 8;
-
 const ACTIVITY_PRIORITY: Record<VisibleAssistantActivity, number> = {
   none: 0,
   streaming: 1,
@@ -56,12 +54,14 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
   });
 
   const liveSessionIds = useMemo(() => {
+    // Interest is bounded by real work, not a fixed count: every durably-active
+    // session the user owns retains its subscription so terminal delivery is
+    // never dropped. Multiplexed over one socket and authorized server-side.
     const ids = new Set<string>();
     if (activeSession) ids.add(activeSession);
     for (const session of sessions) {
       if (!isDurablyActiveSession(session)) continue;
       ids.add(session.id);
-      if (ids.size >= MAX_LIVE_SESSION_SUBSCRIPTIONS) break;
     }
     return Array.from(ids);
   }, [activeSession, sessions]);
