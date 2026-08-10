@@ -136,6 +136,7 @@ export interface Assumptions {
 
 export interface FinancialModel {
   id: string;
+  businessId: string;
   name: string;
   assumptions: Assumptions;
   createdAt: string;

@@ -20,7 +20,8 @@ import {
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { usePageHeader } from "@/hooks/use-page-header";
+import { BusinessPageHeader } from "@/components/business/business-page-header";
+import { useSelectedBusiness } from "@/hooks/use-selected-business";
 import { usePageLoadActivity } from "@/hooks/use-page-activity";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -152,9 +153,10 @@ function SavedIndicator({ state }: { state: SaveState }) {
 }
 
 export default function BusinessModelPage() {
-  usePageHeader({ title: "Business Model" });
+  const { businesses, selectedId, setSelectedId } = useSelectedBusiness();
   const { toast } = useToast();
-  const { data, isLoading, isFetching, error, refetch } = useQuery<FinancialModel>({ queryKey: ["/api/business/model"] });
+  const modelUrl = selectedId ? `/api/business/model?businessId=${encodeURIComponent(selectedId)}` : "/api/business/model";
+  const { data, isLoading, isFetching, error, refetch } = useQuery<FinancialModel>({ queryKey: [modelUrl], enabled: Boolean(selectedId) });
   usePageLoadActivity("page:business-model", isLoading || isFetching);
   const { data: rolesData } = useQuery<{ roles: JobRole[] }>({ queryKey: ["/api/business/roles"] });
   const [draft, setDraft] = useState<Assumptions | null>(null);
@@ -174,11 +176,24 @@ export default function BusinessModelPage() {
     }
   }, [data]);
 
+  useEffect(() => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    loadedIdRef.current = null;
+    setDraft(null);
+    setSaveState("idle");
+  }, [selectedId]);
+
   const save = useMutation({
-    mutationFn: async (assumptions: Assumptions) => (await apiRequest("PATCH", "/api/business/model", assumptions)).json() as Promise<FinancialModel>,
+    mutationFn: async (assumptions: Assumptions) => {
+      if (!selectedId) throw new Error("Select a Business first");
+      return (await apiRequest("PATCH", `/api/business/model?businessId=${encodeURIComponent(selectedId)}`, assumptions)).json() as Promise<FinancialModel>;
+    },
     onMutate: () => setSaveState("saving"),
     onSuccess: (model) => {
-      queryClient.setQueryData(["/api/business/model"], model);
+      queryClient.setQueryData([modelUrl], model);
       setSaveState("saved");
     },
     onError: (saveError: Error) => {
@@ -244,6 +259,7 @@ export default function BusinessModelPage() {
 
   return (
     <div className="w-full space-y-6 p-4" data-testid="business-model-page">
+      <BusinessPageHeader page="Model" businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} />
       <section className="overflow-hidden rounded-md border border-border/20 bg-card">
         <div className="flex items-center justify-between border-b border-border/20 px-4 py-3">
           <div>
