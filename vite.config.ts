@@ -25,9 +25,6 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes("lucide-react")) {
-            return "icons";
-          }
           if (
             id.includes("@radix-ui") ||
             id.includes("components/ui") ||
