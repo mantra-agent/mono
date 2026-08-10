@@ -19,8 +19,9 @@ export interface AgentAuthorityContext {
   origin?: ToolInvocationOrigin;
   trustedDelegation?: TrustedEngineeringDelegation;
   activity?: string;
-  /** Canonical DB skill row ID, resolved by the autonomous runner. Never model-provided. */
+  /** Canonical DB skill row ID and name, resolved by the autonomous runner. Never model-provided. */
   skillId?: string;
+  skillName?: string;
   /** Native Runtime ownership, injected by the runner and never accepted from model arguments. */
   runtimeRunId?: string;
   runtimeAttemptId?: string;
@@ -134,6 +135,14 @@ export function authorizeToolInvocation(
 ): ToolAuthorityDecision {
   const origin = context.origin ?? "internal";
   const action = actionOf(args);
+
+  if (
+    toolName === "system"
+    && ["list_history_rollup_candidates", "save_history_rollup"].includes(action || "")
+    && (origin !== "autonomous" || context.skillName !== "history-rollup" || !context.skillId)
+  ) {
+    return { allowed: false, reason: "history_rollup_skill_required" };
+  }
 
   if (toolName === "ui" && (!context.sessionId || (origin !== "interactive" && origin !== "voice"))) {
     return { allowed: false, reason: "session_bound_interactive_ui_required" };

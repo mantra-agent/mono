@@ -899,7 +899,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["state", "logs", "log_files", "budget", "frontend_performance", "context_health", "reliability", "tool_output_pressure", "run_history_rollups", "events", "active_runs", "clear_active_run", "accounts", "tool_stats"], description: "Action. Use log_files to list available log files; use logs to read a specific log file. tool_stats returns lifetime cumulative counters and does not support a time window." },
+        action: { type: "string", enum: ["state", "logs", "log_files", "budget", "frontend_performance", "context_health", "reliability", "tool_output_pressure", "list_history_rollup_candidates", "save_history_rollup", "events", "active_runs", "clear_active_run", "accounts", "tool_stats"], description: "Action. Use log_files to list available log files; use logs to read a specific log file. tool_stats returns lifetime cumulative counters and does not support a time window." },
         limit: { type: "number", description: "Max entries to return (logs/events default 100; for reliability detail=tool_failures default 50, max 200)" },
         level: { type: "string", description: "Filter by log level: debug, info, warn, error (logs)" },
         source: { type: "string", description: "Filter by source module name (logs)" },
@@ -915,6 +915,12 @@ export const TOOLS: Record<string, ToolMeta> = {
         failureKind: { type: "string", enum: ["input", "permission", "transient", "internal"], description: "Filter reliability tool_failures by structured failure kind (amber classes: permission/input/transient; internal is usually red)." },
         tool: { type: "string", description: "Filter reliability tool_failures by exact tool name (e.g. shell, git, scratch)." },
         code: { type: "string", description: "Filter reliability tool_failures by failure code when present (e.g. shell_policy_denied, scratch_edit_not_found)." },
+        vaultId: { type: "string", description: "Visible Vault ID returned by list_history_rollup_candidates (save_history_rollup)." },
+        rollupLevel: { type: "string", enum: ["hour", "day", "week", "month", "quarter", "year"], description: "Rollup level returned by list_history_rollup_candidates (save_history_rollup)." },
+        timezone: { type: "string", description: "IANA timezone returned by list_history_rollup_candidates (save_history_rollup)." },
+        bucketStart: { type: "string", description: "Exact ISO bucket start returned by list_history_rollup_candidates (save_history_rollup)." },
+        sourceEntryIds: { type: "array", items: { type: "string" }, description: "Exact source entry IDs returned by list_history_rollup_candidates (save_history_rollup)." },
+        summary: { type: "string", description: "Skill-authored chronology summary, 1-12000 characters (save_history_rollup)." },
       },
       required: ["action"],
     },
