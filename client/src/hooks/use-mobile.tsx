@@ -48,23 +48,37 @@ export function ContainerWidthProvider({ children }: { children: React.ReactNode
  * Inside a ContainerWidthProvider (e.g. <main>), uses the container's width.
  * Outside (sidebar, top bar, bottom bar), falls back to viewport width.
  */
+function useViewportMobile() {
+  const [viewportMobile, setViewportMobile] = React.useState(
+    () => typeof window !== "undefined" && window.innerWidth < MOBILE_BREAKPOINT,
+  )
+
+  React.useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
+    const onChange = () => setViewportMobile(window.innerWidth < MOBILE_BREAKPOINT)
+    mql.addEventListener("change", onChange)
+    onChange()
+    return () => mql.removeEventListener("change", onChange)
+  }, [])
+
+  return viewportMobile
+}
+
+/**
+ * Returns true for the native mobile app or a genuinely mobile viewport.
+ * Use this for interaction modality. It deliberately ignores narrow desktop
+ * containers, which may need responsive layout without mobile presentation.
+ */
+export function useIsMobileViewport() {
+  const nativeApp = isNativeAppWebView()
+  const viewportMobile = useViewportMobile()
+  return nativeApp || viewportMobile
+}
+
 export function useIsMobile() {
   const nativeApp = isNativeAppWebView()
   const containerWidth = React.useContext(ContainerWidthContext)
-  const [viewportMobile, setViewportMobile] = React.useState<boolean | undefined>(undefined)
-
-  React.useEffect(() => {
-    // Skip viewport listener when container width is available
-    if (containerWidth !== null) return
-
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
-    const onChange = () => {
-      setViewportMobile(window.innerWidth < MOBILE_BREAKPOINT)
-    }
-    mql.addEventListener("change", onChange)
-    setViewportMobile(window.innerWidth < MOBILE_BREAKPOINT)
-    return () => mql.removeEventListener("change", onChange)
-  }, [containerWidth])
+  const viewportMobile = useViewportMobile()
 
   if (nativeApp) return true
 
@@ -72,5 +86,5 @@ export function useIsMobile() {
     return containerWidth < MOBILE_BREAKPOINT
   }
 
-  return !!viewportMobile
+  return viewportMobile
 }

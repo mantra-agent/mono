@@ -470,7 +470,7 @@ Chat is an explicit exception. Its Mantra mark and conversation prompt are part 
 - **MUST use the canonical `DropdownMenu` primitive** from `client/src/components/ui/dropdown-menu.tsx` for action menus. Do not create a local menu, render raw Radix dropdown primitives, or introduce a parallel responsive-menu component.
 - Declare one action hierarchy with `DropdownMenuTrigger`, `DropdownMenuContent`, `DropdownMenuItem`, and the canonical nested/group variants. The primitive owns presentation by modality; consumers must not branch on viewport or native-app state.
 - Use one nested disclosure model at every width: selecting a nested row replaces the current menu body and exposes Back.
-- Desktop presents that model in a compact collision-aware anchored popover; mobile presents it in one modal bottom sheet.
+- Desktop always presents that model in a compact collision-aware anchored popover, including inside narrow desktop panels. Only a native mobile app or a genuinely mobile viewport presents it in one modal bottom sheet; container width alone must never switch menu modality.
 - Mobile rows are at least 44px tall. Sheet content respects viewport overflow and safe areas. Nested floating layers on mobile are prohibited.
 - Keyboard access, visible focus, disabled semantics, dismissal, and focus return are mandatory.
 - The Design screen's **Responsive action menus** playground is the canonical visual and interaction example. Any change to action-menu behavior must update that example and this section together.

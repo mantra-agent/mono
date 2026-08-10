@@ -258,7 +258,7 @@ Hosting credentials and environment configuration belong to Platform Environment
 
 ### Responsive Action Menus
 
-`client/src/components/ui/dropdown-menu.tsx` is the canonical action-menu primitive and MUST be used for action menus. Consumers declare one Radix-compatible action tree; the primitive owns modality, rendering a compact anchored popover on desktop and one bottom sheet with 44px targets, safe-area/overflow containment, and drill-in Back navigation on mobile. Do not import raw Radix dropdown primitives, create local menu renderers, branch on mobile at call sites, or introduce a parallel responsive-menu component. The Design screen's **Responsive action menus** playground is the canonical implementation example and must stay aligned with `DESIGN.md` § Action menus.
+`client/src/components/ui/dropdown-menu.tsx` is the canonical action-menu primitive and MUST be used for action menus. Consumers declare one Radix-compatible action tree; the primitive owns modality, rendering a compact anchored popover on desktop and one bottom sheet with 44px targets, safe-area/overflow containment, and drill-in Back navigation only in the native mobile app or a genuinely mobile viewport. Narrow desktop containers remain desktop dropdowns; container width is not menu modality. Do not import raw Radix dropdown primitives, create local menu renderers, branch on mobile at call sites, or introduce a parallel responsive-menu component. The Design screen's **Responsive action menus** playground is the canonical implementation example and must stay aligned with `DESIGN.md` § Action menus.
 
 ### Universal Reference Picker
 
