@@ -1,10 +1,5 @@
-import { inputFailure, type ToolFailureCode } from "../../tool-failure";
-import type { ToolHandler, ToolHandlerResult } from "../contracts";
-
-/** Contract reject → amber input failure (same discriminant path as shell_policy_denied). */
-function contractReject(result: string, code: ToolFailureCode, detail?: string): ToolHandlerResult {
-  return { result, error: true, failure: inputFailure(code, detail) };
-}
+import type { ToolHandler } from "../contracts";
+import { contractReject } from "../shared/failures";
 
 async function gitnexusBridgeCall<T>(fn: () => Promise<T>): Promise<{ ok: boolean; result?: T; error?: string }> {
   try {

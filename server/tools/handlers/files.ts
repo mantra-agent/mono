@@ -5,13 +5,9 @@ import {
   permissionFailure,
   transientFailure,
   type ToolFailure,
-  type ToolFailureCode,
 } from "../../tool-failure";
-import type { ToolHandler, ToolHandlerResult } from "../contracts";
-
-function contractReject(result: string, code: ToolFailureCode, detail?: string): ToolHandlerResult {
-  return { result, error: true, failure: inputFailure(code, detail) };
-}
+import type { ToolHandler } from "../contracts";
+import { contractReject } from "../shared/failures";
 
 /** Classify errors emitted by the canonical Files API/provider boundary. */
 export function classifyFilesToolError(err: unknown): ToolFailure | undefined {
