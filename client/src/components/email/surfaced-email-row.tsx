@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SimpleFeedItem } from "@shared/models/simple";
-import { createReferenceRef } from "@shared/references";
 import { CalendarClock, ChevronRight, Clock, Loader2, Mail, MessageSquare, MoreHorizontal, X } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -79,16 +78,9 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
     || (accountId && providerThreadId
       ? `/comms?thread=${encodeURIComponent(`${accountId}:${providerThreadId}`)}`
       : "/comms");
-  const replyReference = useMemo(() => {
-    const threadId = sourceRef?.id
-      || (accountId && providerThreadId ? `${accountId}:${providerThreadId}` : null);
-    if (!threadId) return null;
-    return createReferenceRef({
-      type: "email_thread",
-      id: threadId,
-      metadata: { label: "Reply", href: emailHref },
-    });
-  }, [accountId, emailHref, providerThreadId, sourceRef?.id]);
+  const primaryAction = payloadString(item, "primaryAction") === "invite" ? "invite" : "reply";
+  const actionLabel = payloadString(item, "actionLabel") ?? (primaryAction === "invite" ? "Invite" : "Reply");
+  const actionReference = item.references?.find(ref => ref.type === "email_thread") ?? null;
 
   const markDone = useEmailMarkDone();
   const snoozeMutation = useEmailSnooze();
@@ -151,7 +143,9 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
         `Let's discuss this email thread: **${item.title}**`,
         "",
         "Load the relevant context from previous interactions, projects, goals, and memories for the person and email thread.",
-        "Use the draft tool to draft a reply that both addresses the open question in the email thread and moves forward our goals, unless there are any ambiguities about what the draft should include, in which case first ask clarifying question(s) using the question tool.",
+        primaryAction === "invite"
+          ? "Discuss and handle the calendar invitation using its available context. Do not draft an email reply or imply RSVP authority; identify the appropriate next step and ask a clarifying question only if a consequential choice remains."
+          : "Use the draft tool to draft a reply that both addresses the open question in the email thread and moves forward our goals, unless there are any ambiguities about what the draft should include, in which case first ask clarifying question(s) using the question tool.",
         "",
         emailThreadRef ? `Email thread: ${emailThreadRef}` : null,
         emailMessageRef ? `Latest message: ${emailMessageRef}` : null,
@@ -198,12 +192,12 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
           </span>
           <div className="relative min-w-0 flex-1 pl-2">
             <span className="inline-flex max-w-full items-center gap-1 text-sm">
-              {replyReference ? (
+              {actionReference ? (
                 <span className="inline-flex min-w-0 items-center" onClick={(e) => e.stopPropagation()}>
-                  <ReferenceRenderer refValue={replyReference} surface="simple-row" className="mx-0" />
+                  <ReferenceRenderer refValue={actionReference} surface="simple-row" className="mx-0" />
                 </span>
               ) : (
-                <span className="shrink-0 text-muted-foreground">Reply</span>
+                <span className="shrink-0 text-muted-foreground">{actionLabel}</span>
               )}
               <span className="shrink-0 text-muted-foreground">from</span>
               {senderReference ? (

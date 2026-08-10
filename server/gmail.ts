@@ -807,6 +807,7 @@ export interface NormalizedMessage {
   toAddresses: string | null;
   ccAddresses: string | null;
   direction: "inbound" | "outbound" | "unknown";
+  primaryAction: "invite" | "reply";
   date: Date | null;
   labelIds: string[];
   bodyText: string | null;
@@ -821,21 +822,45 @@ function getHeader(headers: Array<{ name?: string | null; value?: string | null 
   return h?.value ?? null;
 }
 
+const CALENDAR_METHOD_PATTERN = /(?:^|[;\s])method\s*=\s*"?(request|cancel|reply|counter|declinecounter|publish|add|refresh)"?/i;
+const CALENDAR_BODY_METHOD_PATTERN = /(?:^|\r?\n)METHOD\s*:\s*(REQUEST|CANCEL|REPLY|COUNTER|DECLINECOUNTER|PUBLISH|ADD|REFRESH)\s*(?:\r?\n|$)/im;
+const CALENDAR_SUBJECT_FALLBACK_PATTERN = /^(?:updated\s+invitation|invitation|canceled\s+event|cancelled\s+event):/i;
+const MAX_CALENDAR_METADATA_BYTES = 16_384;
+
+function decodeGmailBodyData(data: string | undefined | null): string | null {
+  if (!data) return null;
+  return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8");
+}
+
+function payloadDeclaresCalendarAction(payload: any): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const mimeType = typeof payload.mimeType === "string" ? payload.mimeType.toLowerCase() : "";
+  const contentType = getHeader(payload.headers, "Content-Type")?.toLowerCase() || mimeType;
+  const isCalendar = mimeType === "text/calendar" || contentType.startsWith("text/calendar");
+  if (isCalendar) {
+    if (CALENDAR_METHOD_PATTERN.test(contentType)) return true;
+    const calendarText = decodeGmailBodyData(payload.body?.data)?.slice(0, MAX_CALENDAR_METADATA_BYTES) || "";
+    if (CALENDAR_BODY_METHOD_PATTERN.test(calendarText)) return true;
+    return /(?:^|\r?\n)BEGIN:VCALENDAR\s*(?:\r?\n|$)/im.test(calendarText);
+  }
+  return Array.isArray(payload.parts) && payload.parts.some(payloadDeclaresCalendarAction);
+}
+
+function deriveEmailPrimaryAction(payload: any, subject: string | null): "invite" | "reply" {
+  if (payloadDeclaresCalendarAction(payload)) return "invite";
+  return subject && CALENDAR_SUBJECT_FALLBACK_PATTERN.test(subject.trim()) ? "invite" : "reply";
+}
+
 function extractBody(payload: any): { text: string | null; html: string | null } {
   let text: string | null = null;
   let html: string | null = null;
 
   if (!payload) return { text, html };
 
-  const decode = (data: string | undefined | null) => {
-    if (!data) return null;
-    return Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
-  };
-
   if (payload.mimeType === 'text/plain' && payload.body?.data) {
-    text = decode(payload.body.data);
+    text = decodeGmailBodyData(payload.body.data);
   } else if (payload.mimeType === 'text/html' && payload.body?.data) {
-    html = decode(payload.body.data);
+    html = decodeGmailBodyData(payload.body.data);
   }
 
   if (payload.parts) {
@@ -853,6 +878,8 @@ export function normalizeGmailMessage(raw: any, accountId: string): NormalizedMe
   const headers = raw.payload?.headers || [];
   const labelIds: string[] = raw.labelIds || [];
   const direction: "inbound" | "outbound" | "unknown" = labelIds.includes("SENT") ? "outbound" : "inbound";
+  const subject = getHeader(headers, "Subject");
+  const primaryAction = deriveEmailPrimaryAction(raw.payload, subject);
   const { text, html } = extractBody(raw.payload);
 
   let dateVal: Date | null = null;
@@ -871,12 +898,13 @@ export function normalizeGmailMessage(raw: any, accountId: string): NormalizedMe
     providerMessageId: raw.id || '',
     providerThreadId: raw.threadId || null,
     historyId: raw.historyId || null,
-    subject: getHeader(headers, 'Subject'),
+    subject,
     snippet: raw.snippet || null,
     fromAddress: getHeader(headers, 'From'),
     toAddresses: getHeader(headers, 'To'),
     ccAddresses: getHeader(headers, 'Cc'),
     direction,
+    primaryAction,
     date: dateVal,
     labelIds,
     bodyText: text,
