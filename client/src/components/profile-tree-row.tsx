@@ -125,7 +125,10 @@ export function ProfileTreeRow({
             className={cn(
               "flex items-center gap-2 text-muted-foreground",
               // Keep short field labels fully visible; values take remaining width.
-              mobileLayout === "inline" ? "min-w-max shrink-0" : "min-w-0",
+              // Grid gap-x is uniform, so label→value spacing lives here as
+              // label-cell right padding; the grid stays gap-x-0 to keep the
+              // trailing disclosure/overflow controls compact.
+              mobileLayout === "inline" ? "min-w-max shrink-0 pr-2" : "min-w-0",
             )}
           >
             {icon ? (
