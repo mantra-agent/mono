@@ -7,10 +7,11 @@ import { getInstanceName } from "@shared/instance-config";
 import { objectStorageService } from "./object_storage";
 import { ObjectPermission, setObjectAclPolicy } from "./object_storage/objectAcl";
 import {
-  checkAccountPermission,
-  checkPermissionAnyAccount,
-  type GoogleAccountPermissions,
-} from "./connected-accounts";
+  checkGmailPermission,
+  createGmailHandler,
+  resolveGmailAccountId,
+  type GmailSubHandler,
+} from "./tools/handlers/gmail-boundary";
 import { isSimilarText } from "./utils/text-similarity";
 import { safeStringify } from "./utils/safe-stringify";
 import { eventBus } from "./event-bus";
@@ -547,62 +548,6 @@ async function handleGmailRecent(args: Record<string, any>): Promise<ToolHandler
     }
   }
   return { result: `${lines.length} recent emails:\n${lines.join("\n")}` };
-}
-
-async function resolveGmailAccountId(accountIdRaw: string | undefined): Promise<string | undefined> {
-  if (!accountIdRaw) return undefined;
-  const { listGmailAccounts } = await import("./gmail");
-  const accts = await listGmailAccounts();
-  const exactIdMatch = accts.find(a => a.id === accountIdRaw);
-  if (exactIdMatch) return exactIdMatch.id;
-  const labelOrEmailMatch = accts.find(a =>
-    a.email.toLowerCase() === accountIdRaw.toLowerCase() ||
-    a.label.toLowerCase() === accountIdRaw.toLowerCase() ||
-    a.email.split('@')[0].toLowerCase() === accountIdRaw.toLowerCase() ||
-    a.email.split('@')[1]?.split('.')[0]?.toLowerCase() === accountIdRaw.toLowerCase()
-  );
-  if (labelOrEmailMatch) {
-    toolExec.log(`resolveGmailAccountId resolved "${accountIdRaw}" → ${labelOrEmailMatch.id} (${labelOrEmailMatch.email})`);
-    return labelOrEmailMatch.id;
-  }
-  toolExec.warn(`resolveGmailAccountId could not resolve "${accountIdRaw}" — no matching account found among: ${accts.map(a => a.id + ' (' + a.label + ', ' + a.email + ')').join(', ')}`);
-  return accountIdRaw;
-}
-
-async function checkGmailPermission(
-  accountIdRaw: string | undefined,
-  permKey: keyof GoogleAccountPermissions,
-  actionLabel: string,
-): Promise<{ denied: true; result: ToolHandlerResult } | { denied: false; resolvedAccountId: string | undefined }> {
-  const resolvedId = await resolveGmailAccountId(accountIdRaw);
-  if (resolvedId) {
-    const allowed = await checkAccountPermission(resolvedId, permKey);
-    if (!allowed) {
-      const { getAccount } = await import("./connected-accounts");
-      const acct = await getAccount(resolvedId);
-      const label = acct?.label || resolvedId;
-      const email = acct?.email || '';
-      return {
-        denied: true,
-        result: {
-          result: `Permission denied: ${label}${email ? ` (${email})` : ''} is not allowed to ${actionLabel}. This can be changed in Settings → Connections.`,
-          error: true,
-        },
-      };
-    }
-    return { denied: false, resolvedAccountId: resolvedId };
-  }
-  const check = await checkPermissionAnyAccount(permKey);
-  if (!check.allowed) {
-    return {
-      denied: true,
-      result: {
-        result: `Permission denied: No connected Google account is allowed to ${actionLabel}. This can be changed in Settings → Connections.`,
-        error: true,
-      },
-    };
-  }
-  return { denied: false, resolvedAccountId: undefined };
 }
 
 function optionalDraftText(value: unknown): string | undefined {
@@ -1699,7 +1644,7 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
   return { result: `Unknown cache_action "${subAction}". Use "get_untriaged", "mark_triaged", "get_unenriched", "store_enrichment", "search", "sync_status", "pipeline_counts", "get_message", "diagnose", or "run_downstream".`, error: true };
 }
 
-const gmailSubHandlers: Record<string, (args: Record<string, any>) => Promise<ToolHandlerResult>> = {
+const gmailSubHandlers: Record<string, GmailSubHandler> = {
   status: handleGmailStatus,
   search: handleGmailSearch,
   read: handleGmailRead,
@@ -1712,6 +1657,8 @@ const gmailSubHandlers: Record<string, (args: Record<string, any>) => Promise<To
   triage_log: handleGmailTriageLog,
   email_cache: handleGmailEmailCache,
 };
+
+const gmailHandler = createGmailHandler(gmailSubHandlers);
 
 const STRATEGY_ACTIONS = "list_scenarios, get_scenario, create_scenario, update_scenario, delete_scenario, list_actors, get_actor, add_actor, update_actor, remove_actor, get_move_tree, get_move, get_move_path, create_move, update_move, delete_move, reparent_move, list_child_moves, list_move_definitions, get_move_definition, create_move_definition, update_move_definition, delete_move_definition, set_actor_states, link_assumption_to_move, unlink_assumption_from_move, list_notes, add_note, update_note, delete_note, list_context, add_context, update_context, delete_context, add_end_condition, list_end_conditions, update_end_condition, delete_end_condition, add_assumption, list_assumptions, update_assumption, delete_assumption, cascade_assumption, list_artifacts, get_artifact, create_artifact, delete_artifact, evaluate_move, list_states, get_state, create_state, update_state, delete_state, set_end_condition_effect";
 
@@ -4418,24 +4365,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
   twitter: twitterHandler,
 
-  async gmail(args) {
-    const action = args.action || "status";
-    const handler = gmailSubHandlers[action];
-    if (!handler) return { result: `Unknown gmail action: ${action}. Available: status, search, read, batch_read, draft, reply, update_draft, recent, download_attachment, triage_log, email_cache`, error: true };
-    try {
-      return await handler(args);
-    } catch (err: any) {
-      const { isInvalidGrantError } = await import("./gmail");
-      if (isInvalidGrantError(err)) {
-        return {
-          result: `Gmail authentication expired — the OAuth token has been revoked or expired. The user needs to re-authorize their Google account in Settings → Connections. Let them know their Gmail connection needs to be refreshed.`,
-          error: true,
-          needsReauth: true,
-        };
-      }
-      return { result: `Gmail tool error: ${err.message}`, error: true };
-    }
-  },
+  gmail: gmailHandler,
 
   notion: notionHandler,
 
