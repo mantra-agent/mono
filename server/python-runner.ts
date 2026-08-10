@@ -200,13 +200,13 @@ def _audit(event, args):
 
 
 _source = sys.stdin.read()
-sys.addaudithook(_audit)
 _restrict_filesystem()
 _install_seccomp_network_deny()
 for _module_name in ("ctypes", "_ctypes"):
     sys.modules.pop(_module_name, None)
 del ctypes
 del _libc
+sys.addaudithook(_audit)
 exec(compile(_source, "<mantra-python>", "exec"), {"__name__": "__main__", "__builtins__": builtins.__dict__})
 `;
 
