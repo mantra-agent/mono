@@ -2581,6 +2581,17 @@ export const chatFileStorage: IChatFileStorage = {
         );
         return null;
       }
+      if (role === "assistant" && model === "elevenlabs-voice" && turnId) {
+        const existing = data.messages.find(
+          (message) => message.role === "assistant" && message.turnId === turnId,
+        );
+        if (existing) {
+          log.debug(
+            `[ChatFileStorage] duplicate voice assistant turn ignored session=${sessionId} turnId=${turnId}`,
+          );
+          return existing;
+        }
+      }
       const sanitizedContent =
         role === "assistant" ? stripRoleMarkers(content, sessionId) : content;
       const alignedSegmentChronology =
@@ -2636,7 +2647,16 @@ export const chatFileStorage: IChatFileStorage = {
       if (visibility && visibility !== "chat") msg.visibility = visibility;
       if (pageContext && role === "user") msg.pageContext = pageContext;
       if (turnId) msg.turnId = turnId;
-      data.messages.push(msg);
+      const matchingUserIndex = role === "assistant" && model === "elevenlabs-voice" && turnId
+        ? data.messages.findIndex(
+            (message) => message.role === "user" && message.turnId === turnId,
+          )
+        : -1;
+      if (matchingUserIndex >= 0) {
+        data.messages.splice(matchingUserIndex + 1, 0, msg);
+      } else {
+        data.messages.push(msg);
+      }
       data.updatedAt = msg.createdAt;
       await writeConv(data);
       invalidateSessionsCache();
