@@ -3,6 +3,7 @@ import { createContext, useContext, useState, useRef, useCallback, useEffect, us
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { emitSessionListChanged, emitSessionChanged } from "@/hooks/use-data-sync";
+import { setVisibilityLayer } from "@/hooks/use-visibility-layer";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 
 import { stripExpressionTags } from "@/components/chat-shared";
@@ -1989,6 +1990,7 @@ export function VoiceSessionProvider({
 
     resetEphemeralVoiceState({ clearTranscript: true });
     setStatus("connecting");
+    void setVisibilityLayer(0);
     // Arm the one-shot black voice entrance at the real start. Both browser and
     // native voice flow through startSession, so this is the single canonical
     // place the entrance is armed; reconnects never pass here.
