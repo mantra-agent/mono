@@ -18,6 +18,7 @@ import { handleGmailTriageLog } from "./tools/handlers/gmail-triage";
 import { handleGmailPipelineAction } from "./tools/handlers/gmail-pipeline";
 import { handleGmailMailboxRead } from "./tools/handlers/gmail-mailbox-read";
 import { handleGmailMailboxWrite } from "./tools/handlers/gmail-mailbox-write";
+import { strategyCoreHandlers, type StrategySubHandler } from "./tools/handlers/strategy-core";
 export { handleGmailDraftFromReview } from "./tools/handlers/gmail-drafts";
 export { diagnoseGmailBatchRead } from "./tools/handlers/gmail-provider";
 import { isSimilarText } from "./utils/text-similarity";
@@ -455,120 +456,6 @@ const gmailSubHandlers: Record<string, GmailSubHandler> = {
 const gmailHandler = createGmailHandler(gmailSubHandlers);
 
 const STRATEGY_ACTIONS = "list_scenarios, get_scenario, create_scenario, update_scenario, delete_scenario, list_actors, get_actor, add_actor, update_actor, remove_actor, get_move_tree, get_move, get_move_path, create_move, update_move, delete_move, reparent_move, list_child_moves, list_move_definitions, get_move_definition, create_move_definition, update_move_definition, delete_move_definition, set_actor_states, link_assumption_to_move, unlink_assumption_from_move, list_notes, add_note, update_note, delete_note, list_context, add_context, update_context, delete_context, add_end_condition, list_end_conditions, update_end_condition, delete_end_condition, add_assumption, list_assumptions, update_assumption, delete_assumption, cascade_assumption, list_artifacts, get_artifact, create_artifact, delete_artifact, evaluate_move, list_states, get_state, create_state, update_state, delete_state, set_end_condition_effect";
-
-async function handleStrategyListStrategies(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const list = await ss.getStrategies();
-  if (list.length === 0) return { result: "No strategies yet." };
-  const lines = list.map((g: any) => `- **${g.title}** (id: ${g.id})`);
-  return { result: `${list.length} strategies:\n${lines.join("\n")}` };
-}
-
-async function handleStrategyGetStrategy(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.goalId;
-  if (!id) return { result: "Missing goalId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const strategy = await ss.getStrategy(id);
-  if (!strategy) return { result: `Strategy ${id} not found`, error: true };
-  const actors = await ss.getActors(id);
-  const moves = await ss.getMoveTree(id);
-  const assumptions = await ss.getAssumptions(id);
-  const endConditions = await ss.getEndConditions(id);
-  const contextEntries = await ss.getContextEntries(id);
-  const parts = [`**${strategy.title}** (id: ${strategy.id})`];
-  if (strategy.description) parts.push(`Description: ${strategy.description}`);
-  parts.push(`Actors: ${actors.length}, Moves: ${moves.length}, Assumptions: ${assumptions.length}, End Conditions: ${endConditions.length}, Notes: ${contextEntries.length}`);
-  return { result: parts.join("\n") };
-}
-
-async function handleStrategyCreateStrategy(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const title = args.title;
-  if (!title) return { result: "Missing strategy title", error: true };
-  const existing = await ss.getStrategies();
-  const normalizedTitle = title.toLowerCase().trim();
-  const similar = existing.find((g: any) => {
-    const existingNorm = g.title.toLowerCase().trim();
-    return existingNorm === normalizedTitle || existingNorm.includes(normalizedTitle) || normalizedTitle.includes(existingNorm);
-  });
-  if (similar) {
-    return { result: `A scenario with a similar title already exists: "${similar.title}" (ID: ${similar.id}). Use update_scenario with strategyId="${similar.id}" to modify it, or provide a distinctly different title to create_scenario.`, error: true };
-  }
-  const strategy = await ss.createStrategy({ title, description: args.description || "" });
-  return { result: `Strategy created: "${strategy.title}" (ID: ${strategy.id})` };
-}
-
-async function handleStrategyUpdateStrategy(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.goalId;
-  if (!id) return { result: "Missing goalId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const updates: Record<string, any> = {};
-  if (args.title) updates.title = args.title;
-  if (args.description) updates.description = args.description;
-  const strategy = await ss.updateStrategy(id, updates);
-  if (!strategy) return { result: `Strategy ${id} not found`, error: true };
-  return { result: `Strategy updated: "${strategy.title}" — ${Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(", ")}` };
-}
-
-async function handleStrategyDeleteStrategy(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.goalId;
-  if (!id) return { result: "Missing goalId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const deleted = await ss.deleteStrategy(id);
-  if (!deleted) return { result: `Strategy ${id} not found`, error: true };
-  return { result: `Strategy ${id} deleted` };
-}
-
-async function handleStrategyListActors(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const actors = await ss.getActors(goalId);
-  if (actors.length === 0) return { result: "No actors for this strategy." };
-  const lines = actors.map((a: any) => {
-    const inf = `${Math.round((a.influence ?? 0.5) * 100)}% influence`;
-    return `- **${a.name}** (id: ${a.id}, ${inf}) [person: ${a.personId}]`;
-  });
-  return { result: `${actors.length} actors:\n${lines.join("\n")}` };
-}
-
-async function handleStrategyGetActor(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.id;
-  if (!id) return { result: "Missing actor id", error: true };
-  const actor = await ss.getActor(id);
-  if (!actor) return { result: `Actor ${id} not found`, error: true };
-  const parts = [`**${actor.name}** (id: ${actor.id})`];
-  parts.push(`Influence: ${Math.round((actor.influence ?? 0.5) * 100)}%`);
-  if (actor.notes) parts.push(`Notes: ${actor.notes}`);
-  parts.push(`Person ID: ${actor.personId}`);
-  return { result: parts.join("\n") };
-}
-
-async function handleStrategyAddActor(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const name = args.name;
-  if (!name) return { result: "Missing actor name", error: true };
-  const personId = args.personId;
-  if (!personId) return { result: "Missing personId - actors must be linked to a person", error: true };
-  const influence = Math.max(0, Math.min(1, args.influence ?? 0.5));
-  const actor = await ss.createActor({ goalId, name, notes: args.notes || "", personId, influence });
-  return { result: `Actor added: "${actor.name}" (ID: ${actor.id}, influence: ${Math.round((actor.influence ?? 0.5) * 100)}%)` };
-}
-
-async function handleStrategyUpdateActor(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.id;
-  if (!id) return { result: "Missing actor id", error: true };
-  const updates: Record<string, any> = {};
-  if (args.name) updates.name = args.name;
-  if (args.notes) updates.notes = args.notes;
-  if (args.influence !== undefined) updates.influence = Math.max(0, Math.min(1, args.influence));
-  const actor = await ss.updateActor(id, updates);
-  if (!actor) return { result: `Actor ${id} not found`, error: true };
-  return { result: `Actor updated: "${actor.name}" — ${Object.entries(updates).map(([k, v]) => k === "influence" ? `influence: ${Math.round(v * 100)}%` : `${k}: ${v}`).join(", ")}` };
-}
-
-async function handleStrategyRemoveActor(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.id;
-  if (!id) return { result: "Missing actor id", error: true };
-  const deleted = await ss.deleteActor(id);
-  if (!deleted) return { result: `Actor ${id} not found`, error: true };
-  return { result: `Actor ${id} removed` };
-}
 
 async function handleStrategyGetMoveTree(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
@@ -1243,24 +1130,8 @@ async function handleStrategyEvaluateMove(args: Record<string, any>, ss: any): P
   return { result: summary };
 }
 
-type StrategySubHandler = (args: Record<string, any>, ss: any) => Promise<ToolHandlerResult>;
-
 const strategySubHandlers: Record<string, StrategySubHandler> = {
-  list_scenarios: handleStrategyListStrategies,
-  get_scenario: handleStrategyGetStrategy,
-  create_scenario: handleStrategyCreateStrategy,
-  update_scenario: handleStrategyUpdateStrategy,
-  delete_scenario: handleStrategyDeleteStrategy,
-  list_goals: handleStrategyListStrategies,
-  get_goal: handleStrategyGetStrategy,
-  create_goal: handleStrategyCreateStrategy,
-  update_goal: handleStrategyUpdateStrategy,
-  delete_goal: handleStrategyDeleteStrategy,
-  list_actors: handleStrategyListActors,
-  get_actor: handleStrategyGetActor,
-  add_actor: handleStrategyAddActor,
-  update_actor: handleStrategyUpdateActor,
-  remove_actor: handleStrategyRemoveActor,
+  ...strategyCoreHandlers,
   get_move_tree: handleStrategyGetMoveTree,
   get_move: handleStrategyGetMove,
   get_move_path: handleStrategyGetMovePath,
