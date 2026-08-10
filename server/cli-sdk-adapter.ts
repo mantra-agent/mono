@@ -4,7 +4,7 @@ import fs from "fs";
 import { existsSync } from "fs";
 import crypto from "crypto";
 import type { ToolDefinition } from "@shared/models/tools";
-import type { StreamEvent, ChatCompletionStreamOptions, ChatCompletionOptions, ChatCompletionResult } from "./model-client";
+import { ModelProviderError, type ModelProviderFailure, type StreamEvent, type ChatCompletionStreamOptions, type ChatCompletionOptions, type ChatCompletionResult } from "./model-client";
 import type { ToolExecutor } from "./agent-executor";
 import type { ClaudeCliTierModelConfig } from "@shared/model-connectors";
 import type { Options as SdkOptions } from "@anthropic-ai/claude-agent-sdk";
@@ -268,6 +268,35 @@ function classifyCliAdapterFailure(rawError: string): string {
     return "CLAUDE_CLI_USAGE_LIMIT";
   }
   return "CLAUDE_CLI_PROVIDER_FAILED";
+}
+
+function claudeCliProviderFailure(rawError: string, model: string, options: ChatCompletionStreamOptions): ModelProviderFailure {
+  const providerCode = classifyCliAdapterFailure(rawError);
+  const usageLimited = providerCode === "CLAUDE_CLI_USAGE_LIMIT";
+  const credentialFailure = /expired|invalid|unauthorized|\b401\b/i.test(rawError);
+  return {
+    kind: usageLimited ? "rate_limited" : credentialFailure ? "http_permanent" : "transport",
+    provider: "claude-cli",
+    model,
+    runId: options.metadata?.runId ?? options.runId,
+    sessionId: options.metadata?.sessionId ?? options.convId,
+    phase: "stream",
+    retryable: !credentialFailure,
+    status: credentialFailure ? 401 : usageLimited ? 429 : 0,
+    attempts: 1,
+    providerCode,
+    providerMessage: friendlyCliError(rawError, model),
+    userMessage: usageLimited
+      ? "Claude subscription usage limit reached. Mantra will try another configured provider when available."
+      : credentialFailure
+        ? "Claude CLI credentials are expired or invalid. Update the configured Claude credential before retrying."
+        : "Claude CLI could not complete this request. Mantra will try another configured provider when available.",
+  };
+}
+
+function claudeCliErrorEvent(rawError: string, model: string, options: ChatCompletionStreamOptions): StreamEvent {
+  const error = new ModelProviderError(claudeCliProviderFailure(rawError, model, options));
+  return { type: "error", error: error.message, providerFailure: error.providerFailure };
 }
 
 export function emitCliSubprocessCrash(ctx: CliCrashContext): void {
@@ -1667,22 +1696,7 @@ export async function* cliSdkStream(
             const rawErr = Array.isArray(resultMsg.errors) && resultMsg.errors.length > 0
               ? resultMsg.errors.join("; ")
               : `SDK query failed: ${resultMsg.subtype}`;
-            emitCliSubprocessCrash({
-              phase: "result_error",
-              model,
-              rawError: `subtype=${resultMsg.subtype} ${rawErr}`,
-              runId: options.runId ?? null,
-              convId: options.convId ?? null,
-              pooledHit,
-              poolEligible,
-              workerAgeMs: pooledWorker ? Date.now() - pooledWorker.spawnedAt : null,
-              elapsedMs: Date.now() - start,
-              eventsReceived: eventCount,
-              inputTokens,
-              outputTokens,
-              stderrTail: stderrBuf.tail || null,
-            });
-            yield { type: "error", error: friendlyCliError(rawErr, model) };
+            yield claudeCliErrorEvent(rawErr, model, options);
           }
           break;
         }
@@ -1834,30 +1848,6 @@ export async function* cliSdkStream(
       yield { type: "usage", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, stopReason: "end_turn" };
     } else {
       const errMsg = err instanceof Error ? err.message : String(err);
-      // Derive lifecycle phase: pre_first_event (never started streaming),
-      // during_tool_loop (we issued a tool_use and are awaiting its result),
-      // or post_first_event (mid-text-stream).
-      const phase: CliCrashPhase = firstEventAt === null
-        ? "pre_first_event"
-        : pendingToolCallIdQueue.length > 0
-        ? "during_tool_loop"
-        : "post_first_event";
-      emitCliSubprocessCrash({
-        phase,
-        model,
-        rawError: errMsg,
-        runId: options.runId ?? null,
-        convId: options.convId ?? null,
-        pooledHit,
-        poolEligible,
-        workerAgeMs: pooledWorker ? Date.now() - pooledWorker.spawnedAt : null,
-        elapsedMs: Date.now() - start,
-        eventsReceived: eventCount,
-        inputTokens,
-        outputTokens,
-        stderrTail: stderrBuf.tail || null,
-      });
-
       if (/usageMetadata is not defined/i.test(errMsg) && fullText) {
         log.warn(
           `cliSdkStream: degrading post-output SDK usage finalization failure model=${model} ` +
@@ -1886,10 +1876,8 @@ export async function* cliSdkStream(
             usageSemantics: usageSource === "assistant.usage" ? "cumulative_provider_session" : "unknown",
           },
         };
-      } else if (errMsg.includes("expired") || errMsg.includes("invalid") || errMsg.includes("unauthorized") || errMsg.includes("401")) {
-        yield { type: "error", error: "Claude CLI token expired or invalid. Please re-run `claude setup-token` and update the secret." };
       } else {
-        yield { type: "error", error: friendlyCliError(errMsg, model) };
+        yield claudeCliErrorEvent(errMsg, model, options);
       }
     }
     // Aborted/errored pooled workers must be evicted, never returned to the pool.
