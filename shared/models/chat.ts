@@ -6,6 +6,7 @@ import {
   timestamp,
   jsonb,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -66,6 +67,84 @@ export const messages = pgTable(
     index("idx_messages_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_messages_account").on(table.accountId),
     index("idx_messages_session").on(table.sessionId),
+  ],
+);
+
+export const conversationMessages = pgTable(
+  "conversation_messages",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: text("session_id").notNull(),
+    messageId: text("message_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    role: text("role").notNull(),
+    payload: jsonb("payload").notNull(),
+    messageRevision: integer("message_revision").notNull().default(1),
+    sessionRevision: integer("session_revision").notNull(),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    vaultId: text("vault_id"),
+    createdByUserId: text("created_by_user_id"),
+    updatedByUserId: text("updated_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, precision: 6 })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_conversation_messages_session_message").on(
+      table.ownerUserId,
+      table.accountId,
+      table.sessionId,
+      table.messageId,
+    ),
+    index("idx_conversation_messages_scope_owner_session").on(
+      table.scope,
+      table.ownerUserId,
+      table.sessionId,
+      table.ordinal,
+    ),
+    index("idx_conversation_messages_account_session").on(
+      table.accountId,
+      table.sessionId,
+      table.ordinal,
+    ),
+  ],
+);
+
+export const conversationRevisions = pgTable(
+  "conversation_revisions",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: text("session_id").notNull(),
+    revision: integer("revision").notNull(),
+    messageCount: integer("message_count").notNull(),
+    reason: text("reason").notNull().default("canonical_write"),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    vaultId: text("vault_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_conversation_revisions_session_revision").on(
+      table.ownerUserId,
+      table.accountId,
+      table.sessionId,
+      table.revision,
+    ),
+    index("idx_conversation_revisions_scope_owner_session").on(
+      table.scope,
+      table.ownerUserId,
+      table.sessionId,
+      table.revision,
+    ),
   ],
 );
 
@@ -270,6 +349,16 @@ export type TerminationReason =
   | "error"
   | "circuit_breaker"
   | "yield_to_interactive";
+
+/** Source-owned terminal truth for autonomous child missions. */
+export type ChildMissionTerminalOutcome =
+  | "mission_completed"
+  | "resumable_budget_exhausted"
+  | "blocked"
+  | "needs_review"
+  | "failed"
+  | "cancelled"
+  | "abandoned";
 
 export type TerminalDegradationReason =
   | "empty_response"
@@ -1032,6 +1121,8 @@ export interface ChatSession {
   spawnerTool?: string;
   spawnerSkillRun?: string;
   endReason?: string;
+  /** Source-owned terminal truth for Plan/Workflow child mission consumers. */
+  childMissionOutcome?: ChildMissionTerminalOutcome;
   errorSeverity?: ErrorSeverity | null;
   directChildCount?: number;
   parentMissing?: boolean;

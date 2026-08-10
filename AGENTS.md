@@ -56,6 +56,10 @@ Load what's needed, when it's needed, at the depth the task requires. Context is
 
 Use the smallest set of patterns that expresses the system truthfully, and reuse them everywhere. Extend only when you can name the constraint the current pattern cannot represent without lying.
 
+**Complexity Spends Reliability**
+
+Every abstraction, state, dependency, asynchronous hop, fallback, and configuration option increases failure probability and recovery cost. Prefer deleting states and failure modes over documenting them.
+
 **One Discriminant Per Decision**
 
 When an operation can end in multiple outcomes, represent the outcome as a single discriminated field computed at the source. Diagnostic detail lives alongside the discriminant but never replaces it.
@@ -176,6 +180,10 @@ Every deployment has a rollback path under 5 minutes. Feature flags gate risky n
 **Migrate, Don't Mutate**
 
 When interfaces change, the old contract runs alongside the new until all consumers migrate. Deprecation is explicit: mark, log usage, set a removal date, delete at zero.
+
+**Drift Is a Failure Mode**
+
+Dependencies, schemas, configuration, flags, permissions, documentation, and runbooks need owners and review triggers. Continuously expose obsolete versions, unused flags, configuration divergence, and abandoned components.
 
 **No Premature Optimization**
 
@@ -337,7 +345,7 @@ Operations     — `script/` production build plus `scripts/`, `migrations/`, an
 | Domain | Storage | Key Tables/Files |
 |--------|---------|-----------------|
 | Memory + graph | PostgreSQL + pgvector | `memory_vnext_claims`, `memory_vnext_claim_links`, `memory_vnext_sources`; legacy `memory_entries` closure pending quarantine |
-| Conversations | PostgreSQL document store (whole-session JSON text + indexed JSONB metadata) | `document_store_documents` via `DocumentStorage` / `chat-file-storage.ts` |
+| Conversations | PostgreSQL incremental message rows + ordered revisions; document aggregate for scoped metadata/legacy reads | `conversation_messages`, `conversation_revisions`, `document_store_documents` via `conversation-persistence.ts` / `chat-file-storage.ts` |
 | Intentions | PostgreSQL | `intention_items` |
 | Timers | PostgreSQL + TTLCache | `timers` (`schedules` JSONB column), `responsibility_runs` |
 | Skills | PostgreSQL | `skills`, `skill_runs` |
@@ -385,7 +393,7 @@ Skills are runnable workflows with run identity, sessions, scoring, and operator
 7. **Social Pipeline** — Draft → review → scheduled + calendar → timer claims → X/Twitter post
 8. **Daily Artifacts** — Timer → skill → Library page → set_brief/set_review → CheckIn → UI gold dot
 9. **Hook Reactor** — System event → pattern match → condition + cooldown → action dispatch
-10. **Sleep Cycle** — Nightly: decay → reinforce → NREM merge/prune → REM dream → GSI score
+10. **Sleep Cycle** — Nightly vNext lifecycle maintenance → REM synthesis → optional GSI structural scoring; legacy entry decay, reinforcement, NREM, and tier-budget phases are retired.
 11. **Memory Lifecycle** — vNext source extraction persists provenance-backed claims; nightly lifecycle, REM, and GSI maintain the active claim graph without legacy tier promotion.
 12. **Access Control** — Session/auth middleware resolves a `Principal` → permission service computes base role + `user_permissions` overrides → `/api/auth/me` exposes principal/scopes/permissions → privileged routes call `requirePermission(...)` or equivalent central checks
 13. **Calendar Metadata** — Google event → local overlay → type, linked tasks, auto-linked People
@@ -404,7 +412,7 @@ These are current source-backed conditions, not a speculative backlog. Re-verify
 
 1. **Tool domain migration** — public tool identity and invocation remain singular in `server/tool-registry.ts` and `server/bridge-tools.ts#executeTool`; `server/tools/domain-adapters.ts` exhaustively owns each registered tool by domain and composes exactly one handler source per public name. Legacy private implementation helpers may remain inside `bridge-tools.ts`, but cannot enter the dispatch map or act as registration/authority. Remaining file-size reduction is implementation migration, not an authority gap.
 2. **PostgreSQL query-path observability** — constructors and pool lifecycle now converge through `server/database-adapters.ts`, while `server/db.ts` owns ordinary general/voice execution policy and raw SQL remains supported. Checked-out clients plus named auth, metrics, and dedicated adapters retain workload-local observability rather than the ordinary lane instrumentation. Detailed evidence lives in `server/AGENTS.md` § Database Architecture.
-3. **Whole-session persistence** — `document_store_documents.content` rewrites the complete session document under session serialization; indexed metadata and search segments are projections, not message-row authority.
+3. **Incremental conversation migration** — `conversation_messages` is active transcript authority with stable message IDs, mutable ordinals, per-message revisions, and principal/account/Vault scope; `conversation_revisions` is append-only commit evidence. `document_store_documents` remains the Session aggregate/search anchor and legacy blob input, but active writes persist an empty message projection rather than rewriting the transcript. Legacy sessions adopt their blob messages on the first canonical write.
 4. **Legacy schema implementation concentration** — deployed ordering and observability now converge through `server/schema-convergence.ts`; the retained large `runSchemaBootstrap()` body and subsystem ensures are delegated implementation actors whose future decomposition must preserve that one composition owner.
 5. **Runtime compatibility retirement** — the fenced Runtime kernel is canonical for capacity, attempts, leases, retries, cancellation, and terminal receipts. Top-level Skill execution (including Council and Regression), scheduled Skill Timers, Plan launches, and memory-source extraction enter through native Runtime handlers; retained process-local schedulers and monitors are discovery/projection adapters or child-domain coordinators and must not grant capacity or terminalize a Runtime Run. The legacy admission façade remains a bounded adapter for interactive Agent/browser and non-Skill Hook work until those producers gain native handlers.
 

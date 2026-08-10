@@ -1,26 +1,21 @@
 /**
  * Session Output Buffer
  *
- * Episodic memory layer: writes a compact summary of every completed session
- * to a rolling 50-row PostgreSQL table. The memory.recent_sessions context
- * section reads from this table to give every skill run direct, factual
- * knowledge of what was produced in prior sessions — without semantic search.
+ * Bounded REM seed layer: writes a compact summary of every completed session
+ * to a rolling 50-row PostgreSQL table. HISTORY owns bootstrap chronology;
+ * this table remains source material for dream generation only.
  *
  * Write path:  session.status transitions to saved → chat.session.status_changed event
  *              → writeSessionToBuffer(sessionId) → INSERT + prune
- *              → eventBus.publish("system.session.buffer_written")
- *              → context cache invalidation
  *
- * Read path:   context resolver calls getRecentSessions()
+ * Read path:   REM dream engine calls getRecentSessions()
  *              → single indexed SELECT on a ≤50-row table
- *              → renderRecentSessionsBlock()
  */
 
 import { db } from "./db";
 import { sessionOutputBuffer } from "@shared/schema";
 import { sql, desc, ne } from "drizzle-orm";
 import { chatFileStorage, type FileMessage } from "./chat-file-storage";
-import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, ownedInsertValues } from "./scoped-storage";
@@ -130,13 +125,6 @@ export async function writeSessionToBuffer(sessionId: string): Promise<void> {
       )
     `);
 
-    // Emit invalidation event so context cache clears memory.recent_sessions
-    eventBus.publish({
-      category: "system",
-      event: "system.session.buffer_written",
-      payload: { sessionId },
-    });
-
     log.log(`writeSessionToBuffer: complete sessionId=${sessionId}`);
   } catch (err: unknown) {
     // Buffer write must never block session close
@@ -160,43 +148,3 @@ export async function getRecentSessions(limit = BUFFER_MAX_ROWS) {
     .limit(limit);
 }
 
-type SessionBufferRow = Awaited<ReturnType<typeof getRecentSessions>>[number];
-
-/**
- * Render the recent sessions buffer as a compact context block.
- * Groups sessions by calendar date with bold date headers, time-only per line.
- */
-export function renderRecentSessionsBlock(rows: SessionBufferRow[]): string {
-  if (rows.length === 0) {
-    return "No recent sessions recorded yet — buffer populates as sessions close.";
-  }
-
-  const grouped = new Map<string, string[]>();
-  for (const row of rows) {
-    const d = new Date(row.createdAt);
-    const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    const time = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    const parts: string[] = [
-      `${time} (${row.sessionType}) "${row.title ?? "Untitled"}"`,
-    ];
-    if (row.topics?.length) parts.push(`topics: ${row.topics.join(", ")}`);
-    if (row.pagesCreated?.length)
-      parts.push(`created: ${row.pagesCreated.join(", ")}`);
-    if (row.pagesUpdated?.length)
-      parts.push(`updated: ${row.pagesUpdated.join(", ")}`);
-    if (row.peopleTouched?.length)
-      parts.push(`people: ${row.peopleTouched.join(", ")}`);
-    if (!grouped.has(dateKey)) grouped.set(dateKey, []);
-    grouped.get(dateKey)!.push(`- ${parts.join(" | ")}`);
-  }
-
-  const sections: string[] = [];
-  for (const [date, lines] of grouped) {
-    sections.push(`**${date}**\n${lines.join("\n")}`);
-  }
-
-  return (
-    `_Use this section before creating any artifact — check if it already exists in a recent session._\n\n` +
-    sections.join("\n\n")
-  );
-}

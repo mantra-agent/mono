@@ -14,6 +14,7 @@ import { createLogger } from "./log";
 import { eventBus } from "./event-bus";
 import { POST_ABORT_DRAIN_GRACE_MS } from "./timeout";
 import { hasUnansweredQuestion } from "./question-response";
+import type { ChildMissionTerminalOutcome } from "@shared/models/chat";
 
 const log = createLogger("child-session-monitor");
 
@@ -33,8 +34,8 @@ export const CHILD_TERMINATION_CONFIRM_TIMEOUT_MS = POST_ABORT_DRAIN_GRACE_MS + 
 // ─── MonitorResult discriminated union ───────────────────────────────
 
 export type MonitorResult =
-  | { status: "completed"; output: string }
-  | { status: "failed"; reason: FailureReason; message: string }
+  | { status: "completed"; output: string; missionOutcome: ChildMissionTerminalOutcome }
+  | { status: "failed"; reason: FailureReason; message: string; missionOutcome?: ChildMissionTerminalOutcome }
   | { status: "idle_timeout"; idleMinutes: number; abortingComponent: string; message: string }
   | { status: "termination_unconfirmed"; abortReason: "idle_timeout" | "cancelled"; waitedMs: number; message: string };
 
@@ -228,18 +229,28 @@ export async function monitorChildSession(
         if (sessionStatus === "saved") {
           if (!beginSettlement()) return;
           const output = await readFinalAssistantOutput(sessionId);
-          const completedOutput = output || "Completed successfully";
+          const completedOutput = output || "Child session ended without a closing narration";
+          const missionOutcome = (session as { childMissionOutcome?: ChildMissionTerminalOutcome }).childMissionOutcome;
+          if (!missionOutcome) {
+            resolve({
+              status: "failed",
+              reason: "child_session_failed",
+              message: `Child session ${sessionId} ended without a source-owned mission terminal outcome`,
+            });
+            return;
+          }
           eventBus.publish({
             category: "session",
             event: "child_session.completed",
             payload: {
               childSessionId: sessionId,
               sessionStatus,
+              missionOutcome,
               outputLength: completedOutput.length,
               hasAssistantOutput: Boolean(output),
             },
           });
-          resolve({ status: "completed", output: completedOutput });
+          resolve({ status: "completed", output: completedOutput, missionOutcome });
           return;
         }
         if (sessionStatus === "failed") {

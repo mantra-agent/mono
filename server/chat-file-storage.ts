@@ -54,6 +54,14 @@ import type {
 import type { QuestionPrompt } from "@shared/question-prompt";
 import type { ContextPressureSnapshot } from "@shared/streaming-types";
 import { decisionsStorage } from "./decisions-storage";
+import {
+  deleteConversations,
+  hasCanonicalConversation,
+  moveConversationToVault,
+  readConversationMessages,
+  writeConversationRevision,
+  type ConversationMessagePayload,
+} from "./conversation-persistence";
 
 const log = createLogger("ChatStorage");
 const treeLog = createLogger("SessionTree");
@@ -495,6 +503,7 @@ interface SessionData {
   spawnerTool?: string;
   spawnerSkillRun?: string;
   endReason?: string;
+  childMissionOutcome?: import("@shared/models/chat").ChildMissionTerminalOutcome;
   errorSeverity?: "warning" | "error" | null;
   /** Runtime instance and boot that owns the currently active text-chat turn. */
   activeRuntimeOwner?: string;
@@ -770,6 +779,11 @@ async function readConv(id: string): Promise<SessionData | null> {
   if (!doc) return null;
   const data = parseConvDocument(id, doc);
   if (!data) return null;
+  const principal = requireCurrentPrincipal();
+  const canonicalMessages = await readConversationMessages(principal, id);
+  if (canonicalMessages.length > 0 || await hasCanonicalConversation(principal, id)) {
+    data.messages = canonicalMessages as FileMessage[];
+  }
   await applySessionTreeOverlay(data);
   return data;
 }
@@ -875,6 +889,7 @@ function normalizeDurableRevision(value: unknown): number {
 
 function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
   return {
+    conversationStorageVersion: 1,
     durableRevision: normalizeDurableRevision(data.durableRevision),
     title: data.title,
     manualTitle: data.manualTitle || undefined,
@@ -906,6 +921,7 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
     spawnerTool: data.spawnerTool || undefined,
     spawnerSkillRun: data.spawnerSkillRun || undefined,
     endReason: data.endReason || undefined,
+    childMissionOutcome: data.childMissionOutcome || undefined,
     errorSeverity: data.errorSeverity || undefined,
     activeRuntimeOwner: data.activeRuntimeOwner || undefined,
     pageContext: data.pageContext || undefined,
@@ -938,8 +954,14 @@ async function resolveSessionWriteVaultId(data: SessionData): Promise<string> {
 }
 
 function serializeSessionContent(data: SessionData): string {
-  const { vaultId: _canonicalDocumentVaultId, ...content } = data;
-  return JSON.stringify(content);
+  const {
+    vaultId: _canonicalDocumentVaultId,
+    messages: _canonicalConversationMessages,
+    ...content
+  } = data;
+  // The aggregate blob is compatibility metadata only. Transcript authority is
+  // conversation_messages; active writes never rewrite the whole transcript.
+  return JSON.stringify({ ...content, messages: [] });
 }
 
 function shouldProjectSessionSearch(data: SessionData): boolean {
@@ -969,8 +991,14 @@ async function enqueueSearchProjectionAfterCanonicalWrite(
 async function writeConvInAmbientTransaction(data: SessionData): Promise<number> {
   const vaultId = await resolveSessionWriteVaultId(data);
   data.vaultId = vaultId;
-  data.durableRevision = normalizeDurableRevision(data.durableRevision) + 1;
   const principal = requireCurrentPrincipal();
+  data.durableRevision = normalizeDurableRevision(data.durableRevision) + 1;
+  await writeConversationRevision(principal, {
+    sessionId: data.id,
+    vaultId,
+    revision: data.durableRevision,
+    messages: data.messages as ConversationMessagePayload[],
+  });
   const writePrincipal = principal.activeVaultId === vaultId
     ? principal
     : { ...principal, activeVaultId: vaultId };
@@ -989,7 +1017,6 @@ async function writeConvInAmbientTransaction(data: SessionData): Promise<number>
     && data.sessionType !== "meeting"
     && !data.messages.some(message => message.assistantState === "streaming")
   ) {
-    const principal = requireCurrentPrincipal();
     if (principal.actorType === "user") {
       const { indexSettledSessionReferences } = await import("./session-reference-index");
       await indexSettledSessionReferences(principal, data);
@@ -1076,6 +1103,7 @@ async function deleteSessionSubtree(rootSessionId: string): Promise<SessionDelet
   }
 
   await db.transaction(async (tx) => {
+    await deleteConversations(principal, deletedSessionIds);
     const deletedDocuments = await tx
       .delete(documentStoreDocuments)
       .where(
@@ -1240,6 +1268,7 @@ function convToMeta(data: SessionData): FileSession {
     spawnerTool: data.spawnerTool,
     spawnerSkillRun: data.spawnerSkillRun,
     endReason: data.endReason,
+    childMissionOutcome: data.childMissionOutcome,
     errorSeverity: data.errorSeverity || undefined,
     pageContext: data.pageContext,
     gitWriteOverride: data.gitWriteOverride || false,
@@ -1402,6 +1431,7 @@ function docMetadataToSession(doc: {
     spawnerTool: metadataString(meta, "spawnerTool"),
     spawnerSkillRun: metadataString(meta, "spawnerSkillRun"),
     endReason: metadataString(meta, "endReason"),
+    childMissionOutcome: metadataString(meta, "childMissionOutcome") as import("@shared/models/chat").ChildMissionTerminalOutcome | undefined,
     errorSeverity: metadataString(meta, "errorSeverity") as "warning" | "error" | undefined,
     pageContext: meta.pageContext as PageContext | undefined,
     gitWriteOverride: metadataBool(meta, "gitWriteOverride"),
@@ -1703,6 +1733,10 @@ export interface IChatFileStorage {
   ): Promise<void>;
   clearParentSessionId(id: string): Promise<void>;
   setEndReason(id: string, endReason: string): Promise<void>;
+  setChildMissionOutcome(
+    id: string,
+    outcome: import("@shared/models/chat").ChildMissionTerminalOutcome,
+  ): Promise<void>;
   setErrorSeverity(
     id: string,
     severity: "warning" | "error" | null,
@@ -3136,6 +3170,7 @@ export const chatFileStorage: IChatFileStorage = {
       data.updatedAt = new Date().toISOString();
       data.durableRevision = normalizeDurableRevision(data.durableRevision) + 1;
       const destinationPrincipal = { ...principal, activeVaultId: destinationVaultId };
+      await moveConversationToVault(principal, sessionId, destinationVaultId);
       const document = await runWithPrincipal(destinationPrincipal, () =>
         documentStorage.moveDocumentToVault("chat", sessionId, destinationVaultId, {
           title: data.title,
@@ -4410,6 +4445,24 @@ export const chatFileStorage: IChatFileStorage = {
       invalidateSessionsCache();
       treeLog.log(
         `end child=${id} parent=${data.parentSessionId || "-"} endReason=${endReason} status=${data.status || "-"}`,
+      );
+    });
+  },
+
+  async setChildMissionOutcome(
+    id: string,
+    outcome: import("@shared/models/chat").ChildMissionTerminalOutcome,
+  ) {
+    return withConvLock(id, async () => {
+      const data = await readConv(id);
+      if (!data) return;
+      if (data.childMissionOutcome === outcome) return;
+      data.childMissionOutcome = outcome;
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      invalidateSessionsCache();
+      treeLog.log(
+        `terminal child=${id} parent=${data.parentSessionId || "-"} outcome=${outcome} status=${data.status || "-"}`,
       );
     });
   },

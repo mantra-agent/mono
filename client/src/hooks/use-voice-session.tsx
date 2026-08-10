@@ -3,6 +3,7 @@ import { createContext, useContext, useState, useRef, useCallback, useEffect, us
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { emitSessionListChanged, emitSessionChanged } from "@/hooks/use-data-sync";
+import { setVisibilityLayer } from "@/hooks/use-visibility-layer";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 
 import { stripExpressionTags } from "@/components/chat-shared";
@@ -22,6 +23,10 @@ import {
   type VoiceStartResponse,
 } from "@/lib/voice-start-transport";
 import { getClientTabId } from "@/lib/client-tab-identity";
+import {
+  admitVoiceTranscript,
+  type VoiceEchoAdmissionEvidence,
+} from "@/lib/voice-echo-admission";
 import {
   createVoiceFinalizationRequest,
   isVoiceFinalizationResponse,
@@ -245,24 +250,20 @@ async function parseJsonResponse(response: Response): Promise<unknown> {
   }
 }
 
-interface TentativeUserTranscriptDebugEvent {
-  type: "tentative_user_transcript";
-  tentative_user_transcription_event?: {
-    user_transcript?: string;
-    event_id?: number;
-  };
+interface ElevenLabsMessage {
+  message?: string;
+  role?: "user" | "agent";
+  /** Compatibility only: removed after every supported SDK emits role. */
+  source?: "user" | "user_edited" | "ai";
 }
 
-function getTentativeUserTranscript(debugEvent: unknown): { text: string; eventId?: number } | null {
-  if (!debugEvent || typeof debugEvent !== "object") return null;
-  const event = debugEvent as TentativeUserTranscriptDebugEvent;
-  if (event.type !== "tentative_user_transcript") return null;
-  const text = event.tentative_user_transcription_event?.user_transcript?.trim() || "";
-  if (!text) return null;
-  return {
-    text,
-    eventId: event.tentative_user_transcription_event?.event_id,
-  };
+const STRICT_ECHO_ADMISSION_ENABLED = true;
+
+function resolveElevenLabsMessageRole(message: ElevenLabsMessage): "user" | "agent" | null {
+  if (message.role === "user" || message.role === "agent") return message.role;
+  if (message.source === "user" || message.source === "user_edited") return "user";
+  if (message.source === "ai") return "agent";
+  return null;
 }
 
 function compositionMatchesCommit(composition: string, committed: string): boolean {
@@ -402,6 +403,9 @@ export function VoiceSessionProvider({
   const thinkingAudioGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const thinkingAudioPlayingRef = useRef(false);
   const inputActivityDetectorRef = useRef(createVoiceInputActivityDetector());
+  const inputActiveRef = useRef(false);
+  const recentAssistantTextRef = useRef("");
+  const echoAdmissionSequenceRef = useRef(0);
 
   useEffect(() => {
     // Grace period before the sound may fade in. Fast turns that resolve inside
@@ -488,6 +492,7 @@ export function VoiceSessionProvider({
       }
       if (cancelled) return;
       const active = inputActivityDetectorRef.current.sample(level);
+      inputActiveRef.current = active;
       setUserSpeaking((current) => current === active ? current : active);
     }, VOICE_INPUT_SAMPLE_INTERVAL_MS);
 
@@ -527,6 +532,8 @@ export function VoiceSessionProvider({
     agentModeRef.current = "listening";
     setAgentMode("listening");
     inputActivityDetectorRef.current.reset();
+    inputActiveRef.current = false;
+    echoAdmissionSequenceRef.current += 1;
     setNativeInputActivityAvailable(false);
     setUserSpeaking(false);
     setVoiceThinking(false);
@@ -1308,6 +1315,7 @@ export function VoiceSessionProvider({
     // ---------------------------------------------------------------
     return Conversation.startSession({
       signedUrl,
+      connectionType: "websocket",
       overrides: overridesPayload,
       customLlmExtraBody: {
         sessionId: overrideOpts?.sessionId,
@@ -1324,15 +1332,6 @@ export function VoiceSessionProvider({
       dynamicVariables: overrideOpts?.chatSessionId
         ? { chat_session_id: overrideOpts.chatSessionId }
         : undefined,
-      // Self-host the audio worklets so we don't race the jsDelivr CDN at
-      // call start (cause of the chipmunk first-second + initial pops). The
-      // playback worklet here is a vendored fork of the SDK's stock one with
-      // a 750ms prebuffer and linear-interpolation resampler; libsamplerate
-      // is the unmodified upstream worklet served from our own origin.
-      libsampleratePath: "/voice/libsamplerate.worklet.js",
-      workletPaths: {
-        audioConcatProcessor: "/voice/audioConcatProcessor.worklet.js",
-      },
       onConnect: () => {
         const elapsed = Date.now() - sessionStartTs;
         connectionEstablishedAtRef.current = Date.now();
@@ -1390,64 +1389,78 @@ export function VoiceSessionProvider({
       onDisconnect: (details?: Record<string, unknown>) => {
         handleVoiceDisconnect(sessionStartTs, details);
       },
-      onMessage: (message: { source: string; message: string }) => {
+      onMessage: (message: ElevenLabsMessage) => {
         lastActivityRef.current = Date.now();
-        log.debug("VOICE:MESSAGE", { source: message.source, messageLength: message.message?.length || 0 });
-        if (message.source === "user" || message.source === "user_edited") {
-          inputActivityDetectorRef.current.corroborate();
-          setUserSpeaking(true);
-          // ElevenLabs onMessage is the finalized user-transcript boundary.
-          // Committed transcript history remains server-owned via voice_user_transcript.
-          setUserComposition("");
-        }
-        if (message.source === "ai") {
-          // Assistant transcript arrives via the custom-LLM SSE pipeline (ChatStream).
-          // The EL-emitted "ai" message is a duplicate — skip it.
-          log.debug("VOICE:MESSAGE:AI_TRANSCRIPT_SKIPPED", { reason: "chatstream_authoritative" });
+        const role = resolveElevenLabsMessageRole(message);
+        const transcriptText = message.message?.trim() || "";
+        log.debug("VOICE:MESSAGE", { role, messageLength: transcriptText.length });
+
+        if (role === "agent") {
+          recentAssistantTextRef.current = transcriptText.slice(-1_200);
+          // Assistant transcript remains authoritative through ChatStream.
+          log.debug("VOICE:MESSAGE:AGENT_TRANSCRIPT_SKIPPED", { reason: "chatstream_authoritative" });
           return;
         }
-        if (!firstUserSpeechFiredRef.current) {
-          firstUserSpeechFiredRef.current = true;
-          const connectedAt = connectionEstablishedAtRef.current;
-          const elapsedSinceConnect = connectedAt > 0 ? Date.now() - connectedAt : -1;
-          const detail = elapsedSinceConnect >= 0
-            ? `First user speech ${elapsedSinceConnect}ms after connect`
-            : "First user speech (connect time unknown)";
-          emitVoiceDiag("first_user_speech", detail, "done");
-          phoneDiag("first_user_speech", { elapsedSinceConnect });
-        }
-        if (message.message?.trim()) {
-          log.debug("VOICE:MESSAGE:USER_TRANSCRIPT_FINAL", {
-            messageLength: message.message.length,
+        if (role !== "user" || !transcriptText) return;
+
+        const sequence = ++echoAdmissionSequenceRef.current;
+        const playbackActive = agentModeRef.current === "speaking";
+        const conversation = conversationRef.current;
+        void admitVoiceTranscript({
+          transcript: transcriptText,
+          playbackActive,
+          recentAssistantText: recentAssistantTextRef.current,
+          canaryEnabled: STRICT_ECHO_ADMISSION_ENABLED,
+          interruptPlayback: () => {
+            conversation?.sendUserActivity();
+            agentModeRef.current = "listening";
+            setAgentMode("listening");
+          },
+          isInputActive: () => inputActiveRef.current,
+        }).then((evidence: VoiceEchoAdmissionEvidence) => {
+          if (sequence !== echoAdmissionSequenceRef.current) return;
+          log.debug("VOICE:ECHO_ADMISSION", {
+            outcome: evidence.outcome,
+            playbackActive: evidence.playbackActive,
+            interruptedPlayback: evidence.interruptedPlayback,
+            postInterruptionSpeechMs: evidence.postInterruptionSpeechMs,
+            assistantSimilarity: Number(evidence.assistantSimilarity.toFixed(3)),
           });
-        }
-      },
-      onError: handleVoiceError,
-      onDebug: (debugEvent: unknown) => {
-        // @elevenlabs/client 0.14 routes raw tentative_user_transcript wire
-        // events through onDebug. Adapt that event into explicit composer state;
-        // finalized transcript history still arrives through our server event.
-        const tentative = getTentativeUserTranscript(debugEvent);
-        if (!tentative) return;
-        lastActivityRef.current = Date.now();
-        inputActivityDetectorRef.current.corroborate();
-        setUserSpeaking(true);
-        setUserComposition(tentative.text);
-        if (!firstUserSpeechFiredRef.current) {
-          firstUserSpeechFiredRef.current = true;
-          const connectedAt = connectionEstablishedAtRef.current;
-          const elapsedSinceConnect = connectedAt > 0 ? Date.now() - connectedAt : -1;
-          const detail = elapsedSinceConnect >= 0
-            ? `First user speech ${elapsedSinceConnect}ms after connect`
-            : "First user speech (connect time unknown)";
-          emitVoiceDiag("first_user_speech", detail, "done");
-          phoneDiag("first_user_speech", { elapsedSinceConnect });
-        }
-        log.debug("VOICE:MESSAGE:USER_COMPOSITION", {
-          eventId: tentative.eventId,
-          messageLength: tentative.text.length,
+          phoneDiag("echo_admission", {
+            outcome: evidence.outcome,
+            playbackActive: evidence.playbackActive,
+            interruptedPlayback: evidence.interruptedPlayback,
+            postInterruptionSpeechMs: evidence.postInterruptionSpeechMs,
+            assistantSimilarity: Number(evidence.assistantSimilarity.toFixed(3)),
+          });
+          if (evidence.outcome.startsWith("rejected_")) {
+            setUserComposition("");
+            setUserSpeaking(false);
+            return;
+          }
+
+          inputActivityDetectorRef.current.corroborate();
+          inputActiveRef.current = true;
+          setUserSpeaking(true);
+          // Canonical committed history remains server-owned via voice_user_transcript.
+          setUserComposition("");
+          if (!firstUserSpeechFiredRef.current) {
+            firstUserSpeechFiredRef.current = true;
+            const connectedAt = connectionEstablishedAtRef.current;
+            const elapsedSinceConnect = connectedAt > 0 ? Date.now() - connectedAt : -1;
+            emitVoiceDiag("first_user_speech", `First user speech ${elapsedSinceConnect}ms after connect`, "done");
+            phoneDiag("first_user_speech", { elapsedSinceConnect });
+          }
+          log.debug("VOICE:MESSAGE:USER_TRANSCRIPT_FINAL", {
+            messageLength: transcriptText.length,
+          });
+        }).catch((error: unknown) => {
+          log.warn("VOICE:ECHO_ADMISSION:FAILED_CLOSED", toBoundedLogError(error));
+          setUserComposition("");
+          setUserSpeaking(false);
         });
       },
+      onError: handleVoiceError,
       onModeChange: (mode: { mode: string }) => {
         lastActivityRef.current = Date.now();
         const newMode = mode.mode === "speaking" ? "speaking" : "listening";
@@ -1544,28 +1557,6 @@ export function VoiceSessionProvider({
         recognitionKeyterms: startData.recognitionKeyterms,
       });
       conversationRef.current = conversation;
-
-      // Tell the vendored output worklet the actual source sample rate from
-      // the server metadata. The SDK's A.create() sends `setFormat` with
-      // only the format string ("pcm"/"ulaw") but not the sourceRate. Our
-      // vendored worklet defaults to 16kHz, which is correct when the
-      // AudioContext also runs at 16kHz. But if Chrome's AudioContext ended
-      // up at a different rate (e.g. hardware default 48kHz), the resampling
-      // ratio would be wrong without this explicit correction.
-      try {
-        const conv = conversation as unknown as {
-          output?: { worklet?: { port?: MessagePort }; context?: { sampleRate?: number } };
-          connection?: { outputFormat?: { sampleRate?: number } };
-        };
-        const sourceRate = conv?.connection?.outputFormat?.sampleRate;
-        const ctxRate = conv?.output?.context?.sampleRate;
-        if (sourceRate && conv?.output?.worklet?.port) {
-          conv.output.worklet.port.postMessage({ type: "setSourceRate", rate: sourceRate });
-          log.debug("VOICE:AUDIO:SOURCE_RATE_SET", { sourceRate, audioContextRate: ctxRate });
-        }
-      } catch {
-        // Non-critical: worklet will use its default source rate
-      }
 
       if (!isReconnect && connectionEstablishedAtRef.current === 0) {
         await new Promise<void>((resolve, reject) => {
@@ -1989,6 +1980,7 @@ export function VoiceSessionProvider({
 
     resetEphemeralVoiceState({ clearTranscript: true });
     setStatus("connecting");
+    void setVisibilityLayer(0);
     // Arm the one-shot black voice entrance at the real start. Both browser and
     // native voice flow through startSession, so this is the single canonical
     // place the entrance is armed; reconnects never pass here.

@@ -1417,6 +1417,7 @@ export const emailMessages = pgTable("email_messages", {
   toAddresses: text("to_addresses"),
   ccAddresses: text("cc_addresses"),
   direction: text("direction").notNull().default("unknown"),
+  primaryAction: text("primary_action").notNull().default("reply"),
   date: timestamp("date", { withTimezone: true }),
   labelIds: jsonb("label_ids").$type<string[]>(),
   bodyText: text("body_text"),
@@ -1871,9 +1872,9 @@ export type InsertSessionTree = z.infer<typeof insertSessionTreeSchema>;
 // ---------------------------------------------------------------------------
 // Session Output Buffer
 // Rolling log of the last 50 sessions — captures title, topics, and what
-// was produced (library pages created/updated, people touched). Used by the
-// memory.recent_sessions context section to give every skill run episodic
-// continuity without semantic search.
+// was produced (library pages created/updated, people touched). Retained as
+// bounded source material for REM dream generation; HISTORY owns bootstrap
+// chronology.
 // ---------------------------------------------------------------------------
 export const sessionOutputBuffer = pgTable("session_output_buffer", {
   id: serial("id").primaryKey(),

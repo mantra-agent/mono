@@ -987,6 +987,49 @@ async function recoverWorkflowAttempt(
     const currentDetail = await getWorkflowRun(detail.run.id);
     const currentAttempt = currentDetail?.stages.flatMap((stage) => stage.attempts).find((candidate) => candidate.id === attempt.id);
     if (!currentDetail || !currentAttempt || currentAttempt.status !== "active" || currentAttempt.completedAt) return false;
+    if (currentDetail.run.currentStageKey !== currentAttempt.stageKey) {
+      const completedAt = new Date();
+      const staleFailure = {
+        attemptId: currentAttempt.id,
+        stageKey: currentAttempt.stageKey,
+        stageTitle: currentAttempt.stageTitle,
+        attemptNumber: currentAttempt.attemptNumber,
+        result: "failed",
+        outputSummary: "Workflow recovery retired a stale stage attempt after the run moved beyond its stage.",
+        failureContext: {
+          reason: "stale_stage_attempt",
+          source: WORKFLOW_RECOVERY_JOB,
+          currentStageKey: currentDetail.run.currentStageKey,
+          childSessionId: currentAttempt.childSessionId,
+        },
+        evidence: currentAttempt.evidence || {},
+        childSessionId: currentAttempt.childSessionId,
+      };
+      const [retiredAttempt] = await db.update(workflowStageAttempts).set({
+        status: "failed",
+        result: "failed",
+        outputSummary: staleFailure.outputSummary,
+        failureContext: staleFailure,
+        completedAt,
+        durationSeconds: currentAttempt.startedAt
+          ? Math.max(0, Math.round((completedAt.getTime() - currentAttempt.startedAt.getTime()) / 1000))
+          : null,
+        executionLeaseId: null,
+        executionLeaseOwner: null,
+        executionLeaseExpiresAt: null,
+        updatedAt: completedAt,
+      }).where(writable(attemptScopeColumns, and(
+        eq(workflowStageAttempts.workflowRunId, currentDetail.run.id),
+        eq(workflowStageAttempts.id, currentAttempt.id),
+        eq(workflowStageAttempts.status, "active"),
+        isNull(workflowStageAttempts.completedAt),
+        eq(workflowStageAttempts.executionLeaseId, lease.leaseId),
+      ))).returning();
+      if (retiredAttempt) {
+        log.warn(`[recovery] Retired stale Workflow attempt ${currentAttempt.id}: attempt stage ${currentAttempt.stageKey}, current stage ${currentDetail.run.currentStageKey || "none"}`);
+      }
+      return Boolean(retiredAttempt);
+    }
 
     let result: "failed" | "blocked" = "failed";
     let reason = "interrupted_by_process_restart";

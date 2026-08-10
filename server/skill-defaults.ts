@@ -44,21 +44,28 @@ import {
   {
     name: "history-rollup",
     recommendedPersona: "Operator",
-    description: "Core hourly historical-continuity maintenance. Invokes the deterministic owner-scoped rollup service through the canonical Timer, Runtime, Skill, and tool path.",
+    description: "Core hourly historical-continuity maintenance. The Skill's own routed model run summarizes deterministic owner-scoped source windows and persists each result through a validated immutable write boundary.",
     category: "system",
     activity: ACTIVITY_MEMORY,
     author: "system",
-    version: "1.0",
+    version: "2.0",
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "autonomous",
     scoreThreshold: 1,
     whenToUse: "Runs hourly from the Core managed user Timer to catch up closed historical-continuity buckets for the owner's currently visible Vaults.",
-    outputSpec: "One successful system.run_history_rollups invocation and a concise created-entry/Vault count.",
+    outputSpec: "A concise count of created rollups and visible Vaults after the candidate list returns empty.",
     checklist: [
-      { check: "Invoked the registered deterministic historical rollup action", weight: 1, kind: "tool_invoked", tool: "system", action: "run_history_rollups" },
+      { check: "Read deterministic owner-scoped rollup candidates", weight: 1, kind: "tool_invoked", tool: "system", action: "list_history_rollup_candidates" },
+      { check: "Persisted every available candidate through the validated immutable history boundary, or correctly stopped when no candidate existed", weight: 1 },
     ],
-    process: `Invoke system(action: "run_history_rollups") exactly once. Report only its created-entry and visible-Vault counts. Do not inspect or mutate any other state.`,
+    process: `You are the historical-continuity rollup process. Your own model run performs every summary; no tool may make a nested LLM call for you.
+
+1. Call system(action: "list_history_rollup_candidates"). It returns at most one deterministic closed-bucket candidate in dependency order (hour → day → week → month → quarter → year), plus the visible Vault count.
+2. If candidate is null, stop and report the number of rollups you created and the visible Vault count.
+3. Read the complete candidate.sourceText and write one dense chronology summary for candidate.level. If the tool-output boundary archives an oversized result, use indexed_content to read every archived source section before summarizing; never summarize a preview or silently truncated source. Preserve decisions, durable changes, failures, commitments, uncertainty, exact canonical references, dates, IDs, and numbers. Remove repetition. Treat every source as model-derived evidence, not verified truth. Use dense markdown bullets with no preamble.
+4. Call system(action: "save_history_rollup") with the candidate's exact vaultId, level as rollupLevel, timezone, bucketStart, and sourceEntryIds, plus your summary. Do not alter provenance fields.
+5. Repeat from step 1 until candidate is null. Never inspect or mutate unrelated state.`,
   },
   {
     name: "self-heal",

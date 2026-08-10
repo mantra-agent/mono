@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { getProviderCredential } from "../../provider-credential-store";
@@ -10,7 +11,11 @@ const log = createLogger("RailwayClient");
 const RAILWAY_GRAPHQL_ENDPOINT = "https://backboard.railway.app/graphql/v2";
 const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 5 * 60_000;
 const MAX_RATE_LIMIT_COOLDOWN_MS = 60 * 60_000;
-let rateLimitCooldownUntil = 0;
+const rateLimitCooldownByToken = new Map<string, number>();
+
+function railwayTokenKey(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex").slice(0, 24);
+}
 
 function parseRateLimitCooldownMs(headers: Headers, now: number): number {
   const retryAfter = headers.get("retry-after")?.trim();
@@ -39,9 +44,10 @@ function parseRateLimitCooldownMs(headers: Headers, now: number): number {
   return DEFAULT_RATE_LIMIT_COOLDOWN_MS;
 }
 
-function assertRailwayRequestAllowed(now: number, requestClass: RailwayRequestClass): void {
-  if (rateLimitCooldownUntil <= now) return;
-  const retryAfterSeconds = Math.max(1, Math.ceil((rateLimitCooldownUntil - now) / 1_000));
+function assertRailwayRequestAllowed(token: string, now: number, requestClass: RailwayRequestClass): void {
+  const cooldownUntil = rateLimitCooldownByToken.get(railwayTokenKey(token)) ?? 0;
+  if (cooldownUntil <= now) return;
+  const retryAfterSeconds = Math.max(1, Math.ceil((cooldownUntil - now) / 1_000));
   throw new RailwayApiError(
     `Railway API provider cooldown active for ${requestClass} request; retry after ${retryAfterSeconds}s`,
     429,
@@ -157,7 +163,7 @@ async function railwayRequest<T>(
     throw new RailwayApiError("A Railway provider connector credential is required", 400);
   }
   const requestClass = options.requestClass ?? "observation";
-  assertRailwayRequestAllowed(Date.now(), requestClass);
+  assertRailwayRequestAllowed(token, Date.now(), requestClass);
   const operation = query.match(/\b(?:query|mutation)\s+([A-Za-z0-9_]+)/)?.[1] ?? "anonymous_graphql";
   const receipt = await beginRailwayDispatch({ token, operation, requestClass });
   let res: Response;
@@ -180,7 +186,8 @@ async function railwayRequest<T>(
   if (res.status === 429) {
     const now = Date.now();
     const cooldownMs = parseRateLimitCooldownMs(res.headers, now);
-    rateLimitCooldownUntil = Math.max(rateLimitCooldownUntil, now + cooldownMs);
+    const tokenKey = railwayTokenKey(token);
+    rateLimitCooldownByToken.set(tokenKey, Math.max(rateLimitCooldownByToken.get(tokenKey) ?? 0, now + cooldownMs));
     const retryAfterSeconds = Math.ceil(cooldownMs / 1_000);
     throw new RailwayApiError(
       `Railway API rate limited ${requestClass} request; retry after ${retryAfterSeconds}s`,

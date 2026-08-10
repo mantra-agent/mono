@@ -574,6 +574,7 @@ async function getSkillTools(
   sessionKey: string,
   sessionId: string,
   authoritySkillId?: string,
+  authoritySkillName?: string,
   trustedDelegation?: import("./agent-authority").TrustedEngineeringDelegation,
   runtimeFence?: { runId: string; attemptId: string },
 ): Promise<{
@@ -586,6 +587,7 @@ async function getSkillTools(
     trustedDelegation,
     activity,
     skillId: authoritySkillId,
+    skillName: authoritySkillId ? authoritySkillName : undefined,
     runtimeRunId: runtimeFence?.runId,
     runtimeAttemptId: runtimeFence?.attemptId,
     sessionKey,
@@ -1130,6 +1132,15 @@ export async function executeAutonomousSkillRun(
     }
 
     if (await conversationExists(sessionId)) {
+      let childMissionOutcome = result.childMissionOutcome;
+      if (options.planId && options.stepId) {
+        const { getPlanSteps } = await import("./plan-service");
+        const terminalStep = (await getPlanSteps(options.planId)).find((step) => step.id === options.stepId);
+        if (terminalStep?.status === "blocked" || terminalStep?.status === "needs_review") {
+          childMissionOutcome = terminalStep.status;
+        }
+      }
+      await chatFileStorage.setChildMissionOutcome(sessionId, childMissionOutcome);
       const finalSessionStatus = result.status === "succeeded" || result.status === "degraded" ? "saved" : "failed";
       if (result.status === "failed") {
         await chatFileStorage.setErrorSeverity(sessionId, "error").catch((e: unknown) => {
@@ -1499,6 +1510,7 @@ async function runSkillPipeline(
       sessionKey,
       sessionId,
       authoritySkillId,
+      config.skillId,
       trustedDelegation,
       options.runtimeFence,
     );

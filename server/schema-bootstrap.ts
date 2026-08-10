@@ -3173,6 +3173,12 @@ export async function runSchemaBootstrap(
     `);
   });
 
+  await heal("email_messages primary_action column", async () => {
+    await pool.query(
+      `ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS primary_action TEXT NOT NULL DEFAULT 'reply'`,
+    );
+  });
+
   try {
     const peopleStorage = new PeopleStorage();
     const { migrated, total } = await peopleStorage.migrateAllPeople();
@@ -4041,6 +4047,8 @@ export async function runSchemaBootstrap(
         from_address TEXT,
         to_addresses TEXT,
         cc_addresses TEXT,
+        direction TEXT NOT NULL DEFAULT 'unknown',
+        primary_action TEXT NOT NULL DEFAULT 'reply',
         date TIMESTAMP,
         label_ids JSONB,
         body_text TEXT,
@@ -4056,6 +4064,12 @@ export async function runSchemaBootstrap(
         CONSTRAINT email_messages_provider_account_message_unique UNIQUE (provider, account_id, provider_message_id)
       )
     `);
+    await pool.query(
+      `ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS direction TEXT NOT NULL DEFAULT 'unknown'`,
+    );
+    await pool.query(
+      `ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS primary_action TEXT NOT NULL DEFAULT 'reply'`,
+    );
     await pool.query(
       `ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS triage_status TEXT NOT NULL DEFAULT 'untriaged'`,
     );

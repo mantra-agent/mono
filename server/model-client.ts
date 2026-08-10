@@ -1183,7 +1183,7 @@ export type ModelProviderFailurePhase = "fetch" | "first_event" | "stream" | "pr
 
 export interface ModelProviderFailure extends ModelProviderFailureInfo {
   kind: ModelProviderFailureKind;
-  provider: "openai-subscription" | "openai" | "grok-subscription";
+  provider: "openai-subscription" | "openai" | "grok-subscription" | "claude-cli";
   phase: ModelProviderFailurePhase;
 }
 

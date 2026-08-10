@@ -369,8 +369,8 @@ Memory/myelination prompt templates live in Prompt Modules, not Skills. They hav
 | Summarize/enrich | `myelination-summarize` | `server/title-summary-tags.ts` |
 | Link discovery | `myelination-link` | `graph-discovery.ts`, `memory-enrichment.ts` |
 | Cross-concept links | `myelination-cross-concept` | `graph-discovery.ts` |
-| Mid-term merge | `myelination-mid-merge` | `memory-transitions.ts` |
-| Consolidation | `myelination-mid-merge-consolidate` | `memory-transitions.ts` |
+| Mid-term merge | `myelination-mid-merge` | Retained DB Prompt Module; no runtime caller |
+| Consolidation | `myelination-mid-merge-consolidate` | Retained DB Prompt Module; no runtime caller |
 
 
 ### Personal Rules cutover

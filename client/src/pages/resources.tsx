@@ -96,6 +96,7 @@ interface DiagnosticData {
   system: {
     cpuCores: number;
     cpuLimitVcpus: number | null;
+    cpuLimitSource: string | null;
     loadAvg: number[];
     totalMemory: number;
     freeMemory: number;
@@ -765,7 +766,8 @@ function ResourcesView({
                       detail={(
                         <DetailText>
                           {diagData.realtime.cpu.coreEquivalents} vCPU used
-                          {diagData.system.cpuLimitVcpus !== null ? ` / ${diagData.system.cpuLimitVcpus} allocated` : " · allocation unavailable"}
+                          {diagData.system.cpuLimitVcpus !== null ? ` / ${diagData.system.cpuLimitVcpus} available` : " · allocation unavailable"}
+                          {diagData.system.cpuLimitSource ? ` (${diagData.system.cpuLimitSource})` : ""}
                           {` · load ${diagData.system.loadAvg.join(" / ")}`}
                         </DetailText>
                       )}

@@ -237,7 +237,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: '{ "action": "search", "query": "meeting notes" }',
   },
   system: {
-    description: "System operations — get system state snapshot, retrieve runtime logs, and inspect frontend and context performance. Actions: state, logs, frontend_performance, context_health.",
+    description: "System operations — inspect runtime health and, only inside the canonical history-rollup Skill, read deterministic continuity candidates and persist validated summaries.",
     whenToUse: "When needing a high-level view of system health, creating issue reports, inspecting runtime logs, or reading the same frontend or context-health summaries shown on the Performance page.",
     example: 'State: { "action": "state" }\nLogs: { "action": "logs", "level": "error", "limit": 50 }\nFrontend: { "action": "frontend_performance", "hours": 24 }\nContext: { "action": "context_health", "hours": 24 }',
     actions: {
@@ -245,6 +245,8 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
       logs: { description: "Retrieve recent runtime logs. Filter by level (debug/info/warn/error) and source module.", optionalParams: ["limit", "level", "source"] },
       frontend_performance: { description: "Read the canonical browser telemetry summary used by the Performance page Frontend section.", optionalParams: ["hours"] },
       context_health: { description: "Read the system-wide canonical api_calls context-health summary used by the Performance page Context section.", optionalParams: ["hours"] },
+      list_history_rollup_candidates: { description: "History-rollup Skill only: return the next deterministic closed-bucket source window in dependency order." },
+      save_history_rollup: { description: "History-rollup Skill only: validate exact candidate provenance and persist the Skill-authored immutable summary.", requiredParams: ["vaultId", "rollupLevel", "timezone", "bucketStart", "sourceEntryIds", "summary"] },
     },
   },
   issues: {

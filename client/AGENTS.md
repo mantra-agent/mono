@@ -256,6 +256,10 @@ Hosting credentials and environment configuration belong to Platform Environment
 
 ## Shared UI Patterns
 
+### Responsive Action Menus
+
+`client/src/components/ui/responsive-action-menu.tsx` owns nested action menus. Consumers declare one action tree; nested rows drill into the same body with Back at every width. Desktop renders a compact anchored popover, mobile renders one bottom sheet with 44px targets, safe-area/overflow containment, and no cascading floating layer.
+
 ### Universal Reference Picker
 
 One control for `@anything`. Do not invent local typeaheads for tags, people, pages, goals, or other linkable objects.
@@ -287,6 +291,8 @@ Opportunity UI surfaces use `useVisibleVaults().isVaultEnabled`: unassigned Oppo
 ## Voice
 
 Voice transcript rows use one required lifecycle discriminant: `provisional`, `committed`, or `placeholder`. Only canonical server transcript events may create committed user speech. Local provider/native callbacks may create provisional composer text, and reconnect snapshots contain committed persisted history. Live and replayed voice events must pass through one event-ID-deduplicating reducer and require exact `chatSessionId` identity before mutating state or advancing the cursor. Voice finalization settlement likewise has one discriminant: `finalized`, `not_finalized`, or `unknown`. A transport error cannot prove failure; send the bounded request with `keepalive`, retry once with the same voice-session identity, then reconcile that exact identity against durable saved session state before surfacing a destructive error.
+
+Browser speaker attribution is Mantra-owned. An ElevenLabs `user` role is transport evidence, not identity proof during assistant playback: the canonical echo-admission boundary interrupts playback, requires continued microphone activity after interruption, and may use bounded similarity to recent assistant text as supporting echo evidence before admitting user speech. Diagnostics retain only the outcome, playback/interruption booleans, bounded timing, and similarity score—never raw audio or transcript content. The SDK owns capture, resampling, playback, and cleanup; client code must not access private conversation fields or vendor an SDK playback worklet.
 
 `client/src/lib/voice-transcript-state.ts` is the canonical pure mutation boundary for user voice transcript rows. It owns cleaning, normalized comparison, sequence ordering, placeholder replacement, provisional-to-committed promotion, and duplicate rejection. React hooks generate timestamps/turn IDs and emit diagnostics, but must not reproduce transcript transition logic.
 

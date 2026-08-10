@@ -380,16 +380,6 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     bootstrap: true,
   },
   {
-    id: "memory.recent_sessions",
-    title: "Recent Sessions",
-    parentId: "memory",
-    sourceType: "dynamic",
-    freshnessPolicy: "real-time",
-    priority: 4.5,
-    includedIn: ["full", "world"],
-  },
-
-  {
     id: "session_context",
     title: "Current Session",
     parentId: null,

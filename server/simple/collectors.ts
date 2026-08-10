@@ -482,6 +482,7 @@ interface EmailReviewThread {
   date: string | null;
   triageTier: string | null;
   triageReason: string | null;
+  primaryAction: "invite" | "reply";
   messageIds: number[];
   messageCount: number;
   unreadCount: number;
@@ -614,7 +615,17 @@ async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
         rt.date::text,
         rt.triage_tier,
         rt.triage_reason,
-        (SELECT ARRAY_AGG(t.id ORDER BY t.date DESC) FROM visible_messages t WHERE t.provider_thread_id = rt.provider_thread_id AND t.account_id = rt.account_id AND t.provider = rt.provider) AS message_ids,
+        COALESCE((
+          SELECT t.primary_action
+          FROM visible_messages t
+          WHERE COALESCE(t.provider_thread_id, t.provider_message_id) = rt.provider_thread_id
+            AND t.account_id = rt.account_id
+            AND t.provider = rt.provider
+            AND t.direction = 'inbound'
+          ORDER BY t.date DESC NULLS LAST, t.id DESC
+          LIMIT 1
+        ), 'reply') AS primary_action,
+        (SELECT ARRAY_AGG(t.id ORDER BY t.date DESC) FROM visible_messages t WHERE COALESCE(t.provider_thread_id, t.provider_message_id) = rt.provider_thread_id AND t.account_id = rt.account_id AND t.provider = rt.provider) AS message_ids,
         (SELECT COUNT(*) FROM visible_messages t WHERE t.provider_thread_id = rt.provider_thread_id AND t.account_id = rt.account_id AND t.provider = rt.provider) AS message_count,
         (SELECT COUNT(*) FROM visible_messages t WHERE t.provider_thread_id = rt.provider_thread_id AND t.account_id = rt.account_id AND t.provider = rt.provider AND t.is_read = false) AS unread_count,
         rt.enrichment_summary,
@@ -641,6 +652,7 @@ async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
       date: row.date,
       triageTier: row.triage_tier,
       triageReason: row.triage_reason,
+      primaryAction: row.primary_action === "invite" ? "invite" : "reply",
       messageIds: Array.isArray(row.message_ids) ? row.message_ids.map((id: unknown) => Number(id)).filter((id: number) => Number.isFinite(id)) : [],
       messageCount: Number(row.message_count) || 1,
       unreadCount: Number(row.unread_count) || 0,
@@ -733,6 +745,7 @@ async function collectEmailDoneToday(): Promise<EmailReviewThread[]> {
       date: row.date,
       triageTier: row.triage_tier,
       triageReason: row.triage_reason,
+      primaryAction: "reply",
       messageIds: [],
       messageCount: 1,
       unreadCount: 0,
@@ -774,6 +787,8 @@ function itemFromEmailReview(
   const senderAddress = emailSenderAddress(thread.fromAddress);
   const senderPerson = senderAddress ? emailMap.get(senderAddress) ?? null : null;
   const observedAt = thread.date || new Date().toISOString();
+  const primaryAction = thread.primaryAction === "invite" ? "invite" : "reply";
+  const actionLabel = primaryAction === "invite" ? "Invite" : "Reply";
   const threadKey = `${thread.accountId}:${thread.providerThreadId}`;
   const emailHref = `/comms?thread=${encodeURIComponent(threadKey)}`;
   const sourceRef: SimpleSourceRef = {
@@ -803,7 +818,7 @@ function itemFromEmailReview(
       createReferenceRef({
         type: "email_thread",
         id: threadKey,
-        metadata: { label: "Reply", href: emailHref },
+        metadata: { label: actionLabel, href: emailHref },
       }),
       ...thread.messageIds.slice(0, 1).map(messageId => createReferenceRef({
         type: "email_message",
@@ -818,6 +833,8 @@ function itemFromEmailReview(
     ],
     payload: {
       kind: "email_review",
+      primaryAction,
+      actionLabel,
       sender,
       senderPersonId: senderPerson?.id ?? null,
       fromAddress: thread.fromAddress,

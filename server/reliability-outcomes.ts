@@ -1,4 +1,4 @@
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lt, or, sql } from "drizzle-orm";
 import { documentStoreDocuments } from "@shared/models/memory";
 import { planSteps, workflowRuns } from "@shared/schema";
 import {
@@ -87,6 +87,13 @@ const FAILURE_KINDS = new Set<ReliabilityToolFailureKind>([
 const ARGS_SUMMARY_MAX_CHARS = 240;
 const RESULT_SNIPPET_MAX_CHARS = 280;
 const ERROR_MAX_CHARS = 400;
+const RELIABILITY_CHAT_BATCH_SIZE = 100;
+
+type ReliabilityChatDocument = {
+  documentId: string;
+  content: unknown;
+  updatedAt: Date;
+};
 
 function emptyCounts(): OutcomeCounts {
   return { succeeded: 0, failed: 0, amberFailures: 0, unclassifiedErrors: 0, excluded: 0 };
@@ -107,6 +114,49 @@ function reliabilityChatPredicate(
       gte(documentStoreDocuments.updatedAt, start),
     ),
   );
+}
+
+async function loadReliabilityChatDocuments(
+  principal: NonNullable<ReturnType<typeof getCurrentPrincipal>>,
+  start: Date,
+): Promise<ReliabilityChatDocument[]> {
+  const documents: ReliabilityChatDocument[] = [];
+  let cursor: Pick<ReliabilityChatDocument, "documentId" | "updatedAt"> | null = null;
+
+  for (;;) {
+    const cursorPredicate = cursor
+      ? or(
+          lt(documentStoreDocuments.updatedAt, cursor.updatedAt),
+          and(
+            eq(documentStoreDocuments.updatedAt, cursor.updatedAt),
+            lt(documentStoreDocuments.documentId, cursor.documentId),
+          ),
+        )
+      : undefined;
+    const rows = await db
+      .select({
+        documentId: documentStoreDocuments.documentId,
+        content: documentStoreDocuments.content,
+        updatedAt: documentStoreDocuments.updatedAt,
+      })
+      .from(documentStoreDocuments)
+      .where(
+        and(
+          reliabilityChatPredicate(principal, start),
+          cursorPredicate,
+        ),
+      )
+      .orderBy(
+        desc(documentStoreDocuments.updatedAt),
+        desc(documentStoreDocuments.documentId),
+      )
+      .limit(RELIABILITY_CHAT_BATCH_SIZE);
+
+    documents.push(...rows);
+    if (rows.length < RELIABILITY_CHAT_BATCH_SIZE) return documents;
+    const last = rows[rows.length - 1];
+    cursor = { documentId: last.documentId, updatedAt: last.updatedAt };
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -598,13 +648,7 @@ export async function getReliabilityOutcomeSummary(
   const windowStartMs = start.getTime();
   const windowEndMs = end.getTime();
 
-  const chatDocs = await db
-    .select({
-      content: documentStoreDocuments.content,
-      updatedAt: documentStoreDocuments.updatedAt,
-    })
-    .from(documentStoreDocuments)
-    .where(reliabilityChatPredicate(principal, start));
+  const chatDocs = await loadReliabilityChatDocuments(principal, start);
 
   const toolExecutions = emptyCounts();
   const conversationalTurns = emptyCounts();
@@ -712,14 +756,7 @@ export async function listReliabilityTurnFailures(input?: {
   const start = new Date(end.getTime() - hours * 60 * 60 * 1000);
   const windowStartMs = start.getTime();
   const windowEndMs = end.getTime();
-  const chatDocs = await db
-    .select({
-      documentId: documentStoreDocuments.documentId,
-      content: documentStoreDocuments.content,
-      updatedAt: documentStoreDocuments.updatedAt,
-    })
-    .from(documentStoreDocuments)
-    .where(reliabilityChatPredicate(principal, start));
+  const chatDocs = await loadReliabilityChatDocuments(principal, start);
 
   const rows: ReliabilityTurnFailureRow[] = [];
   for (const doc of chatDocs) {
@@ -769,14 +806,7 @@ export async function listReliabilityToolFailures(input?: {
   const windowStartMs = start.getTime();
   const windowEndMs = end.getTime();
 
-  const chatDocs = await db
-    .select({
-      documentId: documentStoreDocuments.documentId,
-      content: documentStoreDocuments.content,
-      updatedAt: documentStoreDocuments.updatedAt,
-    })
-    .from(documentStoreDocuments)
-    .where(reliabilityChatPredicate(principal, start));
+  const chatDocs = await loadReliabilityChatDocuments(principal, start);
 
   const failures: ReliabilityToolFailureRow[] = [];
   for (const doc of chatDocs) {

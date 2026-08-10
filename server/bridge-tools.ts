@@ -14929,6 +14929,23 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       read: workspaceTools.read_scratch,
       write: workspaceTools.write_scratch,
       edit: workspaceTools.edit_scratch,
+      patch: async (input) => {
+        try {
+          const { applyScratchRepositoryPatch } = await import("./tools/scratch-patch");
+          const result = await applyScratchRepositoryPatch({
+            repositoryDirectory: String(input.repositoryDirectory || ""),
+            patch: String(input.patch || ""),
+            sessionId: String(input._sessionId || ""),
+          });
+          return { result: JSON.stringify(result) };
+        } catch (error) {
+          return {
+            result: `Repository patch rejected: ${error instanceof Error ? error.message : String(error)}`,
+            error: true,
+            failure: inputFailure("scratch_patch_rejected"),
+          };
+        }
+      },
       list: workspaceTools.list_scratch,
       search: workspaceTools.search_scratch,
     };
@@ -15839,13 +15856,34 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         };
       }
     }
-    if (action === "run_history_rollups") {
+    if (action === "list_history_rollup_candidates") {
       try {
-        const { runHistoricalContinuityRollups } = await import("./historical-continuity");
-        return { result: JSON.stringify(await runHistoricalContinuityRollups()) };
+        const { listHistoryRollupCandidates } = await import("./historical-continuity");
+        return { result: JSON.stringify(await listHistoryRollupCandidates()) };
       } catch (err: unknown) {
         return {
-          result: `Failed to run historical continuity rollups: ${err instanceof Error ? err.message : String(err)}`,
+          result: `Failed to list historical continuity rollup candidates: ${err instanceof Error ? err.message : String(err)}`,
+          error: true,
+          failure: classifySystemToolError(err),
+        };
+      }
+    }
+    if (action === "save_history_rollup") {
+      try {
+        const { saveHistoryRollup } = await import("./historical-continuity");
+        return {
+          result: JSON.stringify(await saveHistoryRollup({
+            vaultId: String(args.vaultId || ""),
+            level: String(args.rollupLevel || ""),
+            timezone: String(args.timezone || ""),
+            bucketStart: String(args.bucketStart || ""),
+            sourceEntryIds: Array.isArray(args.sourceEntryIds) ? args.sourceEntryIds.map(String) : [],
+            summary: String(args.summary || ""),
+          })),
+        };
+      } catch (err: unknown) {
+        return {
+          result: `Failed to save historical continuity rollup: ${err instanceof Error ? err.message : String(err)}`,
           error: true,
           failure: classifySystemToolError(err),
         };
@@ -15869,7 +15907,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         return { result: `Failed to get tool stats: ${msg}`, error: true };
       }
     }
-    return { result: `Unknown system action: ${action}. Available: state, logs, log_files, budget, frontend_performance, context_health, reliability, tool_output_pressure, run_history_rollups, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
+    return { result: `Unknown system action: ${action}. Available: state, logs, log_files, budget, frontend_performance, context_health, reliability, tool_output_pressure, list_history_rollup_candidates, save_history_rollup, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
   },
   async timers(args) {
     const action = args.action as string;
@@ -17160,7 +17198,7 @@ const cognitionTools: Record<string, ToolHandler> = {
       return recordMetacognitiveObservationTool({ ...args, type: args.observation_type, content: args.observation });
     }
     if (action === "get_profile" || action === "update_profile") {
-      return utilityTools.agent_profile({ ...args, action: action === "get_profile" ? "get" : "update" });
+      return bridgeHandlers.agent_profile({ ...args, action: action === "get_profile" ? "get" : "update" });
     }
 
     const sub: Record<string, (a: Record<string, any>) => Promise<ToolHandlerResult>> = {

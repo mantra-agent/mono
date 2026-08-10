@@ -83,7 +83,7 @@ export async function verifyRailwayEnvironmentCapability(control: RailwayEnviron
 export async function fetchEnvironmentDeploymentSnapshot(
   control: RailwayEnvironmentControl,
   limit = 20,
-  options: { forceRefresh?: boolean } = {},
+  options: { refresh?: "observer" | "release" } = {},
 ): Promise<RailwayDeploymentSnapshot> {
   return attributed(control, "deployment_snapshot", () => getSharedRailwayDeploymentSnapshot(control, limit, options));
 }
@@ -99,7 +99,7 @@ export async function fetchEnvironmentDeployments(
 export async function fetchLatestEnvironmentDeployment(
   control: RailwayEnvironmentControl,
 ): Promise<RailwayDeployment | null> {
-  const snapshot = await fetchEnvironmentDeploymentSnapshot(control, 1, { forceRefresh: true });
+  const snapshot = await fetchEnvironmentDeploymentSnapshot(control, 1, { refresh: "release" });
   const deployments = snapshot.deployments;
   return deployments[0] ?? null;
 }

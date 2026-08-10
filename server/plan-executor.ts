@@ -33,34 +33,7 @@ import {
   readFinalAssistantOutput,
   truncateOutput,
 } from "./child-session-monitor";
-import { extractSuccessfulToolInvocations } from "./skill-scoring";
-
 const log = createLogger("PlanExecutor");
-
-/**
- * Session status `saved` is lifecycle evidence only. Step completion requires
- * ship evidence: at least one successful tool invocation in the child transcript
- * (preferring toolCalls.outcome, falling back to status==="done").
- * session.end no longer writes saved while the run is busy or settling, so this
- * scrape runs only after tools are durable.
- */
-async function assessChildWorkEvidence(sessionId: string): Promise<
-  | { ok: true; toolCount: number }
-  | { ok: false; message: string }
-> {
-  const { chatFileStorage } = await import("./chat-file-storage");
-  const messages = await chatFileStorage.getMessagesBySession(sessionId);
-  const invoked = extractSuccessfulToolInvocations(messages);
-  if (invoked.size === 0) {
-    return {
-      ok: false,
-      message:
-        `hollow_completion: child session ${sessionId} ended without durable successful tool invocations. ` +
-        "Session end is not ship evidence; step completion requires at least one succeeded/done tool call.",
-    };
-  }
-  return { ok: true, toolCount: invoked.size };
-}
 
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
 const planStepScopeColumns = { ownerUserId: planSteps.ownerUserId, accountId: planSteps.accountId };
@@ -534,18 +507,45 @@ planId,
             };
           }
 
-          // Lifecycle complete ≠ work complete. Gate on successful tool calls
-          // before any completePlanStepAttempt write (canonical completion path).
-          const evidence = await assessChildWorkEvidence(childSessionId);
-          if (!evidence.ok) {
-            log.warn(`[${planId}] Step ${stepIndex + 1} hollow_completion: ${evidence.message}`);
+          if (result.missionOutcome === "blocked" || result.missionOutcome === "needs_review") {
+            const terminalStep = (await getStepsFromDb(planId)).find((candidate) => candidate.id === step.id);
+            if (terminalStep?.status !== result.missionOutcome) {
+              return await failStepFinal(
+                planId,
+                step,
+                stepIndex,
+                lastDuration,
+                childSessionId,
+                `Child declared ${result.missionOutcome}, but the canonical Plan step did not record that hold`,
+                attemptCount,
+              );
+            }
+            return {
+              status: "halted",
+              duration: lastDuration,
+              stepStatus: result.missionOutcome,
+              outcome: terminalStep.outcome ?? undefined,
+            };
+          }
+          if (result.missionOutcome === "resumable_budget_exhausted") {
+            return await pauseStepForContinuation(
+              planId,
+              step,
+              stepIndex,
+              lastDuration,
+              childSessionId,
+              attemptCount,
+              result.output,
+            );
+          }
+          if (result.missionOutcome !== "mission_completed") {
             return await failStepFinal(
               planId,
               step,
               stepIndex,
               lastDuration,
               childSessionId,
-              evidence.message,
+              `Child mission ended as ${result.missionOutcome}; explicit mission_completed was required`,
               attemptCount,
             );
           }
@@ -574,7 +574,7 @@ planId,
           });
           log.log(
             `[${planId}] Step ${stepIndex + 1} completed in ${lastDuration}s ` +
-            `(attempt ${attempt}, tools=${evidence.toolCount})`,
+            `(attempt ${attempt}, missionOutcome=${result.missionOutcome})`,
           );
           return { status: "completed", duration: lastDuration, outcome };
         }
@@ -775,6 +775,51 @@ async function closeAbandonedChildSessionBlock(
   }
 
   return true;
+}
+
+async function pauseStepForContinuation(
+  planId: string,
+  step: { id: string; title: string; status: string },
+  stepIndex: number,
+  duration: number,
+  sessionId: string,
+  attemptCount: number,
+  output: string,
+): Promise<ExecuteStepResult> {
+  const error =
+    `resumable_budget_exhausted: child ${sessionId} preserved completed work and continuation state. ` +
+    "Resume the Plan to continue the mission; this is not completion evidence.";
+  await updatePlanStepAttempt({
+    planId,
+    stepId: step.id,
+    attemptNumber: attemptCount,
+    childSessionId: sessionId,
+    status: "blocked",
+    outcome: truncateOutcome(output),
+    error,
+    durationSeconds: duration,
+    completedAt: new Date(),
+  });
+  await updatePlanStepFields(planId, step.id, {
+    status: "blocked",
+    outcome: truncateOutcome(output),
+    error,
+    durationSeconds: duration,
+    sessionId,
+    completedAt: new Date(),
+  });
+  await updatePlanStatus(planId, "paused");
+  await renderPlanToLibraryPage(planId);
+  publishPlanEvent("plan.step.blocked", {
+    planId,
+    stepId: step.id,
+    stepTitle: step.title,
+    stepIndex,
+    reason: "resumable_budget_exhausted",
+    sessionId,
+  });
+  log.warn(`[${planId}] Step ${stepIndex + 1} paused for replayable continuation after child budget exhaustion`);
+  return { status: "halted", duration, stepStatus: "blocked", outcome: truncateOutcome(output) };
 }
 
 async function failStepFinal(
@@ -1033,46 +1078,55 @@ async function recoverInterruptedPlan(
           const sessionStatus = (session as { status?: string } | null)?.status;
 
           if (sessionStatus === "saved" && attempt) {
-            const evidence = await assessChildWorkEvidence(step.sessionId);
-            if (!evidence.ok) {
-              const hollowError = evidence.message;
-              const hollowResult = await failInterruptedPlanStep({
+            const missionOutcome = (session as { childMissionOutcome?: import("@shared/models/chat").ChildMissionTerminalOutcome }).childMissionOutcome;
+            const output = await readFinalAssistantOutput(step.sessionId);
+            if (missionOutcome === "mission_completed") {
+              await completePlanStepAttempt({
                 planId: plan.id,
                 stepId: step.id,
                 attemptNumber: attempt.attemptNumber,
                 childSessionId: step.sessionId,
-                error: hollowError,
-                durationSeconds,
+                outcome: output?.slice(0, 500) || "Completed (recovered)",
+                durationSeconds: durationSeconds ?? 0,
                 completedAt,
               });
-              if (hollowResult.outcome === "transitioned") {
-                await closeAbandonedChildSessionBlock(
-                  plan.originSessionId,
-                  step.sessionId,
-                  hollowError,
-                  durationSeconds,
-                );
-                log.warn(
-                  `[recovery] Plan ${plan.id} step ${step.id} — hollow saved child rejected: ${hollowError}`,
-                );
-              }
+              log.log(`[recovery] Plan ${plan.id} step ${step.id} — recovered explicit mission_completed`);
+              continue;
+            }
+            if (missionOutcome === "resumable_budget_exhausted") {
+              await pauseStepForContinuation(
+                plan.id,
+                step,
+                step.position,
+                durationSeconds ?? 0,
+                step.sessionId,
+                attempt.attemptNumber,
+                output || "Completed work saved for continuation",
+              );
               continue;
             }
 
-            const output = await readFinalAssistantOutput(step.sessionId);
-            await completePlanStepAttempt({
+            const terminalError = missionOutcome
+              ? `Child mission ended as ${missionOutcome}; explicit mission_completed was required`
+              : `Child session ${step.sessionId} ended without a source-owned mission terminal outcome`;
+            const terminalResult = await failInterruptedPlanStep({
               planId: plan.id,
               stepId: step.id,
               attemptNumber: attempt.attemptNumber,
               childSessionId: step.sessionId,
-              outcome: output?.slice(0, 500) || "Completed (recovered)",
-              durationSeconds: durationSeconds ?? 0,
+              error: terminalError,
+              durationSeconds,
               completedAt,
             });
-            log.log(
-              `[recovery] Plan ${plan.id} step ${step.id} — recovered as completed ` +
-              `(tools=${evidence.toolCount})`,
-            );
+            if (terminalResult.outcome === "transitioned") {
+              await closeAbandonedChildSessionBlock(
+                plan.originSessionId,
+                step.sessionId,
+                terminalError,
+                durationSeconds,
+              );
+            }
+            log.warn(`[recovery] Plan ${plan.id} step ${step.id} — saved child rejected: ${terminalError}`);
             continue;
           }
         }
