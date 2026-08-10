@@ -1923,15 +1923,17 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
       try {
         const issues = await storage.getIssues({ status, excludeStatus, lightweight: true });
-        const page = issues.slice(offset, offset + limit);
+        // Human reports are a triage queue, never autonomous Regression or repair work.
+        const actionableIssues = issues.filter((issue) => issue.kind !== "reported");
+        const page = actionableIssues.slice(offset, offset + limit);
         const nextOffset = offset + page.length;
         return {
           result: JSON.stringify({
             issues: page,
             offset,
-            nextOffset: nextOffset < issues.length ? nextOffset : null,
-            hasMore: nextOffset < issues.length,
-            total: issues.length,
+            nextOffset: nextOffset < actionableIssues.length ? nextOffset : null,
+            hasMore: nextOffset < actionableIssues.length,
+            total: actionableIssues.length,
           }),
         };
       } catch (err: unknown) {

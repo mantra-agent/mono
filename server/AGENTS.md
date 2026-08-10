@@ -457,7 +457,7 @@ Best-effort observability samples share one write path. Domain storage validates
 - **`platformEnvironmentId`** — Platforms Environment ID. Callers may pass it; when omitted, create fills from `getRuntimeIdentity().platformEnvironmentId`.
 - **`buildId`** — provider deployment/build ID. Callers may pass it; when omitted, create fills from `getRuntimeIdentity().deploymentId`.
 
-Do not add parallel create helpers that bypass these fields. Do not soften the gate in routes or the tool layer — map validation errors to 400 / `inputFailure`, leave enforcement in storage. Legacy issues may have empty `reproSteps` or null env/build; new creates may not. Regression Skill and bootstrap instructions treat evidence-rich Issues (repro + env/build) as the only actionable queue.
+Do not add parallel create helpers that bypass these fields. Do not soften the gate in routes or the tool layer — map validation errors to 400 / `inputFailure`, leave enforcement in storage. Legacy issues may have empty `reproSteps` or null env/build; new creates may not. `Issue.kind` is the creation-provenance discriminant: authenticated browser reports persist as `reported`, remain admin-triaged UI state, and are excluded by the Agent `issues.list` projection; all other creates default to `tracked`. Regression Skill and bootstrap instructions treat evidence-rich tracked Issues (repro + env/build) as the only actionable queue, while Self Heal remains exclusively on `issues.list_errors`.
 
 ## Build-owned nightly self-heal boundary
 

@@ -39,7 +39,7 @@ function isIssueCreateValidationError(error: unknown): error is { name: string; 
 }
 
 export function registerIssueRoutes(app: Express) {
-  app.use("/api/issues", requireAuth, requireActiveBuild, requireAdmin);
+  app.use("/api/issues", requireAuth, requireActiveBuild);
 
   app.post("/api/issues", async (req, res) => {
     try {
@@ -74,6 +74,7 @@ export function registerIssueRoutes(app: Express) {
         description: data.description,
         reproSteps: data.reproSteps,
         status: "open",
+        kind: "reported",
         page: data.page || null,
         screenshot: screenshotPath || null,
         logs: data.logs || null,
@@ -152,7 +153,7 @@ export function registerIssueRoutes(app: Express) {
     res.send(buffer);
   });
 
-  app.get("/api/issues/errors/recent", requireAuth, async (req, res) => {
+  app.get("/api/issues/errors/recent", requireAdmin, async (req, res) => {
     const parsedLimit = Number.parseInt(String(req.query.limit ?? "25"), 10);
     const limit = Number.isFinite(parsedLimit) ? Math.min(100, Math.max(1, parsedLimit)) : 25;
     try {
@@ -165,7 +166,7 @@ export function registerIssueRoutes(app: Express) {
     }
   });
 
-  app.post("/api/issues/errors/:fingerprint/dismiss", requireAuth, async (req, res) => {
+  app.post("/api/issues/errors/:fingerprint/dismiss", requireAdmin, async (req, res) => {
     try {
       const { dismissApplicationError } = await import("../error-telemetry");
       const dismissed = await dismissApplicationError(String(req.params.fingerprint ?? ""));
@@ -181,7 +182,7 @@ export function registerIssueRoutes(app: Express) {
     }
   });
 
-  app.get("/api/issues", async (req, res) => {
+  app.get("/api/issues", requireAdmin, async (req, res) => {
     try {
       const status = req.query.status as string | undefined;
       const excludeStatus = req.query.exclude_status as string | undefined;
@@ -193,7 +194,7 @@ export function registerIssueRoutes(app: Express) {
     }
   });
 
-  app.get("/api/issues/:id", async (req, res) => {
+  app.get("/api/issues/:id", requireAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid issue ID" });
@@ -218,7 +219,7 @@ export function registerIssueRoutes(app: Express) {
     notes: z.any().optional(),
   });
 
-  app.patch("/api/issues/:id", async (req, res) => {
+  app.patch("/api/issues/:id", requireAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid issue ID" });
@@ -241,7 +242,7 @@ export function registerIssueRoutes(app: Express) {
     }
   });
 
-  app.post("/api/issues/:id/notes", async (req, res) => {
+  app.post("/api/issues/:id/notes", requireAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid issue ID" });
@@ -267,7 +268,7 @@ export function registerIssueRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/issues/:id", async (req, res) => {
+  app.delete("/api/issues/:id", requireAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid issue ID" });

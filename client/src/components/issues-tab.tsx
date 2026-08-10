@@ -347,6 +347,7 @@ export function IssuesTab() {
   const discussion = useAgendaDiscussion();
   const [search, setSearch] = useState("");
   const [errorsOpen, setErrorsOpen] = useState(true);
+  const [reportedOpen, setReportedOpen] = useState(true);
   const [openOpen, setOpenOpen] = useState(true);
   const [inProgressOpen, setInProgressOpen] = useState(true);
   const [inReviewOpen, setInReviewOpen] = useState(true);
@@ -424,11 +425,14 @@ export function IssuesTab() {
   const activeIssues = (activeData?.issues || []).filter((issue) =>
     matchesQuery(`${issue.title} ${issue.description} ${issue.reproSteps ?? ""}`, normalized),
   );
-  const openIssues = activeIssues.filter((issue) => issue.status === "open");
-  const inProgressIssues = activeIssues.filter((issue) => issue.status === "in_progress");
-  const inReviewIssues = activeIssues.filter((issue) => issue.status === "in_review");
+  const reportedIssues = activeIssues.filter((issue) => issue.kind === "reported");
+  const trackedIssues = activeIssues.filter((issue) => issue.kind !== "reported");
+  const openIssues = trackedIssues.filter((issue) => issue.status === "open");
+  const inProgressIssues = trackedIssues.filter((issue) => issue.status === "in_progress");
+  const inReviewIssues = trackedIssues.filter((issue) => issue.status === "in_review");
   const resolvedIssues = (resolvedData?.issues || []).filter((issue) =>
-    matchesQuery(`${issue.title} ${issue.description} ${issue.reproSteps ?? ""}`, normalized),
+    issue.kind !== "reported"
+    && matchesQuery(`${issue.title} ${issue.description} ${issue.reproSteps ?? ""}`, normalized),
   );
   const filteredErrors = (errorsData || []).filter((error) =>
     matchesQuery(
@@ -499,8 +503,20 @@ export function IssuesTab() {
           data-testid="button-new-issue"
         >
           <Plus className="h-3.5 w-3.5 shrink-0" />
-          New Issue
+          Report Issue
         </button>
+
+        <IssueTreeSection
+          label="Reported"
+          issues={reportedIssues}
+          open={reportedOpen}
+          onOpenChange={setReportedOpen}
+          testId="button-toggle-reported-group"
+          count={reportedIssues.length}
+          loading={isLoading}
+          emptyLabel="No reported issues."
+          renderIssue={renderIssue}
+        />
 
         <ErrorTreeSection
           label="Errors"

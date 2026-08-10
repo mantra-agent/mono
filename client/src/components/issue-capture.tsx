@@ -240,7 +240,7 @@ function AnnotationOverlay({
 }
 
 export function openIssueCaptureDialog() {
-  window.dispatchEvent(new CustomEvent("xyz-capture-issue"));
+  window.dispatchEvent(new CustomEvent("mantra-report-issue"));
 }
 
 export function IssueCaptureDialog() {
@@ -265,8 +265,8 @@ export function IssueCaptureDialog() {
       setIncludeLogs(false);
       setOpen(true);
     };
-    window.addEventListener("xyz-capture-issue", handler);
-    return () => window.removeEventListener("xyz-capture-issue", handler);
+    window.addEventListener("mantra-report-issue", handler);
+    return () => window.removeEventListener("mantra-report-issue", handler);
   }, []);
 
   const { data: recentLogs } = useQuery<any[]>({
@@ -287,7 +287,7 @@ export function IssueCaptureDialog() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "Issue captured" });
+      toast({ title: "Issue reported" });
       setTitle("");
       setDescription("");
       setReproSteps("");
@@ -299,7 +299,7 @@ export function IssueCaptureDialog() {
       });
     },
     onError: (err: Error) => {
-      toast({ title: "Failed to capture", description: err.message, variant: "destructive" });
+      toast({ title: "Failed to report issue", description: err.message, variant: "destructive" });
     },
   });
 
@@ -432,8 +432,8 @@ export function IssueCaptureDialog() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-base">Capture Issue</DialogTitle>
-            <DialogDescription className="sr-only">Report an issue or suggest an improvement</DialogDescription>
+            <DialogTitle className="text-base">Report Issue</DialogTitle>
+            <DialogDescription className="sr-only">Add text and an optional screenshot or image</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3">
@@ -547,7 +547,7 @@ export function IssueCaptureDialog() {
                 data-testid="button-submit-issue"
               >
                 {submitMutation.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : null}
-                Submit
+                Report
               </Button>
             </div>
           </div>
