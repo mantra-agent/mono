@@ -1,3 +1,11 @@
+<!-- 2026-08-10 Session Menu hidden-ancestor suppression:
+- Assets/data: principal-owned Session titles and parent lineage, Vault placement, and browser-visible Session Menu projection (A01/A03; S1/S2 metadata). No persisted state, transcript content, permission, or authority is changed.
+- Flow/boundary: principal-scoped Session list -> top-bar visible-Vault allowlist -> client Session tree projection. Session and parent IDs remain untrusted display inputs and never grant access.
+- Failure/threat: the projection computed `parentMissing` only after Vault filtering, so a child in a visible Vault whose known parent was hidden was promoted to a top-level row. This contradicted the user's explicit Vault visibility boundary and disclosed metadata they intended to suppress from the current view (STRIDE information-disclosure/UI integrity analogue; DATA-01).
+- Controls/owner: Core Session UI now suppresses a visible Session when any known ancestor in the loaded corpus belongs to a hidden Vault, while genuinely absent parents preserve the existing orphan fallback. Server Principal/Vault authorization, single-Vault Session placement, event-carried updates, and top-bar visibility remain independent canonical controls. Owner: Application UI / Session Menu. Severity: medium presentation integrity. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: an ancestor absent from the bounded client corpus cannot be classified as hidden and retains the fallback root behavior; this avoids treating missing data as proof of hidden scope. Revert the ancestor predicate and this record to restore prior promotion behavior; no schema, permission, credential, provider, or user-data migration is involved.
+-->
+
 <!-- 2026-08-10 user-scoped Persona ownership repair:
 - Assets/data: user-owned Persona identity, prompt overlays, cognitive settings, context-section and tool bundles, active Persona selection, and orientation/session continuity (A01/A03/A07; S1/S2 configuration).
 - Flow/boundary: authenticated user Principal -> orientation/cognition/persona editor -> `PersonaStorage.ensureOwnedCopy` / activation -> principal-scoped Persona rows. Persona names, template lineage, and legacy `vault_id` values are persisted input and never grant another user's access.
