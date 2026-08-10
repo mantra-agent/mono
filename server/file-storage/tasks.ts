@@ -72,7 +72,7 @@ const TASK_ASSIGNMENT_FIELDS = new Set<keyof InsertTask>([
   "assigneeSubjectId",
 ]);
 
-function normalizeTaskUpdate(command: TaskUpdateCommand): Partial<InsertTask> {
+function normalizeTaskUpdate(taskId: number, command: TaskUpdateCommand): Partial<InsertTask> {
   const raw: PatchInput = {
     title: command.title,
     description: command.description,
@@ -91,7 +91,7 @@ function normalizeTaskUpdate(command: TaskUpdateCommand): Partial<InsertTask> {
     confirmDestructiveUpdate: command.confirmDestructiveUpdate,
     destructiveUpdateReason: command.destructiveUpdateReason,
   };
-  const { patch, clearFields, destructiveReason } = sanitizePatch<InsertTask>(raw, {
+  const { patch, clearFields, destructiveUpdateReason } = sanitizePatch<InsertTask>(raw, {
     protectedFields: [
       "title",
       "description",
@@ -123,11 +123,13 @@ function normalizeTaskUpdate(command: TaskUpdateCommand): Partial<InsertTask> {
   }
 
   if (clearSet.size > 0) {
-    logPatchClearAudit(
-      "task",
-      [...clearSet].map(String),
-      destructiveReason,
-    );
+    logPatchClearAudit(log, {
+      operation: "tasks.update",
+      entityType: "task",
+      entityId: taskId,
+      clearFields: [...clearSet],
+      destructiveUpdateReason,
+    });
   }
 
   return patch;
@@ -485,7 +487,7 @@ export class FileTaskStorage {
   }
 
   async updateTask(id: number, command: TaskUpdateCommand, provenance?: TaskMutationProvenance): Promise<Task | undefined> {
-    const updates = normalizeTaskUpdate(command);
+    const updates = normalizeTaskUpdate(id, command);
     const hasUpdates = Object.keys(updates).length > 0;
     const principal = requireCurrentUserPrincipal();
     const required: ObjectGrantCapability = hasAdminOnlyTaskChanges(updates as Record<string, unknown>) ? "admin" : "write";
