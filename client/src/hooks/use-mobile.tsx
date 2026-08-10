@@ -1,5 +1,7 @@
 import * as React from "react"
 
+import { isNativeAppWebView } from "@/lib/native-app"
+
 const MOBILE_BREAKPOINT = 768
 
 /** Context that provides the measured width of the nearest container (e.g. <main>). */
@@ -47,6 +49,7 @@ export function ContainerWidthProvider({ children }: { children: React.ReactNode
  * Outside (sidebar, top bar, bottom bar), falls back to viewport width.
  */
 export function useIsMobile() {
+  const nativeApp = isNativeAppWebView()
   const containerWidth = React.useContext(ContainerWidthContext)
   const [viewportMobile, setViewportMobile] = React.useState<boolean | undefined>(undefined)
 
@@ -62,6 +65,8 @@ export function useIsMobile() {
     setViewportMobile(window.innerWidth < MOBILE_BREAKPOINT)
     return () => mql.removeEventListener("change", onChange)
   }, [containerWidth])
+
+  if (nativeApp) return true
 
   if (containerWidth !== null) {
     return containerWidth < MOBILE_BREAKPOINT
