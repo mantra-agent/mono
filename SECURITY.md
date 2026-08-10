@@ -1,3 +1,11 @@
+<!-- 2026-08-10 People import candidate search correction:
+- Assets/data: principal-owned People import candidates and email-derived identity metadata (A01/A03/A07; S1/S2 metadata).
+- Flow/boundary: authenticated People tool -> principal-scoped candidate search -> bounded pending-candidate projection. Search text and persisted candidate fields remain untrusted and grant no authority.
+- Failure/threat: a combined name-and-email query was treated as one contiguous substring, hiding an existing candidate and encouraging duplicate Person creation (STRIDE integrity/availability analogue; DATA-01). A broader repair must not weaken owner/account isolation or expose another user's imported contacts.
+- Controls/owner: People Import retains `sensitiveVisiblePredicate`, pending-decision default, parameterized SQL, and bounded pagination. The canonical search boundary now requires every whitespace-delimited term to match at least one approved identity field, preserving exact candidate-ID lookup and principal scope. Owner: People Import. Severity: medium integrity. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: substring search intentionally treats SQL wildcard characters as wildcards, matching prior behavior; result ranking is unchanged. Revert the token predicate and this record to restore prior combined-query behavior; no schema, permission, credential, or user-data mutation is involved.
+-->
+
 <!-- 2026-08-10 Safari AudioWorklet CSP compatibility repair:
 - Assets/data: authenticated browser execution context and live microphone/audio frames (S3 while in transit through the voice provider path).
 - Flow/boundary: ElevenLabs browser SDK creates a local blob AudioWorklet module -> WebKit evaluates the response CSP -> the worklet processes microphone/playback audio locally.
