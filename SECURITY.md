@@ -1,3 +1,11 @@
+<!-- 2026-08-10 admin user-state projection correction:
+- Assets/data: cross-user account-foundation readiness and last-activity timestamps derived from S1/S2 Session metadata (A01/A03/A07). No transcript content is returned.
+- Flow/boundary: authenticated Users administrator -> users:read-gated list -> content-free activity aggregate across canonical chat documents/messages plus rolling legacy Session stores; users:write independently gates replay-safe setup repair.
+- Abuse/failure case: omitting canonical Session stores made an active user appear stale, while hiding the repair affordance when the foundation resolver returned ready prevented an administrator from replaying the canonical repair after contradictory observed behavior (STRIDE information-disclosure/availability/integrity analogue; IAM-01/DATA-01/OBS-01).
+- Deterministic controls/owner: the existing Users route remains requireAuth + users:read; activity projects only owner ID and MAX(timestamp), never titles, content, Vault identity, or Session IDs. Repair remains separately users:write-gated, idempotent through ensureUserIdentityFoundation, session-revoking, and audited. Owner: Core Identity + Users Administration. Severity: medium integrity/availability. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: Last Active means latest persisted application activity, not proof of a currently connected browser; direct reads that leave no durable state still rely on presence/auth-session evidence. Revert the canonical activity unions, always-visible setup row, and this record to restore prior projection; no schema, permission, credential, or user-data migration is involved.
+-->
+
 <!-- 2026-08-10 admin identity-foundation repair:
 - Assets/data: user identity, personal Account ownership, default Vault, membership, active/visible Vault state, and authenticated sessions (A01/A03/A07; S1 account metadata).
 - Flow/boundary: authenticated Users administrator -> users:write-gated repair mutation -> canonical transactional ensureUserIdentityFoundation -> target-user session revocation. User IDs and existing identity rows remain untrusted persisted input and never grant authority.

@@ -83,6 +83,15 @@ async function getAdminUserActivity(): Promise<Map<string, string>> {
     SELECT user_id, MAX(activity_at) AS last_active_at
     FROM (
       SELECT owner_user_id AS user_id, updated_at AS activity_at
+      FROM document_store_documents
+      WHERE document_type = 'chat'
+        AND owner_user_id IS NOT NULL
+      UNION ALL
+      SELECT owner_user_id AS user_id, updated_at AS activity_at
+      FROM conversation_messages
+      WHERE owner_user_id IS NOT NULL
+      UNION ALL
+      SELECT owner_user_id AS user_id, updated_at AS activity_at
       FROM sessions
       WHERE owner_user_id IS NOT NULL
       UNION ALL

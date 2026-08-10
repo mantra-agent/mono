@@ -408,25 +408,24 @@ function UserDetail({ user, availablePermissions, canWrite, draft, onDraftChange
         <Button size="sm" disabled={!canWrite || !dirty || mutation.isPending} onClick={() => mutation.mutate(Array.from(draft))}>{mutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}</Button>
       </div>
       <div className="space-y-0">
-        {user.identityIncomplete ? (
-          <ProfileTreeRow
-            label="Account Setup"
-            icon={<Shield className="h-3.5 w-3.5" />}
-            hasValue
-            showEmpty
-            expandedContent={
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm text-muted-foreground">Creates the missing personal account and Vault, then revokes stale sessions.</p>
-                <Button size="sm" disabled={!canWrite || repairIdentityMutation.isPending} onClick={() => repairIdentityMutation.mutate()}>
-                  {repairIdentityMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-                  Repair Setup
-                </Button>
-              </div>
-            }
-          >
-            <span className="text-amber-500">Incomplete</span>
-          </ProfileTreeRow>
-        ) : null}
+        <ProfileTreeRow
+          label="Account Setup"
+          icon={<Shield className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          defaultOpen={user.identityIncomplete}
+          expandedContent={
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">Re-runs personal Account and Vault setup, then signs this user out.</p>
+              <Button size="sm" variant="outline" disabled={!canWrite || repairIdentityMutation.isPending} onClick={() => repairIdentityMutation.mutate()}>
+                {repairIdentityMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                Repair Setup
+              </Button>
+            </div>
+          }
+        >
+          <span className={user.identityIncomplete ? "text-destructive" : "text-muted-foreground"}>{user.identityIncomplete ? "Incomplete" : "Ready"}</span>
+        </ProfileTreeRow>
         <ProfileTreeRow label="Status" icon={<User className="h-3.5 w-3.5" />} hasValue showEmpty><span className={user.presence.length > 0 ? "text-foreground" : "text-muted-foreground"}>{user.presence.length > 0 ? "Active" : "Inactive"}</span></ProfileTreeRow>
         <ProfileTreeRow label="Last Active" icon={<Clock className="h-3.5 w-3.5" />} hasValue={!!user.lastActiveAt} showEmpty><span className={user.lastActiveAt ? "text-foreground" : "text-muted-foreground"}>{formatDateTime(user.lastActiveAt)}</span></ProfileTreeRow>
         <ProfileTreeRow label="Connections" icon={<Globe2 className="h-3.5 w-3.5" />} hasValue={user.presence.length > 0} showEmpty><UserPresence presence={user.presence} showLabels /></ProfileTreeRow>
@@ -531,7 +530,7 @@ export default function UsersAdminPage() {
         <button type="button" onClick={() => { setSelectedUserId(user.id); setSelectedWaitlistId(null); }} className="absolute inset-0" aria-label={`View ${user.email}`} />
         <User className={cn("pointer-events-none h-3.5 w-3.5 shrink-0", selected ? "text-foreground" : "text-muted-foreground")} />
         <span className={cn("pointer-events-none min-w-0 flex-1 truncate pr-6", selected ? "text-foreground" : "text-muted-foreground")}>{user.email}</span>
-        {user.identityIncomplete ? <span className="pointer-events-none shrink-0 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-500" title="Identity foundation incomplete — this account is missing its personal workspace and cannot fully sign in">Setup incomplete</span> : null}
+        {user.identityIncomplete ? <span className="pointer-events-none shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive" title="Identity foundation incomplete — this account is missing its personal workspace and cannot fully sign in">Setup incomplete</span> : null}
         {user.presence.length > 0 ? <div className="pointer-events-none"><UserPresence presence={user.presence} /></div> : null}
         {canWrite && currentUser?.id !== user.id ? <DropdownMenu modal={false}><DropdownMenuTrigger asChild><button type="button" className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100" aria-label={`More actions for ${user.email}`} onClick={(event) => event.stopPropagation()}><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteUser(user)}><Trash2 className="mr-2 h-4 w-4" />Delete user</DropdownMenuItem></DropdownMenuContent></DropdownMenu> : null}
       </div>
