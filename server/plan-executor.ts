@@ -315,7 +315,7 @@ export async function executePlan(
       } else {
         // Step exhausted retries — plan is paused
         totalDuration += stepResult.duration;
-        await notifyOriginSession(originSessionId, planId, planTitle, currentStep, "failed");
+        await notifyOriginSession(originSessionId, planId, planTitle, currentStep, "failed", stepResult.error);
         await releaseActivePlan();
         return {
           planId, status: "paused", completedSteps: completedCount,
@@ -1248,6 +1248,7 @@ async function notifyOriginSession(
   planTitle: string,
   step: { title: string; error?: string | null } | null,
   event: "failed" | "crashed" | "completed" | "needs_review" | "blocked",
+  failureDetail?: string,
 ): Promise<void> {
   try {
     const { chatFileStorage } = await import("./chat-file-storage");
@@ -1260,7 +1261,8 @@ async function notifyOriginSession(
     } else if (event === "blocked" && step) {
       msg = `⏸️ Plan **${planTitle}** paused at step "${step.title}" — step is blocked. Resolve the blocker, then use plan(action: "resume") to continue.`;
     } else if (step) {
-      msg = `⚠️ Plan **${planTitle}** paused at step "${step.title}": ${step.error || "Unknown error"}. Use plan(action: "resume") to retry, or plan(action: "get") to inspect.`;
+      const diagnostic = failureDetail || step.error || "Step failed without persisted diagnostic evidence";
+      msg = `⚠️ Plan **${planTitle}** paused at step "${step.title}": ${diagnostic}. Use plan(action: "resume") to retry, or plan(action: "get") to inspect.`;
     } else {
       return;
     }

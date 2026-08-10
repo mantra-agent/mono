@@ -1584,6 +1584,7 @@ async function runSkillPipeline(
         capacityOwner: options.runtimeFence
           ? { kind: "runtime", runId: options.runtimeFence.runId, attemptId: options.runtimeFence.attemptId }
           : undefined,
+        requireExplicitMissionCompletion: Boolean(options.planId && options.stepId),
       }),
       abortController.signal,
       15_000,
@@ -1826,6 +1827,7 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
       temperature: 0.3,
       querySubsystem: "autonomous",
       tier: "request",
+      requireExplicitMissionCompletion: conv.spawnerTool === "plan-executor",
     });
 
     if (result.status === "failed" || result.status === "degraded") {
