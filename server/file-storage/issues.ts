@@ -256,7 +256,9 @@ export class FileIssueStorage {
           platformEnvironmentId = parseOptionalPositiveInt(runtime.platformEnvironmentId);
         }
         if (buildId == null) {
-          buildId = normalizeOptionalText(runtime.deploymentId);
+          // Railway does not inject a deployment ID into the application runtime.
+          // The served Git commit is the stable build identity available on every deploy.
+          buildId = normalizeOptionalText(runtime.gitCommit);
         }
       } catch (err) {
         log.warn("createIssue runtime identity lookup failed", err);

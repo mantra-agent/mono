@@ -246,7 +246,6 @@ export function openIssueCaptureDialog() {
 export function IssueCaptureDialog() {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
   const [reproSteps, setReproSteps] = useState("");
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
@@ -259,7 +258,6 @@ export function IssueCaptureDialog() {
     const handler = () => {
       routeRef.current = getCurrentRoute();
       setTitle("");
-      setDescription("");
       setReproSteps("");
       setScreenshot(null);
       setIncludeLogs(false);
@@ -277,7 +275,6 @@ export function IssueCaptureDialog() {
   const submitMutation = useMutation({
     mutationFn: async (payload: {
       title: string;
-      description: string;
       reproSteps: string;
       page: string;
       screenshot?: string;
@@ -289,7 +286,6 @@ export function IssueCaptureDialog() {
     onSuccess: () => {
       toast({ title: "Issue reported" });
       setTitle("");
-      setDescription("");
       setReproSteps("");
       setScreenshot(null);
       setIncludeLogs(false);
@@ -344,7 +340,7 @@ export function IssueCaptureDialog() {
       });
       return;
     }
-    if (!title.trim() && !description.trim() && !trimmedRepro) return;
+    if (!title.trim() && !trimmedRepro) return;
 
     let logsText: string | undefined;
     if (includeLogs && recentLogs && recentLogs.length > 0) {
@@ -357,7 +353,6 @@ export function IssueCaptureDialog() {
     // platformEnvironmentId + buildId are filled server-side from runtime identity.
     submitMutation.mutate({
       title: title.trim(),
-      description: description.trim(),
       reproSteps: trimmedRepro,
       page: routeRef.current,
       screenshot: screenshot || undefined,
@@ -456,14 +451,6 @@ export function IssueCaptureDialog() {
               placeholder="Repro steps (required) — numbered steps to reproduce..."
               className="min-h-[80px] text-sm"
               data-testid="input-issue-repro"
-            />
-
-            <Textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Context / expected vs actual (optional)"
-              className="min-h-[60px] text-sm"
-              data-testid="input-issue-description"
             />
 
             {screenshot && (
