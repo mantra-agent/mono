@@ -347,14 +347,14 @@ export default function BusinessMetricsPage() {
     return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
   }, []);
   const { data: usage } = useQuery<RangeSample>({
-    queryKey: ["/api/business/metrics/range-sample", usageDayStart],
+    queryKey: ["/api/business/metrics/range-sample", selectedId, usageDayStart],
     queryFn: async () => {
       const end = new Date().toISOString();
       const url = `/api/business/metrics/range-sample?businessId=${encodeURIComponent(selectedId ?? "")}&start=${encodeURIComponent(usageDayStart)}&end=${encodeURIComponent(end)}`;
       const response = await apiRequest("GET", url);
       return response.json();
     },
-    enabled: Boolean(selectedId && selected?.publicName.toLowerCase() === "mantra"),
+    enabled: Boolean(selectedId && selected?.isPlatformInstrument),
     refetchInterval: 60_000,
   });
 

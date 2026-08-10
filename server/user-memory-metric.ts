@@ -3,7 +3,7 @@ import { db } from "./db";
 import { createLogger } from "./log";
 import { ensureMetricsSamplesSchema, metricsDb } from "./metrics-db";
 import {
-  ensureInternalBusinessMetrics,
+  ensurePlatformBusinessMetrics,
   upsertInternalPeriodSample,
   type InternalBusinessMetricDefinition,
 } from "./metrics-storage";
@@ -39,7 +39,7 @@ async function rollupUserMemory(now = new Date()): Promise<void> {
   const resultRows = (Array.isArray(rows) ? rows : (rows as unknown as { rows?: unknown[] }).rows ?? []) as Array<{
     claim_count: number;
   }>;
-  const metric = (await ensureInternalBusinessMetrics("Mantra", [USER_MEMORY_METRIC_DEFINITION])).get("user-memory");
+  const metric = (await ensurePlatformBusinessMetrics([USER_MEMORY_METRIC_DEFINITION])).get("user-memory");
   if (!metric) return;
   await metricsDb.execute(sql`
     DELETE FROM metric_samples
