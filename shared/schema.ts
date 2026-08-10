@@ -311,6 +311,8 @@ export type SessionMessage = z.infer<typeof sessionMessageSchema>;
 
 export const issueStatusEnum = z.enum(["open", "in_progress", "in_review", "resolved"]);
 export type IssueStatus = z.infer<typeof issueStatusEnum>;
+export const issueKindEnum = z.enum(["tracked", "reported"]);
+export type IssueKind = z.infer<typeof issueKindEnum>;
 
 export interface IssueNote {
   id: string;
@@ -327,6 +329,8 @@ export const insertIssueSchema = z.object({
   /** Explicit reproduction steps — required at create; thin title-only issues are rejected. */
   reproSteps: z.string().min(1),
   status: z.string().default("open"),
+  /** Creation provenance. Reported issues are human-submitted and excluded from autonomous repair queues. */
+  kind: issueKindEnum.default("tracked"),
   page: z.string().nullable().optional(),
   screenshot: z.string().nullable().optional(),
   spec: z.string().nullable().optional(),
@@ -347,6 +351,8 @@ export interface Issue {
   /** Explicit reproduction steps. Always non-empty on issues created after the repro gate. */
   reproSteps: string;
   status: string;
+  /** Human reports remain visible for triage but are never autonomous repair work. */
+  kind: IssueKind;
   page: string | null;
   screenshot: string | null;
   spec: string | null;

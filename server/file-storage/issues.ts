@@ -1,5 +1,5 @@
 import { documentStorage } from "../memory/document-storage";
-import { issueStatusEnum, type Issue, type InsertIssue, type IssueStatus, type IssueNote } from "@shared/schema";
+import { issueKindEnum, issueStatusEnum, type Issue, type InsertIssue, type IssueStatus, type IssueNote } from "@shared/schema";
 import { createLogger } from "../log";
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction } from "../db";
 
@@ -145,6 +145,7 @@ function docToIssue(doc: { content: string; metadata: Record<string, unknown> })
     description: String(meta.description || parsed.description || ""),
     reproSteps: reproFromMeta || parsed.reproSteps || "",
     status: String(meta.status || "open"),
+    kind: issueKindEnum.catch("tracked").parse(meta.kind),
     page: (meta.page as string) || null,
     screenshot: (meta.screenshot as string) || null,
     spec: (meta.spec as string) || parsed.spec || null,
@@ -165,6 +166,7 @@ function issueMetadata(issue: Issue): Record<string, unknown> {
     description: issue.description,
     reproSteps: issue.reproSteps,
     status: issue.status,
+    kind: issue.kind,
     page: issue.page,
     screenshot: issue.screenshot,
     dependencies: issue.dependencies,
@@ -203,6 +205,7 @@ export class FileIssueStorage {
         id: i.id,
         title: i.title,
         status: i.status,
+        kind: i.kind,
         page: i.page,
         platformEnvironmentId: i.platformEnvironmentId,
         buildId: i.buildId,
@@ -279,6 +282,7 @@ export class FileIssueStorage {
       description: typeof issue.description === "string" ? issue.description : "",
       reproSteps,
       status: issue.status || "open",
+      kind: issueKindEnum.parse(issue.kind || "tracked"),
       page: issue.page || null,
       screenshot: issue.screenshot || null,
       spec: issue.spec || null,

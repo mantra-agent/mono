@@ -38,6 +38,7 @@ import {
   MessagesSquare,
   Newspaper,
   Palette,
+  Plus,
   Plug,
   Scale,
   ScrollText,
@@ -69,6 +70,8 @@ import { useCommsActivity } from "@/hooks/use-comms-activity";
 import { useOrientationActivity } from "@/hooks/use-orientation-activity";
 import { useEnvActivity } from "@/hooks/use-env-activity";
 import { useProductComposition } from "@/hooks/use-product-composition";
+import { openIssueCaptureDialog } from "@/components/issue-capture";
+import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
 import { ActiveStatusSpinner, getStatusClasses, type NavDotLevel } from "./nav-dot";
 import { AgentOrb } from "@/components/agent-orb";
 import { VoiceEntranceOrb } from "@/components/voice-entrance-orb";
@@ -628,6 +631,7 @@ export function NavPage() {
     )?.label ?? null;
   }, [guidedTarget, resolvedNavSections]);
   const isSearching = searchQuery.trim().length > 0;
+  const canReportIssue = !isSearching && (productComposition?.activeMods.some((mod) => mod.key === "build") ?? false);
   const visibleSections = useMemo(() => {
     if (!guidedTarget || !guidedSectionLabel) return filteredSections;
     const section = resolvedNavSections.find((candidate) => candidate.label === guidedSectionLabel);
@@ -736,6 +740,18 @@ export function NavPage() {
             );
           })
         )}
+
+        {canReportIssue ? (
+          <button
+            type="button"
+            onClick={openIssueCaptureDialog}
+            className={cn(HIERARCHY_PRIMARY_ACTION_CLASS, "mt-2")}
+            data-testid="button-report-issue"
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            <span>Report Issue</span>
+          </button>
+        ) : null}
       </div>
 
 
