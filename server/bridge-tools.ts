@@ -17160,7 +17160,7 @@ const cognitionTools: Record<string, ToolHandler> = {
       return recordMetacognitiveObservationTool({ ...args, type: args.observation_type, content: args.observation });
     }
     if (action === "get_profile" || action === "update_profile") {
-      return utilityTools.agent_profile({ ...args, action: action === "get_profile" ? "get" : "update" });
+      return bridgeHandlers.agent_profile({ ...args, action: action === "get_profile" ? "get" : "update" });
     }
 
     const sub: Record<string, (a: Record<string, any>) => Promise<ToolHandlerResult>> = {
