@@ -80,6 +80,14 @@ function scratchAction(toolName: string, action: string | undefined): string | u
   return toolName === "scratch" ? action : undefined;
 }
 
+function repositoryScratchTarget(
+  toolName: string,
+  action: string | undefined,
+  args: Record<string, unknown>,
+): unknown {
+  return scratchAction(toolName, action) === "patch" ? args.repositoryDirectory : args.path;
+}
+
 function isRepositoryScratchWrite(
   toolName: string,
   action: string | undefined,
@@ -87,7 +95,7 @@ function isRepositoryScratchWrite(
 ): boolean {
   const scratchMutation = scratchAction(toolName, action);
   if (!["write", "edit", "patch"].includes(scratchMutation || "")) return false;
-  const candidate = scratchMutation === "patch" ? args.repositoryDirectory : args.path;
+  const candidate = repositoryScratchTarget(toolName, action, args);
   const path = typeof candidate === "string" ? candidate.trim().replace(/^\.\//, "") : "";
   return /^repos\/[^/]+(?:\/|$)/.test(path);
 }
@@ -171,7 +179,10 @@ export function authorizeToolInvocation(
     return { allowed: false, reason: "workflow_stage_action_required" };
   }
 
-  if (repositoryScratchWrite && !isSessionOwnedRepositoryPath(args.path, context.sessionId)) {
+  if (
+    repositoryScratchWrite
+    && !isSessionOwnedRepositoryPath(repositoryScratchTarget(toolName, action, args), context.sessionId)
+  ) {
     return { allowed: false, reason: "session_owned_repository_required" };
   }
 
