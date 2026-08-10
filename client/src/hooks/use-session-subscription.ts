@@ -251,27 +251,27 @@ export function useSessionSubscriptions(
     }
   }, [store]);
 
-  const sendSubscribe = useCallback((id: string) => {
+  const sendSubscribe = useCallback((id: string, trigger: string) => {
     const ws = sharedWSRef.current;
     if (!ws || ws.getReadyState() !== WebSocket.OPEN) return;
     if (requestedIdsRef.current.has(id)) return;
     requestedIdsRef.current.add(id);
     const currentActiveSession = activeSessionRef.current;
-    log.debug("STREAM:SUBSCRIBE", { handlerId, owner, tabId, activeSession: currentActiveSession, sessionId: id });
     const subscriptionEpoch = (subscriptionEpochRef.current[id] ?? 0) + 1;
     subscriptionEpochRef.current[id] = subscriptionEpoch;
-    ws.send({ type: "session.subscribe", sessionId: id, handlerId, owner, tabId, activeSession: currentActiveSession, subscriptionEpoch, supportsDelta: true });
+    log.info("STREAM:SUBSCRIPTION_MUTATION", { operation: "subscribe", trigger, handlerId, owner, tabId, activeSession: currentActiveSession, sessionId: id, subscriptionEpoch });
+    ws.send({ type: "session.subscribe", sessionId: id, handlerId, owner, tabId, activeSession: currentActiveSession, subscriptionEpoch, trigger, supportsDelta: true });
   }, [handlerId, owner, tabId]);
 
-  const sendUnsubscribe = useCallback((id: string) => {
+  const sendUnsubscribe = useCallback((id: string, trigger: string) => {
     const ws = sharedWSRef.current;
     requestedIdsRef.current.delete(id);
     if (!ws || ws.getReadyState() !== WebSocket.OPEN) return;
     const currentActiveSession = activeSessionRef.current;
-    log.debug("STREAM:UNSUBSCRIBE", { handlerId, owner, tabId, activeSession: currentActiveSession, sessionId: id });
     const subscriptionEpoch = (subscriptionEpochRef.current[id] ?? 0) + 1;
     subscriptionEpochRef.current[id] = subscriptionEpoch;
-    ws.send({ type: "session.unsubscribe", sessionId: id, handlerId, owner, tabId, activeSession: currentActiveSession, subscriptionEpoch });
+    log.info("STREAM:SUBSCRIPTION_MUTATION", { operation: "unsubscribe", trigger, handlerId, owner, tabId, activeSession: currentActiveSession, sessionId: id, subscriptionEpoch });
+    ws.send({ type: "session.unsubscribe", sessionId: id, handlerId, owner, tabId, activeSession: currentActiveSession, subscriptionEpoch, trigger });
   }, [handlerId, owner, tabId]);
 
   // A dropped or out-of-baseline patch means the client's baseline is stale.
@@ -281,7 +281,7 @@ export function useSessionSubscriptions(
   const forceResync = useCallback((id: string) => {
     patchSeqRef.current[id] = null;
     requestedIdsRef.current.delete(id);
-    sendSubscribe(id);
+    sendSubscribe(id, "patch-gap-resync");
   }, [sendSubscribe]);
 
   const upsertStream = useCallback((sessionId: string, patch: Partial<SessionStreamState>) => {
@@ -436,7 +436,7 @@ export function useSessionSubscriptions(
     });
     requestedIdsRef.current.clear();
     for (const id of ids) patchSeqRef.current[id] = null;
-    ids.forEach(sendSubscribe);
+    ids.forEach((id) => sendSubscribe(id, `recovery:${reason}`));
   }, [handlerId, owner, sendSubscribe, tabId]);
 
   const requestRecovery = useCallback((reason: string) => {
@@ -466,7 +466,7 @@ export function useSessionSubscriptions(
       setStreamConnected(true);
       requestedIdsRef.current.clear();
       if (sharedWS.getReadyState() === WebSocket.OPEN && !sharedWS.wasReconnectOpen()) {
-        subscribedIdsRef.current.forEach(sendSubscribe);
+        subscribedIdsRef.current.forEach((id) => sendSubscribe(id, "socket-open"));
       }
     });
     sharedWS.addCloseHandler(handlerId, () => setStreamConnected(false));
@@ -492,7 +492,7 @@ export function useSessionSubscriptions(
         recoveryTimerRef.current = null;
       }
       pendingRecoveryReasonsRef.current.clear();
-      subscribedIdsRef.current.forEach(sendUnsubscribe);
+      subscribedIdsRef.current.forEach((id) => sendUnsubscribe(id, "hook-unmount"));
       subscribedIdsRef.current.clear();
       requestedIdsRef.current.clear();
       sharedWS.removeMessageHandler(handlerId);
@@ -512,7 +512,7 @@ export function useSessionSubscriptions(
     const ids = Array.from(subscribedIdsRef.current);
     if (ids.length === 0) return;
     requestedIdsRef.current.clear();
-    ids.forEach(sendSubscribe);
+    ids.forEach((id) => sendSubscribe(id, "active-session-change"));
   }, [activeSession, sendSubscribe]);
 
   useEffect(() => {
@@ -528,7 +528,7 @@ export function useSessionSubscriptions(
 
     for (const prevId of prevIds) {
       if (!nextIds.has(prevId)) {
-        sendUnsubscribe(prevId);
+        sendUnsubscribe(prevId, "session-set-removed");
         prevIds.delete(prevId);
         delete patchSeqRef.current[prevId];
         delete latestStreamRef.current[prevId];
@@ -542,7 +542,7 @@ export function useSessionSubscriptions(
           store.setState(nextId, getIdleStreamState(wsConnected));
         }
         if (sharedWSRef.current?.getReadyState() === WebSocket.OPEN) {
-          sendSubscribe(nextId);
+          sendSubscribe(nextId, "session-set-added");
         }
       }
     }

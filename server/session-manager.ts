@@ -59,6 +59,7 @@ export interface SessionSubscriberIdentity {
   owner?: string;
   activeSession?: string | null;
   subscriptionEpoch?: number;
+  trigger?: string;
 }
 
 export type ActiveSessionClientResolution =
@@ -647,13 +648,28 @@ class SessionManager {
     owners.set(ownerId, identity);
 
     const session = this.sessions.get(sessionId);
-    if (!session) {
-      log.verbose(() => `SESSION:SUBSCRIBE:PENDING session=${sessionId} sockets=${sockets.size} owners=${owners.size}`);
-      return null;
-    }
-
-    session.subscribers.add(ws);
-    log.verbose(() => `SESSION:SUBSCRIBE session=${sessionId} subs=${session.subscribers.size} owners=${owners.size} alreadySub=${alreadySubscribed}`);
+    if (session) session.subscribers.add(ws);
+    log.info("SESSION:SUBSCRIPTION_MUTATION", {
+      operation: "subscribe",
+      sessionId,
+      connectionId: identity.connectionId ?? null,
+      tabId: identity.tabId ?? null,
+      handlerId: identity.handlerId ?? null,
+      owner: identity.owner ?? null,
+      subscriptionEpoch: identity.subscriptionEpoch ?? 0,
+      activeSession: identity.activeSession ?? null,
+      trigger: identity.trigger ?? "unknown",
+      alreadySubscribed,
+      ownerCount: owners.size,
+      socketCount: sockets.size,
+      subscriberCount: session?.subscribers.size ?? 0,
+      sessionStatus: session?.status ?? "pending",
+      runGeneration: session?.runGeneration ?? null,
+      eventSeq: session?.eventSeq ?? null,
+      patchSeq: session?.patchSeq ?? null,
+      durableRevision: session?.durableRevision ?? null,
+    });
+    if (!session) return null;
 
     return {
       sessionId: session.sessionId,
@@ -676,19 +692,45 @@ class SessionManager {
       log.debug(`SESSION:UNSUBSCRIBE_STALE_EPOCH session=${sessionId} owner=${ownerId}`);
       return true;
     }
-    owners?.delete(ownerId);
+    const hadOwner = owners?.delete(ownerId) ?? false;
+    const session = this.sessions.get(sessionId);
+    const priorSubscriberCount = session?.subscribers.size ?? 0;
+    let remainsSubscribed = true;
 
-    if (owners && owners.size > 0) {
-      log.verbose(() => `SESSION:UNSUBSCRIBE_OWNER session=${sessionId} owners=${owners.size}`);
-      return true;
+    if (!owners || owners.size === 0) {
+      sockets?.delete(ws);
+      if (sockets?.size === 0) this.subscriptionOwners.delete(sessionId);
+      if (session) session.subscribers.delete(ws);
+      remainsSubscribed = false;
     }
 
-    sockets?.delete(ws);
-    if (sockets?.size === 0) this.subscriptionOwners.delete(sessionId);
-    const session = this.sessions.get(sessionId);
-    if (session) session.subscribers.delete(ws);
-    log.verbose(() => `SESSION:UNSUBSCRIBE session=${sessionId} subs=${session?.subscribers.size ?? 0}`);
-    return false;
+    const fields = {
+      operation: "unsubscribe",
+      sessionId,
+      connectionId: identity.connectionId ?? null,
+      tabId: identity.tabId ?? null,
+      handlerId: identity.handlerId ?? null,
+      owner: identity.owner ?? null,
+      subscriptionEpoch: identity.subscriptionEpoch ?? 0,
+      activeSession: identity.activeSession ?? null,
+      trigger: identity.trigger ?? "unknown",
+      hadOwner,
+      ownerCount: owners?.size ?? 0,
+      socketCount: sockets?.size ?? 0,
+      priorSubscriberCount,
+      subscriberCount: session?.subscribers.size ?? 0,
+      sessionStatus: session?.status ?? "missing",
+      runGeneration: session?.runGeneration ?? null,
+      eventSeq: session?.eventSeq ?? null,
+      patchSeq: session?.patchSeq ?? null,
+      durableRevision: session?.durableRevision ?? null,
+    };
+    if (session?.status === "streaming" && priorSubscriberCount === 1 && session.subscribers.size === 0) {
+      log.warn("SESSION:ACTIVE_STREAM_ZERO_SUBSCRIBERS", fields);
+    } else {
+      log.info("SESSION:SUBSCRIPTION_MUTATION", fields);
+    }
+    return remainsSubscribed;
   }
 
   unsubscribeAll(ws: WebSocket): void {
