@@ -84,8 +84,10 @@ function isRepositoryScratchWrite(
   action: string | undefined,
   args: Record<string, unknown>,
 ): boolean {
-  if (!["write", "edit"].includes(scratchAction(toolName, action) || "")) return false;
-  const path = typeof args.path === "string" ? args.path.trim().replace(/^\.\//, "") : "";
+  const scratchMutation = scratchAction(toolName, action);
+  if (!["write", "edit", "patch"].includes(scratchMutation || "")) return false;
+  const candidate = scratchMutation === "patch" ? args.repositoryDirectory : args.path;
+  const path = typeof candidate === "string" ? candidate.trim().replace(/^\.\//, "") : "";
   return /^repos\/[^/]+(?:\/|$)/.test(path);
 }
 
