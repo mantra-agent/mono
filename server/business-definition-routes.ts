@@ -66,6 +66,7 @@ const patchSchema = z
     publicName: z.string().trim().min(1).max(160).optional(),
     entityName: z.string().trim().min(1).max(200).nullable().optional(),
     status: z.enum(["active", "archived"]).optional(),
+    vaultIds: z.array(z.string().trim().min(1)).min(1).max(64).optional(),
   })
   .refine((patch) => Object.keys(patch).length > 0, "At least one change is required");
 
@@ -193,8 +194,12 @@ export function registerBusinessDefinitionRoutes(app: Express): void {
     async (req: Request, res: Response) => {
       try {
         await ensureReady();
-        const patch = patchSchema.parse(req.body ?? {});
-        const business = await businessStorage.update(req.params.id, patch);
+        const { vaultIds, ...patch } = patchSchema.parse(req.body ?? {});
+        let business = Object.keys(patch).length > 0
+          ? await businessStorage.update(req.params.id, patch)
+          : await businessStorage.get(req.params.id);
+        if (!business) throw new Error(`Business ${req.params.id} not found or not visible`);
+        if (vaultIds) business = await businessStorage.replaceVaultMemberships(req.params.id, vaultIds);
         res.json(await toView(business));
       } catch (error) {
         respondError(res, "update business", error);
