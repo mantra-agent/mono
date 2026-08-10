@@ -474,6 +474,7 @@ Chat is an explicit exception. Its Mantra mark and conversation prompt are part 
 - Mobile rows are exactly one compact 44px line with quiet 14px icons. The content-sized panel is inset from screen edges, uses minimal drag/header chrome, and respects viewport overflow and safe areas. It must feel like the Universal Picker—not an edge-to-edge navigation slab. Nested floating layers on mobile are prohibited.
 - Keyboard access, visible focus, disabled semantics, dismissal, and focus return are mandatory.
 - The Design screen's **Responsive action menus** playground is the canonical visual and interaction example. Any change to action-menu behavior must update that example and this section together.
+- The same compact grammar governs menus, selectors, and action/selection popovers: content-sized surfaces, `p-1` framing, compact single-line rows, quiet 14px icons, restrained radius and shadow, and bounded overflow. Explicit picker width may grow for search/results; task dialogs, workflow modals, tooltips, and hover cards are separate patterns and must not be compressed into this grammar.
 
 ### Inputs
 
