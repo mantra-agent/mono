@@ -1,11 +1,9 @@
 import { randomUUID } from "crypto";
 import { sql } from "drizzle-orm";
-import { metrics } from "@shared/schema";
-import { db } from "./db";
 import { createLogger } from "./log";
 import { ensureMetricsSamplesSchema, metricsDb } from "./metrics-db";
 import { enqueueTelemetryWrite } from "./telemetry-write";
-import { upsertInternalPeriodSample } from "./metrics-storage";
+import { ensureInternalAccountMetrics, upsertInternalPeriodSample } from "./metrics-storage";
 
 const log = createLogger("HoursUsed");
 export const USAGE_LEASE_TAIL_MS = 45_000;
@@ -140,49 +138,6 @@ export function observeHoursUsedPresence(observation: HoursUsedPresenceObservati
   });
 }
 
-async function ensureUsageMetrics(accountId: string): Promise<Map<string, { id: string; ownerUserId: string; vaultId: string | null }>> {
-  const accountRows = await db.execute(sql`
-    SELECT a.owner_user_id, u.active_vault_id
-    FROM accounts a
-    JOIN users u ON u.id = a.owner_user_id
-    WHERE a.id = ${accountId} AND a.kind = 'personal'
-    LIMIT 1
-  `);
-  const rows = Array.isArray(accountRows) ? accountRows : (accountRows as unknown as { rows?: unknown[] }).rows ?? [];
-  const owner = rows[0] as { owner_user_id?: string; active_vault_id?: string | null } | undefined;
-  if (!owner?.owner_user_id) return new Map();
-
-  for (const definition of USAGE_METRIC_DEFINITIONS) {
-    const id = `metric_${definition.key.replace(/-/g, "_")}_${accountId}`;
-    await db.execute(sql`
-      INSERT INTO metrics (
-        id, name, slug, description, unit, direction, sample_period, adapter_kind,
-        adapter_config, status, scope, owner_user_id, account_id, vault_id, created_by_user_id
-      )
-      SELECT
-        ${id}, ${definition.name}, ${definition.key}, ${definition.description}, ${definition.unit},
-        'higher_is_better', 'custom', 'internal', ${JSON.stringify({ key: definition.key })}::jsonb,
-        'active', 'user', ${owner.owner_user_id}, ${accountId}, ${owner.active_vault_id ?? null}, ${owner.owner_user_id}
-      WHERE NOT EXISTS (
-        SELECT 1 FROM metrics WHERE account_id = ${accountId} AND slug = ${definition.key}
-      )
-      ON CONFLICT DO NOTHING
-    `);
-  }
-
-  const metricRows = await db.select({
-    id: metrics.id,
-    slug: metrics.slug,
-    ownerUserId: metrics.ownerUserId,
-    vaultId: metrics.vaultId,
-  }).from(metrics)
-    .where(sql`${metrics.accountId} = ${accountId} AND ${metrics.slug} IN ('hours-used', 'active-users', 'current-users')`);
-
-  return new Map(metricRows.flatMap((metric) => metric.ownerUserId
-    ? [[metric.slug, { id: metric.id, ownerUserId: metric.ownerUserId, vaultId: metric.vaultId }]]
-    : []));
-}
-
 function validateUsageRange(start: Date, end: Date): void {
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) {
     throw Object.assign(new Error("start and end must be valid ISO timestamps"), { status: 400 });
@@ -288,7 +243,7 @@ async function rollupCompletedHours(now = new Date()): Promise<void> {
     account_id: string; period_start: Date; period_end: Date; seconds_used: number;
   }>;
   for (const day of days) {
-    const metric = (await ensureUsageMetrics(day.account_id)).get("hours-used");
+    const metric = (await ensureInternalAccountMetrics(day.account_id, USAGE_METRIC_DEFINITIONS)).get("hours-used");
     if (!metric) continue;
     await upsertInternalPeriodSample({
       id: `msamp_hours_used_${day.account_id}_${dayStart.toISOString().slice(0, 10)}`,
@@ -339,7 +294,7 @@ async function rollupCompletedHours(now = new Date()): Promise<void> {
       seconds_used: number;
     }>;
   for (const day of provisional) {
-    const metric = (await ensureUsageMetrics(day.account_id)).get("hours-used");
+    const metric = (await ensureInternalAccountMetrics(day.account_id, USAGE_METRIC_DEFINITIONS)).get("hours-used");
     if (!metric) continue;
     await upsertInternalPeriodSample({
       id: `msamp_hours_used_${day.account_id}_${currentDayStart.toISOString().slice(0, 10)}`,
