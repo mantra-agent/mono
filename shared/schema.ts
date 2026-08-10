@@ -1417,6 +1417,7 @@ export const emailMessages = pgTable("email_messages", {
   toAddresses: text("to_addresses"),
   ccAddresses: text("cc_addresses"),
   direction: text("direction").notNull().default("unknown"),
+  primaryAction: text("primary_action").notNull().default("reply"),
   date: timestamp("date", { withTimezone: true }),
   labelIds: jsonb("label_ids").$type<string[]>(),
   bodyText: text("body_text"),
