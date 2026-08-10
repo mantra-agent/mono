@@ -3,7 +3,7 @@ import type { Express, Request, Response, RequestHandler } from "express";
 import * as fsPromises from "fs/promises";
 import { chatStorage } from "./storage";
 import { storage } from "../../storage";
-import type { SegmentChronologyEntry } from "../../chat-file-storage";
+import { searchSessionSummaries, type SegmentChronologyEntry } from "../../chat-file-storage";
 import type { SessionStreamEvent } from "../../session-manager";
 import { projectAssistantDraft } from "../../assistant-draft-projection";
 import { WORKSPACE_DIR } from "../../paths";
@@ -467,6 +467,29 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
   });
   app.use(["/api/sessions", "/api/chat"], requireAuth);
+  app.get("/api/sessions/search", async (req: Request, res: Response) => {
+    try {
+      const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
+      if (!query) return res.json([]);
+      if (query.length > 500) {
+        return res.status(400).json({ error: "Search query is too long" });
+      }
+
+      const matches = await searchSessionSummaries(query, 24 * 30, 100);
+      const sessions = await chatStorage.getSessions(matches.map((match) => match.id));
+      const rankById = new Map(matches.map((match, index) => [match.id, index]));
+      sessions.sort(
+        (left, right) =>
+          (rankById.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+          (rankById.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+      );
+      res.json(sessions);
+    } catch (error) {
+      chatLog.error("Error searching sessions:", error);
+      res.status(500).json({ error: "Failed to search sessions" });
+    }
+  });
+
   app.get("/api/sessions", async (req: Request, res: Response) => {
     try {
       const reminderMap = await getSessionReminderMap();

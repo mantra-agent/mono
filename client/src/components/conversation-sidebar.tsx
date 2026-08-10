@@ -72,6 +72,7 @@ export interface SessionGroup {
 }
 
 const SESSION_SECTION_STATE_KEY = "mantra:sessions-menu:section-state";
+const SESSION_SEARCH_DEBOUNCE_MS = 250;
 
 type SessionSectionState = Record<string, boolean>;
 
@@ -986,31 +987,39 @@ export function ConversationSidebar({
     togglePin.mutate({ id, isPinned: pinned });
   }, [togglePin]);
 
-  const isSearching = searchQuery.trim().length > 0;
+  const trimmedSearchQuery = searchQuery.trim();
+  const isSearching = trimmedSearchQuery.length > 0;
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
 
-  // Session search must cover the full corpus, not only the primary working
-  // set. Past/Snooze/Archive load lazily for the menu; when the user searches,
-  // warm those same view caches and merge them so search is never silently
-  // scoped to recently-active sessions. These reuse the DeferredSessionGroup
-  // query keys, so the corpus is one source of truth and expanding a section
-  // after searching is instant.
-  const pastSearchQuery = useQuery<ChatSession[]>({ queryKey: ["/api/sessions?view=past"], enabled: isSearching, staleTime: 30_000 });
-  const snoozeSearchQuery = useQuery<ChatSession[]>({ queryKey: ["/api/sessions?view=snooze"], enabled: isSearching, staleTime: 30_000 });
-  const archiveSearchQuery = useQuery<ChatSession[]>({ queryKey: ["/api/sessions?view=archive"], enabled: isSearching, staleTime: 30_000 });
-
-  const searchCorpus = useMemo(() => {
-    if (!isSearching) return sessions;
-    // Primary rows win on id collision — they carry the route's live enrichment.
-    const byId = new Map(sessions.map((session) => [session.id, session]));
-    for (const session of [
-      ...(pastSearchQuery.data ?? []),
-      ...(snoozeSearchQuery.data ?? []),
-      ...(archiveSearchQuery.data ?? []),
-    ]) {
-      if (!byId.has(session.id)) byId.set(session.id, session);
+  useEffect(() => {
+    if (!isSearching) {
+      setDebouncedSearchQuery("");
+      return;
     }
-    return [...byId.values()];
-  }, [isSearching, sessions, pastSearchQuery.data, snoozeSearchQuery.data, archiveSearchQuery.data]);
+    const timeoutId = window.setTimeout(
+      () => setDebouncedSearchQuery(trimmedSearchQuery),
+      SESSION_SEARCH_DEBOUNCE_MS,
+    );
+    return () => window.clearTimeout(timeoutId);
+  }, [isSearching, trimmedSearchQuery]);
+
+  // Search delegates to the same principal/Vault-scoped transcript index used
+  // by the Session tool. Normal navigation keeps its lazy bucketed tree; an
+  // active search receives only canonical matches and renders them flat.
+  const sessionSearchQuery = useQuery<ChatSession[]>({
+    queryKey: ["/api/sessions/search", debouncedSearchQuery],
+    queryFn: async () => {
+      const response = await apiRequest(
+        "GET",
+        `/api/sessions/search?q=${encodeURIComponent(debouncedSearchQuery)}`,
+      );
+      return response.json();
+    },
+    enabled: debouncedSearchQuery.length > 0,
+    staleTime: 30_000,
+  });
+
+  const searchCorpus = isSearching ? (sessionSearchQuery.data ?? []) : sessions;
 
   const vaultVisibleSessions = useMemo(() => {
     const sessionsById = new Map(searchCorpus.map((session) => [session.id, session]));
@@ -1059,28 +1068,16 @@ export function ConversationSidebar({
     });
   }, [vaultVisibleSessions]);
 
-  // Filter: exclude autonomous sessions from main groups (they go to System section)
-  // Also exclude child sessions (shown via tree expansion) — except during an
-  // active search, where results render as a flat list and every match must show.
+  // Normal mode hides children under their expandable parents and keeps
+  // autonomous work in SYSTEM. Search results come pre-filtered from the
+  // canonical server boundary and must surface every match as a flat row.
   const filteredConversations = useMemo(() => {
-    const queryTokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
-    const isActiveSearch = queryTokens.length > 0;
+    if (isSearching) return sessionsWithChildCounts;
     return sessionsWithChildCounts.filter(c => {
-      // Normal mode hides child sessions here because they render nested under
-      // their parent via tree expansion. During an active search the results are
-      // rendered as a flat list, so a matching child whose parent does not match
-      // (and is therefore filtered out) would otherwise never render at all.
-      if (!isActiveSearch && c.parentSessionId && !c.parentMissing && !c.archivedAt && !c.reminder?.active) return false;
-      // Exclude autonomous sessions — they go to the System group at the bottom
-      if (c.sessionType === "autonomous") return false;
-      if (isActiveSearch) {
-        const title = (c.title || "").toLowerCase();
-        const topicsText = (c.topics || []).join(" ").toLowerCase();
-        if (!queryTokens.every(token => title.includes(token) || topicsText.includes(token))) return false;
-      }
-      return true;
+      if (c.parentSessionId && !c.parentMissing && !c.archivedAt && !c.reminder?.active) return false;
+      return c.sessionType !== "autonomous";
     });
-  }, [sessionsWithChildCounts, searchQuery]);
+  }, [isSearching, sessionsWithChildCounts]);
 
   // Sticky set: sessions that qualified for "Recent" on initial load stay there
   // until the next page refresh (not removed mid-session when unread clears / age > 1h).
@@ -1130,19 +1127,24 @@ export function ConversationSidebar({
             <Plus className="h-3.5 w-3.5 shrink-0" />
             <span>New Session</span>
           </button>
-          {convsLoading ? (
+          {convsLoading || (isSearching && (debouncedSearchQuery !== trimmedSearchQuery || sessionSearchQuery.isLoading)) ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
             </div>
-          ) : vaultVisibleSessions.length === 0 ? (
+          ) : isSearching && sessionSearchQuery.isError ? (
+            <div className="text-center py-8 px-4">
+              <Search className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
+              <p className="text-xs text-muted-foreground">Session search unavailable</p>
+            </div>
+          ) : vaultVisibleSessions.length === 0 && !isSearching ? (
             <div className="text-center py-8 px-4">
               <MessageSquare className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
               <p className="text-xs text-muted-foreground">No sessions yet</p>
             </div>
-          ) : groups.length === 0 && searchQuery.trim() ? (
+          ) : groups.length === 0 && isSearching ? (
             <div className="text-center py-8 px-4">
               <Search className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
-              <p className="text-xs text-muted-foreground">No sessions match "{searchQuery.trim()}"</p>
+              <p className="text-xs text-muted-foreground">No sessions match "{trimmedSearchQuery}"</p>
             </div>
           ) : groups.length === 0 ? (
             <div className="text-center py-8 px-4">
