@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { acquireLibraryParentLocks, db, runWithDatabaseTransaction } from "./db";
+import { createLogger } from "./log";
 import type { Principal } from "./principal";
 import { createNamedSystemPrincipal } from "./principal";
 import {
@@ -11,6 +12,8 @@ import { syncContentFields } from "@shared/markdown-tiptap";
 import { libraryPageTrash, libraryPages } from "@shared/models/info";
 import { libraryPageIsLive, libraryPageIsTrashed } from "./library-trash";
 import { vaults } from "@shared/models/vaults";
+
+const log = createLogger("LibraryDomain");
 
 export const LIBRARY_STRUCTURAL_ROLES = ["source", "artifact", "wiki", "meta"] as const;
 export type LibraryStructuralRole = (typeof LIBRARY_STRUCTURAL_ROLES)[number];
