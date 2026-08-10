@@ -175,6 +175,10 @@ app.use((_req, res, next) => {
     "media-src 'self' blob: https:",
     "connect-src 'self' https: wss:",
     "frame-src 'self' https:",
+    // Older WebKit applies child-src, rather than worker-src, to AudioWorklet
+    // module URLs. Keep this compatibility directive aligned with worker-src
+    // so ElevenLabs' generated blob modules remain inside the same boundary.
+    "child-src 'self' blob:",
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",
