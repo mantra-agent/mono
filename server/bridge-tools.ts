@@ -22,6 +22,7 @@ import { strategyCoreHandlers, type StrategySubHandler } from "./tools/handlers/
 import { strategyStateHandlers } from "./tools/handlers/strategy-state";
 import { strategyMoveMutationHandlers } from "./tools/handlers/strategy-move-mutations";
 import { strategyMoveReadHandlers } from "./tools/handlers/strategy-move-reads";
+import { strategyEvaluationHandlers } from "./tools/handlers/strategy-evaluation";
 export { handleGmailDraftFromReview } from "./tools/handlers/gmail-drafts";
 export { diagnoseGmailBatchRead } from "./tools/handlers/gmail-provider";
 import { isSimilarText } from "./utils/text-similarity";
@@ -731,27 +732,12 @@ async function handleStrategyDeleteArtifact(args: Record<string, any>, ss: any):
   return { result: `Artifact ${id} deleted` };
 }
 
-async function handleStrategyEvaluateMove(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const evalMoveId = args.moveId;
-  if (!evalMoveId) return { result: "Missing moveId for evaluate_move", error: true };
-  const resolvedEval = await ss.resolveMoveInstance(evalMoveId);
-  if (!resolvedEval) return { result: `Move instance ${evalMoveId} not found`, error: true };
-  const { evaluateMoveWithAgent } = await import("./strategy-simulation");
-  const runId = await evaluateMoveWithAgent(resolvedEval.id, { awaitResult: true });
-  const updatedMove = await ss.getMoveInstance(resolvedEval.id);
-  const summary = [
-    `Evaluation complete for "${resolvedEval.title}" (run ${runId}).`,
-    updatedMove?.probability != null ? `Probability: ${(updatedMove.probability * 100).toFixed(0)}%` : null,
-    updatedMove?.evaluation ? `Analysis: ${updatedMove.evaluation.slice(0, 800)}` : null,
-  ].filter(Boolean).join("\n");
-  return { result: summary };
-}
-
 const strategySubHandlers: Record<string, StrategySubHandler> = {
   ...strategyCoreHandlers,
   ...strategyStateHandlers,
   ...strategyMoveMutationHandlers,
   ...strategyMoveReadHandlers,
+  ...strategyEvaluationHandlers,
   list_notes: handleStrategyContextList,
   list_context: handleStrategyContextList,
   add_note: handleStrategyContextAdd,
@@ -776,7 +762,6 @@ const strategySubHandlers: Record<string, StrategySubHandler> = {
   get_artifact: handleStrategyGetArtifact,
   create_artifact: handleStrategyCreateArtifact,
   delete_artifact: handleStrategyDeleteArtifact,
-  evaluate_move: handleStrategyEvaluateMove,
 };
 
 export interface CrossSessionDeps {
