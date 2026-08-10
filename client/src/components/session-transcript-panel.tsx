@@ -41,7 +41,6 @@ import {
 import type { QuestionResponseMeta } from "@shared/models/chat";
 import type { SessionStreamMap, SessionStreamState } from "@/hooks/use-session-subscription";
 import { initialStreamingContent, type StreamingContent } from "@shared/streaming-types";
-import { useExecutorStatus } from "@/hooks/use-executor-status";
 import { useFocusSessionOptional } from "@/hooks/use-focus-session";
 import { emitSessionListChanged, emitSessionChanged } from "@/hooks/use-data-sync";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
@@ -172,8 +171,6 @@ export function SessionTranscriptPanel({
   enableAutoScroll = mode !== "widget",
 }: SessionTranscriptPanelProps) {
   const { toast } = useToast();
-  const { data: agentStatus } = useExecutorStatus();
-  const isAgentRunning = agentStatus?.status === "running";
   const voiceSession = useVoiceSessionOptional();
   const isWidget = mode === "widget";
   const panelInstanceIdRef = useRef(`panel-${Math.random().toString(36).slice(2, 10)}`);
@@ -628,9 +625,7 @@ export function SessionTranscriptPanel({
         <ChatEmptyState
           compact={isWidget}
           className={cn("flex-1", isWidget ? "p-4" : "p-8")}
-          message={emptyStateMessage ?? (isAgentRunning
-            ? "What's next?"
-            : "The agent isn't running. Start it from Settings to chat.")}
+          message={emptyStateMessage ?? "What's next?"}
         />
       </div>
     );

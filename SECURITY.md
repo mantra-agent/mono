@@ -1,3 +1,12 @@
+<!-- 2026-08-10 ordinary composer vs privileged gateway boundary:
+- Assets/data: authenticated Session creation and message content; system executor process status.
+- Boundaries/flows: ordinary authenticated browser -> Session message endpoints; system:read browser -> /api/gateway/status.
+- Abuse/failure case: a normal user's lack of system permission caused privileged status polling to return 401, and UI consumers misused that missing diagnostic as denial of ordinary text composition.
+- Control/owner: ExecutorStatusProvider enables the privileged poll only for system:read; BottomBar/useChatSend/Session Menu delegate ordinary availability and authorization to authenticated Session endpoints and retain synchronous replay-safe turn admission.
+- Evidence/status: fixed in task 2226; production build required before merge. Severity: medium availability/authorization-boundary confusion. Owner: Client Session UI. SLA: immediate.
+- Residual risk: server Session authorization and runtime admission remain independent controls; client affordances never grant authority.
+-->
+
 <!-- 2026-08-10 Session Menu hidden-ancestor suppression:
 - Assets/data: principal-owned Session titles and parent lineage, Vault placement, and browser-visible Session Menu projection (A01/A03; S1/S2 metadata). No persisted state, transcript content, permission, or authority is changed.
 - Flow/boundary: principal-scoped Session list -> top-bar visible-Vault allowlist -> client Session tree projection. Session and parent IDs remain untrusted display inputs and never grant access.
