@@ -410,9 +410,9 @@ export function validateQuestionResponse(
   }
   // Principle revisions may come from the prompt shortlist or a searchable picker.
   // Existence is enforced by recordJudgment when the answer is accepted.
-  if (response.reasoning && !prompt.allowResponseReasoning) {
-    return { ok: false, error: "This question does not allow response reasoning." };
-  }
+  const acceptedResponse = prompt.allowResponseReasoning
+    ? response
+    : { ...response, reasoning: undefined };
 
   const selectionCount = response.selectedOptionIds.length + (response.otherText ? 1 : 0);
   if (selectionCount === 0) return { ok: false, error: "Choose at least one answer." };
@@ -420,7 +420,7 @@ export function validateQuestionResponse(
     return { ok: false, error: "Choose exactly one answer." };
   }
 
-  return { ok: true, value: response };
+  return { ok: true, value: acceptedResponse };
 }
 
 export function formatQuestionResponseContent(prompt: QuestionPrompt, response: QuestionResponseMeta): string {
