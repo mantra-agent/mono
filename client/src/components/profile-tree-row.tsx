@@ -147,7 +147,7 @@ export function ProfileTreeRow({
               className={cn(
                 "flex min-w-0 max-w-full items-center text-xs leading-relaxed",
                 mobileLayout === "inline"
-                  ? "col-span-1 justify-end overflow-hidden pl-0 text-right"
+                  ? "col-span-1 justify-self-end justify-end overflow-hidden pl-0 text-right"
                   : "col-span-2 justify-start pl-6 text-left",
                 valueLayout === "compact"
                   ? "sm:col-span-1 sm:w-auto sm:justify-end sm:overflow-visible sm:pl-0 sm:text-right"
