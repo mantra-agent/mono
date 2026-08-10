@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "crypto";
-import { and, asc, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { metrics, kpis, metricSamples } from "@shared/schema";
 import {
   kpiCreateSchema,
@@ -162,6 +162,77 @@ async function latestSampleFor(metricId: string, accountId: string): Promise<Met
     .orderBy(desc(metricSamples.observedAt))
     .limit(1);
   return row ? mapSample(row) : null;
+}
+
+export interface InternalAccountMetricDefinition {
+  key: string;
+  name: string;
+  unit: string;
+  description: string;
+  direction?: MetricDirection;
+  samplePeriod?: "point" | "daily" | "weekly" | "monthly" | "custom";
+}
+
+export interface InternalAccountMetricRef {
+  id: string;
+  ownerUserId: string;
+  vaultId: string | null;
+}
+
+/**
+ * Provision the internal, user-scoped metric rows for a personal account, one per
+ * definition, and return a slug → { id, ownerUserId, vaultId } map for the ones that exist.
+ * Idempotent: existing metrics (matched by account + slug) are never overwritten. Shared by
+ * every internal self-computing adapter (Hours Used, User Memory, …) so per-account metric
+ * provisioning has a single source of truth.
+ */
+export async function ensureInternalAccountMetrics(
+  accountId: string,
+  definitions: readonly InternalAccountMetricDefinition[],
+): Promise<Map<string, InternalAccountMetricRef>> {
+  const accountRows = await db.execute(sql`
+    SELECT a.owner_user_id, u.active_vault_id
+    FROM accounts a
+    JOIN users u ON u.id = a.owner_user_id
+    WHERE a.id = ${accountId} AND a.kind = 'personal'
+    LIMIT 1
+  `);
+  const rows = Array.isArray(accountRows) ? accountRows : (accountRows as unknown as { rows?: unknown[] }).rows ?? [];
+  const owner = rows[0] as { owner_user_id?: string; active_vault_id?: string | null } | undefined;
+  if (!owner?.owner_user_id) return new Map();
+
+  for (const definition of definitions) {
+    const id = `metric_${definition.key.replace(/-/g, "_")}_${accountId}`;
+    const direction = definition.direction ?? "higher_is_better";
+    const samplePeriod = definition.samplePeriod ?? "custom";
+    await db.execute(sql`
+      INSERT INTO metrics (
+        id, name, slug, description, unit, direction, sample_period, adapter_kind,
+        adapter_config, status, scope, owner_user_id, account_id, vault_id, created_by_user_id
+      )
+      SELECT
+        ${id}, ${definition.name}, ${definition.key}, ${definition.description}, ${definition.unit},
+        ${direction}, ${samplePeriod}, 'internal', ${JSON.stringify({ key: definition.key })}::jsonb,
+        'active', 'user', ${owner.owner_user_id}, ${accountId}, ${owner.active_vault_id ?? null}, ${owner.owner_user_id}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM metrics WHERE account_id = ${accountId} AND slug = ${definition.key}
+      )
+      ON CONFLICT DO NOTHING
+    `);
+  }
+
+  const slugs = definitions.map((definition) => definition.key);
+  const metricRows = await db.select({
+    id: metrics.id,
+    slug: metrics.slug,
+    ownerUserId: metrics.ownerUserId,
+    vaultId: metrics.vaultId,
+  }).from(metrics)
+    .where(and(eq(metrics.accountId, accountId), inArray(metrics.slug, slugs)));
+
+  return new Map(metricRows.flatMap((metric) => metric.ownerUserId
+    ? [[metric.slug, { id: metric.id, ownerUserId: metric.ownerUserId, vaultId: metric.vaultId }]]
+    : []));
 }
 
 export interface InternalPeriodSampleInput {

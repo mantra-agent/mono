@@ -1020,6 +1020,8 @@ async function shutdownApplication(input: RuntimeTerminationInput): Promise<void
     timerScheduler.stop();
     const { stopHoursUsedRollups } = await import("./hours-used");
     stopHoursUsedRollups();
+    const { stopUserMemoryRollups } = await import("./user-memory-metric");
+    stopUserMemoryRollups();
     runtimeDispatcher.beginShutdown();
     const { stopMeetingAudioExpiry } = await import("./meeting/audio-retention-expiry");
     stopMeetingAudioExpiry();
@@ -1105,6 +1107,14 @@ function startDeferredBackgroundServices(): void {
       log("[startup] Hours Used rollups started", "boot");
     }).catch(err => {
       log(`[startup] Hours Used rollups failed to start: ${err instanceof Error ? err.message : String(err)}`, "boot");
+    })
+  );
+
+  services.push(
+    import("./user-memory-metric").then(({ startUserMemoryRollups }) => startUserMemoryRollups()).then(() => {
+      log("[startup] User Memory rollups started", "boot");
+    }).catch(err => {
+      log(`[startup] User Memory rollups failed to start: ${err instanceof Error ? err.message : String(err)}`, "boot");
     })
   );
 
