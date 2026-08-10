@@ -528,7 +528,7 @@ export function getShellToolContractDescription(): string {
     "Redirect exceptions: `>/dev/null`, `N>/dev/null`, `N>&M` (e.g. `2>&1`).",
     "Paths: under `/app`, or system bins in `/bin` `/usr/bin` `/usr/local/bin`.",
     `git: inspection-only (${gitSubs}). Writes → git_write_blocked (use git tool). Unknown/non-read → shell_git_read_only.`,
-    "npm: only `npm run build`. sed: `sed -n 'N,Mp' [file]`. find: no -exec/-delete.",
+    "npm: `npm run build` and read-only `npm audit` (flags only, no `fix`). sed: `sed -n 'N,Mp' [file]`. find: no -exec/-delete.",
     "Prefer scratch.read for known paths; parallel tool calls over serial when independent.",
     "Exit ≠ 0 is a normal result (read body) — not a tool error. Timeouts/spawn/policy denials are tool errors.",
   ].join(" ");
@@ -637,7 +637,16 @@ export function validateShellCommand(command: string): ToolAuthorityDecision {
       const gitDeny = classifyShellGitSegment(segment);
       if (gitDeny) return { allowed: false, reason: gitDeny };
     }
-    if (first === "npm" && !/^npm\s+run\s+build\s*$/.test(segment)) return { allowed: false, reason: "npm_command_not_allowlisted" };
+    if (
+      first === "npm" &&
+      !/^npm\s+run\s+build\s*$/.test(segment) &&
+      // Read-only advisory scan: `npm audit` plus optional `--flag`/`--key=value` tokens only.
+      // Excludes `npm audit fix` and every other subcommand because they are not `--`-prefixed,
+      // keeping the verb read-only (no repo mutation, no install lifecycle scripts).
+      !/^npm\s+audit(?:\s+--[A-Za-z0-9][A-Za-z0-9=.-]*)*\s*$/.test(segment)
+    ) {
+      return { allowed: false, reason: "npm_command_not_allowlisted" };
+    }
   }
   return { allowed: true };
 }
@@ -691,7 +700,7 @@ const SHELL_DENIAL_GUIDANCE: Readonly<Record<string, string>> = {
   command_not_allowlisted:
     "That binary is not on the read-only allowlist. Use `scratch.read` for file contents, the `git`/`web` tools for their domains, or an allowlisted binary from the tool contract.",
   npm_command_not_allowlisted:
-    "Only `npm run build` is permitted through shell.",
+    "Through shell, npm permits only `npm run build` and read-only `npm audit` (flags only; `npm audit fix` and other subcommands are blocked).",
   sed_read_expression_required:
     "sed is read-only here: use `sed -n 'N,Mp' [file]`.",
   which_binary_name_required:
