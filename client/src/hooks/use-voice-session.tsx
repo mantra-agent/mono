@@ -179,7 +179,21 @@ function normalizeClientVoiceSessionError(
 ): ClientVoiceSessionOperationError {
   let error: ClientVoiceSessionOperationError;
   if (value instanceof Error) {
-    error = value as ClientVoiceSessionOperationError;
+    // Browser/SDK errors are foreign values. Safari's DOMException is an Error,
+    // but fields such as `code` are read-only; decorating it masked the real
+    // startup failure and prevented lease compensation from running.
+    error = new Error(message || value.message || "VoiceSession client operation failed", {
+      cause: value,
+    }) as ClientVoiceSessionOperationError;
+    error.name = value.name || "Error";
+    if (value.stack) error.stack = value.stack;
+    const source = value as ClientVoiceSessionOperationError;
+    if (typeof source.reason === "string") error.reason = source.reason.slice(0, 120);
+    if (typeof source.attempt === "number") error.attempt = source.attempt;
+    if (typeof source.phase === "string") error.phase = source.phase.slice(0, 80);
+    if (typeof source.code === "string" && /^[A-Z][A-Z0-9_]{1,47}$/.test(source.code)) {
+      error.code = source.code;
+    }
   } else if (typeof value === "string" && value.trim()) {
     error = new Error(message || value.slice(0, 300)) as ClientVoiceSessionOperationError;
   } else if (value && typeof value === "object") {
