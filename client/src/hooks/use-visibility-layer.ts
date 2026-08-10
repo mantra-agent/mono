@@ -14,23 +14,26 @@ export const LAYER_LABELS: Record<VisibilityLayer, string> = {
   4: "Diagnostic",
 };
 
+const VISIBILITY_LAYER_QUERY_KEY = ["/api/session/visibility-layer"] as const;
+
+export async function setVisibilityLayer(newLayer: VisibilityLayer): Promise<void> {
+  const previous = queryClient.getQueryData<{ layer: VisibilityLayer }>(VISIBILITY_LAYER_QUERY_KEY);
+  queryClient.setQueryData(VISIBILITY_LAYER_QUERY_KEY, { layer: newLayer });
+  try {
+    await apiRequest("POST", "/api/session/visibility-layer", { layer: newLayer });
+  } catch {
+    queryClient.setQueryData(VISIBILITY_LAYER_QUERY_KEY, previous ?? { layer: 0 });
+  }
+}
+
 export function useVisibilityLayer() {
   const { data } = useQuery<{ layer: VisibilityLayer }>({
-    queryKey: ["/api/session/visibility-layer"],
+    queryKey: VISIBILITY_LAYER_QUERY_KEY,
     staleTime: 60_000,
   });
 
   const layer: VisibilityLayer = (data?.layer as VisibilityLayer) ?? 0;
-
-  const setLayer = useCallback(async (newLayer: VisibilityLayer) => {
-    const prev = queryClient.getQueryData<{ layer: VisibilityLayer }>(["/api/session/visibility-layer"]);
-    queryClient.setQueryData(["/api/session/visibility-layer"], { layer: newLayer });
-    try {
-      await apiRequest("POST", "/api/session/visibility-layer", { layer: newLayer });
-    } catch {
-      queryClient.setQueryData(["/api/session/visibility-layer"], prev ?? { layer: 0 });
-    }
-  }, []);
+  const setLayer = useCallback(setVisibilityLayer, []);
 
   return { layer, setLayer };
 }
