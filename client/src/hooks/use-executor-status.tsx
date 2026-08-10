@@ -2,6 +2,7 @@ import { createContext, useContext, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { GatewayStatus } from "@shared/schema";
 import type { ReactNode } from "react";
+import { useAuth } from "@/hooks/use-auth";
 
 export const GATEWAY_STATUS_KEY = ["/api/gateway/status"];
 
@@ -22,8 +23,11 @@ const ExecutorStatusContext = createContext<ExecutorStatusContextValue>({
 });
 
 export function ExecutorStatusProvider({ children }: { children: ReactNode }) {
+  const { hasPermission } = useAuth();
+  const canReadSystemStatus = hasPermission("system:read");
   const query = useQuery<GatewayStatus>({
     queryKey: GATEWAY_STATUS_KEY,
+    enabled: canReadSystemStatus,
     refetchInterval: 4000,
     staleTime: 2000,
   });

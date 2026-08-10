@@ -10,7 +10,6 @@ import { useFocusContextValue } from "@/hooks/use-focus-context";
 import { usePageHeaderContext } from "@/hooks/use-page-header";
 import { useVoiceStreaming } from "@/hooks/use-voice-streaming";
 import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
-import { useExecutorStatus } from "@/hooks/use-executor-status";
 import { SessionTranscriptPanel } from "@/components/session-transcript-panel";
 import { NavigationOrbButton } from "@/components/app-sidebar";
 import { ConnectionsIndicator } from "@/components/connections-indicator";
@@ -134,9 +133,7 @@ function useIsDesktop() {
 export function FocusWidget({ contained = false }: { contained?: boolean } = {}) {
   const { route, widgetOpen, setWidgetOpen } = useFocusSession();
   const { openMobile, isMobile: sidebarIsMobile } = useSidebar();
-  const { data: agentStatus } = useExecutorStatus();
   const isDesktop = useIsDesktop();
-  const isAgentRunning = agentStatus?.status === "running";
 
   // The outer shell owns only making the Session Window available. It leaves
   // selection, URL consumption, and auto-voice to the mounted panel so there is
@@ -164,11 +161,10 @@ export function FocusWidget({ contained = false }: { contained?: boolean } = {})
   // the session menu sidebar. So we always mount FocusWidgetPanel on desktop.
   if (!isDesktop && !widgetOpen) return null;
 
-  return <FocusWidgetPanel isAgentRunning={isAgentRunning} contained={contained} />;
+  return <FocusWidgetPanel contained={contained} />;
 }
 
 interface FocusWidgetPanelProps {
-  isAgentRunning: boolean;
   contained: boolean;
 }
 
@@ -193,7 +189,7 @@ function readPendingSessionDeepLink(): PendingSessionDeepLink | null {
  * subscription and transcript panel. Closing the widget tears this whole subtree
  * down so its hooks stop running.
  */
-function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) {
+function FocusWidgetPanel({ contained }: FocusWidgetPanelProps) {
   const { route, widgetOpen, setWidgetOpen, getSessionForRoute, setSessionForRoute, clearSessionForRoute, sessionMenuResetKey, requestBottomBarFocus, setMobileSessionTitle } = useFocusSession();
   const { hasStreaming } = useSessionActivityState();
   const [, setLocationNav] = useLocation();
@@ -818,7 +814,6 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
               sessions={sessions}
               convsLoading={sessionsLoading}
               activeSession={activeSession}
-              isAgentRunning={isAgentRunning}
               hideForSessionTranscript={false}
               searchQuery={searchQuery}
               setSearchQuery={setSearchQuery}

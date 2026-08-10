@@ -10,7 +10,6 @@ import { EditableReferenceInput, type EditableReferenceInputHandle } from "@/com
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { useSessionStreamState, type SessionStatus, type SessionStreamState } from "@/hooks/use-session-subscription";
 import { useSessionStreams } from "@/hooks/use-session-activity";
-import { useExecutorStatus } from "@/hooks/use-executor-status";
 import { useChatSend } from "@/hooks/use-chat-send";
 import { useToast } from "@/hooks/use-toast";
 import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
@@ -538,8 +537,6 @@ export function BottomBar({
     pendingTurn: contextPendingTurn,
     setPendingTurn: setContextPendingTurn,
   } = useFocusSession();
-  const { data: agentStatus } = useExecutorStatus();
-  const isAgentRunning = agentStatus?.status === "running";
   const voiceSession = useVoiceSessionOptional();
   const { store: sessionStreamStore, wsConnected } = useSessionStreams();
   const { toast } = useToast();
@@ -625,7 +622,6 @@ export function BottomBar({
   const chatSend = useChatSend({
     toast,
     voiceSession,
-    isAgentRunning,
     activeSession: focusedSessionId,
     setActiveSession: setFocusedSessionId,
     setComposing,
@@ -932,7 +928,7 @@ export function BottomBar({
             {/* More menu: Attach + Visibility + Session actions */}
             <BottomBarMenu
               onAttach={() => fileInputRef.current?.click()}
-              disabled={!isAgentRunning || voiceActive}
+              disabled={voiceActive}
               focusedSessionId={focusedSessionId ?? null}
               onClearFocus={() => {
                 setFocusedSessionId(null);
@@ -968,8 +964,8 @@ export function BottomBar({
                 onPaste={voiceActive ? undefined : handlePaste}
                 onFocus={onComposerFocusChange ? () => onComposerFocusChange(true) : undefined}
                 onBlur={onComposerFocusChange ? () => onComposerFocusChange(false) : undefined}
-                placeholder={voiceInputPlaceholder ?? (isAgentRunning ? "Message Agent…" : "Agent offline")}
-                disabled={!isAgentRunning || voiceActive || turnAdmissionPending}
+                placeholder={voiceInputPlaceholder ?? "Message Agent…"}
+                disabled={voiceActive || turnAdmissionPending}
                 className={cn(
                   "bg-muted/50 border border-border rounded-[18px] px-3 py-[7px]",
                   voiceActive && "pr-11",
@@ -1017,7 +1013,7 @@ export function BottomBar({
                 <button
                   type="button"
                   onClick={handleSend}
-                  disabled={!isAgentRunning || turnAdmissionPending}
+                  disabled={turnAdmissionPending}
                   className="shrink-0 flex items-center justify-center h-9 w-9 rounded-full border-[1.5px] border-warning text-warning hover:bg-warning/10 transition-colors"
                   aria-label="Interrupt and send"
                 >
@@ -1027,13 +1023,8 @@ export function BottomBar({
                 <button
                   type="button"
                   onClick={handleSend}
-                  disabled={!isAgentRunning || turnAdmissionPending}
-                  className={cn(
-                    "shrink-0 flex items-center justify-center h-9 w-9 rounded-full border-[1.5px] transition-colors",
-                    isAgentRunning
-                      ? "bg-cta border-cta text-cta-foreground hover:bg-cta/85"
-                      : "border-muted text-muted-foreground cursor-not-allowed",
-                  )}
+                  disabled={turnAdmissionPending}
+                  className="shrink-0 flex items-center justify-center h-9 w-9 rounded-full border-[1.5px] transition-colors bg-cta border-cta text-cta-foreground hover:bg-cta/85"
                   aria-label="Send message"
                 >
                   <ArrowUp className="h-5 w-5" strokeWidth={2.5} />

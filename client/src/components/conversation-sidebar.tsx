@@ -927,7 +927,6 @@ export function ConversationSidebar({
   sessions,
   convsLoading,
   activeSession,
-  isAgentRunning,
   hideForSessionTranscript,
   searchQuery,
   setSearchQuery,
@@ -942,7 +941,6 @@ export function ConversationSidebar({
   sessions: ChatSession[];
   convsLoading: boolean;
   activeSession: string | null;
-  isAgentRunning: boolean;
   hideForSessionTranscript: boolean;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
@@ -1120,7 +1118,6 @@ export function ConversationSidebar({
           <button
             type="button"
             onClick={onStartNewChat}
-            disabled={!isAgentRunning}
             className={HIERARCHY_PRIMARY_ACTION_CLASS}
             data-testid="button-new-chat"
           >

@@ -7,7 +7,6 @@ import { markChatAck, markChatSubmitted } from "@/lib/browser-telemetry";
 const log = createLogger("ChatSend");
 import type { ChatSession, PageContext } from "@shared/models/chat";
 import { apiRequest } from "@/lib/queryClient";
-import { GATEWAY_STATUS_KEY } from "@/hooks/use-executor-status";
 import { applySessionStatusToCache, emitSessionChanged } from "@/hooks/use-data-sync";
 import type { useToast } from "@/hooks/use-toast";
 import { getClientTabId } from "@/lib/client-tab-identity";
@@ -24,7 +23,6 @@ export interface PendingChatTurn {
 export interface UseChatSendDeps {
   toast: ReturnType<typeof useToast>["toast"];
   voiceSession: { clearTranscript: () => void } | null | undefined;
-  isAgentRunning: boolean;
   activeSession: string | null;
   setActiveSession: (id: string | null) => void;
   setComposing: (v: boolean) => void;
@@ -41,7 +39,7 @@ export interface UseChatSendDeps {
 export function useChatSend(deps: UseChatSendDeps) {
   const queryClient = useQueryClient();
   const {
-    toast, voiceSession, isAgentRunning,
+    toast, voiceSession,
     activeSession, setActiveSession, setComposing,
     attachedFiles, setAttachedFiles, createSessionPayload, getMessagePageContext,
     externalPendingTurn,
@@ -94,7 +92,7 @@ export function useChatSend(deps: UseChatSendDeps) {
   }, [toast, createSessionPayload]);
 
   const sendMessage = useCallback(async (text: string): Promise<boolean> => {
-    if (!text.trim() || !isAgentRunning || isSending || sendInFlightRef.current) return false;
+    if (!text.trim() || isSending || sendInFlightRef.current) return false;
 
     // React state is not a concurrency primitive. Flip the ref before any state
     // update or await so repeated UI events in the same tick cannot create
@@ -205,9 +203,8 @@ export function useChatSend(deps: UseChatSendDeps) {
     } finally {
       sendInFlightRef.current = false;
       setIsSending(false);
-      queryClient.invalidateQueries({ queryKey: GATEWAY_STATUS_KEY });
     }
-  }, [attachedFiles, activeSession, isAgentRunning, isSending, queryClient, voiceSession, setActiveSession, uploadAttachedFiles, ensureConversation, toast, setAttachedFiles, setComposing, getMessagePageContext]);
+  }, [attachedFiles, activeSession, isSending, queryClient, voiceSession, setActiveSession, uploadAttachedFiles, ensureConversation, toast, setAttachedFiles, setComposing, getMessagePageContext]);
 
   const handleAbort = useCallback(async () => {
     if (!activeSession) return;
@@ -217,8 +214,7 @@ export function useChatSend(deps: UseChatSendDeps) {
       log.error("abort request failed:", err);
     }
     emitSessionChanged(activeSession, "aborted");
-    queryClient.invalidateQueries({ queryKey: GATEWAY_STATUS_KEY });
-  }, [activeSession, queryClient]);
+  }, [activeSession]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
