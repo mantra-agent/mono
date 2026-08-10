@@ -258,7 +258,7 @@ Hosting credentials and environment configuration belong to Platform Environment
 
 ### Responsive Action Menus
 
-`client/src/components/ui/responsive-action-menu.tsx` owns nested action menus. Consumers declare one action tree; nested rows drill into the same body with Back at every width. Desktop renders a compact anchored popover, mobile renders one bottom sheet with 44px targets, safe-area/overflow containment, and no cascading floating layer. `useIsMobile()` treats the injected native-app WebView marker as mobile synchronously; container width remains the browser/desktop-preview fallback.
+`client/src/components/ui/dropdown-menu.tsx` is the canonical action-menu primitive and MUST be used for action menus. Consumers declare one Radix-compatible action tree; the primitive owns modality, rendering a compact anchored popover on desktop and one bottom sheet with 44px targets, safe-area/overflow containment, and drill-in Back navigation on mobile. Do not import raw Radix dropdown primitives, create local menu renderers, branch on mobile at call sites, or introduce a parallel responsive-menu component. The Design screen's **Responsive action menus** playground is the canonical implementation example and must stay aligned with `DESIGN.md` § Action menus.
 
 ### Universal Reference Picker
 

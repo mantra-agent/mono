@@ -86,14 +86,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  ResponsiveActionMenu,
-  ResponsiveActionMenuItem,
-  ResponsiveActionMenuSeparator,
-  ResponsiveActionMenuSub,
-} from "@/components/ui/responsive-action-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -3808,20 +3806,49 @@ function DesignResponsiveMenuPlayground() {
 
   return (
     <div className="space-y-4 rounded-md border border-border/30 bg-muted/10 p-4">
-      <div className="text-sm font-medium">Responsive menus</div>
-      <ResponsiveActionMenu
-        title="Example actions"
-        trigger={<Button variant="outline" size="sm"><MoreHorizontal className="mr-2 h-3.5 w-3.5" />Open menu</Button>}
-      >
-        <ResponsiveActionMenuItem icon={MessageSquare} onSelect={() => setResult("Discuss selected")}>Discuss</ResponsiveActionMenuItem>
-        <ResponsiveActionMenuSub id="reminder" label="Reminder" icon={Clock}>
-          <ResponsiveActionMenuItem icon={CalendarClock} onSelect={() => setResult("Tomorrow morning selected")}>Tomorrow morning</ResponsiveActionMenuItem>
-          <ResponsiveActionMenuItem icon={CalendarClock} onSelect={() => setResult("Next week selected")}>Next week</ResponsiveActionMenuItem>
-        </ResponsiveActionMenuSub>
-        <ResponsiveActionMenuItem icon={Pin} disabled>Unavailable action</ResponsiveActionMenuItem>
-        <ResponsiveActionMenuSeparator />
-        <ResponsiveActionMenuItem icon={Trash2} destructive onSelect={() => setResult("Delete selected")}>Delete</ResponsiveActionMenuItem>
-      </ResponsiveActionMenu>
+      <div className="text-sm font-medium">Canonical DropdownMenu</div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm">
+            <MoreHorizontal className="mr-2 h-3.5 w-3.5" />
+            Open menu
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuItem onClick={() => setResult("Discuss selected")}>
+            <MessageSquare />
+            Discuss
+          </DropdownMenuItem>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Clock />
+              Reminder
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuItem onClick={() => setResult("Tomorrow morning selected")}>
+                <CalendarClock />
+                Tomorrow morning
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setResult("Next week selected")}>
+                <CalendarClock />
+                Next week
+              </DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          <DropdownMenuItem disabled>
+            <Pin />
+            Unavailable action
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="text-destructive focus:text-destructive"
+            onClick={() => setResult("Delete selected")}
+          >
+            <Trash2 />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <div className="text-sm text-muted-foreground">{result}</div>
     </div>
   );

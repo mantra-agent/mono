@@ -4,11 +4,15 @@ import type { SimpleFeedItem } from "@shared/models/simple";
 import { CalendarClock, ChevronRight, Clock, Loader2, Mail, MessageSquare, MoreHorizontal, X } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
-  ResponsiveActionMenu,
-  ResponsiveActionMenuItem,
-  ResponsiveActionMenuSeparator,
-  ResponsiveActionMenuSub,
-} from "@/components/ui/responsive-action-menu";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
 import { apiRequest } from "@/lib/queryClient";
@@ -212,40 +216,47 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
           <CollapsibleTrigger type="button" className="ml-1 shrink-0 rounded p-0.5 hover:bg-accent/60" aria-label={`${open ? "Collapse" : "Expand"} ${item.title}`} onClick={(event) => event.stopPropagation()}>
             <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-90")} />
           </CollapsibleTrigger>
-          <ResponsiveActionMenu
-            open={menuOpen}
-            onOpenChange={setMenuOpen}
-            title={item.title}
-            trigger={(
+          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+            <DropdownMenuTrigger asChild>
               <button type="button" className="ml-1 min-h-11 min-w-11 shrink-0 rounded opacity-0 hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100" aria-label={`Actions for ${item.title}`} onClick={(event) => event.stopPropagation()}>
                 <MoreHorizontal className="mx-auto h-3.5 w-3.5 text-muted-foreground" />
               </button>
-            )}
-          >
-            <ResponsiveActionMenuItem
-              icon={discussMutation.isPending ? Loader2 : MessageSquare}
-              className={discussMutation.isPending ? "[&_svg]:animate-spin" : undefined}
-              disabled={discussMutation.isPending}
-              onSelect={() => discussMutation.mutate()}
-            >
-              Discuss
-            </ResponsiveActionMenuItem>
-            <ResponsiveActionMenuItem icon={Mail} onSelect={() => { window.location.href = emailHref; }}>
-              Open in Comms
-            </ResponsiveActionMenuItem>
-            <ResponsiveActionMenuSeparator />
-            <ResponsiveActionMenuSub id="reminder" label="Reminder" icon={Clock} disabled={snoozeMutation.isPending}>
-              {reminderPresets().map((preset) => (
-                <ResponsiveActionMenuItem key={preset.label} icon={CalendarClock} onSelect={() => handleSnooze(new Date(preset.at()).toISOString())}>
-                  {preset.label}
-                </ResponsiveActionMenuItem>
-              ))}
-            </ResponsiveActionMenuSub>
-            <ResponsiveActionMenuSeparator />
-            <ResponsiveActionMenuItem icon={X} onSelect={dismiss} disabled={markDone.isPending || messageIds.length === 0}>
-              Mark done
-            </ResponsiveActionMenuItem>
-          </ResponsiveActionMenu>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                className={discussMutation.isPending ? "[&_svg]:animate-spin" : undefined}
+                disabled={discussMutation.isPending}
+                onClick={() => discussMutation.mutate()}
+              >
+                {discussMutation.isPending ? <Loader2 /> : <MessageSquare />}
+                Discuss
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { window.location.href = emailHref; }}>
+                <Mail />
+                Open in Comms
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger disabled={snoozeMutation.isPending}>
+                  <Clock />
+                  Reminder
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  {reminderPresets().map((preset) => (
+                    <DropdownMenuItem key={preset.label} onClick={() => handleSnooze(new Date(preset.at()).toISOString())}>
+                      <CalendarClock />
+                      {preset.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={dismiss} disabled={markDone.isPending || messageIds.length === 0}>
+                <X />
+                Mark done
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         <CollapsibleContent>
           <div className="pb-2 pl-0 pr-1.5">
