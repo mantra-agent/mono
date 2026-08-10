@@ -14,6 +14,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { usePageLoadActivity } from "@/hooks/use-page-activity";
+import { formatDateTime as formatDateTimeInTimezone, useTimezone } from "@/hooks/use-timezone";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
@@ -95,17 +96,6 @@ function labelForPermission(permission: string): string {
   return permission.replace(":", " ");
 }
 
-function formatDateTime(value: string | null): string {
-  if (!value) return "No activity yet";
-  return new Date(value).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
 function summarizeUserAgent(userAgent: string | null | undefined): string {
   if (!userAgent?.trim()) return "Unknown device";
   const ua = userAgent.trim();
@@ -183,6 +173,7 @@ function UserGroupSection({ label, count, defaultOpen, storageKey, children }: U
 }
 
 function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) {
+  const { timezone } = useTimezone();
   const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [syntheticConfirmed, setSyntheticConfirmed] = useState(false);
@@ -250,7 +241,7 @@ function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) {
                 </Button>
               </div>
             </div>
-            <p className="text-sm text-muted-foreground">Expires {formatDateTime(result.expiresAt)}.</p>
+            <p className="text-sm text-muted-foreground">Expires {formatDateTimeInTimezone(result.expiresAt, timezone, { year: "numeric" })}.</p>
             <DialogFooter>
               <Button type="button" onClick={() => handleOpenChange(false)} data-testid="button-finish-invite">Done</Button>
             </DialogFooter>
@@ -330,6 +321,7 @@ const WAITLIST_LABELS: Record<string, string> = {
 };
 
 function WaitlistDetail({ application, canWrite, onBack }: { application: WaitlistApplicationRow; canWrite: boolean; onBack: () => void }) {
+  const { timezone } = useTimezone();
   const { toast } = useToast();
   const mutation = useMutation({
     mutationFn: async (status: string) => (await apiRequest("PATCH", `/api/admin/waitlist/${application.id}`, { status })).json(),
@@ -344,13 +336,14 @@ function WaitlistDetail({ application, canWrite, onBack }: { application: Waitli
       <ProfileTreeRow label="Readiness" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span>{WAITLIST_LABELS[application.readiness] || application.readiness}</span></ProfileTreeRow>
       <ProfileTreeRow label="Source" icon={<Globe2 className="h-3.5 w-3.5" />} hasValue={!!application.source} showEmpty><span>{application.source || "Direct"}</span></ProfileTreeRow>
       <ProfileTreeRow label="Email" icon={<Mail className="h-3.5 w-3.5" />} hasValue showEmpty><span className="capitalize">{application.confirmationEmailStatus}</span></ProfileTreeRow>
-      <ProfileTreeRow label="Applied" icon={<Clock className="h-3.5 w-3.5" />} hasValue showEmpty><span>{formatDateTime(application.createdAt)}</span></ProfileTreeRow>
+      <ProfileTreeRow label="Applied" icon={<Clock className="h-3.5 w-3.5" />} hasValue showEmpty><span>{formatDateTimeInTimezone(application.createdAt, timezone, { year: "numeric" })}</span></ProfileTreeRow>
       <ProfileTreeRow label="Status" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty expandedContent={<div className="flex flex-wrap gap-2">{WAITLIST_STATUS_OPTIONS.map((status) => <Button key={status} size="sm" variant={application.status === status ? "default" : "outline"} disabled={!canWrite || mutation.isPending || application.status === status} onClick={() => mutation.mutate(status)} className="capitalize">{status}</Button>)}</div>}><span className="capitalize">{application.status}</span></ProfileTreeRow>
     </div>
   </div>;
 }
 
 function UserDetail({ user, availablePermissions, canWrite, draft, onDraftChange, onBack }: { user: AdminUserRow; availablePermissions: string[]; canWrite: boolean; draft: Set<string>; onDraftChange: (next: Set<string>) => void; onBack: () => void }) {
+  const { timezone } = useTimezone();
   const { toast } = useToast();
   const [revokingSid, setRevokingSid] = useState<string | null>(null);
   const sessionsQueryKey = ["/api/auth/users", user.id, "sessions"] as const;
@@ -427,7 +420,7 @@ function UserDetail({ user, availablePermissions, canWrite, draft, onDraftChange
           <span className={user.identityIncomplete ? "text-destructive" : "text-muted-foreground"}>{user.identityIncomplete ? "Incomplete" : "Ready"}</span>
         </ProfileTreeRow>
         <ProfileTreeRow label="Status" icon={<User className="h-3.5 w-3.5" />} hasValue showEmpty><span className={user.presence.length > 0 ? "text-foreground" : "text-muted-foreground"}>{user.presence.length > 0 ? "Active" : "Inactive"}</span></ProfileTreeRow>
-        <ProfileTreeRow label="Last Active" icon={<Clock className="h-3.5 w-3.5" />} hasValue={!!user.lastActiveAt} showEmpty><span className={user.lastActiveAt ? "text-foreground" : "text-muted-foreground"}>{formatDateTime(user.lastActiveAt)}</span></ProfileTreeRow>
+        <ProfileTreeRow label="Last Active" icon={<Clock className="h-3.5 w-3.5" />} hasValue={!!user.lastActiveAt} showEmpty><span className={user.lastActiveAt ? "text-foreground" : "text-muted-foreground"}>{user.lastActiveAt ? formatDateTimeInTimezone(user.lastActiveAt, timezone, { year: "numeric" }) : "No activity yet"}</span></ProfileTreeRow>
         <ProfileTreeRow label="Connections" icon={<Globe2 className="h-3.5 w-3.5" />} hasValue={user.presence.length > 0} showEmpty><UserPresence presence={user.presence} showLabels /></ProfileTreeRow>
         <ProfileTreeRow label="Role" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span className="capitalize text-foreground">{user.role}</span></ProfileTreeRow>
         <ProfileTreeRow label="Joined" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-foreground">{created}</span></ProfileTreeRow>
