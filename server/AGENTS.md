@@ -1,5 +1,9 @@
 # Authority
 
+## Browser worklet CSP boundary
+
+`server/index.ts` owns the global browser Content Security Policy. `worker-src` is the modern worker boundary; `child-src` must carry the same `'self' blob:` sources because older WebKit applies that compatibility directive to AudioWorklet modules. Do not widen either directive independently or add remote worklet origins; ElevenLabs' generated modules remain limited to same-origin/blob execution.
+
 ## Domain provider transport boundary
 
 `server/integrations/provider-http.ts` owns the shared resource ceiling for fixed-origin domain provider adapters: it composes caller cancellation with a real request deadline and caps untrusted error-response bytes before adapters inspect or retain them. Provider adapters still own credentials, endpoint allowlists, schemas, status semantics, idempotency, retries, and degraded outcomes; the transport helper never retries mutations or turns ambiguous timeout into success. New direct provider `fetch` calls must name why this boundary cannot express their transport contract.

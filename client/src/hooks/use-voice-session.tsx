@@ -331,6 +331,9 @@ function classifyStartFailure(err: unknown, ctx: { signedUrlReceived: boolean })
   const msg = err.message || "";
   const lower = msg.toLowerCase();
 
+  if (name === "SecurityError" && /content security policy|\bcsp\b/i.test(msg)) {
+    return { reason: "audio_worklet_csp", message: "Voice audio could not load in this browser. Refresh Mantra and try again." };
+  }
   if (name === "NotAllowedError" || name === "PermissionDeniedError" || /permission denied|not allowed|microphone access/i.test(msg)) {
     return { reason: "mic_permission", message: "Microphone is blocked. Allow microphone access in your browser settings and try again." };
   }
