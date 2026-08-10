@@ -69,6 +69,7 @@ export async function convergeBootSchema(): Promise<void> {
         const { ensureMilestonesSchema } = await import("./milestone-schema");
         const { ensureMetricsDefinitionsSchema } = await import("./metrics-storage");
         const { ensureBusinessPlansSchema } = await import("./business-plan-storage");
+        const { ensureConversationSchema } = await import("./conversation-schema");
         const { ensurePermissionSchema } = await import("./permissions");
         const { ensureMeetingAudioRetentionSchema } = await import("./meeting/audio-retention-schema");
         await migrateOpportunitySchema();
@@ -76,6 +77,7 @@ export async function convergeBootSchema(): Promise<void> {
         await ensureMilestonesSchema(pool);
         await ensureMetricsDefinitionsSchema();
         await ensureBusinessPlansSchema();
+        await ensureConversationSchema(pool);
         await ensurePermissionSchema();
         await ensureMeetingAudioRetentionSchema();
         await ensureWorkVaultSchema(pool);
