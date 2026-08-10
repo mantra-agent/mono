@@ -276,6 +276,32 @@ function compositionMatchesCommit(composition: string, committed: string): boole
 
 const WS_OPEN_TIMEOUT_MS = 10_000;
 
+function buildBrowserVoiceStartOptions(input: {
+  signedUrl: string;
+  overrides: Record<string, unknown>;
+  sessionId?: string;
+  chatSessionId?: string | null;
+  callbacks: Record<string, unknown>;
+}): Parameters<typeof Conversation.startSession>[0] {
+  // The SDK owns and may normalize the object tree passed to startSession.
+  // Give every attempt fresh mutable containers; never expose our retained
+  // override/identity objects to browser- or SDK-specific mutation.
+  const customLlmExtraBody: Record<string, string> = {};
+  if (input.sessionId) customLlmExtraBody.sessionId = input.sessionId;
+  if (input.chatSessionId) customLlmExtraBody.chatSessionId = input.chatSessionId;
+
+  return {
+    signedUrl: input.signedUrl,
+    connectionType: "websocket",
+    overrides: structuredClone(input.overrides),
+    customLlmExtraBody,
+    dynamicVariables: input.chatSessionId
+      ? { chat_session_id: input.chatSessionId }
+      : undefined,
+    ...input.callbacks,
+  } as Parameters<typeof Conversation.startSession>[0];
+}
+
 interface StartFailureClassification {
   reason: string;
   message: string;
@@ -1313,25 +1339,12 @@ export function VoiceSessionProvider({
     // ---------------------------------------------------------------
     // Browser path — use ElevenLabs SDK directly (unchanged)
     // ---------------------------------------------------------------
-    return Conversation.startSession({
+    return Conversation.startSession(buildBrowserVoiceStartOptions({
       signedUrl,
-      connectionType: "websocket",
       overrides: overridesPayload,
-      customLlmExtraBody: {
-        sessionId: overrideOpts?.sessionId,
-        chatSessionId: overrideOpts?.chatSessionId,
-      },
-      // Plumb the active chat session into ElevenLabs so its native LLM
-      // can substitute `{{chat_session_id}}` into per-tool request_headers
-      // (`X-Chat-Session-Id`). Without this, the v3 webhook never knows
-      // which chat the tool call belongs to and `recordV3ToolCall` drops
-      // every record silently — the user's session window then shows no
-      // tools even though Sonnet successfully called them. Only relevant
-      // for v3 (custom LLM paths use customLlmExtraBody instead), but
-      // sending it for all engines is harmless.
-      dynamicVariables: overrideOpts?.chatSessionId
-        ? { chat_session_id: overrideOpts.chatSessionId }
-        : undefined,
+      sessionId: overrideOpts?.sessionId,
+      chatSessionId: overrideOpts?.chatSessionId,
+      callbacks: {
       onConnect: () => {
         const elapsed = Date.now() - sessionStartTs;
         connectionEstablishedAtRef.current = Date.now();
@@ -1474,7 +1487,8 @@ export function VoiceSessionProvider({
           setActiveVoiceToolCount(0);
         }
       },
-    });
+      },
+    }));
   }, [isNative, toast, phoneDiag, startUIRefresh, handleVoiceDisconnect, handleVoiceError, handleUserTranscript, attemptReconnect, emitVoiceDiag]);
 
   const connectSession = useCallback(async (isReconnect: boolean = false): Promise<boolean> => {
@@ -1614,6 +1628,27 @@ export function VoiceSessionProvider({
           elapsedMs,
           signedUrlReceived,
         }, { critical: true });
+        const failedVoiceSessionId = voiceSessionIdRef.current;
+        const failedChatSessionId = chatConversationIdRef.current;
+        if (failedVoiceSessionId && failedChatSessionId) {
+          try {
+            const cleanupResponse = await fetch("/api/voice/sessions/start-failed", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({
+                sessionId: failedVoiceSessionId,
+                chatSessionId: failedChatSessionId,
+                reason: classification.reason,
+              }),
+            });
+            if (!cleanupResponse.ok) {
+              throw new Error(`voice_start_compensation_http_${cleanupResponse.status}`);
+            }
+          } catch (cleanupError: unknown) {
+            log.warn("VOICE:START_FAILURE_COMPENSATION_FAILED", toBoundedLogError(cleanupError));
+          }
+        }
 
         startFailureMessageRef.current = classification.message;
 

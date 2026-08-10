@@ -1,3 +1,10 @@
+<!-- 2026-08-10 iPhone voice startup compensation boundary:
+- Assets/data: authenticated voice session identity, conversation ownership, microphone-session lifecycle.
+- Boundary/flow: a browser that received a completed voice lease but whose SDK startup throws may request compensation using exact session + chat IDs.
+- Abuse case (STRIDE: spoofing/tampering; agentic cross-user action): an untrusted client guesses another session ID and attempts to terminate its voice lease.
+- Deterministic controls/owner: requireAuth plus storage-owned owner_user_id/account_id/scope/chat/session predicates under the conversation advisory lock; only an active caller-owned lease transitions to abandoned; repeated calls are idempotent; reason text is bounded and grants no authority. Owner: Voice storage boundary.
+- Finding/outcome: repaired — the former process-map diagnostic cleanup could miss a lease when SDK startup failed before callbacks; exact principal-scoped durable compensation now closes it. Residual risk: provider/browser startup defects can still prevent a call, but cannot retain another principal's lease or block the caller's next start.
+-->
 <!-- 2026-08-10 ordinary composer vs privileged gateway boundary:
 - Assets/data: authenticated Session creation and message content; system executor process status.
 - Boundaries/flows: ordinary authenticated browser -> Session message endpoints; system:read browser -> /api/gateway/status.

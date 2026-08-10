@@ -985,6 +985,23 @@ export async function registerVoiceSessionRoutes(app: Express) {
     }
   });
 
+  app.post("/api/voice/sessions/start-failed", requireAuth, async (req, res) => {
+    const sessionId = typeof req.body?.sessionId === "string" ? req.body.sessionId.trim() : "";
+    const chatSessionId = typeof req.body?.chatSessionId === "string" ? req.body.chatSessionId.trim() : "";
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.slice(0, 80) : "unknown";
+    if (!sessionId || !chatSessionId || !req.principal) {
+      return res.status(400).json({ error: "sessionId and chatSessionId are required" });
+    }
+    const outcome = await storage.abandonOwnedVoiceSession(sessionId, chatSessionId, req.principal);
+    if (outcome === "not_owned") {
+      return res.status(404).json({ error: "Voice session not found" });
+    }
+    const { endVoiceSession } = await import("../voice-llm");
+    endVoiceSession(sessionId, `client_start_failed:${reason}`);
+    voiceLog.warn(`client startup compensation outcome=${outcome} sessionId=${sessionId} chatSessionId=${chatSessionId} reason=${reason}`);
+    return res.json({ ok: true, outcome });
+  });
+
   app.post("/api/voice/sessions/save", requireAuth, async (req, res) => {
     try {
       const transcript = Array.isArray(req.body.transcript) ? req.body.transcript : [];

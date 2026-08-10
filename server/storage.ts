@@ -175,6 +175,11 @@ export interface IStorage {
     chatSessionId: string,
     principal: Principal,
   ): Promise<"completed" | "already_complete" | "superseded" | "not_completable">;
+  abandonOwnedVoiceSession(
+    sessionId: string,
+    chatSessionId: string,
+    principal: Principal,
+  ): Promise<"abandoned" | "already_terminal" | "not_owned">;
   updateVoiceSessionInflight(sessionId: string, inflightTurn: number, bootId: string): Promise<void>;
   clearVoiceSessionInflight(sessionId: string, bootId: string): Promise<void>;
   abandonExpiredVoiceSessions(staleBefore: Date): Promise<VoiceSessionActive[]>;
@@ -1248,6 +1253,43 @@ export class HybridStorage implements IStorage {
           eq(voiceSessionActive.accountId, principal.accountId),
         ));
       return "completed";
+    });
+  }
+
+  async abandonOwnedVoiceSession(
+    sessionId: string,
+    chatSessionId: string,
+    principal: Principal,
+  ): Promise<"abandoned" | "already_terminal" | "not_owned"> {
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+      return "not_owned";
+    }
+    return db.transaction(async (tx) => {
+      const lockKey = fnv1a32(`${principal.accountId}:${chatSessionId}`);
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${0x56535452}::int4, ${lockKey}::int4)`);
+      const [lease] = await tx.select({ status: voiceSessionActive.status })
+        .from(voiceSessionActive)
+        .where(and(
+          eq(voiceSessionActive.sessionId, sessionId),
+          eq(voiceSessionActive.chatSessionId, chatSessionId),
+          eq(voiceSessionActive.scope, "user"),
+          eq(voiceSessionActive.ownerUserId, principal.userId),
+          eq(voiceSessionActive.accountId, principal.accountId),
+        ))
+        .limit(1);
+      if (!lease) return "not_owned";
+      if (lease.status !== "active") return "already_terminal";
+      await tx.update(voiceSessionActive)
+        .set({ status: "abandoned", endedAt: new Date(), inflightTurn: 0 })
+        .where(and(
+          eq(voiceSessionActive.sessionId, sessionId),
+          eq(voiceSessionActive.chatSessionId, chatSessionId),
+          eq(voiceSessionActive.status, "active"),
+          eq(voiceSessionActive.scope, "user"),
+          eq(voiceSessionActive.ownerUserId, principal.userId),
+          eq(voiceSessionActive.accountId, principal.accountId),
+        ));
+      return "abandoned";
     });
   }
 

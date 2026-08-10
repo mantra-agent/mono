@@ -410,6 +410,8 @@ Real-time voice database work uses the reserved `voice` lane. Install it before 
 6. Client plays connection chime on connect (`client/src/lib/voice-chime.ts`)
 7. User speaks first (no canned greeting)
 
+If browser SDK startup throws after the server completes the durable start lease, the authenticated client compensates through the exact session + chat identity. The storage-owned transition is principal-scoped and idempotent: it marks only the caller-owned active lease abandoned and tears down the matching process-local voice session so retry cannot be blocked by `duplicate_start`.
+
 ### CLI Pre-Warming
 - `preWarmVoiceCli(opts)` — spawns CLI subprocess with delegating tool handlers during voice start
 - `claimVoiceWarmHandle(sessionId, toolExecutor)` — claimed on first custom-LLM callback, binds real tool executor
