@@ -12,6 +12,7 @@ import {
   resolveGmailAccountId,
   type GmailSubHandler,
 } from "./tools/handlers/gmail-boundary";
+import { createGmailReadHandlers } from "./tools/handlers/gmail-read";
 import { isSimilarText } from "./utils/text-similarity";
 import { safeStringify } from "./utils/safe-stringify";
 import { eventBus } from "./event-bus";
@@ -262,24 +263,6 @@ const peopleSubHandlers: Record<string, (args: Record<string, any>) => Promise<T
   ...peopleImportHandlers,
 };
 
-async function handleGmailStatus(): Promise<ToolHandlerResult> {
-  const { listGmailAccounts, getAccountScopes, isConnectorConnected } = await import("./gmail");
-  const accounts = await listGmailAccounts();
-  const connector = await isConnectorConnected();
-  if (accounts.length === 0 && !connector) {
-    return { result: "Gmail: not connected — no accounts linked" };
-  }
-  const parts: string[] = [];
-  for (const a of accounts) {
-    const scopes = await getAccountScopes(a.id);
-    const caps = [scopes.hasGmailRead ? "read" : null, scopes.hasSend ? "send" : null, scopes.hasDraft ? "draft" : null].filter(Boolean).join("+");
-    parts.push(`${a.email} (${a.label || a.id}${caps ? ", " + caps : ""})`);
-  }
-  let msg = `Gmail: ${accounts.length} account${accounts.length !== 1 ? "s" : ""} connected — ${parts.join(", ")}`;
-  if (connector) msg += " | external connector also available";
-  return { result: msg };
-}
-
 interface GmailHeader {
   name: string;
   value: string;
@@ -410,36 +393,6 @@ function formatListErrors(errors: string[], fallbackMessage: string, expectData 
   return { result: fallbackMessage, ...(expectData ? { error: true } : {}) };
 }
 
-async function handleGmailSearch(args: Record<string, any>): Promise<ToolHandlerResult> {
-  const permCheck = await checkGmailPermission(args.account, "gmailRead", "read emails");
-  if (permCheck.denied) return permCheck.result;
-
-  const { getMessage, listGmailAccounts } = await import("./gmail");
-  const query = args.query;
-  if (!query) return { result: "Missing search query", error: true };
-  const maxResults = args.maxResults || 10;
-
-  const accounts = await listGmailAccounts();
-  if (accounts.length === 0) return { result: "No Gmail accounts connected. Add a Gmail account in Settings → Connections.", error: true };
-  const resolvedAccountId = permCheck.resolvedAccountId || await resolveGmailAccountId(args.account);
-  const targets = resolveTargetAccounts(resolvedAccountId, accounts);
-  if (targets.length === 0) return { result: `Gmail account "${args.account}" not found in connected accounts.`, error: true };
-
-  const { stubs, errors } = await listMessagesMultiAccount(query, maxResults, targets, "search");
-  if (stubs.length === 0) return formatListErrors(errors, `No emails found for "${query}" across all accounts`);
-
-  const lines: string[] = [];
-  for (const stub of stubs) {
-    try {
-      const msg = await getMessage(stub.id, 'metadata', stub.acctId);
-      lines.push(formatMessageLine(msg as any, stub.id, stub.acctId, targets.length > 1 ? stub.acctLabel : undefined));
-    } catch (err) {
-      lines.push(`- [ERROR] Message ${stub.id}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  return { result: `Found ${lines.length} emails:\n${lines.join("\n")}` };
-}
-
 function findTextBody(payload: GmailMessagePayload | undefined): string {
   if (!payload) return '';
   if (payload.mimeType === 'text/plain' && payload.body?.data) {
@@ -477,77 +430,6 @@ function findAttachments(payload: GmailMessagePayload | undefined): GmailAttachm
   }
   if (payload.parts) payload.parts.forEach(walk);
   return attachments;
-}
-
-async function handleGmailRead(args: Record<string, any>): Promise<ToolHandlerResult> {
-  const permCheck = await checkGmailPermission(args.account, "gmailRead", "read emails");
-  if (permCheck.denied) return permCheck.result;
-
-  const { getMessage, listGmailAccounts } = await import("./gmail");
-  const id = args.id;
-  if (!id) return { result: "Missing message id", error: true };
-  const readAccountId = permCheck.resolvedAccountId || await resolveGmailAccountId(args.account);
-
-  let msg: any = null;
-  if (readAccountId) {
-    msg = await getMessage(id, 'full', readAccountId);
-  } else {
-    const accts = await listGmailAccounts();
-    for (const acct of accts) {
-      try {
-        msg = await getMessage(id, 'full', acct.id);
-        break;
-      } catch (err) { toolExec.debug("gmail read account fallback", acct.id, err); }
-    }
-    if (!msg) return { result: `Message ${id} not found in any connected account`, error: true };
-  }
-
-  const { from, subject, date } = extractHeaders(msg!);
-
-  let body = findTextBody(msg!.payload);
-  if (!body && msg!.payload?.body?.data) {
-    body = Buffer.from(msg!.payload.body.data, 'base64').toString('utf-8');
-  }
-
-  const attachments = findAttachments(msg!.payload);
-  let result = `**${subject}**\nFrom: ${from}\nDate: ${date}\n\n${body}`;
-  if (attachments.length > 0) {
-    result += `\n\n**Attachments (${attachments.length}):**`;
-    for (const att of attachments) {
-      const sizeKB = Math.round(att.size / 1024);
-      result += `\n- ${att.filename} (${att.mimeType}, ${sizeKB}KB) [attachmentId:${att.attachmentId}]`;
-    }
-    result += `\n\nUse action "download_attachment" with the message id, attachmentId, and account to download.`;
-  }
-  return { result };
-}
-
-async function handleGmailRecent(args: Record<string, any>): Promise<ToolHandlerResult> {
-  const permCheck = await checkGmailPermission(args.account, "gmailRead", "read emails");
-  if (permCheck.denied) return permCheck.result;
-
-  const { getMessage, listGmailAccounts } = await import("./gmail");
-  const maxResults = args.maxResults || 5;
-
-  const accounts = await listGmailAccounts();
-  if (accounts.length === 0) return { result: "No Gmail accounts connected. Add a Gmail account in Settings → Connections.", error: true };
-  const resolvedAccountId = permCheck.resolvedAccountId || await resolveGmailAccountId(args.account);
-  const targets = resolveTargetAccounts(resolvedAccountId, accounts);
-  if (targets.length === 0) return { result: `Gmail account "${args.account}" not found in connected accounts.`, error: true };
-
-  const { stubs, errors } = await listMessagesMultiAccount(undefined, maxResults, targets, "recent");
-  if (stubs.length === 0) return formatListErrors(errors, "No recent emails found across any account");
-
-  const lines: string[] = [];
-  for (const stub of stubs) {
-    try {
-      const msg = await getMessage(stub.id, 'metadata', stub.acctId);
-      lines.push(formatMessageLine(msg as any, stub.id, stub.acctId, targets.length > 1 ? stub.acctLabel : undefined));
-    } catch (err) {
-      lines.push(`- [ERROR] Message ${stub.id}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  return { result: `${lines.length} recent emails:\n${lines.join("\n")}` };
 }
 
 function optionalDraftText(value: unknown): string | undefined {
@@ -1644,15 +1526,23 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
   return { result: `Unknown cache_action "${subAction}". Use "get_untriaged", "mark_triaged", "get_unenriched", "store_enrichment", "search", "sync_status", "pipeline_counts", "get_message", "diagnose", or "run_downstream".`, error: true };
 }
 
+const gmailReadHandlers = createGmailReadHandlers({
+  resolveTargetAccounts,
+  listMessagesMultiAccount,
+  formatListErrors,
+  formatMessageLine,
+  extractHeaders,
+  findTextBody,
+  findAttachments,
+  logReadFallback: (accountId, error) => toolExec.debug("gmail read account fallback", accountId, error),
+});
+
 const gmailSubHandlers: Record<string, GmailSubHandler> = {
-  status: handleGmailStatus,
-  search: handleGmailSearch,
-  read: handleGmailRead,
+  ...gmailReadHandlers,
   batch_read: handleGmailBatchRead,
   draft: handleGmailDraft,
   reply: handleGmailReply,
   update_draft: handleGmailDraftUpdate,
-  recent: handleGmailRecent,
   download_attachment: handleGmailDownloadAttachment,
   triage_log: handleGmailTriageLog,
   email_cache: handleGmailEmailCache,
