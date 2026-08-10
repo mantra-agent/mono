@@ -1012,10 +1012,37 @@ export function ConversationSidebar({
     return [...byId.values()];
   }, [isSearching, sessions, pastSearchQuery.data, snoozeSearchQuery.data, archiveSearchQuery.data]);
 
-  const vaultVisibleSessions = useMemo(
-    () => searchCorpus.filter((session) => Boolean(session.vaultId && visibleVaultIdSet.has(session.vaultId))),
-    [searchCorpus, visibleVaultIdSet],
-  );
+  const vaultVisibleSessions = useMemo(() => {
+    const sessionsById = new Map(searchCorpus.map((session) => [session.id, session]));
+    const suppressedByHiddenAncestor = new Map<string, boolean>();
+
+    const hasHiddenAncestor = (session: ChatSession, visiting = new Set<string>()): boolean => {
+      const cached = suppressedByHiddenAncestor.get(session.id);
+      if (cached !== undefined) return cached;
+      if (!session.parentSessionId || visiting.has(session.id)) return false;
+
+      const parent = sessionsById.get(session.parentSessionId);
+      if (!parent) return false;
+      if (!parent.vaultId || !visibleVaultIdSet.has(parent.vaultId)) {
+        suppressedByHiddenAncestor.set(session.id, true);
+        return true;
+      }
+
+      visiting.add(session.id);
+      const suppressed = hasHiddenAncestor(parent, visiting);
+      visiting.delete(session.id);
+      suppressedByHiddenAncestor.set(session.id, suppressed);
+      return suppressed;
+    };
+
+    return searchCorpus.filter((session) =>
+      Boolean(
+        session.vaultId
+        && visibleVaultIdSet.has(session.vaultId)
+        && !hasHiddenAncestor(session),
+      ),
+    );
+  }, [searchCorpus, visibleVaultIdSet]);
 
   const sessionsWithChildCounts = useMemo(() => {
     const visibleIds = new Set(vaultVisibleSessions.map(s => s.id));
