@@ -218,7 +218,7 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
           </CollapsibleTrigger>
           <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
             <DropdownMenuTrigger asChild>
-              <button type="button" className="ml-1 min-h-11 min-w-11 shrink-0 rounded opacity-0 hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100" aria-label={`Actions for ${item.title}`} onClick={(event) => event.stopPropagation()}>
+              <button type="button" className="ml-1 shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100" aria-label={`Actions for ${item.title}`} onClick={(event) => event.stopPropagation()}>
                 <MoreHorizontal className="mx-auto h-3.5 w-3.5 text-muted-foreground" />
               </button>
             </DropdownMenuTrigger>
