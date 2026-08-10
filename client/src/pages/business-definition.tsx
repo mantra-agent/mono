@@ -1,8 +1,17 @@
+import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Building2, ChevronDown, Loader2, Plus, Shield } from "lucide-react";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
@@ -203,13 +212,78 @@ function DefinitionEditor({ business }: { business: BusinessDefinition }) {
   );
 }
 
+function NewBusinessAction({ onCreated }: { onCreated: (business: BusinessDefinition) => void }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [publicName, setPublicName] = useState("");
+  const create = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/business/definition", { publicName: publicName.trim() });
+      return response.json() as Promise<BusinessDefinition>;
+    },
+    onSuccess: async (business) => {
+      await queryClient.invalidateQueries({ queryKey: BUSINESS_QUERY_KEY });
+      onCreated(business);
+      setPublicName("");
+      setOpen(false);
+      toast({ title: `${business.publicName} created` });
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Failed to create Business",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    },
+  });
+
+  return (
+    <>
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 rounded-md bg-cta px-2 py-1.5 text-sm font-medium text-cta-foreground transition-colors hover:bg-cta/90"
+        onClick={() => setOpen(true)}
+        data-testid="button-new-business"
+      >
+        <Plus className="h-3.5 w-3.5" />
+        <span>New Business</span>
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Business</DialogTitle>
+            <DialogDescription>Create the Business first, then define its identity and narrative.</DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={publicName}
+            onChange={(event) => setPublicName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && publicName.trim() && !create.isPending) create.mutate();
+            }}
+            placeholder="Business name"
+            aria-label="Business name"
+            data-testid="input-new-business-name"
+          />
+          <DialogFooter>
+            <Button onClick={() => create.mutate()} disabled={!publicName.trim() || create.isPending}>
+              {create.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Create Business
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 export default function BusinessDefinitionPage() {
   const { businesses, selectedId, setSelectedId, selected, isLoading } = useSelectedBusiness();
 
   return (
     <div className="p-4">
       <BusinessPageHeader
-        page="Identity"
+        page="Definition"
         businesses={businesses}
         selectedId={selectedId}
         onSelect={setSelectedId}
@@ -219,10 +293,14 @@ export default function BusinessDefinitionPage() {
           <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading businesses…
         </div>
       ) : selected ? (
-        <DefinitionEditor business={selected} />
+        <>
+          <NewBusinessAction onCreated={(business) => setSelectedId(business.id)} />
+          <DefinitionEditor business={selected} />
+        </>
       ) : (
-        <div className="px-2 py-16 text-center text-sm text-muted-foreground">
-          Create a Business to define its identity, values, vision, and mission.
+        <div className="space-y-2 py-2">
+          <NewBusinessAction onCreated={(business) => setSelectedId(business.id)} />
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">No Businesses yet.</div>
         </div>
       )}
     </div>
