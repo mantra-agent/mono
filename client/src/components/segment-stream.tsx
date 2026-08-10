@@ -41,14 +41,15 @@ export function filterStepsByLayer(
   layer: VisibilityLayer,
   isActiveSession?: boolean,
 ): ExecutionStep[] {
-  if (layer === 4) return steps;
-
   return steps.filter((step) => {
+    if (step.type === "system" && step.systemStepName === "session_compaction") {
+      return step.status === "active" || step.status === "error";
+    }
+
+    if (layer === 4) return true;
     if (step.type === "compacting") return false;
 
     if (step.type === "system") {
-      if (step.systemStepName === "session_compaction")
-        return step.status === "active" || step.status === "error";
       if (step.systemStepName === "working_context_compression")
         return layer >= 1;
       if (step.systemStepName === "compaction") return layer >= 1;
