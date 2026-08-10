@@ -3,6 +3,7 @@ import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 import { Check, ChevronLeft, ChevronRight, Circle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { useIsMobileViewport } from "@/hooks/use-mobile"
 import {
   Drawer,
   DrawerContent,
@@ -13,15 +14,14 @@ import {
 /**
  * Modality-aware DropdownMenu.
  *
- * Desktop renders the raw Radix dropdown exactly as before — zero behavioral
- * change. On mobile (native app WebView or viewport < breakpoint) the same
- * declared Radix child tree is reinterpreted as a full-width bottom-sheet with
- * drill-in navigation for submenus, so every existing call site becomes a
- * proper touch surface without changing its markup.
+ * Desktop renders the raw Radix dropdown exactly as before. On mobile the same
+ * declared child tree is presented as an inset picker-style panel with drill-in
+ * navigation. This preserves one action hierarchy without forcing desktop
+ * flyout geometry or action-sheet chrome onto a touch viewport.
  */
 
 const MOBILE_ROW_CLASS =
-  "relative flex h-11 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0"
+  "relative flex h-9 w-full items-center gap-2 rounded-sm px-2.5 text-left text-sm font-medium outline-none transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0"
 
 // ---------------------------------------------------------------------------
 // Child-tree helpers (mobile)
@@ -249,7 +249,7 @@ function MobileMenuLevel({
         <div className="border-b border-border/40 p-1">
           <button
             type="button"
-            className="flex h-11 w-full min-w-0 items-center gap-2 rounded-md px-2.5 text-sm font-medium outline-none transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-9 w-full min-w-0 items-center gap-2 rounded-sm px-2.5 text-sm font-medium outline-none transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
             onClick={back}
           >
             <ChevronLeft className="h-3.5 w-3.5 shrink-0" />
@@ -300,11 +300,14 @@ function MobileDropdownRoot({
   const contentChildren = (content?.props as { children?: React.ReactNode } | undefined)?.children
 
   return (
-    <Drawer open={open} onOpenChange={setOpen}>
+    <Drawer open={open} onOpenChange={setOpen} shouldScaleBackground={false}>
       <DrawerTrigger asChild={triggerProps.asChild ?? true}>
         {triggerProps.children}
       </DrawerTrigger>
-      <DrawerContent className="!inset-x-2 !bottom-[max(0.5rem,env(safe-area-inset-bottom))] w-auto max-h-[70dvh] overflow-hidden rounded-xl border border-border/60 bg-popover text-popover-foreground shadow-2xl [&>div:first-child]:mt-2 [&>div:first-child]:h-1 [&>div:first-child]:w-9">
+      <DrawerContent
+        overlayClassName="bg-transparent"
+        className="!inset-x-4 !bottom-[calc(var(--bottom-bar-height,0px)+max(0.5rem,env(safe-area-inset-bottom)))] w-auto max-h-[min(70dvh,28rem)] overflow-hidden rounded-md border border-border bg-background text-foreground shadow-none [&>div:first-child]:hidden"
+      >
         <MobileMenuLevel
           contentChildren={contentChildren}
           path={path}
@@ -316,7 +319,12 @@ function MobileDropdownRoot({
   )
 }
 
-const DropdownMenu = DropdownMenuPrimitive.Root
+function DropdownMenu(props: DropdownMenuPrimitive.DropdownMenuProps) {
+  const isMobileViewport = useIsMobileViewport()
+  if (isMobileViewport) return <MobileDropdownRoot {...props} />
+  return <DropdownMenuPrimitive.Root {...props} />
+}
+DropdownMenu.displayName = "DropdownMenu"
 
 const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger
 

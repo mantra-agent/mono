@@ -469,9 +469,9 @@ Chat is an explicit exception. Its Mantra mark and conversation prompt are part 
 
 - **MUST use the canonical `DropdownMenu` primitive** from `client/src/components/ui/dropdown-menu.tsx` for action menus. Do not create a local menu, render raw Radix dropdown primitives, or introduce a parallel responsive-menu component.
 - Declare one action hierarchy with `DropdownMenuTrigger`, `DropdownMenuContent`, `DropdownMenuItem`, and the canonical nested/group variants. The primitive owns presentation by modality; consumers must not branch on viewport or native-app state.
-- Use one nested disclosure model at every width: selecting a nested row replaces the current menu body and exposes Back.
-- Every viewport presents that model in the same compact collision-aware anchored popover. Mobile must not substitute a drawer, bottom sheet, or other modal surface; container or viewport width may constrain placement and overflow, never change menu identity.
-- Mobile rows remain one compact 44px line with quiet 14px icons. The content-sized popup stays anchored to its trigger, inset within viewport edges, and bounded for overflow. It must feel like the Universal Picker—not a navigation slab.
+- Nested actions drill into the current menu body and expose Back on mobile; desktop retains conventional pointer-friendly flyout submenus.
+- Mobile action menus use the Universal Picker's visual grammar: an inset black panel, thin border, small radius, no handle, no heavy shadow, and bounded overflow. They must not render as desktop flyouts or action sheets.
+- Mobile rows use the Universal Picker's dense single-line rhythm with quiet 14px icons and full-width selected states. The panel aligns to the interaction area rather than sizing itself like a desktop trigger popup.
 - Keyboard access, visible focus, disabled semantics, dismissal, and focus return are mandatory.
 - The Design screen's **Responsive action menus** playground is the canonical visual and interaction example. Any change to action-menu behavior must update that example and this section together.
 - The same compact grammar governs menus, selectors, and action/selection popovers: content-sized surfaces, `p-1` framing, compact single-line rows, quiet 14px icons, restrained radius and shadow, and bounded overflow. Explicit picker width may grow for search/results; task dialogs, workflow modals, tooltips, and hover cards are separate patterns and must not be compressed into this grammar.
