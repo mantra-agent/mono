@@ -73,6 +73,7 @@ const DesignPage = lazyWithRetry(() => import("@/pages/design"));
 const PeoplePage = lazyWithRetry(() => import("@/pages/people"));
 const MeetingsPage = lazyWithRetry(() => import("@/pages/meetings"));
 const CompaniesPage = lazyWithRetry(() => import("@/pages/companies"));
+const BusinessDefinitionPage = lazyWithRetry(() => import("@/pages/business-definition"));
 const BusinessModelPage = lazyWithRetry(() => import("@/pages/business-model"));
 const BusinessAdvantagePage = lazyWithRetry(() => import("@/pages/business-advantage"));
 const BusinessKpisPage = lazyWithRetry(() => import("@/pages/business-kpis"));
@@ -328,6 +329,7 @@ function Router() {
         </Route>
         <Route path="/companies/:id" component={CompaniesPage} />
         <Route path="/companies" component={CompaniesPage} />
+        <Route path="/business/definition">{() => <RequirePermission permission="system:read"><BusinessDefinitionPage /></RequirePermission>}</Route>
         <Route path="/business/model">{() => <RequirePermission permission="system:read"><BusinessModelPage /></RequirePermission>}</Route>
         <Route path="/business/advantage" component={BusinessAdvantagePage} />
         <Route path="/business/roles">{() => <RequirePermission permission="system:read"><JobRolesPage /></RequirePermission>}</Route>
