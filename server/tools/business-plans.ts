@@ -339,7 +339,7 @@ async function handleKpiAction(action: string, args: Record<string, unknown>) {
 
 async function handleMetricAction(action: string, args: Record<string, unknown>) {
   if (action === "list_metrics") {
-    const metrics = await metricsStorage.list(optionalStr(args, "query"));
+    const metrics = await metricsStorage.list(optionalStr(args, "query"), optionalStr(args, "businessId"));
     return { result: safeStringify({ total: metrics.length, metrics: metrics.map(metricResult) }, { label: "bridge.business.metrics.list" }) };
   }
   if (action === "get_metric") {
@@ -350,7 +350,10 @@ async function handleMetricAction(action: string, args: Record<string, unknown>)
   if (action === "create_metric") {
     const name = requiredStr(args, "name");
     if (!name) return { result: "business.create_metric requires name", error: true };
+    const businessId = requiredStr(args, "businessId");
+    if (!businessId) return { result: "business.create_metric requires businessId", error: true };
     const metric = await metricsStorage.create({
+      businessId,
       name,
       slug: optionalStr(args, "slug"),
       description: optionalStr(args, "description"),
@@ -366,6 +369,7 @@ async function handleMetricAction(action: string, args: Record<string, unknown>)
     const metricId = requiredStr(args, "metricId");
     if (!metricId) return { result: "business.update_metric requires metricId", error: true };
     const metric = await metricsStorage.update(metricId, {
+      businessId: optionalStr(args, "businessId"),
       name: optionalStr(args, "name"),
       description: optionalStr(args, "description"),
       unit: optionalStr(args, "unit"),
@@ -387,7 +391,9 @@ async function handleMetricAction(action: string, args: Record<string, unknown>)
     const start = requiredStr(args, "start");
     const end = requiredStr(args, "end");
     if (!start || !end) return { result: `business.${action} requires start and end`, error: true };
-    const sample = await metricsStorage.sampleRange(new Date(start), new Date(end));
+    const businessId = requiredStr(args, "businessId");
+    if (!businessId) return { result: "business.sample_range requires businessId", error: true };
+    const sample = await metricsStorage.sampleRange(businessId, new Date(start), new Date(end));
     return { result: safeStringify(sample, { label: `bridge.business.metrics.${action}` }) };
   }
   if (action === "list_samples") {

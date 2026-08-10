@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import { createLogger } from "./log";
 import { ensureMetricsSamplesSchema, metricsDb } from "./metrics-db";
 import { enqueueTelemetryWrite } from "./telemetry-write";
-import { ensureInternalAccountMetrics, upsertInternalPeriodSample } from "./metrics-storage";
+import { ensureInternalBusinessMetrics, upsertInternalPeriodSample } from "./metrics-storage";
 
 const log = createLogger("HoursUsed");
 export const USAGE_LEASE_TAIL_MS = 45_000;
@@ -153,7 +153,7 @@ function validateUsageRange(start: Date, end: Date): void {
   }
 }
 
-export async function sampleUsageRange(accountId: string, start: Date, end: Date): Promise<UsageRangeSample> {
+export async function sampleUsageRange(accountId: string | null, start: Date, end: Date): Promise<UsageRangeSample> {
   validateUsageRange(start, end);
   await ensureHoursUsedSchema();
   const rows = await metricsDb.execute(sql`
@@ -167,7 +167,7 @@ export async function sampleUsageRange(accountId: string, start: Date, end: Date
         connected_at,
         COALESCE(disconnected_at, last_seen_at + (${USAGE_LEASE_TAIL_MS} * interval '1 millisecond')) AS effective_end
       FROM hours_used_intervals
-      WHERE account_id = ${accountId}
+      WHERE (${accountId}::text IS NULL OR account_id = ${accountId})
         AND connected_at < ${end}
         AND COALESCE(disconnected_at, last_seen_at + (${USAGE_LEASE_TAIL_MS} * interval '1 millisecond')) > ${start}
     ), merged AS (
@@ -234,47 +234,45 @@ async function rollupCompletedHours(now = new Date()): Promise<void> {
   `);
 
   const dailyRows = await metricsDb.execute(sql`
-    SELECT account_id, period_start, period_end, seconds_used
+    SELECT ${dayStart}::timestamptz AS period_start, ${dayEnd}::timestamptz AS period_end,
+      COALESCE(sum(seconds_used), 0) AS seconds_used
     FROM hours_used_rollups
     WHERE period_kind = 'day' AND period_start = ${dayStart}
-    LIMIT 1000
   `);
   const days = (Array.isArray(dailyRows) ? dailyRows : (dailyRows as unknown as { rows?: unknown[] }).rows ?? []) as Array<{
-    account_id: string; period_start: Date; period_end: Date; seconds_used: number;
+    period_start: Date; period_end: Date; seconds_used: number;
   }>;
-  for (const day of days) {
-    const metric = (await ensureInternalAccountMetrics(day.account_id, USAGE_METRIC_DEFINITIONS)).get("hours-used");
-    if (!metric) continue;
-    await upsertInternalPeriodSample({
-      id: `msamp_hours_used_${day.account_id}_${dayStart.toISOString().slice(0, 10)}`,
-      metricId: metric.id,
-      accountId: day.account_id,
-      ownerUserId: metric.ownerUserId,
-      vaultId: metric.vaultId,
-      value: Number(day.seconds_used) / 3600,
-      unit: "hours",
-      observedAt: day.period_end,
-      sourceRef: "internal/hours-used-v1",
-      evidence: "Union of canonical authenticated client-presence intervals per user.",
-      periodStart: day.period_start,
-      periodEnd: day.period_end,
-    });
-  }
+  const metric = (await ensureInternalBusinessMetrics("Mantra", USAGE_METRIC_DEFINITIONS)).get("hours-used");
+  if (metric) await metricsDb.execute(sql`
+    DELETE FROM metric_samples
+    WHERE source_ref = 'internal/hours-used-v1' AND metric_id <> ${metric.id}
+  `);
+  const day = days[0];
+  if (metric && day) await upsertInternalPeriodSample({
+    id: `msamp_hours_used_${metric.businessId}_${dayStart.toISOString().slice(0, 10)}`,
+    metricId: metric.id,
+    accountId: metric.accountId,
+    ownerUserId: metric.ownerUserId,
+    vaultId: metric.vaultId,
+    value: Number(day.seconds_used) / 3600,
+    unit: "hours",
+    observedAt: day.period_end,
+    sourceRef: "internal/hours-used-v2",
+    evidence: "Platform sum of authenticated connected time, unioned per user across tabs and devices.",
+    periodStart: day.period_start,
+    periodEnd: day.period_end,
+  });
 
   const currentDayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const provisionalRows = await metricsDb.execute(sql`
-    SELECT account_id,
-      COALESCE(SUM(EXTRACT(EPOCH FROM (upper(merged) - lower(merged)))), 0) AS seconds_used
+    SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (upper(merged) - lower(merged)))), 0) AS seconds_used
     FROM (
       SELECT account_id, user_id, unnest(range_agg(span)) AS merged
       FROM (
         SELECT account_id, user_id,
           tstzrange(
             GREATEST(connected_at, ${currentDayStart}),
-            LEAST(
-              COALESCE(disconnected_at, last_seen_at + (${USAGE_LEASE_TAIL_MS} * interval '1 millisecond')),
-              ${now}
-            ),
+            LEAST(COALESCE(disconnected_at, last_seen_at + (${USAGE_LEASE_TAIL_MS} * interval '1 millisecond')), ${now}),
             '[)'
           ) AS span
         FROM hours_used_intervals
@@ -284,33 +282,25 @@ async function rollupCompletedHours(now = new Date()): Promise<void> {
       WHERE NOT isempty(span)
       GROUP BY account_id, user_id
     ) unions
-    GROUP BY account_id
-    LIMIT 1000
   `);
   const provisional = (Array.isArray(provisionalRows)
     ? provisionalRows
-    : (provisionalRows as unknown as { rows?: unknown[] }).rows ?? []) as Array<{
-      account_id: string;
-      seconds_used: number;
-    }>;
-  for (const day of provisional) {
-    const metric = (await ensureInternalAccountMetrics(day.account_id, USAGE_METRIC_DEFINITIONS)).get("hours-used");
-    if (!metric) continue;
-    await upsertInternalPeriodSample({
-      id: `msamp_hours_used_${day.account_id}_${currentDayStart.toISOString().slice(0, 10)}`,
-      metricId: metric.id,
-      accountId: day.account_id,
-      ownerUserId: metric.ownerUserId,
-      vaultId: metric.vaultId,
-      value: Number(day.seconds_used) / 3600,
-      unit: "hours",
-      observedAt: now,
-      sourceRef: "internal/hours-used-v1",
-      evidence: "Provisional current UTC day; union of canonical authenticated client-presence intervals per user.",
-      periodStart: currentDayStart,
-      periodEnd: now,
-    });
-  }
+    : (provisionalRows as unknown as { rows?: unknown[] }).rows ?? []) as Array<{ seconds_used: number }>;
+  const currentMetric = (await ensureInternalBusinessMetrics("Mantra", USAGE_METRIC_DEFINITIONS)).get("hours-used");
+  if (currentMetric) await upsertInternalPeriodSample({
+    id: `msamp_hours_used_${currentMetric.businessId}_${currentDayStart.toISOString().slice(0, 10)}`,
+    metricId: currentMetric.id,
+    accountId: currentMetric.accountId,
+    ownerUserId: currentMetric.ownerUserId,
+    vaultId: currentMetric.vaultId,
+    value: Number(provisional[0]?.seconds_used ?? 0) / 3600,
+    unit: "hours",
+    observedAt: now,
+    sourceRef: "internal/hours-used-v2",
+    evidence: "Provisional platform total for the current UTC day; authenticated connected time unioned per user.",
+    periodStart: currentDayStart,
+    periodEnd: now,
+  });
 
   await metricsDb.execute(sql`
     DELETE FROM hours_used_intervals

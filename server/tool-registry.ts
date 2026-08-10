@@ -534,7 +534,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         end: { type: "string", description: "Exclusive ISO range end for sample_range/sample_usage; cannot be future or more than 400 days after start" },
         limit: { type: "number", description: "Max rows for list_samples (default 50, max 500)" },
         clearFields: { type: "array", items: { type: "string" }, description: "Explicit fields to clear on update_kpi/update_metric (e.g. description, targetLabel, standingObjectiveKey, bullThreshold)" },
-        businessId: { type: "string", description: "Business entity ID (required for get_business/update_business/archive_business and business-vault actions)" },
+        businessId: { type: "string", description: "Business entity ID (required for Business-entity actions and create_metric; optional filter for list_metrics and reassignment for update_metric)" },
         publicName: { type: "string", description: "Business display/brand name (create_business/update_business)" },
         entityName: { type: "string", description: "Business legal entity name (create_business/update_business)" },
         valuesPageId: { type: "string", description: "Library page ID for the Business Values narrative (create_business/update_business)" },

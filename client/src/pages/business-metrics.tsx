@@ -43,6 +43,8 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { BusinessSelector } from "@/components/business/business-selector";
+import { useSelectedBusiness } from "@/hooks/use-selected-business";
 
 interface MetricsResponse {
   metrics: Metric[];
@@ -128,7 +130,7 @@ function RecordSampleForm({ metric }: { metric: Metric }) {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/business/metrics"] });
+      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/business/metrics") });
       queryClient.invalidateQueries({ queryKey: ["/api/business/kpis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/business/kpis/standing-scores"] });
       toast({ title: "Sample recorded", description: `${metric.name} updated.` });
@@ -239,7 +241,7 @@ function MetricTreeRow({
   );
 }
 
-function CreateMetricDialog() {
+function CreateMetricDialog({ businessId }: { businessId: string }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -251,6 +253,7 @@ function CreateMetricDialog() {
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/business/metrics", {
+        businessId,
         name: name.trim(),
         unit: unit.trim(),
         direction,
@@ -261,7 +264,7 @@ function CreateMetricDialog() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/business/metrics"] });
+      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/business/metrics") });
       toast({ title: "Metric created", description: name });
       setOpen(false);
       setName("");
@@ -328,11 +331,16 @@ function CreateMetricDialog() {
 
 export default function BusinessMetricsPage() {
   const { toast } = useToast();
+  const { businesses, selectedId, setSelectedId, selected } = useSelectedBusiness();
   const [query, setQuery] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Metric | null>(null);
 
+  const metricsUrl = selectedId
+    ? `/api/business/metrics?businessId=${encodeURIComponent(selectedId)}`
+    : "/api/business/metrics";
   const { data, isLoading } = useQuery<MetricsResponse>({
-    queryKey: ["/api/business/metrics"],
+    queryKey: [metricsUrl],
+    enabled: Boolean(selectedId),
   });
   const usageDayStart = useMemo(() => {
     const now = new Date();
@@ -342,10 +350,11 @@ export default function BusinessMetricsPage() {
     queryKey: ["/api/business/metrics/range-sample", usageDayStart],
     queryFn: async () => {
       const end = new Date().toISOString();
-      const url = `/api/business/metrics/range-sample?start=${encodeURIComponent(usageDayStart)}&end=${encodeURIComponent(end)}`;
+      const url = `/api/business/metrics/range-sample?businessId=${encodeURIComponent(selectedId ?? "")}&start=${encodeURIComponent(usageDayStart)}&end=${encodeURIComponent(end)}`;
       const response = await apiRequest("GET", url);
       return response.json();
     },
+    enabled: Boolean(selectedId && selected?.publicName.toLowerCase() === "mantra"),
     refetchInterval: 60_000,
   });
 
@@ -355,7 +364,7 @@ export default function BusinessMetricsPage() {
       return res.json();
     },
     onSuccess: (_result, metric) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/business/metrics"] });
+      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/business/metrics") });
       queryClient.invalidateQueries({ queryKey: ["/api/business/kpis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/business/kpis/standing-scores"] });
       toast({ title: "Metric deleted", description: metric.name });
@@ -389,6 +398,9 @@ export default function BusinessMetricsPage() {
 
   return (
     <div className="p-4">
+      <div className="pb-4">
+        <BusinessSelector businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} />
+      </div>
       <div className={HIERARCHY_TREE_STACK_CLASS}>
         <HierarchySearchInput
           value={query}
@@ -397,7 +409,7 @@ export default function BusinessMetricsPage() {
           clearTestId="button-clear-metrics-search"
           ariaLabel="Search metrics"
         />
-        <CreateMetricDialog />
+        {selectedId ? <CreateMetricDialog businessId={selectedId} /> : null}
       </div>
 
       {usage ? (

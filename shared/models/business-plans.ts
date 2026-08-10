@@ -1,11 +1,13 @@
 import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { vaults } from "./vaults";
+import { businesses } from "./businesses";
 
 export const businessPlans = pgTable(
   "business_plans",
   {
     id: text("id").primaryKey(),
+    businessId: text("business_id").references(() => businesses.id, { onDelete: "restrict" }),
     name: text("name").notNull(),
     // Null until the user assigns a thematic goal through the Business Plan UI.
     thematicGoalId: text("thematic_goal_id"),
@@ -22,6 +24,7 @@ export const businessPlans = pgTable(
   (table) => [
     index("idx_business_plans_owner").on(table.ownerUserId, table.accountId),
     index("idx_business_plans_vault").on(table.vaultId),
+    index("idx_business_plans_business").on(table.businessId),
   ],
 );
 

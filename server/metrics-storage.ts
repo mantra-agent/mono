@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "crypto";
 import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
-import { metrics, kpis, metricSamples } from "@shared/schema";
+import { businesses, metrics, kpis, metricSamples } from "@shared/schema";
 import {
   kpiCreateSchema,
   kpiUpdateSchema,
@@ -36,6 +36,7 @@ import {
 } from "./scoped-storage";
 import { getCurrentPrincipal } from "./principal-context";
 import { eventBus } from "./event-bus";
+import { visibleBusinessPredicate, writableBusinessPredicate } from "./business-vault-access";
 
 const metricScope: ScopeColumns = {
   scope: metrics.scope,
@@ -72,6 +73,7 @@ function toIso(value: Date | string | null | undefined): string | null {
 function mapMetric(row: typeof metrics.$inferSelect, latestSample?: MetricSample | null): Metric {
   return {
     id: row.id,
+    businessId: row.businessId ?? null,
     name: row.name,
     slug: row.slug,
     description: row.description ?? "",
@@ -153,18 +155,18 @@ function mapKpi(
   };
 }
 
-async function latestSampleFor(metricId: string, accountId: string): Promise<MetricSample | null> {
+async function latestSampleFor(metricId: string): Promise<MetricSample | null> {
   await ensureMetricsSamplesSchema();
   const [row] = await metricsDb
     .select()
     .from(metricSamples)
-    .where(and(eq(metricSamples.metricId, metricId), eq(metricSamples.accountId, accountId)))
+    .where(eq(metricSamples.metricId, metricId))
     .orderBy(desc(metricSamples.observedAt))
     .limit(1);
   return row ? mapSample(row) : null;
 }
 
-export interface InternalAccountMetricDefinition {
+export interface InternalBusinessMetricDefinition {
   key: string;
   name: string;
   unit: string;
@@ -173,49 +175,45 @@ export interface InternalAccountMetricDefinition {
   samplePeriod?: "point" | "daily" | "weekly" | "monthly" | "custom";
 }
 
-export interface InternalAccountMetricRef {
+export interface InternalBusinessMetricRef {
   id: string;
+  businessId: string;
+  accountId: string;
   ownerUserId: string;
   vaultId: string | null;
 }
 
-/**
- * Provision the internal, user-scoped metric rows for a personal account, one per
- * definition, and return a slug → { id, ownerUserId, vaultId } map for the ones that exist.
- * Idempotent: existing metrics (matched by account + slug) are never overwritten. Shared by
- * every internal self-computing adapter (Hours Used, User Memory, …) so per-account metric
- * provisioning has a single source of truth.
+/** Provision one internal series per Business and slug. Internal adapters may
+ * aggregate private source rows, but only this Business-owned series is exposed.
  */
-export async function ensureInternalAccountMetrics(
-  accountId: string,
-  definitions: readonly InternalAccountMetricDefinition[],
-): Promise<Map<string, InternalAccountMetricRef>> {
-  const accountRows = await db.execute(sql`
-    SELECT a.owner_user_id, u.active_vault_id
-    FROM accounts a
-    JOIN users u ON u.id = a.owner_user_id
-    WHERE a.id = ${accountId} AND a.kind = 'personal'
+export async function ensureInternalBusinessMetrics(
+  publicName: string,
+  definitions: readonly InternalBusinessMetricDefinition[],
+): Promise<Map<string, InternalBusinessMetricRef>> {
+  const businessRows = await db.execute(sql`
+    SELECT b.id AS business_id, b.owner_user_id, b.account_id, min(bvm.vault_id) AS vault_id
+    FROM businesses b
+    JOIN business_vault_memberships bvm ON bvm.business_id = b.id
+    WHERE lower(b.public_name) = lower(${publicName}) AND b.status = 'active'
+    GROUP BY b.id, b.owner_user_id, b.account_id
+    ORDER BY b.created_at
     LIMIT 1
   `);
-  const rows = Array.isArray(accountRows) ? accountRows : (accountRows as unknown as { rows?: unknown[] }).rows ?? [];
-  const owner = rows[0] as { owner_user_id?: string; active_vault_id?: string | null } | undefined;
-  if (!owner?.owner_user_id) return new Map();
+  const rows = Array.isArray(businessRows) ? businessRows : (businessRows as unknown as { rows?: unknown[] }).rows ?? [];
+  const owner = rows[0] as { business_id?: string; owner_user_id?: string; account_id?: string; vault_id?: string | null } | undefined;
+  if (!owner?.business_id || !owner.owner_user_id || !owner.account_id) return new Map();
 
   for (const definition of definitions) {
-    const id = `metric_${definition.key.replace(/-/g, "_")}_${accountId}`;
-    const direction = definition.direction ?? "higher_is_better";
-    const samplePeriod = definition.samplePeriod ?? "custom";
+    const id = `metric_${definition.key.replace(/-/g, "_")}_${owner.business_id}`;
     await db.execute(sql`
       INSERT INTO metrics (
-        id, name, slug, description, unit, direction, sample_period, adapter_kind,
+        id, business_id, name, slug, description, unit, direction, sample_period, adapter_kind,
         adapter_config, status, scope, owner_user_id, account_id, vault_id, created_by_user_id
-      )
-      SELECT
-        ${id}, ${definition.name}, ${definition.key}, ${definition.description}, ${definition.unit},
-        ${direction}, ${samplePeriod}, 'internal', ${JSON.stringify({ key: definition.key })}::jsonb,
-        'active', 'user', ${owner.owner_user_id}, ${accountId}, ${owner.active_vault_id ?? null}, ${owner.owner_user_id}
-      WHERE NOT EXISTS (
-        SELECT 1 FROM metrics WHERE account_id = ${accountId} AND slug = ${definition.key}
+      ) VALUES (
+        ${id}, ${owner.business_id}, ${definition.name}, ${definition.key}, ${definition.description}, ${definition.unit},
+        ${definition.direction ?? "higher_is_better"}, ${definition.samplePeriod ?? "custom"}, 'internal',
+        ${JSON.stringify({ key: definition.key })}::jsonb, 'active', 'user', ${owner.owner_user_id},
+        ${owner.account_id}, ${owner.vault_id ?? null}, ${owner.owner_user_id}
       )
       ON CONFLICT DO NOTHING
     `);
@@ -224,14 +222,15 @@ export async function ensureInternalAccountMetrics(
   const slugs = definitions.map((definition) => definition.key);
   const metricRows = await db.select({
     id: metrics.id,
+    businessId: metrics.businessId,
+    accountId: metrics.accountId,
     slug: metrics.slug,
     ownerUserId: metrics.ownerUserId,
     vaultId: metrics.vaultId,
-  }).from(metrics)
-    .where(and(eq(metrics.accountId, accountId), inArray(metrics.slug, slugs)));
+  }).from(metrics).where(and(eq(metrics.businessId, owner.business_id), inArray(metrics.slug, slugs)));
 
-  return new Map(metricRows.flatMap((metric) => metric.ownerUserId
-    ? [[metric.slug, { id: metric.id, ownerUserId: metric.ownerUserId, vaultId: metric.vaultId }]]
+  return new Map(metricRows.flatMap((metric) => metric.ownerUserId && metric.businessId && metric.accountId
+    ? [[metric.slug, { id: metric.id, businessId: metric.businessId, accountId: metric.accountId, ownerUserId: metric.ownerUserId, vaultId: metric.vaultId }]]
     : []));
 }
 
@@ -294,42 +293,39 @@ export async function upsertInternalPeriodSample(input: InternalPeriodSampleInpu
 }
 
 export const metricsStorage = {
-  async list(query?: string): Promise<Metric[]> {
+  async list(query?: string, businessId?: string): Promise<Metric[]> {
     const principal = currentPrincipal();
     const needle = query?.trim();
-    const filter = needle
-      ? or(
-          ilike(metrics.name, `%${needle}%`),
-          ilike(metrics.description, `%${needle}%`),
-          ilike(metrics.slug, `%${needle}%`),
-        )
-      : undefined;
+    const filter = and(
+      businessId ? eq(metrics.businessId, businessId) : undefined,
+      needle ? or(
+        ilike(metrics.name, `%${needle}%`),
+        ilike(metrics.description, `%${needle}%`),
+        ilike(metrics.slug, `%${needle}%`),
+      ) : undefined,
+    );
     const rows = await db
-      .select()
+      .select({ metric: metrics })
       .from(metrics)
-      .where(combineWithVisibleScope(principal, metricScope, filter))
+      .innerJoin(businesses, eq(businesses.id, metrics.businessId))
+      .where(visibleBusinessPredicate(principal, filter))
       .orderBy(asc(metrics.name));
 
     const out: Metric[] = [];
-    for (const row of rows) {
-      const sample = principal.accountId
-        ? await latestSampleFor(row.id, principal.accountId)
-        : null;
-      out.push(mapMetric(row, sample));
-    }
+    for (const { metric } of rows) out.push(mapMetric(metric, await latestSampleFor(metric.id)));
     return out;
   },
 
   async get(id: string): Promise<Metric> {
     const principal = currentPrincipal();
-    const [row] = await db
-      .select()
+    const [result] = await db
+      .select({ metric: metrics })
       .from(metrics)
-      .where(combineWithVisibleScope(principal, metricScope, eq(metrics.id, id)))
+      .innerJoin(businesses, eq(businesses.id, metrics.businessId))
+      .where(visibleBusinessPredicate(principal, eq(metrics.id, id)))
       .limit(1);
-    assertVisible(principal, row, "Metric");
-    const sample = principal.accountId ? await latestSampleFor(row.id, principal.accountId) : null;
-    return mapMetric(row, sample);
+    if (!result?.metric) throw Object.assign(new Error("Metric not found"), { status: 404 });
+    return mapMetric(result.metric, await latestSampleFor(result.metric.id));
   },
 
   async create(input: MetricCreate): Promise<Metric> {
@@ -338,11 +334,16 @@ export const metricsStorage = {
     const slug = parsed.slug?.trim() || slugifyMetricName(parsed.name);
     const id = newId("metric");
     const ownership = ownedInsertValues(principal, metricScope);
+    if (!parsed.businessId) throw Object.assign(new Error("businessId is required"), { status: 400 });
+    const [target] = await db.select({ id: businesses.id }).from(businesses)
+      .where(writableBusinessPredicate(principal, eq(businesses.id, parsed.businessId))).limit(1);
+    if (!target) throw Object.assign(new Error("Business not found or not writable"), { status: 404 });
     const [row] = await db
       .insert(metrics)
       .values({
         id,
         ...ownership,
+        businessId: parsed.businessId,
         createdByUserId: principal.userId,
         name: parsed.name,
         slug,
@@ -371,13 +372,18 @@ export const metricsStorage = {
     }
     if (Object.keys(patch).length <= 1) return existing;
 
+    if (rest.businessId) {
+      const [target] = await db.select({ id: businesses.id }).from(businesses)
+        .where(writableBusinessPredicate(principal, eq(businesses.id, rest.businessId))).limit(1);
+      if (!target) throw Object.assign(new Error("Business not found or not writable"), { status: 404 });
+    }
     const [row] = await db
       .update(metrics)
       .set(patch)
       .where(combineWithWritableScope(principal, metricScope, eq(metrics.id, id)))
       .returning();
     assertWritable(principal, row, "Metric");
-    const sample = principal.accountId ? await latestSampleFor(row.id, principal.accountId) : null;
+    const sample = await latestSampleFor(row.id);
     return mapMetric(row, sample);
   },
 
@@ -401,23 +407,23 @@ export const metricsStorage = {
     const rows = await metricsDb
       .select()
       .from(metricSamples)
-      .where(
-        and(
-          eq(metricSamples.metricId, metric.id),
-          eq(metricSamples.accountId, principal.accountId),
-        ),
-      )
+      .where(eq(metricSamples.metricId, metric.id))
       .orderBy(desc(metricSamples.observedAt))
       .limit(Math.min(Math.max(limit, 1), 500));
     return rows.map(mapSample);
   },
 
-  async sampleRange(start: Date, end: Date): Promise<UsageRangeSample & WorkRangeSample & IdentityRangeSample & {
+  async sampleRange(businessId: string, start: Date, end: Date): Promise<UsageRangeSample & WorkRangeSample & IdentityRangeSample & {
     coverage: { status: "provisional" | "finalized"; finalizesAt: string };
   }> {
     const principal = currentPrincipal();
-    if (!principal.accountId) {
-      throw Object.assign(new Error("Account required"), { status: 400 });
+    const [business] = await db.select({ id: businesses.id, publicName: businesses.publicName })
+      .from(businesses)
+      .where(visibleBusinessPredicate(principal, eq(businesses.id, businessId)))
+      .limit(1);
+    if (!business) throw Object.assign(new Error("Business not found"), { status: 404 });
+    if (business.publicName.toLowerCase() !== "mantra") {
+      throw Object.assign(new Error("This Business has no internal current-range adapter"), { status: 409 });
     }
     const [{ sampleUsageRange }, { sampleWorkRange }, { sampleIdentityRange }] = await Promise.all([
       import("./hours-used"),
@@ -425,7 +431,7 @@ export const metricsStorage = {
       import("./identity-metrics"),
     ]);
     const [usage, work, identity] = await Promise.all([
-      sampleUsageRange(principal.accountId, start, end),
+      sampleUsageRange(null, start, end),
       sampleWorkRange(start, end),
       sampleIdentityRange(start, end),
     ]);
@@ -722,6 +728,7 @@ export async function ensureMetricsDefinitionsSchema(): Promise<void> {
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS metrics (
       id text PRIMARY KEY,
+      business_id text REFERENCES businesses(id) ON DELETE RESTRICT,
       name text NOT NULL,
       slug text NOT NULL,
       description text NOT NULL DEFAULT '',
@@ -740,6 +747,7 @@ export async function ensureMetricsDefinitionsSchema(): Promise<void> {
       updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  await db.execute(sql`ALTER TABLE metrics ADD COLUMN IF NOT EXISTS business_id text REFERENCES businesses(id) ON DELETE RESTRICT`);
   await db.execute(sql`DROP INDEX IF EXISTS metrics_account_slug_uidx`);
   // Expression unique index so NULL vault_id cannot stack duplicate slugs
   // (plain UNIQUE treats each NULL as distinct in PostgreSQL).
@@ -747,6 +755,22 @@ export async function ensureMetricsDefinitionsSchema(): Promise<void> {
   await db.execute(
     sql`CREATE UNIQUE INDEX IF NOT EXISTS metrics_account_vault_slug_uidx ON metrics(account_id, COALESCE(vault_id, ''), slug)`,
   );
+  await db.execute(sql`
+    UPDATE metrics m SET business_id = b.id
+    FROM businesses b
+    WHERE m.business_id IS NULL
+      AND m.account_id = b.account_id
+      AND lower(b.public_name) = 'mantra'
+  `);
+  await db.execute(sql`
+    DELETE FROM metrics m
+    USING businesses b
+    WHERE m.business_id IS NULL
+      AND m.account_id <> b.account_id
+      AND lower(b.public_name) = 'mantra'
+      AND m.slug IN ('hours-used', 'active-users', 'current-users', 'user-memory')
+  `);
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS metrics_business_slug_uidx ON metrics(business_id, slug) WHERE business_id IS NOT NULL`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS metrics_account_vault_idx ON metrics(account_id, vault_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS metrics_scope_owner_idx ON metrics(scope, owner_user_id)`);
 
