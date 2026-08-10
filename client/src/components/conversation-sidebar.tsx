@@ -1033,14 +1033,20 @@ export function ConversationSidebar({
   }, [vaultVisibleSessions]);
 
   // Filter: exclude autonomous sessions from main groups (they go to System section)
-  // Also exclude child sessions (shown via tree expansion)
+  // Also exclude child sessions (shown via tree expansion) — except during an
+  // active search, where results render as a flat list and every match must show.
   const filteredConversations = useMemo(() => {
     const queryTokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    const isActiveSearch = queryTokens.length > 0;
     return sessionsWithChildCounts.filter(c => {
-      if (c.parentSessionId && !c.parentMissing && !c.archivedAt && !c.reminder?.active) return false;
+      // Normal mode hides child sessions here because they render nested under
+      // their parent via tree expansion. During an active search the results are
+      // rendered as a flat list, so a matching child whose parent does not match
+      // (and is therefore filtered out) would otherwise never render at all.
+      if (!isActiveSearch && c.parentSessionId && !c.parentMissing && !c.archivedAt && !c.reminder?.active) return false;
       // Exclude autonomous sessions — they go to the System group at the bottom
       if (c.sessionType === "autonomous") return false;
-      if (queryTokens.length > 0) {
+      if (isActiveSearch) {
         const title = (c.title || "").toLowerCase();
         const topicsText = (c.topics || []).join(" ").toLowerCase();
         if (!queryTokens.every(token => title.includes(token) || topicsText.includes(token))) return false;
