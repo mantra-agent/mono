@@ -84,6 +84,8 @@ export const personas = pgTable(
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
+    // Rolling-deployment compatibility only. Persona ownership is user/account-wide;
+    // runtime scope predicates and writes must never use this legacy column.
     vaultId: text("vault_id"),
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
