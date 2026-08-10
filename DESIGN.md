@@ -465,6 +465,13 @@ Chat is an explicit exception. Its Mantra mark and conversation prompt are part 
 - Destructive action: destructive token only when the action is genuinely destructive.
 - Buttons should be short. If a button needs a sentence, the surrounding surface is doing too little.
 
+### Action menus
+
+- Use one shared action hierarchy and one nested disclosure model at every width: selecting a nested row replaces the current menu body and exposes Back.
+- Desktop presents that model in a compact collision-aware anchored popover; mobile presents it in one modal bottom sheet.
+- Mobile rows are at least 44px tall. Sheet content respects viewport overflow and safe areas. Nested floating layers on mobile are prohibited.
+- Keyboard access, visible focus, disabled semantics, dismissal, and focus return are mandatory.
+
 ### Inputs
 
 - Inputs use tokenized border, background, focus ring, and placeholder color.

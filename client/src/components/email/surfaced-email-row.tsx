@@ -2,16 +2,14 @@ import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SimpleFeedItem } from "@shared/models/simple";
 import { createReferenceRef } from "@shared/references";
-import { ChevronRight, Loader2, Mail, MessageSquare, MoreHorizontal, X } from "lucide-react";
+import { CalendarClock, ChevronRight, Clock, Loader2, Mail, MessageSquare, MoreHorizontal, X } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { ReminderPopover } from "@/components/library-reminder";
+  ResponsiveActionMenu,
+  ResponsiveActionMenuItem,
+  ResponsiveActionMenuSeparator,
+  ResponsiveActionMenuSub,
+} from "@/components/ui/responsive-action-menu";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
 import { apiRequest } from "@/lib/queryClient";
@@ -47,6 +45,19 @@ function formatSnoozeTime(date: Date): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function reminderPresets() {
+  return [
+    { label: "In 15 minutes", at: () => Date.now() + 15 * 60 * 1000 },
+    { label: "In 1 hour", at: () => Date.now() + 60 * 60 * 1000 },
+    { label: "In 3 hours", at: () => Date.now() + 3 * 60 * 60 * 1000 },
+    { label: "Tomorrow morning", at: () => { const date = new Date(); date.setDate(date.getDate() + 1); date.setHours(9, 0, 0, 0); return date.getTime(); } },
+    { label: "In two days", at: () => { const date = new Date(); date.setDate(date.getDate() + 2); date.setHours(9, 0, 0, 0); return date.getTime(); } },
+    { label: "Next week", at: () => { const date = new Date(); date.setDate(date.getDate() + 7); date.setHours(9, 0, 0, 0); return date.getTime(); } },
+    { label: "In two weeks", at: () => { const date = new Date(); date.setDate(date.getDate() + 14); date.setHours(9, 0, 0, 0); return date.getTime(); } },
+    { label: "Next month", at: () => { const date = new Date(); date.setMonth(date.getMonth() + 1); date.setHours(9, 0, 0, 0); return date.getTime(); } },
+  ];
 }
 
 export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
@@ -207,30 +218,40 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
           <CollapsibleTrigger type="button" className="ml-1 shrink-0 rounded p-0.5 hover:bg-accent/60" aria-label={`${open ? "Collapse" : "Expand"} ${item.title}`} onClick={(event) => event.stopPropagation()}>
             <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-90")} />
           </CollapsibleTrigger>
-          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
-            <DropdownMenuTrigger asChild>
-              <button type="button" className="ml-1 shrink-0 rounded p-0.5 opacity-0 hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100" aria-label={`Actions for ${item.title}`} onClick={(e) => e.stopPropagation()}>
-                <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+          <ResponsiveActionMenu
+            open={menuOpen}
+            onOpenChange={setMenuOpen}
+            title={item.title}
+            trigger={(
+              <button type="button" className="ml-1 min-h-11 min-w-11 shrink-0 rounded opacity-0 hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100" aria-label={`Actions for ${item.title}`} onClick={(event) => event.stopPropagation()}>
+                <MoreHorizontal className="mx-auto h-3.5 w-3.5 text-muted-foreground" />
               </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48" onClick={(e) => e.stopPropagation()}>
-              <DropdownMenuItem disabled={discussMutation.isPending} onClick={(e) => { e.stopPropagation(); discussMutation.mutate(); }}>
-                {discussMutation.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <MessageSquare className="mr-2 h-3.5 w-3.5" />}
-                Discuss
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); window.location.href = emailHref; }}>
-                <Mail className="mr-2 h-3.5 w-3.5" />
-                Open in Comms
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <ReminderPopover title={item.title} onSelect={handleSnooze} allowNextBuild={false} />
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); dismiss(); setMenuOpen(false); }} disabled={markDone.isPending || messageIds.length === 0}>
-                <X className="mr-2 h-3.5 w-3.5" />
-                Mark done
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+            )}
+          >
+            <ResponsiveActionMenuItem
+              icon={discussMutation.isPending ? Loader2 : MessageSquare}
+              className={discussMutation.isPending ? "[&_svg]:animate-spin" : undefined}
+              disabled={discussMutation.isPending}
+              onSelect={() => discussMutation.mutate()}
+            >
+              Discuss
+            </ResponsiveActionMenuItem>
+            <ResponsiveActionMenuItem icon={Mail} onSelect={() => { window.location.href = emailHref; }}>
+              Open in Comms
+            </ResponsiveActionMenuItem>
+            <ResponsiveActionMenuSeparator />
+            <ResponsiveActionMenuSub id="reminder" label="Reminder" icon={Clock} disabled={snoozeMutation.isPending}>
+              {reminderPresets().map((preset) => (
+                <ResponsiveActionMenuItem key={preset.label} icon={CalendarClock} onSelect={() => handleSnooze(new Date(preset.at()).toISOString())}>
+                  {preset.label}
+                </ResponsiveActionMenuItem>
+              ))}
+            </ResponsiveActionMenuSub>
+            <ResponsiveActionMenuSeparator />
+            <ResponsiveActionMenuItem icon={X} onSelect={dismiss} disabled={markDone.isPending || messageIds.length === 0}>
+              Mark done
+            </ResponsiveActionMenuItem>
+          </ResponsiveActionMenu>
         </div>
         <CollapsibleContent>
           <div className="pb-2 pl-0 pr-1.5">
