@@ -495,6 +495,7 @@ interface SessionData {
   spawnerTool?: string;
   spawnerSkillRun?: string;
   endReason?: string;
+  childMissionOutcome?: import("@shared/models/chat").ChildMissionTerminalOutcome;
   errorSeverity?: "warning" | "error" | null;
   /** Runtime instance and boot that owns the currently active text-chat turn. */
   activeRuntimeOwner?: string;
@@ -906,6 +907,7 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
     spawnerTool: data.spawnerTool || undefined,
     spawnerSkillRun: data.spawnerSkillRun || undefined,
     endReason: data.endReason || undefined,
+    childMissionOutcome: data.childMissionOutcome || undefined,
     errorSeverity: data.errorSeverity || undefined,
     activeRuntimeOwner: data.activeRuntimeOwner || undefined,
     pageContext: data.pageContext || undefined,
@@ -1240,6 +1242,7 @@ function convToMeta(data: SessionData): FileSession {
     spawnerTool: data.spawnerTool,
     spawnerSkillRun: data.spawnerSkillRun,
     endReason: data.endReason,
+    childMissionOutcome: data.childMissionOutcome,
     errorSeverity: data.errorSeverity || undefined,
     pageContext: data.pageContext,
     gitWriteOverride: data.gitWriteOverride || false,
@@ -1402,6 +1405,7 @@ function docMetadataToSession(doc: {
     spawnerTool: metadataString(meta, "spawnerTool"),
     spawnerSkillRun: metadataString(meta, "spawnerSkillRun"),
     endReason: metadataString(meta, "endReason"),
+    childMissionOutcome: metadataString(meta, "childMissionOutcome") as import("@shared/models/chat").ChildMissionTerminalOutcome | undefined,
     errorSeverity: metadataString(meta, "errorSeverity") as "warning" | "error" | undefined,
     pageContext: meta.pageContext as PageContext | undefined,
     gitWriteOverride: metadataBool(meta, "gitWriteOverride"),
@@ -1703,6 +1707,10 @@ export interface IChatFileStorage {
   ): Promise<void>;
   clearParentSessionId(id: string): Promise<void>;
   setEndReason(id: string, endReason: string): Promise<void>;
+  setChildMissionOutcome(
+    id: string,
+    outcome: import("@shared/models/chat").ChildMissionTerminalOutcome,
+  ): Promise<void>;
   setErrorSeverity(
     id: string,
     severity: "warning" | "error" | null,
@@ -4410,6 +4418,24 @@ export const chatFileStorage: IChatFileStorage = {
       invalidateSessionsCache();
       treeLog.log(
         `end child=${id} parent=${data.parentSessionId || "-"} endReason=${endReason} status=${data.status || "-"}`,
+      );
+    });
+  },
+
+  async setChildMissionOutcome(
+    id: string,
+    outcome: import("@shared/models/chat").ChildMissionTerminalOutcome,
+  ) {
+    return withConvLock(id, async () => {
+      const data = await readConv(id);
+      if (!data) return;
+      if (data.childMissionOutcome === outcome) return;
+      data.childMissionOutcome = outcome;
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      invalidateSessionsCache();
+      treeLog.log(
+        `terminal child=${id} parent=${data.parentSessionId || "-"} outcome=${outcome} status=${data.status || "-"}`,
       );
     });
   },
