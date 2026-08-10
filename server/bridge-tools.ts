@@ -23,6 +23,7 @@ import { strategyStateHandlers } from "./tools/handlers/strategy-state";
 import { strategyMoveMutationHandlers } from "./tools/handlers/strategy-move-mutations";
 import { strategyMoveReadHandlers } from "./tools/handlers/strategy-move-reads";
 import { strategyEvaluationHandlers } from "./tools/handlers/strategy-evaluation";
+import { strategySupportHandlers } from "./tools/handlers/strategy-support";
 export { handleGmailDraftFromReview } from "./tools/handlers/gmail-drafts";
 export { diagnoseGmailBatchRead } from "./tools/handlers/gmail-provider";
 import { isSimilarText } from "./utils/text-similarity";
@@ -461,85 +462,6 @@ const gmailHandler = createGmailHandler(gmailSubHandlers);
 
 const STRATEGY_ACTIONS = "list_scenarios, get_scenario, create_scenario, update_scenario, delete_scenario, list_actors, get_actor, add_actor, update_actor, remove_actor, get_move_tree, get_move, get_move_path, create_move, update_move, delete_move, reparent_move, list_child_moves, list_move_definitions, get_move_definition, create_move_definition, update_move_definition, delete_move_definition, set_actor_states, link_assumption_to_move, unlink_assumption_from_move, list_notes, add_note, update_note, delete_note, list_context, add_context, update_context, delete_context, add_end_condition, list_end_conditions, update_end_condition, delete_end_condition, add_assumption, list_assumptions, update_assumption, delete_assumption, cascade_assumption, list_artifacts, get_artifact, create_artifact, delete_artifact, evaluate_move, list_states, get_state, create_state, update_state, delete_state, set_end_condition_effect";
 
-async function handleStrategyContextList(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const entries = await ss.getContextEntries(goalId);
-  if (entries.length === 0) return { result: "No context entries for this strategy." };
-  const lines = entries.map((e: any) => `- [${e.type}] ${e.content.slice(0, 100)}${e.content.length > 100 ? "..." : ""} (id: ${e.id})`);
-  return { result: `${entries.length} context entries:\n${lines.join("\n")}` };
-}
-
-async function handleStrategyContextAdd(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const content = args.content;
-  if (!content) return { result: "Missing content", error: true };
-  const entry = await ss.createContextEntry({ goalId, type: args.type || "historical", content });
-  return { result: `Context entry added (ID: ${entry.id}, type: ${entry.type})` };
-}
-
-async function handleStrategyContextUpdate(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.id;
-  if (!id) return { result: "Missing context entry id", error: true };
-  const updates: Record<string, any> = {};
-  if (args.content) updates.content = args.content;
-  if (args.type) updates.type = args.type;
-  const entry = await ss.updateContextEntry(id, updates);
-  if (!entry) return { result: `Context entry ${id} not found`, error: true };
-  return { result: `Context entry ${id} updated` };
-}
-
-async function handleStrategyContextDelete(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.id;
-  if (!id) return { result: "Missing context entry id", error: true };
-  const deleted = await ss.deleteContextEntry(id);
-  if (!deleted) return { result: `Context entry ${id} not found`, error: true };
-  return { result: `Context entry ${id} deleted` };
-}
-
-async function handleStrategyListEndConditions(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const conditions = await ss.getEndConditions(goalId);
-  if (conditions.length === 0) return { result: "No end conditions for this strategy." };
-  const lines = conditions.map((c: any) => {
-    const req = c.isRequired ? "[REQUIRED]" : "[OPTIONAL]";
-    const sat = c.isSatisfied ? " [SATISFIED]" : "";
-    return `- ${req}${sat} ${c.description} (id: ${c.id})`;
-  });
-  return { result: `${conditions.length} end conditions:\n${lines.join("\n")}` };
-}
-
-async function handleStrategyAddEndCondition(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const description = args.description;
-  if (!description) return { result: "Missing description", error: true };
-  const condition = await ss.createEndCondition({ goalId, description, isRequired: args.isRequired ?? false, isSatisfied: args.isSatisfied ?? false });
-  return { result: `End condition added (ID: ${condition.id})` };
-}
-
-async function handleStrategyUpdateEndCondition(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.id;
-  if (!id) return { result: "Missing end condition id", error: true };
-  const updates: Record<string, any> = {};
-  if (args.description) updates.description = args.description;
-  if (args.isRequired !== undefined) updates.isRequired = args.isRequired;
-  if (args.isSatisfied !== undefined) updates.isSatisfied = args.isSatisfied;
-  const condition = await ss.updateEndCondition(id, updates);
-  if (!condition) return { result: `End condition ${id} not found`, error: true };
-  return { result: `End condition ${id} updated` };
-}
-
-async function handleStrategyDeleteEndCondition(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.id;
-  if (!id) return { result: "Missing end condition id", error: true };
-  const deleted = await ss.deleteEndCondition(id);
-  if (!deleted) return { result: `End condition ${id} not found`, error: true };
-  return { result: `End condition ${id} deleted` };
-}
-
 async function handleStrategyListAssumptions(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
   if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
@@ -738,18 +660,7 @@ const strategySubHandlers: Record<string, StrategySubHandler> = {
   ...strategyMoveMutationHandlers,
   ...strategyMoveReadHandlers,
   ...strategyEvaluationHandlers,
-  list_notes: handleStrategyContextList,
-  list_context: handleStrategyContextList,
-  add_note: handleStrategyContextAdd,
-  add_context: handleStrategyContextAdd,
-  update_note: handleStrategyContextUpdate,
-  update_context: handleStrategyContextUpdate,
-  delete_note: handleStrategyContextDelete,
-  delete_context: handleStrategyContextDelete,
-  list_end_conditions: handleStrategyListEndConditions,
-  add_end_condition: handleStrategyAddEndCondition,
-  update_end_condition: handleStrategyUpdateEndCondition,
-  delete_end_condition: handleStrategyDeleteEndCondition,
+  ...strategySupportHandlers,
   list_assumptions: handleStrategyListAssumptions,
   add_assumption: handleStrategyAddAssumption,
   update_assumption: handleStrategyUpdateAssumption,
