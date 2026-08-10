@@ -1,3 +1,11 @@
+<!-- 2026-08-09 bootstrap chronology deduplication:
+- Assets/data: principal/account/Vault-scoped S2 Session summaries, Historical Continuity projections, and assembled model context (A01/A03/A07).
+- Flow/boundary: current user Principal -> context spine selection -> HISTORY per visible Vault. The retained `session_output_buffer` remains a principal-scoped bounded REM input and no longer projects into bootstrap.
+- Failure/threat: HISTORY and Recent Sessions independently projected overlapping chronology, wasting bounded context and allowing subtly divergent accounts of the past to condition the model (STRIDE integrity/availability plus agentic context-confusion risk; DATA-01/AGENT-03/OBS-01).
+- Controls/owner: Core Context Assembly removes `memory.recent_sessions` from the spine, resolver registry, context catalog, cache invalidation, and client selector. Core Historical Continuity is the sole bootstrap chronology owner. Existing Principal/Vault predicates on HISTORY and REM reads remain unchanged. Owner: Core Historical Continuity + Context Assembly. Severity: medium integrity/availability. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: REM still uses the compact session buffer as non-authoritative dream seed material; this is intentionally outside bootstrap and does not compete with HISTORY. Revert the section/catalog removal and this record to restore the prior duplicate projection; no schema, data, permission, credential, or provider mutation is involved.
+-->
+
 <!-- 2026-08-09 question-answer submission integrity:
 - Assets/data: authenticated principal-owned Session prompts, selected answers, optional S2 response reasoning, and Decision provenance (A01/A03/A07).
 - Flow/boundary: rendered Question recommendation -> authenticated Session message POST -> canonical prompt/response normalization and validation -> Session persistence and Decision recording. Model-authored recommendation text and browser payload fields remain untrusted and never grant authority.

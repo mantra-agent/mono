@@ -6,7 +6,6 @@ import { estimateTokensFromChars as sharedEstimateTokensFromChars } from "./cont
 import { db, withQueryAttributionAsync, getInFlightStats } from "./db";
 import { getInstanceNameLower } from "@shared/instance-config";
 import { TTLCache } from "./utils/ttl-cache";
-import { sessionOutputBuffer } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
 import { parseReferenceText } from "@shared/reference-parser";
 import { sql, or, and, eq, desc, gte, inArray } from "drizzle-orm";
@@ -21,7 +20,6 @@ import type {
 } from "../shared/context-spine";
 import { getSectionsForCallType, cacheTtlFromFreshness, SPINE_SECTIONS, getBootstrapSectionIds } from "./context-spine-config";
 import { getInstructionGroupBySection } from "./context-instruction-groups";
-import { getRecentSessions } from "./session-output-buffer";
 import { getModelForActivity, getConfig as getJobProfileConfig, ACTIVITY_CHAT, ACTIVITY_VOICE, ACTIVITY_VOICE_GREETING } from "./job-profiles";
 import type { TierId, ActivityId } from "./job-profiles";
 import { getTimezone, getLocalTimeString, formatInTimezone, getDateInTimezone } from "./timezone";
@@ -173,7 +171,6 @@ const INVALIDATION_EVENT_MAP: Record<string, string[]> = {
   "cognition.persona.switched": [
     "world_model.people.self.persona",
   ],
-  "system.session.buffer_written": ["memory.recent_sessions"],
 };
 
 function initSectionCacheInvalidation(): void {
@@ -311,7 +308,6 @@ const sectionResolvers: Record<string, SectionResolver> = {
     return renderHistoryProjection();
   },
   "memory": async () => "",
-  "memory.recent_sessions": resolveRecentSessions,
   "memory.graph": resolveGraphMemory,
   "session_context": resolveSessionContext,
   "thoughts": resolveThoughts,
@@ -455,7 +451,6 @@ export const SECTION_CATALOG: Record<string, { description: string; recommendedF
   "world_model.decisions": { description: "Open strategic decisions", recommendedFor: "strategy, decision-making", tokenCost: "small" },
   "memory": { description: "Memory wrapper (enables all memory sub-sections)", recommendedFor: "conversations", tokenCost: "small" },
   "memory.graph": { description: "Semantically linked vNEXT claims", recommendedFor: "conversations", tokenCost: "medium" },
-  "memory.recent_sessions": { description: "Recent session titles and topics (artifact dedup)", recommendedFor: "conversations", tokenCost: "medium" },
   "session_context": { description: "Current session metadata and history", recommendedFor: "conversations", tokenCost: "medium" },
   "thoughts": { description: "Recent metacognitive observations", recommendedFor: "conversations, reflection", tokenCost: "small" },
   "capabilities.goals_instructions": { description: "Goals mutation instructions", recommendedFor: "planning, review, FTUE, goal updates", tokenCost: "small" },
@@ -1480,45 +1475,6 @@ async function resolveCalendar(): Promise<string> {
   } catch (err: any) {
     log.warn("Calendar on-demand fetch failed:", err.message);
     return "Calendar unavailable.";
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Recent Sessions (episodic output buffer)
-// ---------------------------------------------------------------------------
-async function resolveRecentSessions(): Promise<string> {
-  try {
-    const rows = await getRecentSessions(50);
-
-    if (rows.length === 0) {
-      return "No recent sessions recorded yet — buffer populates as sessions close.";
-    }
-
-    const lines = rows.map((row) => {
-      const d = new Date(row.createdAt);
-      const ts =
-        `${d.getFullYear()}-` +
-        `${String(d.getMonth() + 1).padStart(2, "0")}-` +
-        `${String(d.getDate()).padStart(2, "0")} ` +
-        `${String(d.getHours()).padStart(2, "0")}:` +
-        `${String(d.getMinutes()).padStart(2, "0")}`;
-      const parts: string[] = [
-        `- ${ts} (${row.sessionType}) "${row.title ?? "Untitled"}"`,
-      ];
-      if (row.topics?.length) parts.push(`topics: ${row.topics.join(", ")}`);
-      if (row.pagesCreated?.length) parts.push(`created: ${row.pagesCreated.join(", ")}`);
-      if (row.pagesUpdated?.length) parts.push(`updated: ${row.pagesUpdated.join(", ")}`);
-      if (row.peopleTouched?.length) parts.push(`people: ${row.peopleTouched.join(", ")}`);
-      return parts.join(" | ");
-    });
-
-    return (
-      `_Use this section before creating any artifact — check if it already exists in a recent session._\n\n` +
-      lines.join("\n")
-    );
-  } catch (err: unknown) {
-    log.warn(`resolveRecentSessions failed: ${err instanceof Error ? err.message : String(err)}`);
-    return "";
   }
 }
 
