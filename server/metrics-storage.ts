@@ -186,15 +186,14 @@ export interface InternalBusinessMetricRef {
 /** Provision one internal series per Business and slug. Internal adapters may
  * aggregate private source rows, but only this Business-owned series is exposed.
  */
-export async function ensureInternalBusinessMetrics(
-  publicName: string,
+export async function ensurePlatformBusinessMetrics(
   definitions: readonly InternalBusinessMetricDefinition[],
 ): Promise<Map<string, InternalBusinessMetricRef>> {
   const businessRows = await db.execute(sql`
     SELECT b.id AS business_id, b.owner_user_id, b.account_id, min(bvm.vault_id) AS vault_id
     FROM businesses b
     JOIN business_vault_memberships bvm ON bvm.business_id = b.id
-    WHERE lower(b.public_name) = lower(${publicName}) AND b.status = 'active'
+    WHERE b.is_platform_instrument = true AND b.status = 'active'
     GROUP BY b.id, b.owner_user_id, b.account_id
     ORDER BY b.created_at
     LIMIT 1
@@ -417,12 +416,12 @@ export const metricsStorage = {
     coverage: { status: "provisional" | "finalized"; finalizesAt: string };
   }> {
     const principal = currentPrincipal();
-    const [business] = await db.select({ id: businesses.id, publicName: businesses.publicName })
+    const [business] = await db.select({ id: businesses.id, isPlatformInstrument: businesses.isPlatformInstrument })
       .from(businesses)
       .where(visibleBusinessPredicate(principal, eq(businesses.id, businessId)))
       .limit(1);
     if (!business) throw Object.assign(new Error("Business not found"), { status: 404 });
-    if (business.publicName.toLowerCase() !== "mantra") {
+    if (!business.isPlatformInstrument) {
       throw Object.assign(new Error("This Business has no internal current-range adapter"), { status: 409 });
     }
     const [{ sampleUsageRange }, { sampleWorkRange }, { sampleIdentityRange }] = await Promise.all([
@@ -760,14 +759,14 @@ export async function ensureMetricsDefinitionsSchema(): Promise<void> {
     FROM businesses b
     WHERE m.business_id IS NULL
       AND m.account_id = b.account_id
-      AND lower(b.public_name) = 'mantra'
+      AND b.is_platform_instrument = true
   `);
   await db.execute(sql`
     DELETE FROM metrics m
     USING businesses b
     WHERE m.business_id IS NULL
       AND m.account_id <> b.account_id
-      AND lower(b.public_name) = 'mantra'
+      AND b.is_platform_instrument = true
       AND m.slug IN ('hours-used', 'active-users', 'current-users', 'user-memory')
   `);
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS metrics_business_slug_uidx ON metrics(business_id, slug) WHERE business_id IS NOT NULL`);

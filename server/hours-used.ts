@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import { createLogger } from "./log";
 import { ensureMetricsSamplesSchema, metricsDb } from "./metrics-db";
 import { enqueueTelemetryWrite } from "./telemetry-write";
-import { ensureInternalBusinessMetrics, upsertInternalPeriodSample } from "./metrics-storage";
+import { ensurePlatformBusinessMetrics, upsertInternalPeriodSample } from "./metrics-storage";
 
 const log = createLogger("HoursUsed");
 export const USAGE_LEASE_TAIL_MS = 45_000;
@@ -242,7 +242,7 @@ async function rollupCompletedHours(now = new Date()): Promise<void> {
   const days = (Array.isArray(dailyRows) ? dailyRows : (dailyRows as unknown as { rows?: unknown[] }).rows ?? []) as Array<{
     period_start: Date; period_end: Date; seconds_used: number;
   }>;
-  const metric = (await ensureInternalBusinessMetrics("Mantra", USAGE_METRIC_DEFINITIONS)).get("hours-used");
+  const metric = (await ensurePlatformBusinessMetrics(USAGE_METRIC_DEFINITIONS)).get("hours-used");
   if (metric) await metricsDb.execute(sql`
     DELETE FROM metric_samples
     WHERE source_ref = 'internal/hours-used-v1' AND metric_id <> ${metric.id}
@@ -286,7 +286,7 @@ async function rollupCompletedHours(now = new Date()): Promise<void> {
   const provisional = (Array.isArray(provisionalRows)
     ? provisionalRows
     : (provisionalRows as unknown as { rows?: unknown[] }).rows ?? []) as Array<{ seconds_used: number }>;
-  const currentMetric = (await ensureInternalBusinessMetrics("Mantra", USAGE_METRIC_DEFINITIONS)).get("hours-used");
+  const currentMetric = (await ensurePlatformBusinessMetrics(USAGE_METRIC_DEFINITIONS)).get("hours-used");
   if (currentMetric) await upsertInternalPeriodSample({
     id: `msamp_hours_used_${currentMetric.businessId}_${currentDayStart.toISOString().slice(0, 10)}`,
     metricId: currentMetric.id,

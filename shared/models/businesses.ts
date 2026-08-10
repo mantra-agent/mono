@@ -1,4 +1,5 @@
-import { index, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, index, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { vaults } from "./vaults";
 
@@ -22,6 +23,9 @@ export const businesses = pgTable(
     visionPageId: text("vision_page_id"),
     missionPageId: text("mission_page_id"),
     status: text("status").notNull().default("active"),
+    // Stable capability identity for Mantra's own platform telemetry. Public and
+    // legal names remain presentation and may change without moving adapters.
+    isPlatformInstrument: boolean("is_platform_instrument").notNull().default(false),
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
@@ -32,6 +36,9 @@ export const businesses = pgTable(
   (table) => [
     index("idx_businesses_owner").on(table.ownerUserId, table.accountId),
     index("idx_businesses_scope_owner").on(table.scope, table.ownerUserId),
+    uniqueIndex("businesses_account_platform_instrument_uidx")
+      .on(table.accountId)
+      .where(sql`${table.isPlatformInstrument} = true`),
   ],
 );
 

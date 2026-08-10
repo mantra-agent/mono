@@ -35,6 +35,7 @@ export interface Business {
   visionPageId: string | null;
   missionPageId: string | null;
   status: string;
+  isPlatformInstrument: boolean;
   vaultIds: string[];
   createdAt?: string;
   updatedAt?: string;
@@ -64,6 +65,7 @@ export async function ensureBusinessesSchema(): Promise<void> {
       vision_page_id text,
       mission_page_id text,
       status text NOT NULL DEFAULT 'active',
+      is_platform_instrument boolean NOT NULL DEFAULT false,
       scope text NOT NULL DEFAULT 'user',
       owner_user_id text,
       account_id text,
@@ -72,6 +74,7 @@ export async function ensureBusinessesSchema(): Promise<void> {
       updated_at timestamptz NOT NULL DEFAULT now()
     )
   `);
+  await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS is_platform_instrument boolean NOT NULL DEFAULT false`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_businesses_owner ON businesses(owner_user_id, account_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_businesses_scope_owner ON businesses(scope, owner_user_id)`);
 
@@ -95,13 +98,24 @@ export async function ensureBusinessesSchema(): Promise<void> {
   // identity and conflict guards make this safe across replicas and restarts.
   await db.execute(sql`
     INSERT INTO businesses (
-      id, public_name, status, scope, owner_user_id, account_id, created_by_user_id
+      id, public_name, status, is_platform_instrument, scope, owner_user_id, account_id, created_by_user_id
     )
-    SELECT 'business_mantra_' || substring(md5(v.account_id), 1, 16), 'Mantra', 'active', 'user',
+    SELECT 'business_mantra_' || substring(md5(v.account_id), 1, 16), 'Mantra', 'active', true, 'user',
       a.owner_user_id, v.account_id, a.owner_user_id
     FROM vaults v JOIN accounts a ON a.id = v.account_id
     WHERE v.id = '5097b85a-793b-4811-98e7-95621003eb7a' AND v.is_archived = false
     ON CONFLICT (id) DO NOTHING
+  `);
+  // Existing installs may have renamed this deterministic Business. Identity,
+  // not presentation, owns the platform adapter capability.
+  await db.execute(sql`
+    UPDATE businesses
+    SET is_platform_instrument = true
+    WHERE id = 'business_mantra_' || substring(md5(account_id), 1, 16)
+  `);
+  await db.execute(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS businesses_account_platform_instrument_uidx
+    ON businesses(account_id) WHERE is_platform_instrument = true
   `);
   await db.execute(sql`
     INSERT INTO business_vault_memberships (
@@ -109,7 +123,7 @@ export async function ensureBusinessesSchema(): Promise<void> {
     )
     SELECT b.id, v.id, 'user', b.owner_user_id, b.account_id, b.created_by_user_id
     FROM businesses b JOIN vaults v ON v.account_id = b.account_id
-    WHERE lower(b.public_name) = 'mantra'
+    WHERE b.is_platform_instrument = true
       AND v.id = '5097b85a-793b-4811-98e7-95621003eb7a'
     ON CONFLICT (business_id, vault_id) DO NOTHING
   `);
@@ -125,6 +139,7 @@ function hydrate(row: BusinessRow, vaultIds: string[]): Business {
     visionPageId: row.visionPageId ?? null,
     missionPageId: row.missionPageId ?? null,
     status: row.status,
+    isPlatformInstrument: row.isPlatformInstrument,
     vaultIds,
     createdAt: row.createdAt?.toISOString?.() ?? undefined,
     updatedAt: row.updatedAt?.toISOString?.() ?? undefined,

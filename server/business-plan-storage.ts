@@ -48,7 +48,7 @@ export async function ensureBusinessPlansSchema(): Promise<void> {
     FROM businesses b
     WHERE bp.business_id IS NULL
       AND bp.account_id = b.account_id
-      AND lower(b.public_name) = 'mantra'
+      AND b.is_platform_instrument = true
   `);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_business_plans_owner ON business_plans(owner_user_id, account_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_business_plans_vault ON business_plans(vault_id)`);
