@@ -1,5 +1,5 @@
 // Use createLogger for logging ONLY
-import { eq, notInArray, sql } from "drizzle-orm";
+import { and, eq, notInArray, or, sql } from "drizzle-orm";
 import { db } from "./db";
 import { getSetting, setSetting } from "./system-settings";
 import { peopleImportCandidates } from "@shared/schema";
@@ -825,15 +825,21 @@ export async function searchCandidatesFromDb(options: SearchImportCandidatesOpti
     const id = normalizeEmail(options.candidateId);
     wherePredicate = sql`${ownedPredicate} AND ${peopleImportCandidates.email} = ${id}`;
   } else if (options.query?.trim()) {
-    const pattern = `%${options.query.trim().toLowerCase()}%`;
-    // Match on email column OR name field inside JSONB
-    wherePredicate = sql`${ownedPredicate} AND (
-      ${peopleImportCandidates.email} ILIKE ${pattern}
-      OR lower(${peopleImportCandidates.candidate}->>'name') LIKE ${pattern}
-      OR lower(${peopleImportCandidates.candidate}->>'displayName') LIKE ${pattern}
-      OR lower(${peopleImportCandidates.candidate}->>'givenName') LIKE ${pattern}
-      OR lower(${peopleImportCandidates.candidate}->>'familyName') LIKE ${pattern}
-    )`;
+    const terms = options.query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    // Every search term must match at least one identity field. Treating the
+    // entire query as one substring makes ordinary "name email" lookups
+    // impossible because no single field contains both values.
+    const termPredicates = terms.map(term => {
+      const pattern = `%${term}%`;
+      return or(
+        sql`${peopleImportCandidates.email} ILIKE ${pattern}`,
+        sql`lower(${peopleImportCandidates.candidate}->>'name') LIKE ${pattern}`,
+        sql`lower(${peopleImportCandidates.candidate}->>'displayName') LIKE ${pattern}`,
+        sql`lower(${peopleImportCandidates.candidate}->>'givenName') LIKE ${pattern}`,
+        sql`lower(${peopleImportCandidates.candidate}->>'familyName') LIKE ${pattern}`,
+      );
+    });
+    wherePredicate = sql`${ownedPredicate} AND ${and(...termPredicates)}`;
   } else {
     wherePredicate = ownedPredicate;
   }
