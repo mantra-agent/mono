@@ -1,3 +1,12 @@
+<!-- 2026-08-10 Safari AudioWorklet CSP compatibility repair:
+- Assets/data: authenticated browser execution context and live microphone/audio frames (S3 while in transit through the voice provider path).
+- Flow/boundary: ElevenLabs browser SDK creates a local blob AudioWorklet module -> WebKit evaluates the response CSP -> the worklet processes microphone/playback audio locally.
+- Threats: availability failure when older WebKit applies `child-src` rather than `worker-src`; spoofing/misdiagnosis when the resulting CSP `SecurityError` is presented as a denied microphone permission; script execution exposure if the repair broadens worklet sources beyond the already-approved local blob boundary.
+- Controls/owner: Core Application Platform owns the composition-root CSP. `child-src 'self' blob:` now explicitly mirrors the existing `worker-src 'self' blob:` compatibility boundary; no remote origin, `data:`, `unsafe-eval`, framing origin, device permission, or provider authority is added. The client classifies explicit CSP `SecurityError` before generic “not allowed” microphone text.
+- Evidence: Live iPhone startup reached ElevenLabs `audioWorklet.addModule()` and emitted `SecurityError: Not allowed by CSP`; current policy already allowed blob modules through `worker-src`, while standards define `child-src` as the first fallback and older WebKit behavior requires that compatibility directive explicitly. Production build is the release gate.
+- Severity/owner/SLA/status: high availability, low confidentiality/integrity delta; Core Application Platform; immediate; repaired in source pending build, merge, Live promotion, and iPhone verification. Residual risk: blob worklet execution remains intrinsically broader than same-origin static worklets, but this change does not widen beyond the existing intended worker boundary.
+-->
+
 <!-- 2026-08-10 admin identity-foundation repair:
 - Assets/data: user identity, personal Account ownership, default Vault, membership, active/visible Vault state, and authenticated sessions (A01/A03/A07; S1 account metadata).
 - Flow/boundary: authenticated Users administrator -> users:write-gated repair mutation -> canonical transactional ensureUserIdentityFoundation -> target-user session revocation. User IDs and existing identity rows remain untrusted persisted input and never grant authority.
