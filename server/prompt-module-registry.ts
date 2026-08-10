@@ -86,9 +86,7 @@ export const PROMPT_MODULE_MANIFEST: Record<PromptModuleKey, PromptModuleManifes
     ownerSystem: "memory",
     description: "Merges related mid-term memories during myelination.",
     activity: ACTIVITY_MEMORY,
-    callSites: [
-      { file: "server/memory/memory-transitions.ts", purpose: "Merges mid-term memories." },
-    ],
+    callSites: [],
   },
   "myelination-mid-merge-consolidate": {
     key: "myelination-mid-merge-consolidate",
@@ -96,7 +94,7 @@ export const PROMPT_MODULE_MANIFEST: Record<PromptModuleKey, PromptModuleManifes
     ownerSystem: "memory",
     description: "Consolidates mid-term merge candidates into durable memory text.",
     activity: ACTIVITY_MEMORY,
-    callSites: [{ file: "server/memory/memory-transitions.ts", purpose: "Consolidates memory merge output." }],
+    callSites: [],
   },
   "myelination-summarize": {
     key: "myelination-summarize",

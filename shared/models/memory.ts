@@ -242,69 +242,6 @@ export type InsertSessionSearchSegment = typeof sessionSearchSegments.$inferInse
 export const memoryLayers = ["short", "mid", "long", "workspace"] as const;
 export type MemoryLayer = (typeof memoryLayers)[number];
 
-export const memoryIntegrationStages = [
-  "stage_0",
-  "stage_1",
-  "stage_2",
-  "stage_3",
-  "stage_4",
-] as const;
-export type MemoryIntegrationStage = (typeof memoryIntegrationStages)[number];
-
-export const MEMORY_INTEGRATION_STAGE = {
-  RAW: "stage_0",
-  ENRICHED: "stage_1",
-  INTEGRATED: "stage_2",
-  CANONICAL: "stage_3",
-  UPKEEP: "stage_4",
-} as const satisfies Record<string, MemoryIntegrationStage>;
-
-export const MEMORY_LAYER_DEFAULT_INTEGRATION_STAGE: Record<
-  MemoryLayer,
-  MemoryIntegrationStage
-> = {
-  short: MEMORY_INTEGRATION_STAGE.RAW,
-  mid: MEMORY_INTEGRATION_STAGE.ENRICHED,
-  long: MEMORY_INTEGRATION_STAGE.CANONICAL,
-  workspace: MEMORY_INTEGRATION_STAGE.ENRICHED,
-};
-
-export function hasStageOneMemoryFields(entry: {
-  title?: string | null;
-  summary?: string | null;
-  tags?: string[] | null;
-}): boolean {
-  return Boolean(
-    entry.title?.trim() &&
-      entry.summary?.trim() &&
-      Array.isArray(entry.tags) &&
-      entry.tags.length > 0,
-  );
-}
-
-export function deriveMemoryIntegrationStage(entry: {
-  integrationStage?: string | null;
-  layer?: string | null;
-  title?: string | null;
-  summary?: string | null;
-  tags?: string[] | null;
-}): MemoryIntegrationStage {
-  if (
-    entry.integrationStage &&
-    (memoryIntegrationStages as readonly string[]).includes(entry.integrationStage)
-  ) {
-    return entry.integrationStage as MemoryIntegrationStage;
-  }
-  if (hasStageOneMemoryFields(entry)) return MEMORY_INTEGRATION_STAGE.ENRICHED;
-  if (
-    entry.layer &&
-    (memoryLayers as readonly string[]).includes(entry.layer)
-  ) {
-    return MEMORY_LAYER_DEFAULT_INTEGRATION_STAGE[entry.layer as MemoryLayer];
-  }
-  return MEMORY_INTEGRATION_STAGE.RAW;
-}
-
 export const memorySources = [
   "conversation",
   "event",
