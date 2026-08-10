@@ -83,9 +83,11 @@ export const TOOLS: Record<string, ToolMeta> = {
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["read", "write", "edit", "list", "search"], description: "Action" },
+        action: { type: "string", enum: ["read", "write", "edit", "patch", "list", "search"], description: "Action" },
         path: { type: "string", description: "File path relative to scratch workspace" },
         content: { type: "string", description: "File content (write)" },
+        repositoryDirectory: { type: "string", description: "Exact repos/<clone> directory owned by this session (patch)" },
+        patch: { type: "string", description: "Bounded Git unified diff applied atomically with context verification (patch)" },
         old_string: { type: "string", description: "Text to find (edit)" },
         new_string: { type: "string", description: "Replacement text (edit)" },
         replace_all: { type: "boolean", description: "Replace all occurrences (edit, default false)" },
