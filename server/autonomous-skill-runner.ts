@@ -574,6 +574,7 @@ async function getSkillTools(
   sessionKey: string,
   sessionId: string,
   authoritySkillId?: string,
+  authoritySkillName?: string,
   trustedDelegation?: import("./agent-authority").TrustedEngineeringDelegation,
   runtimeFence?: { runId: string; attemptId: string },
 ): Promise<{
@@ -586,6 +587,7 @@ async function getSkillTools(
     trustedDelegation,
     activity,
     skillId: authoritySkillId,
+    skillName: authoritySkillId ? authoritySkillName : undefined,
     runtimeRunId: runtimeFence?.runId,
     runtimeAttemptId: runtimeFence?.attemptId,
     sessionKey,
@@ -1508,6 +1510,7 @@ async function runSkillPipeline(
       sessionKey,
       sessionId,
       authoritySkillId,
+      config.skillId,
       trustedDelegation,
       options.runtimeFence,
     );

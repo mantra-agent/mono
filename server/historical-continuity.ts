@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "crypto";
+import { createHash } from "crypto";
 import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { vaults } from "@shared/models/vaults";
 import { db } from "./db";
@@ -12,7 +12,6 @@ import { getTimezone } from "./timezone";
 const log = createLogger("HistoricalContinuity");
 const TURN_MAX_INPUT_CHARS = 48_000;
 const TURN_MAX_OUTPUT_TOKENS = 320;
-const ROLLUP_MAX_OUTPUT_TOKENS = 600;
 const HISTORY_TOKEN_BUDGET = 2_400;
 const DEFAULT_HISTORY_TIMEZONE = "America/Chicago";
 const ROLLUP_LEVELS = ["hour", "day", "week", "month", "quarter", "year"] as const;
@@ -228,14 +227,6 @@ export async function ensureHistoricalContinuitySchema(): Promise<void> {
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS uk_historical_continuity_turn ON historical_continuity_entries(owner_user_id, account_id, session_id, assistant_message_id) WHERE level = 'turn'`);
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS uk_historical_continuity_bucket ON historical_continuity_entries(owner_user_id, account_id, vault_id, level, timezone, bucket_start)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_historical_continuity_projection ON historical_continuity_entries(owner_user_id, account_id, vault_id, level, bucket_start DESC)`);
-  await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS historical_continuity_rollup_leases (
-      lease_key TEXT PRIMARY KEY,
-      owner_boot_id TEXT NOT NULL,
-      lease_expires_at TIMESTAMPTZ(6) NOT NULL,
-      updated_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
   await db.execute(sql`COMMENT ON TABLE historical_continuity_entries IS 'Immutable model-derived chronology. Raw transcripts remain authoritative; entries are continuity and memory-candidate evidence, never semantic truth.'`);
 }
 
@@ -270,89 +261,175 @@ export async function emitCompletedTurnSummary(input: TurnSummaryInput): Promise
   log.info("continuity.turn.persisted", { sessionId: input.sessionId, assistantMessageId: input.assistantMessageId, summaryLength: summary.length });
 }
 
-export async function runHistoricalContinuityRollups(): Promise<{ created: number; vaults: number }> {
-  const principal = requireCurrentUserPrincipal();
-  const visibleVaults = await resolveVisibleVaults();
-  if (!visibleVaults.length) return { created: 0, vaults: 0 };
-
-  const workerId = randomUUID();
-  const leaseKey = `historical-continuity:hourly:${principal.userId}:${principal.accountId}`;
-  const claimed = await db.execute(sql`
-    INSERT INTO historical_continuity_rollup_leases (lease_key, owner_boot_id, lease_expires_at)
-    VALUES (${leaseKey}, ${workerId}, NOW() + INTERVAL '15 minutes')
-    ON CONFLICT (lease_key) DO UPDATE SET owner_boot_id=EXCLUDED.owner_boot_id, lease_expires_at=EXCLUDED.lease_expires_at, updated_at=NOW()
-    WHERE historical_continuity_rollup_leases.lease_expires_at < NOW()
-    RETURNING lease_key
-  `);
-  if (!claimed.rows.length) return { created: 0, vaults: 0 };
-
-  let created = 0;
-  try {
-    for (const vault of visibleVaults) {
-      const timezones = await db.execute(sql`
-        SELECT DISTINCT timezone
-        FROM historical_continuity_entries
-        WHERE owner_user_id=${principal.userId}
-          AND account_id=${principal.accountId}
-          AND vault_id=${vault.id}
-        ORDER BY timezone
-      `);
-      for (const row of timezones.rows as Array<Record<string, unknown>>) {
-        created += await rollupOwner(vault.id, resolveHistoryTimezone(String(row.timezone)));
-      }
-    }
-    return { created, vaults: visibleVaults.length };
-  } finally {
-    await db.execute(sql`DELETE FROM historical_continuity_rollup_leases WHERE lease_key=${leaseKey} AND owner_boot_id=${workerId}`);
-  }
+export interface HistoryRollupCandidate {
+  vaultId: string;
+  vaultName: string;
+  level: RollupLevel;
+  sourceLevel: ContinuityLevel;
+  timezone: string;
+  bucketStart: string;
+  bucketEnd: string;
+  sourceStart: string;
+  sourceEnd: string;
+  sourceCount: number;
+  sourceEntryIds: string[];
+  sourceText: string;
 }
 
-async function rollupOwner(vaultId: string, timezone: string): Promise<number> {
-  const principal = requireCurrentUserPrincipal();
-  let created = 0;
+export interface SaveHistoryRollupInput {
+  vaultId: string;
+  level: string;
+  timezone: string;
+  bucketStart: string;
+  sourceEntryIds: string[];
+  summary: string;
+}
+
+export async function listHistoryRollupCandidates(): Promise<{
+  candidate: HistoryRollupCandidate | null;
+  visibleVaultCount: number;
+}> {
+  const visibleVaults = await resolveVisibleVaults();
   for (const level of ROLLUP_LEVELS) {
-    const sourceLevel = level === "hour" ? "turn" : ROLLUP_LEVELS[ROLLUP_LEVELS.indexOf(level) - 1];
-    const candidates = await db.execute(sql`
-      WITH bucketed AS (
-        SELECT id, bucket_start AS entry_bucket_start, source_start, source_end, summary,
-               date_trunc(${level}, bucket_start AT TIME ZONE ${timezone}) AT TIME ZONE ${timezone} AS rollup_bucket_start,
-               (date_trunc(${level}, bucket_start AT TIME ZONE ${timezone}) + ('1 ' || ${level})::interval) AT TIME ZONE ${timezone} AS rollup_bucket_end
-        FROM historical_continuity_entries
-        WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND vault_id=${vaultId} AND level=${sourceLevel}
-      )
-      SELECT rollup_bucket_start AS bucket_start, rollup_bucket_end AS bucket_end,
-             array_agg(id ORDER BY entry_bucket_start) AS source_ids,
-             min(source_start) AS source_start, max(source_end) AS source_end, count(*)::int AS source_count,
-             string_agg(summary, E'\n\n' ORDER BY entry_bucket_start) AS source_text
-      FROM bucketed
-      WHERE rollup_bucket_end <= NOW()
-      GROUP BY rollup_bucket_start, rollup_bucket_end
-      ORDER BY rollup_bucket_start ASC LIMIT 100
-    `);
-    for (const row of candidates.rows as Array<Record<string, unknown>>) {
-      const bucketStart = new Date(String(row.bucket_start));
-      const bucketEnd = new Date(String(row.bucket_end));
-      const existing = await db.execute(sql`SELECT 1 FROM historical_continuity_entries WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND vault_id=${vaultId} AND level=${level} AND timezone=${timezone} AND bucket_start=${bucketStart} LIMIT 1`);
-      if (existing.rows.length) continue;
-      const sourceIds = normalizeSourceEntryIds(row.source_ids);
-      if (!sourceIds.length) {
-        log.warn("continuity.rollup.source_ids_skipped", {
-          level,
-          vaultId,
-          bucketStart: bucketStart.toISOString(),
-          sourceCount: Number(row.source_count) || null,
-        });
-        continue;
+    for (const vault of visibleVaults) {
+      const timezones = await listHistoryTimezones(vault.id);
+      for (const timezone of timezones) {
+        const candidate = await loadHistoryRollupCandidate(vault, level, timezone);
+        if (candidate) return { candidate, visibleVaultCount: visibleVaults.length };
       }
-      const result = await chatCompletion({ activity: ACTIVITY_FRAMING, messages: [{ role: "system", content: `Compress these ${sourceLevel} continuity entries into one ${level} chronology summary. Preserve decisions, durable changes, failures, commitments, uncertainty, exact references, dates, IDs, and numbers. Remove repetition. This is model-derived evidence, not truth. Dense markdown bullets; no preamble.` }, { role: "user", content: String(row.source_text).slice(0, 120_000) }], maxTokens: ROLLUP_MAX_OUTPUT_TOKENS, temperature: 0.1, metadata: { source: `historical-continuity.rollup.${level}` } });
-      const summary = result.content.trim();
-      if (!summary) continue;
-      const id = deterministicId(level, principal.userId, principal.accountId, vaultId, timezone, bucketStart.toISOString());
-      await db.execute(sql`INSERT INTO historical_continuity_entries (id, owner_user_id, account_id, vault_id, level, timezone, bucket_start, bucket_end, source_start, source_end, source_count, source_entry_ids, summary, summary_sha256) VALUES (${id}, ${principal.userId}, ${principal.accountId}, ${vaultId}, ${level}, ${timezone}, ${bucketStart}, ${bucketEnd}, ${new Date(String(row.source_start))}, ${new Date(String(row.source_end))}, ${Number(row.source_count)}, ${textArray(sourceIds)}, ${summary}, ${sha(summary)}) ON CONFLICT DO NOTHING`);
-      created++;
     }
   }
-  return created;
+  return { candidate: null, visibleVaultCount: visibleVaults.length };
+}
+
+export async function saveHistoryRollup(input: SaveHistoryRollupInput): Promise<{
+  outcome: "created" | "already_exists";
+  entryId: string;
+}> {
+  const principal = requireCurrentUserPrincipal();
+  if (!ROLLUP_LEVELS.includes(input.level as RollupLevel)) throw new Error("Invalid history rollup level");
+  const level = input.level as RollupLevel;
+  const timezone = resolveHistoryTimezone(input.timezone);
+  if (timezone !== input.timezone) throw new Error("Invalid history rollup timezone");
+  const summary = input.summary.trim();
+  if (!summary || summary.length > 12_000) throw new Error("History rollup summary must contain 1-12000 characters");
+  const bucketStart = parseDatabaseDate(input.bucketStart);
+  if (!bucketStart) throw new Error("Invalid history rollup bucketStart");
+  const vault = (await resolveVisibleVaults()).find((entry) => entry.id === input.vaultId);
+  if (!vault) throw new Error("History rollup Vault is not visible");
+
+  const existing = await db.execute(sql`
+    SELECT id FROM historical_continuity_entries
+    WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId}
+      AND vault_id=${vault.id} AND level=${level} AND timezone=${timezone} AND bucket_start=${bucketStart}
+    LIMIT 1
+  `);
+  const entryId = deterministicId(level, principal.userId, principal.accountId, vault.id, timezone, bucketStart.toISOString());
+  if (existing.rows.length) return { outcome: "already_exists", entryId: String(existing.rows[0].id) };
+
+  const candidate = await loadHistoryRollupCandidate(vault, level, timezone, bucketStart);
+  if (!candidate) throw new Error("History rollup candidate is no longer current");
+  if (!sameStringSet(candidate.sourceEntryIds, input.sourceEntryIds)) {
+    throw new Error("History rollup source entries changed; list candidates again");
+  }
+
+  const inserted = await db.execute(sql`
+    INSERT INTO historical_continuity_entries
+      (id, owner_user_id, account_id, vault_id, level, timezone, bucket_start, bucket_end,
+       source_start, source_end, source_count, source_entry_ids, summary, summary_sha256)
+    VALUES
+      (${entryId}, ${principal.userId}, ${principal.accountId}, ${vault.id}, ${level}, ${timezone},
+       ${new Date(candidate.bucketStart)}, ${new Date(candidate.bucketEnd)}, ${new Date(candidate.sourceStart)},
+       ${new Date(candidate.sourceEnd)}, ${candidate.sourceCount}, ${textArray(candidate.sourceEntryIds)},
+       ${summary}, ${sha(summary)})
+    ON CONFLICT DO NOTHING
+    RETURNING id
+  `);
+  const outcome = inserted.rows.length ? "created" : "already_exists";
+  log.info("continuity.rollup.persisted", {
+    entryId,
+    vaultId: vault.id,
+    level,
+    sourceCount: candidate.sourceCount,
+    outcome,
+  });
+  return { outcome, entryId };
+}
+
+async function listHistoryTimezones(vaultId: string): Promise<string[]> {
+  const principal = requireCurrentUserPrincipal();
+  const result = await db.execute(sql`
+    SELECT DISTINCT timezone FROM historical_continuity_entries
+    WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND vault_id=${vaultId}
+    ORDER BY timezone
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((row) => resolveHistoryTimezone(String(row.timezone)));
+}
+
+async function loadHistoryRollupCandidate(
+  vault: VisibleVault,
+  level: RollupLevel,
+  timezone: string,
+  exactBucketStart?: Date,
+): Promise<HistoryRollupCandidate | null> {
+  const principal = requireCurrentUserPrincipal();
+  const sourceLevel: ContinuityLevel = level === "hour" ? "turn" : ROLLUP_LEVELS[ROLLUP_LEVELS.indexOf(level) - 1];
+  const candidates = await db.execute(sql`
+    WITH bucketed AS (
+      SELECT id, bucket_start AS entry_bucket_start, source_start, source_end, summary,
+             date_trunc(${level}, bucket_start AT TIME ZONE ${timezone}) AT TIME ZONE ${timezone} AS rollup_bucket_start,
+             (date_trunc(${level}, bucket_start AT TIME ZONE ${timezone}) + ('1 ' || ${level})::interval) AT TIME ZONE ${timezone} AS rollup_bucket_end
+      FROM historical_continuity_entries
+      WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId}
+        AND vault_id=${vault.id} AND level=${sourceLevel}
+    )
+    SELECT rollup_bucket_start AS bucket_start, rollup_bucket_end AS bucket_end,
+           array_agg(id ORDER BY entry_bucket_start) AS source_ids,
+           min(source_start) AS source_start, max(source_end) AS source_end,
+           count(*)::int AS source_count,
+           string_agg(summary, E'\n\n' ORDER BY entry_bucket_start) AS source_text
+    FROM bucketed
+    WHERE rollup_bucket_end <= NOW()
+      AND (${exactBucketStart ?? null}::timestamptz IS NULL OR rollup_bucket_start=${exactBucketStart ?? null})
+      AND NOT EXISTS (
+        SELECT 1 FROM historical_continuity_entries existing
+        WHERE existing.owner_user_id=${principal.userId} AND existing.account_id=${principal.accountId}
+          AND existing.vault_id=${vault.id} AND existing.level=${level}
+          AND existing.timezone=${timezone} AND existing.bucket_start=rollup_bucket_start
+      )
+    GROUP BY rollup_bucket_start, rollup_bucket_end
+    ORDER BY rollup_bucket_start ASC
+    LIMIT 1
+  `);
+  const row = candidates.rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const sourceEntryIds = normalizeSourceEntryIds(row.source_ids);
+  const bucketStart = parseDatabaseDate(row.bucket_start);
+  const bucketEnd = parseDatabaseDate(row.bucket_end);
+  const sourceStart = parseDatabaseDate(row.source_start);
+  const sourceEnd = parseDatabaseDate(row.source_end);
+  if (!sourceEntryIds.length || !bucketStart || !bucketEnd || !sourceStart || !sourceEnd) return null;
+  return {
+    vaultId: vault.id,
+    vaultName: vault.name,
+    level,
+    sourceLevel,
+    timezone,
+    bucketStart: bucketStart.toISOString(),
+    bucketEnd: bucketEnd.toISOString(),
+    sourceStart: sourceStart.toISOString(),
+    sourceEnd: sourceEnd.toISOString(),
+    sourceCount: Number(row.source_count),
+    sourceEntryIds,
+    sourceText: String(row.source_text),
+  };
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const expected = [...left].sort();
+  const actual = [...right].sort();
+  return expected.every((value, index) => value === actual[index]);
 }
 
 async function resolveVisibleVaults(): Promise<VisibleVault[]> {
