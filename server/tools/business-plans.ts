@@ -1,5 +1,7 @@
 import { safeStringify } from "../utils/safe-stringify";
 import { businessPlanStorage } from "../business-plan-storage";
+import { businessStorage, type Business } from "../business-storage";
+import { businessCreateSchema, businessPatchSchema } from "@shared/schema";
 import { kpiStorage, metricsStorage } from "../metrics-storage";
 import type { BusinessPlan } from "@shared/schema";
 import type { Kpi, Metric, MetricSample } from "@shared/models/metrics";
@@ -124,6 +126,88 @@ function safeBusinessError(error: unknown): string {
     }
   }
   return "Business operation failed";
+}
+
+function businessResult(business: Business) {
+  return {
+    reference: `@business:${business.id}`,
+    id: business.id,
+    publicName: business.publicName,
+    entityName: business.entityName,
+    valuesPageId: business.valuesPageId,
+    visionPageId: business.visionPageId,
+    missionPageId: business.missionPageId,
+    status: business.status,
+    vaultIds: business.vaultIds,
+    createdAt: business.createdAt,
+    updatedAt: business.updatedAt,
+  };
+}
+
+async function handleEntityAction(action: string, args: Record<string, unknown>) {
+  if (action === "list_businesses") {
+    const list = await businessStorage.list();
+    return { result: safeStringify({ total: list.length, businesses: list.map(businessResult) }, { label: "bridge.business.entities.list" }) };
+  }
+  if (action === "create_business") {
+    const parsed = businessCreateSchema.safeParse({
+      publicName: optionalStr(args, "publicName"),
+      entityName: optionalStr(args, "entityName"),
+      valuesPageId: optionalStr(args, "valuesPageId"),
+      visionPageId: optionalStr(args, "visionPageId"),
+      missionPageId: optionalStr(args, "missionPageId"),
+      vaultIds: stringArray(args.vaultIds),
+    });
+    if (!parsed.success) return { result: `business.create_business invalid: ${parsed.error.issues[0]?.message ?? "bad input"}`, error: true };
+    const business = await businessStorage.create(parsed.data);
+    return { result: safeStringify(businessResult(business), { label: "bridge.business.entities.create" }) };
+  }
+
+  const businessId = requiredStr(args, "businessId");
+  if (!businessId) return { result: `business.${action} requires businessId`, error: true };
+
+  if (action === "get_business") {
+    const business = await businessStorage.get(businessId);
+    return business
+      ? { result: safeStringify(businessResult(business), { label: "bridge.business.entities.get" }) }
+      : { result: `Business "${businessId}" not found or not visible`, error: true };
+  }
+  if (action === "update_business") {
+    const parsed = businessPatchSchema.safeParse({
+      publicName: optionalStr(args, "publicName"),
+      entityName: optionalStr(args, "entityName"),
+      valuesPageId: optionalStr(args, "valuesPageId"),
+      visionPageId: optionalStr(args, "visionPageId"),
+      missionPageId: optionalStr(args, "missionPageId"),
+      status: optionalStr(args, "businessStatus"),
+    });
+    if (!parsed.success) return { result: `business.update_business invalid: ${parsed.error.issues[0]?.message ?? "bad input"}`, error: true };
+    const business = await businessStorage.update(businessId, parsed.data);
+    return { result: safeStringify(businessResult(business), { label: "bridge.business.entities.update" }) };
+  }
+  if (action === "archive_business") {
+    const business = await businessStorage.archive(businessId);
+    return { result: safeStringify(businessResult(business), { label: "bridge.business.entities.archive" }) };
+  }
+  if (action === "list_business_vaults") {
+    const memberships = await businessStorage.listVaultMemberships(businessId);
+    return { result: safeStringify({ total: memberships.length, vaults: memberships }, { label: "bridge.business.entities.list_vaults" }) };
+  }
+  if (action === "add_business_vault" || action === "remove_business_vault") {
+    const vaultId = requiredStr(args, "vaultId");
+    if (!vaultId) return { result: `business.${action} requires vaultId`, error: true };
+    const { business, changed } = action === "add_business_vault"
+      ? await businessStorage.addVaultMembership(businessId, vaultId)
+      : await businessStorage.removeVaultMembership(businessId, vaultId);
+    return { result: safeStringify({ changed, business: businessResult(business) }, { label: `bridge.business.entities.${action}` }) };
+  }
+  if (action === "set_business_vaults") {
+    const vaultIds = stringArray(args.vaultIds);
+    if (!vaultIds || vaultIds.length === 0) return { result: "business.set_business_vaults requires a non-empty vaultIds set", error: true };
+    const business = await businessStorage.replaceVaultMemberships(businessId, vaultIds);
+    return { result: safeStringify(businessResult(business), { label: "bridge.business.entities.set_vaults" }) };
+  }
+  return { result: `Unknown business entity action: ${action}`, error: true };
 }
 
 async function handlePlanAction(action: string, args: Record<string, unknown>) {
@@ -339,6 +423,10 @@ async function handleMetricAction(action: string, args: Record<string, unknown>)
   return { result: `Unknown business metric action: ${action}`, error: true };
 }
 
+const ENTITY_ACTIONS = new Set([
+  "list_businesses", "get_business", "create_business", "update_business", "archive_business",
+  "list_business_vaults", "add_business_vault", "remove_business_vault", "set_business_vaults",
+]);
 const PLAN_ACTIONS = new Set([
   "list", "get", "create", "rename", "delete", "set_thematic_goal", "clear_thematic_goal",
   "add_initiative", "remove_initiative", "add_kpi", "remove_kpi", "assign_vault",
@@ -352,6 +440,7 @@ const METRIC_ACTIONS = new Set([
 export const handleBusiness: ToolHandler = async (args) => {
   const action = String(args.action || "list");
   try {
+    if (ENTITY_ACTIONS.has(action)) return await handleEntityAction(action, args);
     if (KPI_ACTIONS.has(action)) return await handleKpiAction(action, args);
     if (METRIC_ACTIONS.has(action)) return await handleMetricAction(action, args);
     if (PLAN_ACTIONS.has(action)) return await handlePlanAction(action, args);

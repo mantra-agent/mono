@@ -18,6 +18,7 @@ export * from "./models/prompt-modules";
 export * from "./models/thought";
 export * from "./models/finance";
 export * from "./models/business-plans";
+export * from "./models/businesses";
 export * from "./models/health";
 export * from "./models/info";
 export * from "./models/captures";
