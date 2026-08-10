@@ -6,16 +6,11 @@ import {
   inputFailure,
   transientFailure,
   type ToolFailure,
-  type ToolFailureCode,
 } from "../../tool-failure";
-import type { ToolHandler, ToolHandlerResult } from "../contracts";
+import type { ToolHandler } from "../contracts";
+import { contractReject } from "../shared/failures";
 
 const toolExec = createLogger("ToolExec");
-
-/** Contract reject → amber input failure (same discriminant path as shell_policy_denied). */
-function contractReject(result: string, code: ToolFailureCode, detail?: string): ToolHandlerResult {
-  return { result, error: true, failure: inputFailure(code, detail) };
-}
 
 /** Classify HTTP status from web.fetch non-ok responses. */
 function classifyWebFetchHttpStatus(status: number): ToolFailure {
