@@ -89,7 +89,8 @@ export function registerMetricsRoutes(app: Express): void {
         await ensureReady();
         await ensureSeeded();
         const query = typeof req.query.query === "string" ? req.query.query : undefined;
-        const list = await metricsStorage.list(query);
+        const businessId = typeof req.query.businessId === "string" ? req.query.businessId : undefined;
+        const list = await metricsStorage.list(query, businessId);
         res.json({ metrics: list });
       } catch (error) {
         respondError(res, "list metrics", error);
@@ -104,13 +105,14 @@ export function registerMetricsRoutes(app: Express): void {
     async (req: Request, res: Response) => {
       try {
         await ensureReady();
+        const businessId = typeof req.query.businessId === "string" ? req.query.businessId : null;
         const start = typeof req.query.start === "string" ? new Date(req.query.start) : null;
         const end = typeof req.query.end === "string" ? new Date(req.query.end) : null;
-        if (!start || !end) {
-          res.status(400).json({ error: "start and end are required ISO timestamps" });
+        if (!businessId || !start || !end) {
+          res.status(400).json({ error: "businessId, start, and end are required" });
           return;
         }
-        res.json(await metricsStorage.sampleRange(start, end));
+        res.json(await metricsStorage.sampleRange(businessId, start, end));
       } catch (error) {
         respondError(res, "sample usage metrics", error);
       }

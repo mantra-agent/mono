@@ -76,9 +76,9 @@ export async function convergeBootSchema(): Promise<void> {
         await migrateOpportunitySchema();
         await ensureWorkVaultParentSchema(pool);
         await ensureMilestonesSchema(pool);
+        await ensureBusinessesSchema();
         await ensureMetricsDefinitionsSchema();
         await ensureBusinessPlansSchema();
-        await ensureBusinessesSchema();
         await ensureConversationSchema(pool);
         await ensurePermissionSchema();
         await ensureMeetingAudioRetentionSchema();

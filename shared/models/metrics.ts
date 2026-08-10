@@ -1,6 +1,7 @@
 import { pgTable, text, integer, real, boolean, timestamp, jsonb, index, uniqueIndex, doublePrecision } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
+import { businesses } from "./businesses";
 
 // ── Enums ──────────────────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ export const metrics = pgTable(
   "metrics",
   {
     id: text("id").primaryKey(),
+    businessId: text("business_id").references(() => businesses.id, { onDelete: "restrict" }),
     name: text("name").notNull(),
     slug: text("slug").notNull(),
     description: text("description").notNull().default(""),
@@ -60,6 +62,7 @@ export const metrics = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
   (t) => ({
+    businessSlug: uniqueIndex("metrics_business_slug_uidx").on(t.businessId, t.slug),
     accountVaultSlug: uniqueIndex("metrics_account_vault_slug_uidx").on(t.accountId, t.vaultId, t.slug),
     accountVault: index("metrics_account_vault_idx").on(t.accountId, t.vaultId),
     scopeOwner: index("metrics_scope_owner_idx").on(t.scope, t.ownerUserId),
@@ -156,6 +159,7 @@ const slugSchema = z
 const nameSchema = z.string().trim().min(1).max(160);
 
 export const metricCreateSchema = z.object({
+  businessId: z.string().trim().min(1).optional(),
   name: nameSchema,
   slug: slugSchema.optional(),
   description: z.string().max(4000).optional().default(""),
@@ -168,6 +172,7 @@ export const metricCreateSchema = z.object({
 });
 
 export const metricUpdateSchema = z.object({
+  businessId: z.string().trim().min(1).optional(),
   name: nameSchema.optional(),
   description: z.string().max(4000).optional(),
   unit: z.string().trim().max(40).optional(),
@@ -245,6 +250,7 @@ export type MetricSampleCreate = z.infer<typeof metricSampleCreateSchema>;
 
 export interface Metric {
   id: string;
+  businessId: string | null;
   name: string;
   slug: string;
   description: string;

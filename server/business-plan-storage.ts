@@ -24,6 +24,7 @@ export async function ensureBusinessPlansSchema(): Promise<void> {
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS business_plans (
       id text PRIMARY KEY,
+      business_id text REFERENCES businesses(id) ON DELETE RESTRICT,
       name text NOT NULL,
       thematic_goal_id text,
       initiative_project_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
@@ -40,6 +41,15 @@ export async function ensureBusinessPlansSchema(): Promise<void> {
   // Existing installs created thematic_goal_id as NOT NULL during bootstrap.
   // Drop that constraint so plans can exist with no assigned goal until the user picks one.
   await db.execute(sql`ALTER TABLE business_plans ALTER COLUMN thematic_goal_id DROP NOT NULL`);
+  await db.execute(sql`ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS business_id text REFERENCES businesses(id) ON DELETE RESTRICT`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_business_plans_business ON business_plans(business_id)`);
+  await db.execute(sql`
+    UPDATE business_plans bp SET business_id = b.id
+    FROM businesses b
+    WHERE bp.business_id IS NULL
+      AND bp.account_id = b.account_id
+      AND lower(b.public_name) = 'mantra'
+  `);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_business_plans_owner ON business_plans(owner_user_id, account_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_business_plans_vault ON business_plans(vault_id)`);
 }
@@ -88,6 +98,7 @@ async function assertKpis(kpiIds: string[]): Promise<void> {
 }
 
 async function insertPlan(input: {
+  businessId?: string;
   name: string;
   vaultId: string;
   thematicGoalId: string | null;
@@ -99,6 +110,7 @@ async function insertPlan(input: {
   const [created] = await db.insert(businessPlans).values({
     id: newId(),
     ...ownedInsertValues(principal, planScope),
+    businessId: input.businessId ?? null,
     name: input.name,
     thematicGoalId: input.thematicGoalId,
     initiativeProjectIds: input.initiativeProjectIds,
@@ -151,6 +163,7 @@ export const businessPlanStorage = {
     if (thematicGoalId) await assertGoal(thematicGoalId);
 
     return insertPlan({
+      businessId: input.businessId,
       name: input.name,
       vaultId,
       thematicGoalId,

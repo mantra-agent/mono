@@ -90,6 +90,29 @@ export async function ensureBusinessesSchema(): Promise<void> {
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_business_vault_memberships_vault_business ON business_vault_memberships(vault_id, business_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_business_vault_memberships_scope_owner ON business_vault_memberships(scope, owner_user_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_business_vault_memberships_account ON business_vault_memberships(account_id)`);
+
+  // Extract the first real Business from the existing Mantra Vault. Deterministic
+  // identity and conflict guards make this safe across replicas and restarts.
+  await db.execute(sql`
+    INSERT INTO businesses (
+      id, public_name, status, scope, owner_user_id, account_id, created_by_user_id
+    )
+    SELECT 'business_mantra_' || substring(md5(v.account_id), 1, 16), 'Mantra', 'active', 'user',
+      a.owner_user_id, v.account_id, a.owner_user_id
+    FROM vaults v JOIN accounts a ON a.id = v.account_id
+    WHERE v.id = '5097b85a-793b-4811-98e7-95621003eb7a' AND v.is_archived = false
+    ON CONFLICT (id) DO NOTHING
+  `);
+  await db.execute(sql`
+    INSERT INTO business_vault_memberships (
+      business_id, vault_id, scope, owner_user_id, account_id, created_by_user_id
+    )
+    SELECT b.id, v.id, 'user', b.owner_user_id, b.account_id, b.created_by_user_id
+    FROM businesses b JOIN vaults v ON v.account_id = b.account_id
+    WHERE lower(b.public_name) = 'mantra'
+      AND v.id = '5097b85a-793b-4811-98e7-95621003eb7a'
+    ON CONFLICT (business_id, vault_id) DO NOTHING
+  `);
   log.info("businesses schema ensured");
 }
 
