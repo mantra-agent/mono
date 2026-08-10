@@ -1,3 +1,11 @@
+<!-- 2026-08-09 question-answer submission integrity:
+- Assets/data: authenticated principal-owned Session prompts, selected answers, optional S2 response reasoning, and Decision provenance (A01/A03/A07).
+- Flow/boundary: rendered Question recommendation -> authenticated Session message POST -> canonical prompt/response normalization and validation -> Session persistence and Decision recording. Model-authored recommendation text and browser payload fields remain untrusted and never grant authority.
+- Failure/threat: the client initialized response reasoning from an Agent recommendation even when the stored prompt disallowed user reasoning, then submitted that field and made a visible unanswered Question impossible to answer; stale clients could repeat the same malformed optional field indefinitely (STRIDE tampering/availability/repudiation plus agentic contract-confusion risk; AGENT-03/AGENT-04/OBS-01).
+- Controls/owner: Core Question UI renders and submits response reasoning only when the canonical prompt permits it. The shared server validation boundary independently removes disallowed optional reasoning before formatting, persistence, or Decision provenance while retaining strict prompt identity, supersession, answer cardinality, option ID, Other, Principle, Principal, Session, and replay validation. Owner: Core Session Question interaction. Severity: high user-visible integrity/availability. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: an old client may still transmit recommendation rationale, but the server now treats it as non-authoritative optional presentation residue and preserves the selected answer; invalid or superseded selections still fail closed. Revert the client conditional state/surface, shared normalization, and this record to restore strict rejection; no schema, permission, credential, or persisted-data migration is involved.
+-->
+
 <!-- 2026-08-09 response-generation limit observability:
 - Assets/data: model request/output token budgets and aggregate provider usage (A07/A08; S1 operational metadata); prompt, response, tool arguments, principal identity, and credentials remain excluded.
 - Flow/boundary: tracked provider stream -> Core AgentExecutor terminal classification -> bounded structured terminal event/result -> autonomous Session fallback and server log.

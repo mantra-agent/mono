@@ -220,7 +220,9 @@ export function QuestionWidget({
   const [principleQuery, setPrincipleQuery] = useState("");
   const [principlesLoading, setPrinciplesLoading] = useState(false);
   const [reasoning, setReasoning] = useState(
-    () => response?.reasoning ?? recommendation?.reasoning ?? prompt.reasoning ?? "",
+    () => prompt.allowResponseReasoning
+      ? response?.reasoning ?? recommendation?.reasoning ?? ""
+      : "",
   );
   // Principles stay collapsed unless the agent already checked some.
   const [showContext, setShowContext] = useState(
@@ -453,7 +455,7 @@ export function QuestionWidget({
       selectedOptionIds: selected,
       ...(normalizedOther ? { otherText: normalizedOther } : {}),
       ...(selectedPrinciples.length > 0 ? { selectedPrincipleRevisionIds: selectedPrinciples } : {}),
-      ...(trimmedReasoning ? { reasoning: trimmedReasoning } : {}),
+      ...(prompt.allowResponseReasoning && trimmedReasoning ? { reasoning: trimmedReasoning } : {}),
     };
     try {
       const submitted = await onSubmit(nextResponse);
@@ -601,24 +603,26 @@ export function QuestionWidget({
           </div>
         )}
       </div>
-      <div className="space-y-1.5 border-t border-border/40 px-3 py-2">
-        <label
-          htmlFor={`question-reasoning-${prompt.toolCallId}`}
-          className="sr-only"
-        >
-          Reasoning (optional)
-        </label>
-        <textarea
-          id={`question-reasoning-${prompt.toolCallId}`}
-          value={reasoning}
-          onChange={(event) => setReasoning(event.target.value)}
-          disabled={controlsDisabled}
-          rows={2}
-          placeholder="Reasoning (optional)"
-          className="w-full resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
-          data-testid={`question-reasoning-${prompt.toolCallId}`}
-        />
-      </div>
+      {prompt.allowResponseReasoning ? (
+        <div className="space-y-1.5 border-t border-border/40 px-3 py-2">
+          <label
+            htmlFor={`question-reasoning-${prompt.toolCallId}`}
+            className="sr-only"
+          >
+            Reasoning (optional)
+          </label>
+          <textarea
+            id={`question-reasoning-${prompt.toolCallId}`}
+            value={reasoning}
+            onChange={(event) => setReasoning(event.target.value)}
+            disabled={controlsDisabled}
+            rows={2}
+            placeholder="Reasoning (optional)"
+            className="w-full resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
+            data-testid={`question-reasoning-${prompt.toolCallId}`}
+          />
+        </div>
+      ) : null}
       <Collapsible
         open={showContext}
         onOpenChange={setShowContext}
