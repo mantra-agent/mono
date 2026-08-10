@@ -2,7 +2,7 @@ import { readFile, readdir, mkdir } from "fs/promises";
 import { join, resolve, relative, basename, dirname } from "path";
 import type { SQL } from "drizzle-orm";
 import { recordToolCallStart, recordToolCallEnd } from "./file-storage";
-import { MIME_MAP, TEXT_ARTIFACT_MIME_MAP } from "./lib/mime";
+import { MIME_MAP } from "./lib/mime";
 import { getInstanceName } from "@shared/instance-config";
 import { objectStorageService } from "./object_storage";
 import { ObjectPermission, setObjectAclPolicy } from "./object_storage/objectAcl";
@@ -24,6 +24,8 @@ import { strategyMoveMutationHandlers } from "./tools/handlers/strategy-move-mut
 import { strategyMoveReadHandlers } from "./tools/handlers/strategy-move-reads";
 import { strategyEvaluationHandlers } from "./tools/handlers/strategy-evaluation";
 import { strategySupportHandlers } from "./tools/handlers/strategy-support";
+import { strategyAssumptionHandlers } from "./tools/handlers/strategy-assumptions";
+import { strategyArtifactHandlers } from "./tools/handlers/strategy-artifacts";
 export { handleGmailDraftFromReview } from "./tools/handlers/gmail-drafts";
 export { diagnoseGmailBatchRead } from "./tools/handlers/gmail-provider";
 import { isSimilarText } from "./utils/text-similarity";
@@ -462,198 +464,6 @@ const gmailHandler = createGmailHandler(gmailSubHandlers);
 
 const STRATEGY_ACTIONS = "list_scenarios, get_scenario, create_scenario, update_scenario, delete_scenario, list_actors, get_actor, add_actor, update_actor, remove_actor, get_move_tree, get_move, get_move_path, create_move, update_move, delete_move, reparent_move, list_child_moves, list_move_definitions, get_move_definition, create_move_definition, update_move_definition, delete_move_definition, set_actor_states, link_assumption_to_move, unlink_assumption_from_move, list_notes, add_note, update_note, delete_note, list_context, add_context, update_context, delete_context, add_end_condition, list_end_conditions, update_end_condition, delete_end_condition, add_assumption, list_assumptions, update_assumption, delete_assumption, cascade_assumption, list_artifacts, get_artifact, create_artifact, delete_artifact, evaluate_move, list_states, get_state, create_state, update_state, delete_state, set_end_condition_effect";
 
-async function handleStrategyListAssumptions(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const assumptions = await ss.getAssumptions(goalId);
-  if (assumptions.length === 0) return { result: "No assumptions for this strategy." };
-  const assumptionLinks = await ss.getAssumptionLinksForGoal(goalId);
-  const linkCountByAssumption = new Map<string, number>();
-  for (const l of assumptionLinks) linkCountByAssumption.set(l.assumptionId, (linkCountByAssumption.get(l.assumptionId) || 0) + 1);
-  const lines = assumptions.map((a: any) => {
-    const linkCount = linkCountByAssumption.get(a.id) || 0;
-    return `- **${a.title}** (id: ${a.id}, prob: ${(a.probability * 100).toFixed(0)}%)${linkCount > 0 ? ` — linked to ${linkCount} move(s)` : ""}`;
-  });
-  return { result: `${assumptions.length} assumptions:\n${lines.join("\n")}` };
-}
-
-async function handleStrategyAddAssumption(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const title = args.title;
-  if (!title) return { result: "Missing assumption title", error: true };
-  const assumption = await ss.createAssumption({ goalId, title, description: args.description || "", probability: args.probability ?? 0.5 });
-  return { result: `Assumption added: "${assumption.title}" (ID: ${assumption.id}, prob: ${(assumption.probability * 100).toFixed(0)}%)` };
-}
-
-async function handleStrategyUpdateAssumption(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.id;
-  if (!id) return { result: "Missing assumption id", error: true };
-  const updates: Record<string, any> = {};
-  if (args.title) updates.title = args.title;
-  if (args.description) updates.description = args.description;
-  if (args.probability !== undefined) updates.probability = args.probability;
-  const assumption = await ss.updateAssumption(id, updates);
-  if (!assumption) return { result: `Assumption ${id} not found`, error: true };
-  return { result: `Assumption updated: "${assumption.title}" — ${Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(", ")}` };
-}
-
-async function handleStrategyDeleteAssumption(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.id;
-  if (!id) return { result: "Missing assumption id", error: true };
-  const deleted = await ss.deleteAssumption(id);
-  if (!deleted) return { result: `Assumption ${id} not found`, error: true };
-  return { result: `Assumption ${id} deleted` };
-}
-
-async function handleStrategyCascadeAssumption(args: Record<string, any>): Promise<ToolHandlerResult> {
-  const id = args.id;
-  if (!id) return { result: "Missing assumption id", error: true };
-  const { cascadeAssumption } = await import("./strategy-simulation");
-  await cascadeAssumption(id);
-  return { result: `Assumption ${id} cascaded — affected move probabilities recalculated` };
-}
-
-async function handleStrategySetActorStates(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const moveId = args.moveId;
-  if (!moveId) return { result: "Missing moveId", error: true };
-  if (!args.actorStates || !Array.isArray(args.actorStates)) return { result: "Missing actorStates array (expected [{actorId, state}])", error: true };
-  const resolvedSetStates = await ss.resolveMoveInstance(moveId);
-  if (!resolvedSetStates) return { result: `Move ${moveId} not found`, error: true };
-  const move = await ss.updateMoveInstance(resolvedSetStates.id, { actorStates: args.actorStates });
-  if (!move) return { result: `Move ${moveId} not found`, error: true };
-  const stateActors = await ss.getActors(move.goalId);
-  const stateActorMap = new Map(stateActors.map((a: any) => [a.id, a.name]));
-  const stateLines = args.actorStates.map((s: any) => `  - ${stateActorMap.get(s.actorId) || s.actorId}: "${s.state}"`);
-  return { result: `Actor states updated on move "${move.title}":\n${stateLines.join("\n")}` };
-}
-
-async function handleStrategyLinkAssumptionToMove(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const assumptionId = args.assumptionId;
-  const moveId = args.moveId;
-  const polarity = args.polarity === "negative" ? "negative" : "positive";
-  if (!assumptionId) return { result: "Missing assumptionId", error: true };
-  if (!moveId) return { result: "Missing moveId", error: true };
-  const resolvedLink = await ss.resolveMoveInstance(moveId);
-  if (!resolvedLink) return { result: `Move ${moveId} not found`, error: true };
-  const assumption = await ss.getAssumption(assumptionId);
-  if (!assumption) return { result: `Assumption ${assumptionId} not found`, error: true };
-  await ss.createAssumptionLink({ assumptionId, moveInstanceId: resolvedLink.id, polarity });
-  return { result: `Move ${moveId} linked to assumption "${assumption.title}" with polarity=${polarity}` };
-}
-
-async function handleStrategyUnlinkAssumptionFromMove(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const assumptionId = args.assumptionId;
-  const moveId = args.moveId;
-  if (!assumptionId) return { result: "Missing assumptionId", error: true };
-  if (!moveId) return { result: "Missing moveId", error: true };
-  const resolvedUnlink = await ss.resolveMoveInstance(moveId);
-  if (!resolvedUnlink) return { result: `Move ${moveId} not found`, error: true };
-  const assumption = await ss.getAssumption(assumptionId);
-  if (!assumption) return { result: `Assumption ${assumptionId} not found`, error: true };
-  const links = await ss.getAssumptionLinksForAssumption(assumptionId);
-  const link = links.find((l: any) => l.moveInstanceId === resolvedUnlink.id);
-  if (!link) return { result: `Move ${moveId} is not linked to assumption "${assumption.title}"` };
-  await ss.deleteAssumptionLink(link.id);
-  return { result: `Move ${moveId} unlinked from assumption "${assumption.title}"` };
-}
-
-async function handleStrategyListArtifacts(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const artifacts = await ss.getArtifacts(goalId);
-  if (artifacts.length === 0) return { result: "No artifacts for this strategy." };
-  const lines = artifacts.map((a: any) => {
-    const sizeKB = (a.fileSize / 1024).toFixed(1);
-    return `- **${a.fileName}** (${sizeKB} KB, ${a.contentType}, id: ${a.id}, path: ${a.objectPath})`;
-  });
-  return { result: `${artifacts.length} artifacts:\n${lines.join("\n")}\n\nUse get_artifact with the artifact id to read its content.` };
-}
-
-async function handleStrategyGetArtifact(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.id;
-  if (!id) return { result: "Missing artifact id. Call list_artifacts first.", error: true };
-  const allGoalArtifacts = args.goalId ? await ss.getArtifacts(args.goalId) : [];
-  let artifact = allGoalArtifacts.find((a: any) => a.id === id);
-  if (!artifact) {
-    const { db } = await import("./db");
-    const { strategyArtifacts } = await import("@shared/models/strategy");
-    const { eq } = await import("drizzle-orm");
-    const [found] = await db.select().from(strategyArtifacts).where(eq(strategyArtifacts.id, id));
-    artifact = found || null;
-  }
-  if (!artifact) return { result: `Artifact ${id} not found`, error: true };
-
-  const textExts = [".md", ".txt", ".json", ".yaml", ".yml", ".xml", ".csv", ".js", ".ts", ".py", ".sh", ".toml", ".ini", ".html", ".css", ".svg", ".log"];
-  const textTypes = ["text/", "application/json", "application/xml", "application/javascript", "application/yaml", "application/toml"];
-  const isText = textTypes.some(t => artifact!.contentType.startsWith(t)) ||
-    (artifact.contentType === "application/octet-stream" && textExts.some(ext => artifact!.fileName.toLowerCase().endsWith(ext)));
-  if (!isText) return { result: `Artifact "${artifact.fileName}" is a binary file (${artifact.contentType}) and cannot be read as text. View it in the Strategy UI instead.`, error: true };
-
-  try {
-    const storageService = objectStorageService;
-    const objectPath = artifact.objectPath.startsWith("/objects/") ? artifact.objectPath : `/objects/${artifact.objectPath}`;
-    const objectFile = await storageService.getObjectEntityFile(objectPath);
-    const [buffer] = await objectFile.download();
-    const content = buffer.toString("utf-8");
-    const offset = typeof args?.offset === "number" && args.offset >= 0 ? args.offset : 0;
-    const limit = typeof args?.limit === "number" && args.limit > 0 ? args.limit : undefined;
-    if (offset > 0 || limit !== undefined) {
-      const slice = limit !== undefined ? content.slice(offset, offset + limit) : content.slice(offset);
-      return { result: `**${artifact.fileName}** (offset=${offset}, showing ${slice.length} of ${content.length} chars):\n\n${slice}` };
-    }
-    if (content.length > 50000) {
-      const { indexAndArchiveWithFallback } = await import("./content-indexer");
-      const refBlock = await indexAndArchiveWithFallback({
-        content,
-        sourceType: "file",
-        sourceLabel: artifact.fileName,
-      });
-      return { result: `**${artifact.fileName}** (${content.length} chars):\n\n${refBlock}` };
-    }
-    return { result: `**${artifact.fileName}** (${content.length} chars):\n\n${content}` };
-  } catch (err: any) {
-    return { result: `Failed to read artifact "${artifact.fileName}": ${err.message}`, error: true };
-  }
-}
-
-async function handleStrategyCreateArtifact(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const fileName = args.fileName;
-  if (!fileName) return { result: "Missing fileName (e.g. 'analysis.md')", error: true };
-  const content = args.content;
-  if (content === undefined || content === null) return { result: "Missing content — provide the text content to store", error: true };
-  const MAX_ARTIFACT_SIZE = 50 * 1024;
-  if (content.length > MAX_ARTIFACT_SIZE) return { result: `Content too large (${(content.length / 1024).toFixed(1)} KB). Maximum size is ${MAX_ARTIFACT_SIZE / 1024} KB.`, error: true };
-
-  const { extname } = await import("path");
-  const ext = extname(fileName).toLowerCase();
-  if (ext && !TEXT_ARTIFACT_MIME_MAP[ext]) return { result: `Unsupported file extension "${ext}". create_artifact only supports text formats: ${Object.keys(TEXT_ARTIFACT_MIME_MAP).join(", ")}`, error: true };
-  const contentType = TEXT_ARTIFACT_MIME_MAP[ext] || "text/plain";
-  const contentBuffer = Buffer.from(content, "utf-8");
-
-  try {
-    const { objectPath } = await objectStorageService.uploadObjectEntity(contentBuffer, {
-      extension: ext || ".md",
-      contentType,
-    });
-
-    const artifact = await ss.createArtifact({ goalId, fileName, fileSize: contentBuffer.length, contentType, objectPath });
-    return { result: `Artifact created: "${artifact.fileName}" (ID: ${artifact.id}, ${(contentBuffer.length / 1024).toFixed(1)} KB)` };
-  } catch (err: any) {
-    return { result: `Failed to create artifact: ${err.message}`, error: true };
-  }
-}
-
-async function handleStrategyDeleteArtifact(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.id;
-  if (!id) return { result: "Missing artifact id", error: true };
-  const deleted = await ss.deleteArtifact(id);
-  if (!deleted) return { result: `Artifact ${id} not found`, error: true };
-  return { result: `Artifact ${id} deleted` };
-}
-
 const strategySubHandlers: Record<string, StrategySubHandler> = {
   ...strategyCoreHandlers,
   ...strategyStateHandlers,
@@ -661,18 +471,8 @@ const strategySubHandlers: Record<string, StrategySubHandler> = {
   ...strategyMoveReadHandlers,
   ...strategyEvaluationHandlers,
   ...strategySupportHandlers,
-  list_assumptions: handleStrategyListAssumptions,
-  add_assumption: handleStrategyAddAssumption,
-  update_assumption: handleStrategyUpdateAssumption,
-  delete_assumption: handleStrategyDeleteAssumption,
-  cascade_assumption: (args) => handleStrategyCascadeAssumption(args),
-  set_actor_states: handleStrategySetActorStates,
-  link_assumption_to_move: handleStrategyLinkAssumptionToMove,
-  unlink_assumption_from_move: handleStrategyUnlinkAssumptionFromMove,
-  list_artifacts: handleStrategyListArtifacts,
-  get_artifact: handleStrategyGetArtifact,
-  create_artifact: handleStrategyCreateArtifact,
-  delete_artifact: handleStrategyDeleteArtifact,
+  ...strategyAssumptionHandlers,
+  ...strategyArtifactHandlers,
 };
 
 export interface CrossSessionDeps {
