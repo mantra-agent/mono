@@ -271,6 +271,16 @@ export type TerminationReason =
   | "circuit_breaker"
   | "yield_to_interactive";
 
+/** Source-owned terminal truth for autonomous child missions. */
+export type ChildMissionTerminalOutcome =
+  | "mission_completed"
+  | "resumable_budget_exhausted"
+  | "blocked"
+  | "needs_review"
+  | "failed"
+  | "cancelled"
+  | "abandoned";
+
 export type TerminalDegradationReason =
   | "empty_response"
   | "empty_response_output_limit"
@@ -1032,6 +1042,8 @@ export interface ChatSession {
   spawnerTool?: string;
   spawnerSkillRun?: string;
   endReason?: string;
+  /** Source-owned terminal truth for Plan/Workflow child mission consumers. */
+  childMissionOutcome?: ChildMissionTerminalOutcome;
   errorSeverity?: ErrorSeverity | null;
   directChildCount?: number;
   parentMissing?: boolean;
