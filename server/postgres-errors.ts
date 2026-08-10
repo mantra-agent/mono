@@ -73,3 +73,22 @@ export function getPostgresErrorCode(error: unknown): string {
 export function isUniqueViolationError(error: unknown): boolean {
   return getPostgresErrorCode(error) === "23505";
 }
+
+/**
+ * The constraint/index name node-postgres attaches to a violation (e.g. the
+ * primary key vs a named unique index). Returns null when the driver did not
+ * surface one, so callers must treat null as "unknown", not as a match.
+ */
+export function getPostgresConstraintName(error: unknown): string | null {
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 5 && current && !seen.has(current); depth++) {
+    seen.add(current);
+    const candidate = current as { constraint?: unknown; cause?: unknown };
+    if (typeof candidate.constraint === "string" && candidate.constraint.length > 0) {
+      return candidate.constraint;
+    }
+    current = candidate.cause;
+  }
+  return null;
+}

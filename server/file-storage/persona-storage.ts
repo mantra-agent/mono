@@ -4,7 +4,7 @@ import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors"
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { TTLCache } from "../utils/ttl-cache";
 import { createLogger } from "../log";
-import { isUniqueViolationError } from "../postgres-errors";
+import { isUniqueViolationError, getPostgresConstraintName } from "../postgres-errors";
 import { requireCurrentUserPrincipal } from "../principal-context";
 import { createSystemPrincipal, type Principal } from "../principal";
 import { principalHasPermission } from "../permissions";
@@ -830,15 +830,27 @@ class PersonaStorageClass {
     label: string,
     run: () => Promise<T>,
   ): Promise<T> {
-    try {
-      return await run();
-    } catch (error) {
-      if (!isUniqueViolationError(error)) throw error;
-      log.warn(
-        `${label}: personas id unique violation; repairing id sequence and retrying once`,
-      );
-      await this.syncIdSequence();
-      return await run();
+    // personas.id is a serial whose sequence can lag MAX(id) after restores,
+    // explicit-id seed inserts, or legacy paths. That surfaces as a 23505 on the
+    // personas_pkey constraint. Repair the sequence and retry a bounded number of
+    // times so a drifted sequence can never surface a raw insert error to callers
+    // (which previously collapsed orient/persona activation). A unique violation on
+    // any other constraint (e.g. an owner+name index) is not an id-sequence problem
+    // and is rethrown immediately for the caller's own recovery.
+    const MAX_ATTEMPTS = 4;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await run();
+      } catch (error) {
+        if (!isUniqueViolationError(error)) throw error;
+        const constraint = getPostgresConstraintName(error);
+        const isIdCollision = constraint === "personas_pkey" || constraint === null;
+        if (!isIdCollision || attempt >= MAX_ATTEMPTS) throw error;
+        log.warn(
+          `${label}: personas id unique violation (constraint=${constraint ?? "unknown"}, attempt ${attempt}/${MAX_ATTEMPTS}); repairing id sequence and retrying`,
+        );
+        await this.syncIdSequence();
+      }
     }
   }
 
