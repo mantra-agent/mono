@@ -385,7 +385,7 @@ Skills are runnable workflows with run identity, sessions, scoring, and operator
 7. **Social Pipeline** — Draft → review → scheduled + calendar → timer claims → X/Twitter post
 8. **Daily Artifacts** — Timer → skill → Library page → set_brief/set_review → CheckIn → UI gold dot
 9. **Hook Reactor** — System event → pattern match → condition + cooldown → action dispatch
-10. **Sleep Cycle** — Nightly: decay → reinforce → NREM merge/prune → REM dream → GSI score
+10. **Sleep Cycle** — Nightly vNext lifecycle maintenance → REM synthesis → optional GSI structural scoring; legacy entry decay, reinforcement, NREM, and tier-budget phases are retired.
 11. **Memory Lifecycle** — vNext source extraction persists provenance-backed claims; nightly lifecycle, REM, and GSI maintain the active claim graph without legacy tier promotion.
 12. **Access Control** — Session/auth middleware resolves a `Principal` → permission service computes base role + `user_permissions` overrides → `/api/auth/me` exposes principal/scopes/permissions → privileged routes call `requirePermission(...)` or equivalent central checks
 13. **Calendar Metadata** — Google event → local overlay → type, linked tasks, auto-linked People
