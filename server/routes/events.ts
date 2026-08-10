@@ -128,6 +128,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
             subscriptionEpoch: typeof msg.subscriptionEpoch === "number" && Number.isSafeInteger(msg.subscriptionEpoch)
               ? msg.subscriptionEpoch
               : 0,
+            trigger: typeof msg.trigger === "string" ? msg.trigger : "unknown",
           };
           const ownerId = identity.handlerId || "connection";
           const subscriptionEpoch = identity.subscriptionEpoch ?? 0;
@@ -234,6 +235,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
             subscriptionEpoch: typeof msg.subscriptionEpoch === "number" && Number.isSafeInteger(msg.subscriptionEpoch)
               ? msg.subscriptionEpoch
               : 0,
+            trigger: typeof msg.trigger === "string" ? msg.trigger : "unknown",
           };
           if (!sessionManager.beginSubscriptionMutation(unsubSessionId, ws, identity)) return;
           const hadSubscription = subscribedSessionIds.has(unsubSessionId);
