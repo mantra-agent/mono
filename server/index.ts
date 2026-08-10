@@ -9,8 +9,9 @@ import { SUPERVISOR_HEALTH_PATH } from "./supervisor-health-contract";
 import { createServer } from "http";
 import { executorManager } from "./executor-manager";
 import { apiTimingMiddleware, startEventLoopMonitor, recordBootTiming, setCpuAllocationLimit } from "./performance-monitor";
+import { resolveEffectiveCpuAllocation } from "./cpu-allocation";
 import { startMemoryWatchdog } from "./memory-watchdog";
-import { describeServiceInstanceLimits, fetchServiceInstanceLimits, resolveServiceInstanceCpuLimit, resolveServiceInstanceMemoryMB } from "./integrations/railway/client";
+import { describeServiceInstanceLimits, fetchServiceInstanceLimits, resolveServiceInstanceMemoryMB } from "./integrations/railway/client";
 import { resolveRailwayEnvironmentControl } from "./integrations/railway/environment-control";
 import { initTimezone, getTimezone } from "./timezone";
 import { initProfiles } from "./job-profiles";
@@ -681,6 +682,17 @@ app.use((req, res, next) => {
         setTimeout(() => { process.exit(79); }, 50).unref();
       }
 
+      resolveEffectiveCpuAllocation()
+        .then((allocation) => {
+          setCpuAllocationLimit(allocation.vCpus, allocation.source);
+          serverLog.info("startup.cpu_allocation_resolved", allocation);
+        })
+        .catch((error) => {
+          serverLog.warn("startup.cpu_allocation_unavailable", {
+            reason: "container_runtime_quota_unavailable",
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+        });
       startEventLoopMonitor();
       executorManager.startSupervisor();
       executorManager.start().catch((err) => {
@@ -787,19 +799,10 @@ app.use((req, res, next) => {
             control.token,
           );
           const maxMemoryMB = resolveServiceInstanceMemoryMB(limits);
-          const cpuLimitVcpus = resolveServiceInstanceCpuLimit(limits);
           if (maxMemoryMB === null) {
             throw new Error(`Railway serviceInstanceLimits returned no supported memory field: ${describeServiceInstanceLimits(limits)}`);
           }
-          if (cpuLimitVcpus !== null) {
-            setCpuAllocationLimit(cpuLimitVcpus);
-          } else {
-            serverLog.warn("startup.cpu_limit_unavailable", {
-              reason: "railway_service_instance_limits_missing_cpu",
-              degradedBehavior: "cpu_utilization_is_unavailable",
-            });
-          }
-          log(`[startup] Resource limits resolved from Railway serviceInstanceLimits: maxMemory=${maxMemoryMB}MB cpuLimit=${cpuLimitVcpus ?? "unavailable"}vCPU ${describeServiceInstanceLimits(limits)}`, "boot");
+          log(`[startup] Memory watchdog limit resolved from Railway serviceInstanceLimits: maxMemory=${maxMemoryMB}MB ${describeServiceInstanceLimits(limits)}`, "boot");
           startMemoryWatchdog({
             maxMemoryMB,
             onGracefulShutdown: () => shutdownApplication({
@@ -814,9 +817,9 @@ app.use((req, res, next) => {
           const status = typeof (err as { status?: unknown })?.status === "number"
             ? (err as { status: number }).status
             : null;
-          serverLog.warn("startup.resource_limits_unavailable", {
+          serverLog.warn("startup.memory_watchdog_disabled", {
             reason: "railway_service_instance_limits_unavailable",
-            degradedBehavior: "cpu_utilization_is_unavailable_and_provider_memory_oom_restart_remains_authoritative",
+            degradedBehavior: "provider_memory_limit_remains_authoritative_and_oom_restart_remains_available",
             errorName: err instanceof Error ? err.name : typeof err,
             providerStatus: status,
           });

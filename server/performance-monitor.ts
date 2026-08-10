@@ -55,10 +55,12 @@ const rpsHistory: TimestampedSample[] = [];
 let lastCpuUsage = process.cpuUsage();
 let lastCpuTime = process.hrtime.bigint();
 let cpuLimitVcpus: number | null = null;
+let cpuLimitSource: string | null = null;
 let currentCpuCoreEquivalents = 0;
 
-export function setCpuAllocationLimit(vCpus: number): void {
+export function setCpuAllocationLimit(vCpus: number, source: string): void {
   cpuLimitVcpus = Number.isFinite(vCpus) && vCpus > 0 ? vCpus : null;
+  cpuLimitSource = cpuLimitVcpus === null ? null : source;
 }
 
 let requestCount = 0;
@@ -318,6 +320,7 @@ export function getPerformanceDiagnostics() {
     system: {
       cpuCores: os.cpus().length,
       cpuLimitVcpus,
+      cpuLimitSource,
       loadAvg: loadAvg.map(l => Math.round(l * 100) / 100),
       totalMemory: totalSystemMemory,
       freeMemory: freeSystemMemory,

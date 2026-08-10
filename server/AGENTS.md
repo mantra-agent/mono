@@ -14,6 +14,8 @@ Secret-backed integration tools are normally withheld from the advertised regist
 
 ## Railway request priority boundary
 
+Service CPU utilization derives its effective denominator locally from Linux cgroup quota, falling back to process CPU affinity only when quota is unlimited or unavailable. Railway API observations may corroborate provider allocation but must never be required for in-process CPU correctness or availability.
+
 `server/integrations/railway/client.ts` is the single outbound Railway API boundary and every request is classified as `observation` or `release`. Immediately before every real provider HTTP dispatch, `request-attribution.ts` durably records one secret-free receipt keyed by connector/token fingerprint, operation, caller, environment, Principal scope, and bounded run/session lineage; settlement adds outcome, latency, HTTP status, and Railway rate-limit headers. Local cooldown rejections and cache hits never count as provider calls. The shared deployment snapshot may spend only the observation budget and must preserve hourly capacity for a human-approved release; `forceRefresh` never bypasses that guard. Publish-owned deployment reads and redeploy mutations use the release class, remain bounded and identity-fenced, and do not fail because an observation budget is exhausted. Railway-issued `Retry-After` / reset guidance remains authoritative across both classes: release priority reserves local capacity but never bypasses provider cooldown. Platform binding, connector credential, permissions, manual production approval, idempotency, and rollback remain independent gates.
 
 ## Git clone source identity
