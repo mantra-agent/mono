@@ -12,7 +12,7 @@ import { getTimezone } from "./timezone";
 const log = createLogger("HistoricalContinuity");
 const TURN_MAX_INPUT_CHARS = 48_000;
 const TURN_MAX_OUTPUT_TOKENS = 320;
-const HISTORY_TOKEN_BUDGET = 2_400;
+const HISTORY_TOKEN_BUDGET = 9_600;
 const DEFAULT_HISTORY_TIMEZONE = "America/Chicago";
 const ROLLUP_LEVELS = ["hour", "day", "week", "month", "quarter", "year"] as const;
 const HISTORY_PROJECTION_LEVELS = ["turn", "hour", "day", "week", "month", "quarter", "year"] as const;
