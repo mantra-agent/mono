@@ -3,7 +3,7 @@ import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 import { Check, ChevronLeft, ChevronRight, Circle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobileViewport } from "@/hooks/use-mobile"
 import {
   Drawer,
   DrawerContent,
@@ -325,8 +325,8 @@ function MobileDropdownRoot({
 // ---------------------------------------------------------------------------
 
 function DropdownMenu(props: DropdownMenuPrimitive.DropdownMenuProps) {
-  const isMobile = useIsMobile()
-  if (isMobile) return <MobileDropdownRoot {...props} />
+  const isMobileViewport = useIsMobileViewport()
+  if (isMobileViewport) return <MobileDropdownRoot {...props} />
   return <DropdownMenuPrimitive.Root {...props} />
 }
 DropdownMenu.displayName = "DropdownMenu"
