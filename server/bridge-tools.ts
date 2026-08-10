@@ -50,6 +50,9 @@ import { peopleRelationshipHandlers } from "./tools/handlers/people-relationship
 import { peopleInteractionHandlers } from "./tools/handlers/people-interactions";
 import { peopleMutationHandlers } from "./tools/handlers/people-mutations";
 import { peopleImportHandlers } from "./tools/handlers/people-imports";
+import { companiesHandler } from "./tools/handlers/companies";
+import { twitterHandler } from "./tools/handlers/twitter";
+import { notionHandler } from "./tools/handlers/notion";
 import type {
   ToolExecutionResult as ToolResult,
   ToolHandler,
@@ -2562,111 +2565,6 @@ const strategySubHandlers: Record<string, StrategySubHandler> = {
   set_end_condition_effect: handleStrategySetEndConditionEffect,
 };
 
-type NotionResolveAccountId = (a: Record<string, any>) => Promise<{ id: string } | { error: string }>;
-type NotionModule = typeof import("./notion");
-
-async function handleNotionStatus(notion: NotionModule): Promise<ToolHandlerResult> {
-  const accounts = await notion.listNotionAccounts();
-  if (accounts.length === 0) return { result: "Notion: no accounts connected. Add one in Settings > Integrations." };
-  const lines = accounts.map(a => `- **${a.workspaceName}** (${a.label})`);
-  return { result: `Notion: ${accounts.length} account(s) connected:\n${lines.join("\n")}` };
-}
-
-async function handleNotionSearch(args: Record<string, any>, resolveAccountId: NotionResolveAccountId, notion: NotionModule): Promise<ToolHandlerResult> {
-  const resolved = await resolveAccountId(args);
-  if ("error" in resolved) return { result: resolved.error, error: true };
-  const query = args.query || "";
-  const pages = await notion.searchPages(resolved.id, query, args.limit || 10);
-  if (pages.length === 0) return { result: query ? `No Notion pages found for "${query}"` : "No pages found in Notion." };
-  const lines = pages.map((p: any) => {
-    const title = p.properties?.title?.title?.[0]?.plain_text || p.properties?.Name?.title?.[0]?.plain_text || "(untitled)";
-    const lastEdited = p.last_edited_time ? ` — edited ${new Date(p.last_edited_time).toLocaleDateString()}` : "";
-    return `- **${title}** (id: ${p.id})${lastEdited}`;
-  });
-  return { result: `Found ${pages.length} pages:\n${lines.join("\n")}` };
-}
-
-async function handleNotionGetPage(args: Record<string, any>, resolveAccountId: NotionResolveAccountId, notion: NotionModule): Promise<ToolHandlerResult> {
-  const resolved = await resolveAccountId(args);
-  if ("error" in resolved) return { result: resolved.error, error: true };
-  const pageId = args.id;
-  if (!pageId) return { result: "Missing page id", error: true };
-  const page = await notion.getPage(resolved.id, pageId);
-  const props = page.properties || {};
-  const title = (props as any).title?.title?.[0]?.plain_text || (props as any).Name?.title?.[0]?.plain_text || "(untitled)";
-  const lastEdited = page.last_edited_time ? new Date(page.last_edited_time as any).toLocaleString() : "unknown";
-  const propLines = Object.entries(props)
-    .filter(([k]) => k !== "title" && k !== "Name")
-    .slice(0, 10)
-    .map(([k, v]: [string, any]) => {
-      if (v.type === "rich_text") return `  ${k}: ${v.rich_text?.[0]?.plain_text || ""}`;
-      if (v.type === "select") return `  ${k}: ${v.select?.name || ""}`;
-      if (v.type === "multi_select") return `  ${k}: ${v.multi_select?.map((s: any) => s.name).join(", ") || ""}`;
-      if (v.type === "date") return `  ${k}: ${v.date?.start || ""}`;
-      if (v.type === "number") return `  ${k}: ${v.number ?? ""}`;
-      if (v.type === "checkbox") return `  ${k}: ${v.checkbox ? "Yes" : "No"}`;
-      return `  ${k}: (${v.type})`;
-    });
-  return { result: `**${title}**\nLast edited: ${lastEdited}\n${propLines.length ? "Properties:\n" + propLines.join("\n") : ""}` };
-}
-
-async function handleNotionGetContent(args: Record<string, any>, resolveAccountId: NotionResolveAccountId, notion: NotionModule): Promise<ToolHandlerResult> {
-  const resolved = await resolveAccountId(args);
-  if ("error" in resolved) return { result: resolved.error, error: true };
-  const pageId = args.id;
-  if (!pageId) return { result: "Missing page id", error: true };
-  const blocks = await notion.getPageContent(resolved.id, pageId);
-  const lines = blocks.slice(0, 50).map((b: any) => {
-    const type = b.type;
-    const content = b[type];
-    if (!content) return `[${type}]`;
-    if (content.rich_text) {
-      const text = content.rich_text.map((t: any) => t.plain_text).join("");
-      if (type === "heading_1") return `# ${text}`;
-      if (type === "heading_2") return `## ${text}`;
-      if (type === "heading_3") return `### ${text}`;
-      if (type === "bulleted_list_item") return `- ${text}`;
-      if (type === "numbered_list_item") return `1. ${text}`;
-      if (type === "to_do") return `${content.checked ? "[x]" : "[ ]"} ${text}`;
-      return text;
-    }
-    if (type === "divider") return "---";
-    if (type === "image") return `[image: ${content.external?.url || content.file?.url || "embedded"}]`;
-    return `[${type}]`;
-  });
-  if (blocks.length > 50) lines.push(`... and ${blocks.length - 50} more blocks`);
-  return { result: lines.join("\n") || "(empty page)" };
-}
-
-async function handleNotionListDatabases(args: Record<string, any>, resolveAccountId: NotionResolveAccountId, notion: NotionModule): Promise<ToolHandlerResult> {
-  const resolved = await resolveAccountId(args);
-  if ("error" in resolved) return { result: resolved.error, error: true };
-  const dbs = await notion.searchDatabases(resolved.id, args.query, args.limit || 10);
-  if (dbs.length === 0) return { result: "No databases found in Notion." };
-  const lines = dbs.map((db: any) => {
-    const title = db.title?.[0]?.plain_text || "(untitled)";
-    return `- **${title}** (id: ${db.id})`;
-  });
-  return { result: `Found ${dbs.length} databases:\n${lines.join("\n")}` };
-}
-
-async function handleNotionQueryDatabase(args: Record<string, any>, resolveAccountId: NotionResolveAccountId, notion: NotionModule): Promise<ToolHandlerResult> {
-  const resolved = await resolveAccountId(args);
-  if ("error" in resolved) return { result: resolved.error, error: true };
-  const dbId = args.id;
-  if (!dbId) return { result: "Missing database id", error: true };
-  const { results, hasMore } = await notion.queryDatabase(resolved.id, dbId, { pageSize: args.limit || 20 });
-  if (results.length === 0) return { result: "No entries in this database." };
-  const lines = results.map((row: any) => {
-    const props = row.properties || {};
-    const title = Object.values(props).find((v: any) => v.type === "title") as any;
-    const name = title?.title?.[0]?.plain_text || "(untitled)";
-    return `- **${name}** (id: ${row.id})`;
-  });
-  const more = hasMore ? `\n(more results available)` : "";
-  return { result: `${results.length} entries:\n${lines.join("\n")}${more}` };
-}
-
 export interface CrossSessionDeps {
   storage: import("./chat-file-storage").IChatFileStorage;
   publishEvent?: (
@@ -4504,53 +4402,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
   },
 
-  async companies(args) {
-    try {
-      const { companyStorage } = await import("./company-storage");
-      const action = String(args.action || "list");
-      if (action === "list") return { result: JSON.stringify(await companyStorage.list(args.query), null, 2) };
-      const company = args.id ? await companyStorage.resolve(String(args.id)) : null;
-      if (action === "get") {
-        if (!company) return { result: "Company not found", error: true };
-        return { result: JSON.stringify({ ...company, people: await companyStorage.listPeople(company.id), opportunities: await companyStorage.listOpportunities(company.id) }, null, 2) };
-      }
-      if (action === "create") {
-        if (!args.name) return { result: "Missing company name", error: true };
-        const created = await companyStorage.create(args);
-        return { result: `Company created: ${created.name} @company:${created.id}` };
-      }
-      if (!company) return { result: "Company not found. Provide id or exact name.", error: true };
-      if (action === "update") {
-        const updated = await companyStorage.update(company.id, args);
-        return { result: `Company updated: ${updated.name} @company:${updated.id}` };
-      }
-      if (action === "delete") {
-        await companyStorage.delete(company.id);
-        return { result: `Company deleted: ${company.name}` };
-      }
-      if (action === "add_opportunity" || action === "remove_opportunity") {
-        if (typeof args.opportunityId !== "number") return { result: "Missing opportunityId", error: true };
-        if (action === "add_opportunity") {
-          await companyStorage.addOpportunity(company.id, args.opportunityId);
-          return { result: `Added opportunity ${args.opportunityId} to @company:${company.id}` };
-        }
-        await companyStorage.removeOpportunity(company.id, args.opportunityId);
-        return { result: `Removed opportunity ${args.opportunityId} from @company:${company.id}` };
-      }
-      if (!args.personId) return { result: "Missing personId", error: true };
-      if (action === "add_person") {
-        await companyStorage.addPerson(company.id, String(args.personId));
-        return { result: `Added @person:${args.personId} to @company:${company.id}` };
-      }
-      if (action === "remove_person") {
-        await companyStorage.removePerson(company.id, String(args.personId));
-        return { result: `Removed @person:${args.personId} from @company:${company.id}` };
-      }
-      return { result: `Unknown companies action: ${action}`, error: true };
-    } catch (err: any) {
-      return { result: `Companies tool error: ${err.message}`, error: true };
-    }
-  },
+  companies: companiesHandler,
 
   async people(args) {
     const action = args.action || "list";
@@ -4563,111 +4415,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
   },
 
-  async twitter(args) {
-    const action = args.action || "status";
-    try {
-      const twitter = await import("./twitter");
-      const twitterActions: Record<string, (a: Record<string, any>) => Promise<ToolHandlerResult>> = {
-        status: async () => {
-          const connected = await twitter.isTwitterConnected();
-          if (!connected) return { result: "X (Twitter) is not connected. The user needs to add their API credentials in Settings → Connections." };
-          const accounts = await twitter.listTwitterAccounts();
-          const results = [];
-          for (const acct of accounts) {
-            const check = await twitter.verifyStoredCredentials(acct.id);
-            const perms = await twitter.getTwitterPermissions(acct.id);
-            results.push({
-              id: acct.id,
-              label: acct.label,
-              valid: check.valid,
-              username: check.username,
-              error: check.error,
-              permissions: perms,
-            });
-          }
-          return { result: safeStringify({ connected: true, accounts: results }, { label: "bridge.accounts.connected" }) };
-        },
-        post: async (a) => {
-          const account = await twitter.getFirstAccountTokens();
-          if (!account) return { result: "No X (Twitter) account connected. Add credentials in Settings → Connections.", error: true };
-          const allowed = await twitter.checkTwitterPermission(account.accountId, "post");
-          if (!allowed) return { result: "Posting is disabled for this X account. The user can enable it in Settings → Connections → X (Twitter) permissions.", error: true };
-          if (!a.text) return { result: "Missing tweet text. Provide the 'text' parameter.", error: true };
-          const result = await twitter.postTweet(account.tokens, a.text);
-          return { result: `Tweet posted successfully!\nURL: ${result.url}\nID: ${result.id}` };
-        },
-        reply: async (a) => {
-          const account = await twitter.getFirstAccountTokens();
-          if (!account) return { result: "No X (Twitter) account connected. Add credentials in Settings → Connections.", error: true };
-          const allowed = await twitter.checkTwitterPermission(account.accountId, "reply");
-          if (!allowed) return { result: "Replying is disabled for this X account. The user can enable it in Settings → Connections → X (Twitter) permissions.", error: true };
-          if (!a.tweet_id) return { result: "Missing tweet_id. Provide the tweet ID or URL to reply to.", error: true };
-          if (!a.text) return { result: "Missing reply text. Provide the 'text' parameter.", error: true };
-          const tweetId = twitter.parseTweetId(a.tweet_id);
-          if (!tweetId) return { result: `Could not parse tweet ID from: ${a.tweet_id}`, error: true };
-          const result = await twitter.replyToTweet(account.tokens, tweetId, a.text);
-          return { result: `Reply posted successfully!\nURL: ${result.url}\nID: ${result.id}` };
-        },
-        lookup: async (a) => {
-          const account = await twitter.getFirstAccountTokens();
-          if (!account) return { result: "No X (Twitter) account connected. Add credentials in Settings → Connections.", error: true };
-          if (!a.tweet_id) return { result: "Missing tweet_id. Provide a tweet ID or URL to look up.", error: true };
-          const articleId = twitter.parseArticleId(a.tweet_id);
-          if (articleId && /\/i\/articles\//i.test(a.tweet_id)) {
-            if (!account.tokens.bearerToken) return { result: "This is an X Article URL. A Bearer Token is required to read articles. Add one in Settings → Connections → X (Twitter).", error: true };
-            const article = await twitter.lookupNews(account.tokens.bearerToken, articleId);
-            return { result: JSON.stringify(article) };
-          }
-          const tweetId = twitter.parseTweetId(a.tweet_id);
-          if (!tweetId) return { result: `Could not parse tweet ID from: ${a.tweet_id}`, error: true };
-          const tweet = await twitter.lookupTweet(account.tokens, tweetId);
-          return { result: JSON.stringify(tweet) };
-        },
-        delete: async (a) => {
-          const account = await twitter.getFirstAccountTokens();
-          if (!account) return { result: "No X (Twitter) account connected. Add credentials in Settings → Connections.", error: true };
-          const allowed = await twitter.checkTwitterPermission(account.accountId, "delete");
-          if (!allowed) return { result: "Deleting tweets is disabled for this X account. The user can enable it in Settings → Connections → X (Twitter) permissions.", error: true };
-          if (!a.tweet_id) return { result: "Missing tweet_id. Provide the tweet ID or URL to delete.", error: true };
-          const tweetId = twitter.parseTweetId(a.tweet_id);
-          if (!tweetId) return { result: `Could not parse tweet ID from: ${a.tweet_id}`, error: true };
-          await twitter.deleteTweet(account.tokens, tweetId);
-          return { result: `Tweet ${tweetId} deleted successfully.` };
-        },
-        news_search: async (a) => {
-          const account = await twitter.getFirstAccountTokens();
-          if (!account) return { result: "No X (Twitter) account connected. Add credentials in Settings → Connections.", error: true };
-          if (!account.tokens.bearerToken) return { result: "No Bearer Token configured for this X account. Add a Bearer Token in Settings → Connections → X (Twitter) to use news/article endpoints.", error: true };
-          if (!a.query) return { result: "Missing query. Provide a search query for news articles.", error: true };
-          let maxResults: number | undefined;
-          if (a.max_results) {
-            maxResults = parseInt(a.max_results, 10);
-            if (isNaN(maxResults) || maxResults < 1 || maxResults > 100) {
-              return { result: "max_results must be a number between 1 and 100.", error: true };
-            }
-          }
-          const results = await twitter.searchNews(account.tokens.bearerToken, a.query, maxResults);
-          return { result: JSON.stringify(results) };
-        },
-        news_lookup: async (a) => {
-          const account = await twitter.getFirstAccountTokens();
-          if (!account) return { result: "No X (Twitter) account connected. Add credentials in Settings → Connections.", error: true };
-          if (!account.tokens.bearerToken) return { result: "No Bearer Token configured for this X account. Add a Bearer Token in Settings → Connections → X (Twitter) to use news/article endpoints.", error: true };
-          if (!a.article_id) return { result: "Missing article_id. Provide an article ID or URL to look up.", error: true };
-          const articleId = twitter.parseArticleId(a.article_id);
-          if (!articleId) return { result: `Could not parse article ID from: ${a.article_id}`, error: true };
-          const article = await twitter.lookupNews(account.tokens.bearerToken, articleId);
-          return { result: JSON.stringify(article) };
-        },
-      };
-
-      const handler = twitterActions[action];
-      if (!handler) return { result: `Unknown twitter action: ${action}. Available: status, post, reply, lookup, delete, news_search, news_lookup`, error: true };
-      return await handler(args);
-    } catch (err: any) {
-      return { result: `Twitter tool error: ${err.message}`, error: true };
-    }
-  },
+  twitter: twitterHandler,
 
   async gmail(args) {
     const action = args.action || "status";
@@ -4688,39 +4436,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
   },
 
-  async notion(args) {
-    const action = args.action || "status";
-
-    try {
-      const notionModule = await import("./notion");
-
-      const resolveAccountId = async (a: Record<string, any>): Promise<{ id: string } | { error: string }> => {
-        const accounts = await notionModule.listNotionAccounts();
-        if (accounts.length === 0) return { error: "No Notion account connected. Add one in Settings > Integrations." };
-        if (a.account) {
-          const match = accounts.find(acc => acc.id === a.account || acc.label.toLowerCase() === a.account.toLowerCase() || acc.workspaceName.toLowerCase().includes(a.account.toLowerCase()));
-          if (!match) return { error: `Notion account "${a.account}" not found. Connected accounts: ${accounts.map(acc => acc.label).join(", ")}` };
-          return { id: match.id };
-        }
-        return { id: accounts[0].id };
-      };
-
-      const notionActionHandlers: Record<string, (a: Record<string, any>) => Promise<ToolHandlerResult>> = {
-        status: (a) => handleNotionStatus(notionModule),
-        search: (a) => handleNotionSearch(a, resolveAccountId, notionModule),
-        get_page: (a) => handleNotionGetPage(a, resolveAccountId, notionModule),
-        get_content: (a) => handleNotionGetContent(a, resolveAccountId, notionModule),
-        list_databases: (a) => handleNotionListDatabases(a, resolveAccountId, notionModule),
-        query_database: (a) => handleNotionQueryDatabase(a, resolveAccountId, notionModule),
-      };
-
-      const handler = notionActionHandlers[action];
-      if (!handler) return { result: `Unknown notion action: ${action}. Available: status, search, get_page, get_content, list_databases, query_database`, error: true };
-      return await handler(args);
-    } catch (err: any) {
-      return { result: `Notion tool error: ${err.message}`, error: true };
-    }
-  },
+  notion: notionHandler,
 
   async add_meeting(args) {
     try {
