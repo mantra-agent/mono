@@ -471,7 +471,7 @@ Chat is an explicit exception. Its Mantra mark and conversation prompt are part 
 - Declare one action hierarchy with `DropdownMenuTrigger`, `DropdownMenuContent`, `DropdownMenuItem`, and the canonical nested/group variants. The primitive owns presentation by modality; consumers must not branch on viewport or native-app state.
 - Use one nested disclosure model at every width: selecting a nested row replaces the current menu body and exposes Back.
 - Desktop always presents that model in a compact collision-aware anchored popover, including inside narrow desktop panels. Only a native mobile app or a genuinely mobile viewport presents it in one modal bottom sheet; container width alone must never switch menu modality.
-- Mobile rows are at least 44px tall. Sheet content respects viewport overflow and safe areas. Nested floating layers on mobile are prohibited.
+- Mobile rows are exactly one compact 44px line with quiet 14px icons. The content-sized panel is inset from screen edges, uses minimal drag/header chrome, and respects viewport overflow and safe areas. It must feel like the Universal Picker—not an edge-to-edge navigation slab. Nested floating layers on mobile are prohibited.
 - Keyboard access, visible focus, disabled semantics, dismissal, and focus return are mandatory.
 - The Design screen's **Responsive action menus** playground is the canonical visual and interaction example. Any change to action-menu behavior must update that example and this section together.
 

@@ -7,7 +7,6 @@ import { useIsMobileViewport } from "@/hooks/use-mobile"
 import {
   Drawer,
   DrawerContent,
-  DrawerHeader,
   DrawerTitle,
   DrawerTrigger,
 } from "@/components/ui/drawer"
@@ -23,7 +22,7 @@ import {
  */
 
 const MOBILE_ROW_CLASS =
-  "relative flex min-h-11 w-full items-center gap-2 rounded-sm px-3 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0"
+  "relative flex h-11 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0"
 
 // ---------------------------------------------------------------------------
 // Child-tree helpers (mobile)
@@ -246,22 +245,20 @@ function MobileMenuLevel({
   const showBack = path.length > 0
   return (
     <>
-      <DrawerHeader className="pb-2 text-left">
-        {showBack ? (
+      <DrawerTitle className="sr-only">{title ?? "Menu"}</DrawerTitle>
+      {showBack ? (
+        <div className="border-b border-border/40 p-1">
           <button
             type="button"
-            className="mb-1 flex min-h-11 w-full items-center gap-2 rounded-sm text-sm font-medium outline-none transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-11 w-full min-w-0 items-center gap-2 rounded-md px-2.5 text-sm font-medium outline-none transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
             onClick={back}
           >
-            <ChevronLeft className="h-3.5 w-3.5" />
-            Back
+            <ChevronLeft className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{title}</span>
           </button>
-        ) : null}
-        <DrawerTitle className={cn("truncate text-base text-popover-foreground", !title && "sr-only")}>
-          {title ?? "Menu"}
-        </DrawerTitle>
-      </DrawerHeader>
-      <div className="max-h-[70dvh] overflow-y-auto overscroll-contain p-1 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        </div>
+      ) : null}
+      <div className="max-h-[min(60dvh,28rem)] overflow-y-auto overscroll-contain p-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
         {rows}
       </div>
     </>
@@ -308,7 +305,7 @@ function MobileDropdownRoot({
       <DrawerTrigger asChild={triggerProps.asChild ?? true}>
         {triggerProps.children}
       </DrawerTrigger>
-      <DrawerContent className="max-h-[85dvh] bg-popover text-popover-foreground">
+      <DrawerContent className="!inset-x-2 !bottom-[max(0.5rem,env(safe-area-inset-bottom))] w-auto max-h-[70dvh] overflow-hidden rounded-xl border border-border/60 bg-popover text-popover-foreground shadow-2xl [&>div:first-child]:mt-2 [&>div:first-child]:h-1 [&>div:first-child]:w-9">
         <MobileMenuLevel
           contentChildren={contentChildren}
           path={path}
