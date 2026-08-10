@@ -21,6 +21,7 @@ import { handleGmailMailboxWrite } from "./tools/handlers/gmail-mailbox-write";
 import { strategyCoreHandlers, type StrategySubHandler } from "./tools/handlers/strategy-core";
 import { strategyStateHandlers } from "./tools/handlers/strategy-state";
 import { strategyMoveMutationHandlers } from "./tools/handlers/strategy-move-mutations";
+import { strategyMoveReadHandlers } from "./tools/handlers/strategy-move-reads";
 export { handleGmailDraftFromReview } from "./tools/handlers/gmail-drafts";
 export { diagnoseGmailBatchRead } from "./tools/handlers/gmail-provider";
 import { isSimilarText } from "./utils/text-similarity";
@@ -459,173 +460,6 @@ const gmailHandler = createGmailHandler(gmailSubHandlers);
 
 const STRATEGY_ACTIONS = "list_scenarios, get_scenario, create_scenario, update_scenario, delete_scenario, list_actors, get_actor, add_actor, update_actor, remove_actor, get_move_tree, get_move, get_move_path, create_move, update_move, delete_move, reparent_move, list_child_moves, list_move_definitions, get_move_definition, create_move_definition, update_move_definition, delete_move_definition, set_actor_states, link_assumption_to_move, unlink_assumption_from_move, list_notes, add_note, update_note, delete_note, list_context, add_context, update_context, delete_context, add_end_condition, list_end_conditions, update_end_condition, delete_end_condition, add_assumption, list_assumptions, update_assumption, delete_assumption, cascade_assumption, list_artifacts, get_artifact, create_artifact, delete_artifact, evaluate_move, list_states, get_state, create_state, update_state, delete_state, set_end_condition_effect";
 
-async function handleStrategyGetMoveTree(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
-  const moves = await ss.getMoveTree(goalId);
-  if (moves.length === 0) return { result: "No moves in this strategy's tree." };
-  const treeActors = await ss.getActors(goalId);
-  const treeActorMap = new Map(treeActors.map((a: any) => [a.id, a.name]));
-  const lines = moves.map((m: any) => {
-    const indent = "  ".repeat(m.depth);
-    const prob = `${(m.probability * 100).toFixed(0)}%`;
-    const actorName = m.actorId ? (treeActorMap.get(m.actorId) || "Unknown") : "";
-    const actorStr = actorName ? ` by ${actorName}` : "";
-    const ref = m.refId ? ` #${m.refId}` : "";
-    const states = (m.actorStates as any[] || []);
-    const stateStr = states.length > 0
-      ? ` | states: ${states.map((s: any) => `${treeActorMap.get(s.actorId) || s.actorId}: "${s.state}"`).join(", ")}`
-      : "";
-    const idPart = ref ? `${ref}, prob: ${prob}` : `prob: ${prob}`;
-    return `${indent}- [${m.status}] **${m.title}**${actorStr} (${idPart})${stateStr}`;
-  });
-  return { result: `${moves.length} moves:\n${lines.join("\n")}` };
-}
-
-async function handleStrategyGetMove(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.moveId;
-  if (!id) return { result: "Missing moveId", error: true };
-  const move = await ss.resolveMoveInstance(id);
-  if (!move) return { result: `Move ${id} not found`, error: true };
-  const moveActors = await ss.getActors(move.goalId);
-  const moveActorMap = new Map(moveActors.map((a: any) => [a.id, a.name]));
-  const actorName = move.actorId ? (moveActorMap.get(move.actorId) || "Unknown") : "";
-  const ref = (move as any).refId ? `#${(move as any).refId}` : "";
-  const idLabel = ref ? `${ref}, id: ${move.id}` : `id: ${move.id}`;
-  const parts = [`**${move.title}**${actorName ? ` by ${actorName}` : ""} (${idLabel}, ${move.status})`];
-  parts.push(`Probability: ${(move.probability * 100).toFixed(0)}%, Depth: ${move.depth}`);
-  if (move.description) parts.push(`Description: ${move.description}`);
-  if (move.evaluation) parts.push(`Analysis: ${move.evaluation}`);
-  if (move.impact) parts.push(`Impact: ${move.impact}`);
-  parts.push(`Source: ${move.source}`);
-
-  const historyPath = await ss.getMovePath(id);
-  if (historyPath.length > 1) {
-    const historyLines = historyPath.map((h: any, i: number) => {
-      const hActor = h.actorId ? (moveActorMap.get(h.actorId) || "Unknown") : "—";
-      const hRef = h.refId ? `#${h.refId}` : "";
-      const marker = h.id === move.id ? " ← current" : "";
-      const hIdPart = hRef ? `${hRef}, prob: ${(h.probability * 100).toFixed(0)}%` : `prob: ${(h.probability * 100).toFixed(0)}%`;
-      return `  ${i + 1}. ${hActor}: **${h.title}** (${hIdPart})${marker}`;
-    });
-    parts.push(`\nMove History (${historyPath.length} moves):\n${historyLines.join("\n")}`);
-  }
-
-  const accumulatedStates = new Map<string, string>();
-  for (const h of historyPath) {
-    const hStates = (h.actorStates as any[] || []);
-    for (const s of hStates) {
-      if (s.state && s.state.trim() !== "") accumulatedStates.set(s.actorId, s.state);
-    }
-  }
-  if (accumulatedStates.size > 0 || moveActors.length > 0) {
-    const stateLines = moveActors.map((a: any) => {
-      const state = accumulatedStates.get(a.id);
-      const inf = `${Math.round((a.influence ?? 0.5) * 100)}% influence`;
-      return state
-        ? `  - ${a.name} (${inf}): "${state}"`
-        : `  - ${a.name} (${inf}): (no state set)`;
-    });
-    parts.push(`\nAccumulated Actor States:\n${stateLines.join("\n")}`);
-  }
-
-  const moveAssumptions = await ss.getAssumptions(move.goalId);
-  const assumptionLinks = await ss.getAssumptionLinksForGoal(move.goalId);
-  const linkedAssumptionIds = new Set(assumptionLinks.filter((l: any) => l.moveInstanceId === move.id).map((l: any) => l.assumptionId));
-  const linked = moveAssumptions.filter((a: any) => linkedAssumptionIds.has(a.id));
-  if (linked.length > 0) {
-    const assumptionLines = linked.map((a: any) => `  - "${a.title}" (prob: ${(a.probability * 100).toFixed(0)}%)`);
-    parts.push(`Linked Assumptions:\n${assumptionLines.join("\n")}`);
-  }
-
-  const goalStates = await ss.getStates(move.goalId);
-  const stateMap = new Map(goalStates.map((s: any) => [s.id, s.name]));
-  if (move.parentStateId) {
-    parts.push(`Parent State: "${stateMap.get(move.parentStateId) || "?"}" (id: ${move.parentStateId})`);
-  } else if (move.parentMoveInstanceId) {
-    parts.push(`Parent Move: ${move.parentMoveInstanceId}`);
-  }
-  if (move.terminatingStateId) {
-    parts.push(`Terminating State: "${stateMap.get(move.terminatingStateId) || "?"}" (id: ${move.terminatingStateId})`);
-  }
-
-  const moveEffects = await ss.getMoveEndConditionEffects(move.id);
-  if (moveEffects.length > 0) {
-    const ecs = await ss.getEndConditions(move.goalId);
-    const ecMap = new Map(ecs.map((e: any) => [e.id, e]));
-    const effectLines = moveEffects.map((e: any) => {
-      const ec: any = ecMap.get(e.endConditionId);
-      const label = ec ? `"${ec.title}"${ec.isRequired ? " [required]" : ""}` : e.endConditionId;
-      return `  - ${e.effect.toUpperCase()}: ${label}`;
-    });
-    parts.push(`End Condition Effects:\n${effectLines.join("\n")}`);
-  }
-
-  return { result: parts.join("\n") };
-}
-
-async function handleStrategyGetMovePath(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.moveId;
-  if (!id) return { result: "Missing move id", error: true };
-  const resolvedMove = await ss.resolveMoveInstance(id);
-  if (!resolvedMove) return { result: `Move ${id} not found`, error: true };
-  const path = await ss.getMovePath(resolvedMove.id);
-  if (path.length === 0) return { result: `Move ${id} not found`, error: true };
-  const pathActors = await ss.getActors(path[0].goalId);
-  const pathActorMap = new Map(pathActors.map((a: any) => [a.id, a.name]));
-  const accStates = new Map<string, string>();
-  const lines = path.map((m: any) => {
-    const prefix = m.depth === 0 ? "ROOT" : `Depth ${m.depth}`;
-    const actorName = m.actorId ? (pathActorMap.get(m.actorId) || "Unknown") : "—";
-    const ref = m.refId ? `#${m.refId}` : "";
-    const mStates = (m.actorStates as any[] || []);
-    const changes: string[] = [];
-    for (const s of mStates) {
-      if (s.state && s.state.trim() !== "" && accStates.get(s.actorId) !== s.state) {
-        changes.push(`${pathActorMap.get(s.actorId) || s.actorId}: "${s.state}"`);
-      }
-      if (s.state && s.state.trim() !== "") accStates.set(s.actorId, s.state);
-    }
-    const changeStr = changes.length > 0 ? ` | state changes: ${changes.join(", ")}` : "";
-    const pIdPart = ref ? `${ref}, prob: ${(m.probability * 100).toFixed(0)}%` : `prob: ${(m.probability * 100).toFixed(0)}%`;
-    return `[${prefix}] ${actorName}: ${m.title} (${pIdPart}, ${m.status})${changeStr}`;
-  });
-  return { result: `Path (${path.length} moves):\n${lines.join("\n")}` };
-}
-
-async function handleStrategyListChildMoves(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const parentId = args.parentId;
-  if (!parentId) return { result: "Missing parentId / moveId", error: true };
-  const resolvedParent = await ss.resolveMoveInstance(parentId);
-  const resolvedParentId = resolvedParent?.id || parentId;
-  const children = await ss.getChildMoveInstances(resolvedParentId);
-  if (children.length === 0) return { result: "No child moves from this position." };
-  const parentMove = resolvedParent;
-  const parentStates = (parentMove?.actorStates as any[] || []);
-  const parentStateMap = new Map(parentStates.map((s: any) => [s.actorId, s.state]));
-  const childActors = await ss.getActors(children[0].goalId);
-  const childActorMap = new Map(childActors.map((a: any) => [a.id, a.name]));
-  const childAssumptions = await ss.getAssumptions(children[0].goalId);
-  const childAssumptionLinks = await ss.getAssumptionLinksForGoal(children[0].goalId);
-  const lines = children.map((c: any) => {
-    const actorName = c.actorId ? (childActorMap.get(c.actorId) || "Unknown") : "—";
-    const states = (c.actorStates as any[] || []);
-    const changedStates = states.filter((s: any) => {
-      const prev = parentStateMap.get(s.actorId);
-      return s.state && s.state.trim() !== "" && prev !== s.state;
-    });
-    const stateStr = changedStates.length > 0
-      ? ` | state changes: ${changedStates.map((s: any) => `${childActorMap.get(s.actorId) || s.actorId}: "${s.state}"`).join(", ")}`
-      : "";
-    const linkedCount = childAssumptionLinks.filter((l: any) => l.moveInstanceId === c.id).length;
-    const assumptionStr = linkedCount > 0 ? ` | ${linkedCount} linked assumptions` : "";
-    const ref = c.refId ? `#${c.refId}` : "";
-    const cIdPart = ref ? `${ref}, ${c.source}, prob: ${(c.probability * 100).toFixed(0)}%` : `${c.source}, prob: ${(c.probability * 100).toFixed(0)}%`;
-    return `- **${c.title}** by ${actorName} (${cIdPart})${stateStr}${assumptionStr}`;
-  });
-  return { result: `${children.length} child moves:\n${lines.join("\n")}` };
-}
-
 async function handleStrategyContextList(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
   if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
@@ -917,10 +751,7 @@ const strategySubHandlers: Record<string, StrategySubHandler> = {
   ...strategyCoreHandlers,
   ...strategyStateHandlers,
   ...strategyMoveMutationHandlers,
-  get_move_tree: handleStrategyGetMoveTree,
-  get_move: handleStrategyGetMove,
-  get_move_path: handleStrategyGetMovePath,
-  list_child_moves: handleStrategyListChildMoves,
+  ...strategyMoveReadHandlers,
   list_notes: handleStrategyContextList,
   list_context: handleStrategyContextList,
   add_note: handleStrategyContextAdd,
