@@ -63,6 +63,8 @@ Provider custom-LLM callbacks resolve by one exact app voice session ID. The ID 
 ### Content Accumulation
 Uses per-iteration content model (`iterationResults[]`) with explicit `mergeIterationResults()`. Every visible iteration is preserved in order, including pre-tool prose, with the same separator encoded into persisted segment chronology.
 
+Voice assistant persistence is replay-safe by canonical `turnId` and inserts the assistant row immediately after its matching user row. Provider callback completion order must never create a second assistant row for one logical turn or detach a response from the utterance that caused it.
+
 ## When Working Here
 - The `VoiceSession` interface in `types.ts` is the source of truth
 - `voice-llm.ts` is the thin orchestration layer (~600 lines) importing from submodules
