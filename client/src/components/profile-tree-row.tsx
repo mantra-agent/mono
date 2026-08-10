@@ -62,7 +62,10 @@ export function ProfileTreeRow({
   const sessionDisclosureControlClassName = "h-5 min-h-5 w-5 min-w-5 rounded [&_svg]:size-3";
   const sessionOverflowControlClassName = "h-6 min-h-6 w-6 min-w-6 rounded-md [&_svg]:size-3.5";
 
-  const inlineCompactGrid =
+  // Rendered cells are label, value, then trailing controls. Keep exactly one
+  // grid track per cell; valueLayout sizes content inside the flexible value
+  // track rather than introducing a phantom fixed-width track.
+  const inlineValueGrid =
     trailingCount === 3
       ? "grid-cols-[max-content_minmax(0,1fr)_auto_auto_auto] gap-y-0"
       : trailingCount === 2
@@ -70,14 +73,6 @@ export function ProfileTreeRow({
         : trailingCount === 1
           ? "grid-cols-[max-content_minmax(0,1fr)_auto] gap-y-0"
           : "grid-cols-[max-content_minmax(0,1fr)] gap-y-0";
-  const inlineDefaultGrid =
-    trailingCount === 3
-      ? "grid-cols-[max-content_minmax(0,1fr)_12rem_auto_auto_auto] gap-y-0"
-      : trailingCount === 2
-        ? "grid-cols-[max-content_minmax(0,1fr)_12rem_auto_auto] gap-y-0"
-        : trailingCount === 1
-          ? "grid-cols-[max-content_minmax(0,1fr)_12rem_auto] gap-y-0"
-          : "grid-cols-[max-content_minmax(0,1fr)_12rem] gap-y-0";
   const inlineNoValueGrid =
     trailingCount === 3
       ? "grid-cols-[max-content_auto_auto_auto] gap-y-0"
@@ -112,9 +107,7 @@ export function ProfileTreeRow({
             mobileLayout === "inline" ? "gap-x-0" : "gap-x-2",
             showValue
               ? mobileLayout === "inline"
-                ? valueLayout === "compact"
-                  ? inlineCompactGrid
-                  : inlineDefaultGrid
+                ? inlineValueGrid
                 : stackedValueGrid
               : mobileLayout === "inline"
                 ? inlineNoValueGrid
