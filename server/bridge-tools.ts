@@ -19,6 +19,7 @@ import { handleGmailPipelineAction } from "./tools/handlers/gmail-pipeline";
 import { handleGmailMailboxRead } from "./tools/handlers/gmail-mailbox-read";
 import { handleGmailMailboxWrite } from "./tools/handlers/gmail-mailbox-write";
 import { strategyCoreHandlers, type StrategySubHandler } from "./tools/handlers/strategy-core";
+import { strategyStateHandlers } from "./tools/handlers/strategy-state";
 export { handleGmailDraftFromReview } from "./tools/handlers/gmail-drafts";
 export { diagnoseGmailBatchRead } from "./tools/handlers/gmail-provider";
 import { isSimilarText } from "./utils/text-similarity";
@@ -659,68 +660,6 @@ async function handleStrategyUpdateMove(args: Record<string, any>, ss: any): Pro
   return { result: `Move updated: "${move.title}" — ${Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(", ")}` };
 }
 
-async function handleStrategyListStates(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId", error: true };
-  const states = await ss.getStates(goalId);
-  if (states.length === 0) return { result: "No states defined for this strategy." };
-  const lines = states.map((s: any) => `- ${s.name} (ID: ${s.id})${s.description ? ` — ${s.description}` : ""}`);
-  return { result: `${states.length} state(s):\n${lines.join("\n")}` };
-}
-
-async function handleStrategyCreateState(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const goalId = args.goalId;
-  const name = args.name;
-  if (!goalId || !name) return { result: "Missing goalId or name", error: true };
-  const state = await ss.createState({ goalId, name, description: args.description || "" });
-  return { result: `State created: "${state.name}" (ID: ${state.id})` };
-}
-
-async function handleStrategyGetState(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.stateId;
-  if (!id) return { result: "Missing stateId", error: true };
-  const state = await ss.getState(id);
-  if (!state) return { result: `State ${id} not found`, error: true };
-  const refs = await ss.getStateReferences(id);
-  const lines = [
-    `State: ${state.name} (ID: ${state.id})`,
-    state.description ? `Description: ${state.description}` : "",
-    `Reached by ${refs.terminatingMoves.length} move(s); branches into ${refs.childMoves.length} move(s).`,
-  ].filter(Boolean);
-  return { result: lines.join("\n") };
-}
-
-async function handleStrategyUpdateState(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.stateId;
-  if (!id) return { result: "Missing stateId", error: true };
-  const updates: Record<string, any> = {};
-  if (args.name !== undefined) updates.name = args.name;
-  if (args.description !== undefined) updates.description = args.description;
-  const state = await ss.updateState(id, updates);
-  if (!state) return { result: `State ${id} not found`, error: true };
-  return { result: `State updated: "${state.name}"` };
-}
-
-async function handleStrategyDeleteState(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const id = args.stateId;
-  if (!id) return { result: "Missing stateId", error: true };
-  const result = await ss.deleteState(id);
-  if (!result.deleted) return { result: result.reason || `State ${id} not found`, error: true };
-  return { result: `State ${id} deleted` };
-}
-
-async function handleStrategySetEndConditionEffect(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  const moveId = args.moveId;
-  const endConditionId = args.endConditionId;
-  const effect = args.effect;
-  if (!moveId || !endConditionId || !effect) return { result: "Missing moveId, endConditionId, or effect", error: true };
-  if (!["satisfies", "blocks", "none"].includes(effect)) return { result: "effect must be one of: satisfies, blocks, none", error: true };
-  const resolved = await ss.resolveMoveInstance(moveId);
-  if (!resolved) return { result: `Move ${moveId} not found`, error: true };
-  await ss.setMoveEndConditionEffect(resolved.id, endConditionId, effect);
-  return { result: `End-condition effect set: move=${resolved.id}, endCondition=${endConditionId}, effect=${effect}` };
-}
-
 async function handleStrategyDeleteMove(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const id = args.moveId;
   if (!id) return { result: "Missing move id", error: true };
@@ -1061,59 +1000,6 @@ async function handleStrategyDeleteArtifact(args: Record<string, any>, ss: any):
   return { result: `Artifact ${id} deleted` };
 }
 
-async function handleStrategyMoveDefinitions(action: string, args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
-  switch (action) {
-    case "list_move_definitions": {
-      const goalId = args.goalId;
-      const actorId = args.actorId;
-      if (!goalId && !actorId) return { result: "Missing strategyId or actorId. Call list_scenarios first to get strategyIds, then list_actors to get actorIds.", error: true };
-      const defs = actorId ? await ss.getMoveDefinitionsByActor(actorId) : await ss.getMoveDefinitions(goalId);
-      if (defs.length === 0) return { result: "No move definitions found." };
-      const lines = defs.map((d: any) => `- ${d.title} (id: ${d.id}, actorId: ${d.actorId})${d.description ? `: ${d.description.slice(0, 100)}` : ""}`);
-      return { result: `${defs.length} move definitions:\n${lines.join("\n")}` };
-    }
-    case "get_move_definition": {
-      const id = args.id;
-      if (!id) return { result: "Missing move definition id", error: true };
-      const def = await ss.getMoveDefinition(id);
-      if (!def) return { result: `Move definition ${id} not found`, error: true };
-      const parts = [`**${def.title}** (id: ${def.id})`, `Actor: ${def.actorId}`, `Goal: ${def.goalId}`];
-      if (def.description) parts.push(`Description: ${def.description}`);
-      return { result: parts.join("\n") };
-    }
-    case "create_move_definition": {
-      const goalId = args.goalId;
-      const actorId = args.actorId;
-      const title = args.title;
-      if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
-      if (!actorId) return { result: "Missing actorId", error: true };
-      if (!title) return { result: "Missing title", error: true };
-      const def = await ss.createMoveDefinition({ goalId, actorId, title, description: args.description || "" });
-      return { result: `Move definition created: "${def.title}" (id: ${def.id}, actorId: ${def.actorId}, goalId: ${def.goalId})` };
-    }
-    case "update_move_definition": {
-      const id = args.id;
-      if (!id) return { result: "Missing move definition id", error: true };
-      const updates: Record<string, any> = {};
-      if (args.title) updates.title = args.title;
-      if (args.description !== undefined) updates.description = args.description;
-      if (args.actorId) updates.actorId = args.actorId;
-      const def = await ss.updateMoveDefinition(id, updates);
-      if (!def) return { result: `Move definition ${id} not found`, error: true };
-      return { result: `Move definition updated: "${def.title}" — ${Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(", ")}` };
-    }
-    case "delete_move_definition": {
-      const id = args.id;
-      if (!id) return { result: "Missing move definition id", error: true };
-      const deleted = await ss.deleteMoveDefinition(id);
-      if (!deleted) return { result: `Move definition ${id} not found`, error: true };
-      return { result: `Move definition ${id} deleted` };
-    }
-    default:
-      return { result: `Unknown move definition action: ${action}`, error: true };
-  }
-}
-
 async function handleStrategyEvaluateMove(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const evalMoveId = args.moveId;
   if (!evalMoveId) return { result: "Missing moveId for evaluate_move", error: true };
@@ -1132,6 +1018,7 @@ async function handleStrategyEvaluateMove(args: Record<string, any>, ss: any): P
 
 const strategySubHandlers: Record<string, StrategySubHandler> = {
   ...strategyCoreHandlers,
+  ...strategyStateHandlers,
   get_move_tree: handleStrategyGetMoveTree,
   get_move: handleStrategyGetMove,
   get_move_path: handleStrategyGetMovePath,
@@ -1164,18 +1051,7 @@ const strategySubHandlers: Record<string, StrategySubHandler> = {
   get_artifact: handleStrategyGetArtifact,
   create_artifact: handleStrategyCreateArtifact,
   delete_artifact: handleStrategyDeleteArtifact,
-  list_move_definitions: (args, ss) => handleStrategyMoveDefinitions("list_move_definitions", args, ss),
-  get_move_definition: (args, ss) => handleStrategyMoveDefinitions("get_move_definition", args, ss),
-  create_move_definition: (args, ss) => handleStrategyMoveDefinitions("create_move_definition", args, ss),
-  update_move_definition: (args, ss) => handleStrategyMoveDefinitions("update_move_definition", args, ss),
-  delete_move_definition: (args, ss) => handleStrategyMoveDefinitions("delete_move_definition", args, ss),
   evaluate_move: handleStrategyEvaluateMove,
-  list_states: handleStrategyListStates,
-  get_state: handleStrategyGetState,
-  create_state: handleStrategyCreateState,
-  update_state: handleStrategyUpdateState,
-  delete_state: handleStrategyDeleteState,
-  set_end_condition_effect: handleStrategySetEndConditionEffect,
 };
 
 export interface CrossSessionDeps {
