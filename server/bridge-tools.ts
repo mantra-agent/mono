@@ -14,6 +14,7 @@ import {
 import { createGmailReadHandlers } from "./tools/handlers/gmail-read";
 import { gmailDraftHandlers } from "./tools/handlers/gmail-drafts";
 import { createGmailProviderHandlers } from "./tools/handlers/gmail-provider";
+import { handleGmailTriageLog } from "./tools/handlers/gmail-triage";
 export { handleGmailDraftFromReview } from "./tools/handlers/gmail-drafts";
 export { diagnoseGmailBatchRead } from "./tools/handlers/gmail-provider";
 import { isSimilarText } from "./utils/text-similarity";
@@ -37,7 +38,6 @@ import {
   type ToolFailure,
 } from "./tool-failure";
 import { extractToolFailureKind, inferFailureKind } from "@shared/tool-failure";
-import { TRIAGE_LOOKBACK_HOURS } from "./skill-defaults";
 import { resolveRegisteredTool } from "./tool-registry";
 import { prepareToolInvocation } from "./tools/invocation";
 import { assertRegisteredToolHandlers } from "./tools/registry-validation";
@@ -412,46 +412,6 @@ function findAttachments(payload: GmailMessagePayload | undefined): GmailAttachm
   }
   if (payload.parts) payload.parts.forEach(walk);
   return attachments;
-}
-
-async function handleGmailTriageLog(args: Record<string, any>): Promise<ToolHandlerResult> {
-  const { storage } = await import("./storage");
-  const subAction = args.triage_action || "get_triaged_ids";
-
-  if (subAction === "get_triaged_ids") {
-    const sinceHours = args.sinceHours || TRIAGE_LOOKBACK_HOURS;
-    const ids = await storage.getTriagedMessageIds(sinceHours);
-    return { result: ids.length > 0 ? `${ids.length} previously triaged message IDs:\n${ids.join("\n")}` : "No previously triaged messages found." };
-  }
-
-  if (subAction === "record") {
-    const VALID_TIERS = new Set(["🔴", "🟡", "🟢", "📋", "🗑️", "respond_now", "respond_today", "acknowledge", "fyi", "noise"]);
-    const TIER_NORMALIZE: Record<string, string> = { respond_now: "🔴", respond_today: "🟡", acknowledge: "🟢", fyi: "📋", noise: "🗑️" };
-    const entries: Array<{ gmailMessageId: string; accountId: string; tier: string; senderEmail?: string; subject?: string; cachedMessageId?: number }> = args.entries;
-    if (!entries || !Array.isArray(entries) || entries.length === 0) {
-      return { result: "Missing or empty 'entries' array. Each entry needs: gmailMessageId, accountId, tier.", error: true };
-    }
-    for (const e of entries) {
-      if (!e.gmailMessageId || !e.accountId || !e.tier) {
-        return { result: `Invalid entry — each needs gmailMessageId, accountId, and tier. Got: ${JSON.stringify(e)}`, error: true };
-      }
-      if (!VALID_TIERS.has(e.tier)) {
-        return { result: `Invalid tier "${e.tier}". Valid: 🔴, 🟡, 🟢, 📋, 🗑️ (or respond_now, respond_today, acknowledge, fyi, noise)`, error: true };
-      }
-      e.tier = TIER_NORMALIZE[e.tier] || e.tier;
-    }
-    await storage.recordTriagedEmails(entries.map(e => ({
-      gmailMessageId: e.gmailMessageId,
-      accountId: e.accountId,
-      tier: e.tier,
-      senderEmail: e.senderEmail || null,
-      subject: e.subject || null,
-      cachedMessageId: e.cachedMessageId ?? null,
-    })));
-    return { result: `Recorded ${entries.length} triaged email(s) in triage log.` };
-  }
-
-  return { result: `Unknown triage_action "${subAction}". Use "get_triaged_ids" or "record".`, error: true };
 }
 
 async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHandlerResult> {
