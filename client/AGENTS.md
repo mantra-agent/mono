@@ -256,6 +256,10 @@ Hosting credentials and environment configuration belong to Platform Environment
 
 ## Shared UI Patterns
 
+### Responsive Action Menus
+
+`client/src/components/ui/responsive-action-menu.tsx` owns nested action menus. Consumers declare one action tree; nested rows drill into the same body with Back at every width. Desktop renders a compact anchored popover, mobile renders one bottom sheet with 44px targets, safe-area/overflow containment, and no cascading floating layer.
+
 ### Universal Reference Picker
 
 One control for `@anything`. Do not invent local typeaheads for tags, people, pages, goals, or other linkable objects.

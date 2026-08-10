@@ -47,6 +47,9 @@ import {
   Activity,
   Bug,
   Calendar,
+  CalendarClock,
+  Clock,
+  Trash2,
   Dumbbell,
   Ruler,
   ShieldCheck,
@@ -85,6 +88,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  ResponsiveActionMenu,
+  ResponsiveActionMenuItem,
+  ResponsiveActionMenuSeparator,
+  ResponsiveActionMenuSub,
+} from "@/components/ui/responsive-action-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -3794,6 +3803,30 @@ const referenceExamples = [
   },
 ];
 
+function DesignResponsiveMenuPlayground() {
+  const [result, setResult] = useState("No action selected");
+
+  return (
+    <div className="space-y-4 rounded-md border border-border/30 bg-muted/10 p-4">
+      <div className="text-sm font-medium">Responsive menus</div>
+      <ResponsiveActionMenu
+        title="Example actions"
+        trigger={<Button variant="outline" size="sm"><MoreHorizontal className="mr-2 h-3.5 w-3.5" />Open menu</Button>}
+      >
+        <ResponsiveActionMenuItem icon={MessageSquare} onSelect={() => setResult("Discuss selected")}>Discuss</ResponsiveActionMenuItem>
+        <ResponsiveActionMenuSub id="reminder" label="Reminder" icon={Clock}>
+          <ResponsiveActionMenuItem icon={CalendarClock} onSelect={() => setResult("Tomorrow morning selected")}>Tomorrow morning</ResponsiveActionMenuItem>
+          <ResponsiveActionMenuItem icon={CalendarClock} onSelect={() => setResult("Next week selected")}>Next week</ResponsiveActionMenuItem>
+        </ResponsiveActionMenuSub>
+        <ResponsiveActionMenuItem icon={Pin} disabled>Unavailable action</ResponsiveActionMenuItem>
+        <ResponsiveActionMenuSeparator />
+        <ResponsiveActionMenuItem icon={Trash2} destructive onSelect={() => setResult("Delete selected")}>Delete</ResponsiveActionMenuItem>
+      </ResponsiveActionMenu>
+      <div className="text-sm text-muted-foreground">{result}</div>
+    </div>
+  );
+}
+
 /** Interactive Design playground for the universal @ picker. */
 function DesignReferencePlayground() {
   const [anything, setAnything] = useState<ReferencePickerValue[]>([]);
@@ -4900,6 +4933,14 @@ export function DesignTab() {
 
         <DesignSection
           number="13"
+          eyebrow="Menus"
+          title="Responsive action menus"
+        >
+          <DesignResponsiveMenuPlayground />
+        </DesignSection>
+
+        <DesignSection
+          number="14"
           eyebrow="References"
           title="Typed reference links"
         >
