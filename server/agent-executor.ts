@@ -301,6 +301,8 @@ export interface ExecutorRunOptions {
    * stub is used, its real schema is hydrated via `refreshToolSchema`.
    */
   authorityStubTools?: ToolDefinition[];
+  /** Require Plan children to explicitly assert their terminal mission outcome. */
+  requireExplicitMissionCompletion?: boolean;
 }
 
 function toolTransfersExecutionToChild(name: string, args: Record<string, unknown>): boolean {
@@ -1294,6 +1296,8 @@ interface RunIterationContext {
   intentionallyAwaitingUser: boolean;
   /** True when a successful session.end / set_status=saved intentionally completed the run. */
   intentionallyCompletedSession: boolean;
+  /** Bounded re-drive count when a Plan child naturally stops without a terminal assertion. */
+  missionCompletionAssertionRetries: number;
   iterationToolCalls: Array<{ id: string; name: string; args: Record<string, unknown>; order: number }>;
   convergence: RunConvergenceState;
 }
@@ -3474,6 +3478,7 @@ export class AgentExecutor extends EventEmitter {
       iterationToolCalls: [],
       intentionallyAwaitingUser: false,
       intentionallyCompletedSession: false,
+      missionCompletionAssertionRetries: 0,
       segmentChronology: [],
       systemStepsData: [],
       chronologyThinkingIdx: -1,
@@ -5015,6 +5020,29 @@ export class AgentExecutor extends EventEmitter {
           break;
         }
         if (!result.shouldContinue) {
+          const shouldRequestMissionCompletionAssertion =
+            options.requireExplicitMissionCompletion === true &&
+            result.exitCause === "natural_stop" &&
+            !ctx.intentionallyCompletedSession &&
+            !ctx.intentionallyAwaitingUser &&
+            !ctx.aborted &&
+            !ctx.budgetExhaustion &&
+            !ctx.terminalToolFailure &&
+            ctx.missionCompletionAssertionRetries < 1;
+          if (shouldRequestMissionCompletionAssertion) {
+            ctx.missionCompletionAssertionRetries++;
+            if (result.finalContent) {
+              messages.push({ role: "assistant", content: result.finalContent });
+            }
+            messages.push({
+              role: "user",
+              content: "[System: This Plan mission has not emitted an explicit terminal outcome. If the assigned work is complete, call session(action: \"end\") now with a concise completion summary. If it cannot complete, call plan(action: \"update_step\") for this exact step with status \"blocked\" or \"needs_review\" and a specific outcome. Do not merely describe completion or repeat prior work.]",
+            });
+            log.warn(
+              `plan mission completion assertion requested runId=${runId} sessionId=${options.sessionId || "none"} retry=${ctx.missionCompletionAssertionRetries}`,
+            );
+            continue;
+          }
           lastExitCause = result.exitCause;
           break;
         }
