@@ -4,7 +4,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
 import { requirePermission } from "../permissions";
-import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db } from "../db";
+import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction } from "../db";
 import { projectVaultMemberships, projects, vaults, users } from "@shared/schema";
 import { getPrincipal } from "../principal";
 import { assertVisible, assertWritable } from "../scoped-storage";
@@ -282,7 +282,7 @@ export function registerVaultRoutes(app: Express) {
 
       // Insert the new vault, its reserved Meetings root, and visibility as one mutation.
       let updatedVisibleIds: string[] = [];
-      const newVault = await db.transaction(async tx => {
+      const newVault = await db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
         const [created] = await tx
           .insert(vaults)
           .values({
@@ -308,7 +308,7 @@ export function registerVaultRoutes(app: Express) {
           visibleVaultIds: updatedVisibleIds,
         });
         return created;
-      });
+      }));
 
       log.info("vault created", {
         userId: principal.userId,
