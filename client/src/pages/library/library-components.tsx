@@ -379,7 +379,7 @@ export function LibraryPageEditor({
         headerTarget,
       )}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <RichTextEditor ref={editorRef} key={selectedId} value={editContent} onChange={handleContentChange} placeholder="Write your page content here..." className="flex-1 overflow-hidden" data-testid="editor-library-content" onInsertLink={() => { setSpecPickerQuery(""); setSpecPickerOpen(true); }} plainTextFallback={selectedPage.plainTextContent || ""} onFocusChange={setBodyFocused} contentFooter={<>
+        <RichTextEditor ref={editorRef} key={selectedId} value={editContent} onChange={handleContentChange} placeholder="Write your page content here..." className="flex-1 overflow-hidden" data-testid="editor-library-content" enableReferencePicker onInsertLink={() => { setSpecPickerQuery(""); setSpecPickerOpen(true); }} plainTextFallback={selectedPage.plainTextContent || ""} onFocusChange={setBodyFocused} contentFooter={<>
           <ChildPages pageId={selectedPage.id} pages={pages} />
           <PageLinks slug={selectedPage.slug} plainText={editPlainText} pages={pages} />
         </>} />
