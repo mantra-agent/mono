@@ -1099,6 +1099,7 @@ async function handleSearchVnextClaims(req: Request, res: Response): Promise<voi
     const limit = Math.min(parsePositiveInt(req.query.limit) ?? 20, 100);
     const offset = Math.max(parsePositiveInt(req.query.offset) ?? 0, 0);
     const claims = await memoryVnextClaimStorage.searchClaims({
+      id: parsePositiveInt(req.query.id) ?? undefined,
       claimType: typeof req.query.claimType === "string" ? req.query.claimType : undefined,
       hasEntityLinks: req.query.hasEntityLinks === "true" ? true : req.query.hasEntityLinks === "false" ? false : undefined,
       entityId: typeof req.query.entityId === "string" ? req.query.entityId : undefined,
@@ -1110,6 +1111,19 @@ async function handleSearchVnextClaims(req: Request, res: Response): Promise<voi
     });
     log.debug(`[vnext] claim_search total=${claims.length} limit=${limit} offset=${offset}`);
     res.json({ storage: "memory_vnext_claims", total: claims.length, claims: claims.map(serializeVnextClaim) });
+  } catch (error: unknown) {
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
+async function handleDeleteVnextClaim(req: Request, res: Response): Promise<void> {
+  try {
+    const id = parsePositiveInt(req.params.id);
+    if (!id) { res.status(400).json({ error: "Invalid claim id" }); return; }
+    const deleted = await memoryVnextClaimStorage.deleteClaim(id);
+    if (!deleted) { res.status(404).json({ error: "vNext claim not found" }); return; }
+    eventBus.publish({ category: "memory", event: "entries_changed", payload: { action: "vnext_claim_deleted", claimId: id, level: "info" } });
+    res.json({ deleted: true, claimId: id });
   } catch (error: unknown) {
     res.status(500).json({ error: errorMessage(error) });
   }
@@ -1358,6 +1372,7 @@ export function registerMemoryRoutes(app: Express) {
   app.post("/api/memory/vnext/evaluation/predictions/reviews", requirePermission("system:write"), handleSetVnextCausalPathReview);
   app.get("/api/memory/vnext/claims", handleSearchVnextClaims);
   app.get("/api/memory/vnext/claims/:id", handleGetVnextClaim);
+  app.delete("/api/memory/vnext/claims/:id", handleDeleteVnextClaim);
   app.get("/api/memory/vnext/claims/:id/sources", handleGetVnextClaimSources);
   app.get("/api/memory/vnext/claims/:id/entity-links", handleGetVnextClaimEntityLinks);
   app.get("/api/memory/vnext/claims/:id/claim-links", handleGetVnextClaimLinks);

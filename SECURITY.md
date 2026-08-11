@@ -1,3 +1,10 @@
+<!-- 2026-08-11 user retention deletion boundary:
+- Assets/data: principal-owned S2 memory claims, source/entity/claim references, and cached email bodies/metadata (A01/A03/A07).
+- Flow/threat: authenticated Journal or Email Archive -> explicit confirmation -> canonical principal-scoped deletion. An unscoped ID mutation could destroy another user's private data; incomplete cleanup could strand semantic references or cached body copies (STRIDE tampering/information disclosure; DATA-01).
+- Controls/owner: claim deletion uses the vNext storage boundary plus writable Principal scope and database cascades; cached-email deletion resolves the exact writable message inside one transaction, clears scoped nullable enrichment/dismissal references, then deletes the body-bearing row. UI confirmation grants no authority. Gmail deletion is deliberately excluded. Owner: Core Memory + Email. Severity: high integrity/confidentiality. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: historical dismissal/enrichment summaries may remain after their body-bearing message reference is cleared; Gmail retains its provider copy. Revert the routes, storage mutations, UI controls, and this record to remove the capability; deleted rows are not recoverable through application rollback.
+-->
+
 <!-- 2026-08-11 history-rollup failure classification repair:
 - Assets/data: principal/account/Vault-scoped S2 continuity summaries and immutable source-entry provenance (A01/A03/A07/A08).
 - Flow/threat: owner-restored history-rollup Skill -> candidate read -> model-authored summary -> fenced immutable save. Invalid summary bounds and stale source sets are untrusted caller input or optimistic-concurrency rejection; classifying them as internal defects polluted global reliability signals and could drive autonomous repair toward weakening the provenance fence (STRIDE tampering/repudiation plus agentic authority confusion; DATA-01/AGENT-03/OBS-01).
