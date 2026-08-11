@@ -2653,12 +2653,7 @@ function BoxDetail() {
   return (
     <Card className="min-w-0 overflow-hidden" data-testid="box-detail">
       <CardContent className="space-y-0 p-0">
-        <IntegrationTreeSection label="Credentials" initialOpen>
-          <div className="min-w-0 px-2 py-1.5">
-            <SecretsForSection section="box" />
-          </div>
-        </IntegrationTreeSection>
-        <IntegrationTreeSection label="Connection" initialOpen>
+        <IntegrationTreeSection label="Box account" initialOpen>
           <BoxSection vaultId={activeVaultId || undefined} />
         </IntegrationTreeSection>
       </CardContent>
