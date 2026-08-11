@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/queryClient";
-import type { BusinessPlan, Goal, Kpi, ProjectRow } from "@shared/schema";
+import type { BusinessPlan, Goal, Kpi, Metric, ProjectRow } from "@shared/schema";
 import { createReferenceRef } from "@shared/references";
 
 interface VaultRow {
@@ -36,6 +36,10 @@ interface VaultSnapshot {
 
 const RECENT_BUSINESS_PLAN_KEY = "business-plan:recent-plan-id";
 
+interface MetricsResponse {
+  metrics: Metric[];
+}
+
 interface KpisResponse {
   kpis: Kpi[];
 }
@@ -46,6 +50,12 @@ interface GoalsResponse {
 
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function metricList(value: unknown): Metric[] {
+  if (Array.isArray(value)) return value as Metric[];
+  if (value && typeof value === "object" && Array.isArray((value as MetricsResponse).metrics)) return (value as MetricsResponse).metrics;
+  return [];
 }
 
 function kpiList(value: unknown): Kpi[] {
@@ -64,7 +74,7 @@ function goalList(value: unknown): Goal[] {
   return [];
 }
 
-function referenceValue(type: "goal" | "project" | "kpi", id: string, label: string): ReferencePickerValue {
+function referenceValue(type: "goal" | "project" | "metric" | "kpi", id: string, label: string): ReferencePickerValue {
   return { type, id, label };
 }
 
@@ -74,7 +84,7 @@ function AssignControl({
   onAssign,
   asAction = false,
 }: {
-  type: "goal" | "project" | "kpi";
+  type: "goal" | "project" | "metric" | "kpi";
   label: string;
   onAssign: (id: string) => void;
   asAction?: boolean;
@@ -107,7 +117,7 @@ function ReplaceControl({
   label,
   onReplace,
 }: {
-  type: "goal" | "project" | "kpi";
+  type: "goal" | "project" | "metric" | "kpi";
   value: string;
   label: string;
   onReplace: (id: string) => void;
@@ -214,6 +224,7 @@ export default function BusinessAdvantagePage() {
   // is cached as `{ goals }`. Never assume the shared cache holds a bare array.
   const goalsQuery = useQuery<Goal[] | GoalsResponse>({ queryKey: ["/api/life-goals"] });
   const projectsQuery = useQuery<ProjectRow[]>({ queryKey: ["/api/projects/projects"] });
+  const metricsQuery = useQuery<Metric[] | MetricsResponse>({ queryKey: ["/api/business/metrics"] });
   const kpisQuery = useQuery<Kpi[] | KpisResponse>({ queryKey: ["/api/business/kpis"] });
 
   const plans = asArray<BusinessPlan>(plansQuery.data);
@@ -248,6 +259,7 @@ export default function BusinessAdvantagePage() {
     plans[0];
   const initiativeProjectIds = asArray<number>(plan?.initiativeProjectIds);
   const kpiIds = asArray<string>(plan?.kpiIds);
+  const measurementBindings = asArray<BusinessPlan["initiativeMeasurementBindings"][number]>(plan?.initiativeMeasurementBindings);
 
   const goalsById = useMemo(
     () => new Map(goalList(goalsQuery.data).map((goal) => [goal.id, goal])),
@@ -256,6 +268,10 @@ export default function BusinessAdvantagePage() {
   const projectsById = useMemo(
     () => new Map(asArray<ProjectRow>(projectsQuery.data).map((project) => [project.id, project])),
     [projectsQuery.data],
+  );
+  const metricsById = useMemo(
+    () => new Map(metricList(metricsQuery.data).map((metric) => [metric.id, metric])),
+    [metricsQuery.data],
   );
   const kpisById = useMemo(
     () => new Map(kpiList(kpisQuery.data).map((kpi) => [kpi.id, kpi])),
@@ -294,7 +310,7 @@ export default function BusinessAdvantagePage() {
     },
   });
 
-  if (plansQuery.isLoading || vaultsQuery.isLoading || goalsQuery.isLoading || projectsQuery.isLoading || kpisQuery.isLoading) {
+  if (plansQuery.isLoading || vaultsQuery.isLoading || goalsQuery.isLoading || projectsQuery.isLoading || metricsQuery.isLoading || kpisQuery.isLoading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -405,6 +421,19 @@ export default function BusinessAdvantagePage() {
             <div className="min-w-0">
               {initiativeProjectIds.map((projectId, index) => {
                 const project = projectsById.get(projectId);
+                const binding = measurementBindings.find((candidate) => candidate.initiativeProjectId === projectId);
+                const leadingMetric = binding?.leadingMetricId ? metricsById.get(binding.leadingMetricId) : undefined;
+                const laggingKpi = binding?.laggingKpiId ? kpisById.get(binding.laggingKpiId) : undefined;
+                const replaceBinding = (patch: { leadingMetricId?: string | null; laggingKpiId?: string | null }) => {
+                  const next = measurementBindings.filter((candidate) => candidate.initiativeProjectId !== projectId);
+                  const replacement = {
+                    initiativeProjectId: projectId,
+                    leadingMetricId: patch.leadingMetricId !== undefined ? patch.leadingMetricId : binding?.leadingMetricId ?? null,
+                    laggingKpiId: patch.laggingKpiId !== undefined ? patch.laggingKpiId : binding?.laggingKpiId ?? null,
+                  };
+                  if (replacement.leadingMetricId || replacement.laggingKpiId) next.push(replacement);
+                  update({ initiativeMeasurementBindings: next });
+                };
                 return (
                   <HierarchyTreeRow
                     key={`${plan.id}-project-${projectId}-${index}`}
@@ -440,9 +469,21 @@ export default function BusinessAdvantagePage() {
                         />
                       }
                       expandedContent={
-                        project?.description ? (
-                          <p className="text-sm leading-6 text-foreground/90">{project.description}</p>
-                        ) : null
+                        <div className="space-y-2">
+                          {project?.description ? <p className="text-sm leading-6 text-foreground/90">{project.description}</p> : null}
+                          <div className="space-y-1 border-l border-border/20 pl-3">
+                            {binding?.leadingMetricId ? (
+                              <ReplaceControl type="metric" value={binding.leadingMetricId} label={leadingMetric?.name ?? "Metric"} onReplace={(id) => replaceBinding({ leadingMetricId: id })} />
+                            ) : (
+                              <AssignControl type="metric" label="+ Leading Metric" onAssign={(id) => replaceBinding({ leadingMetricId: id })} />
+                            )}
+                            {binding?.laggingKpiId ? (
+                              <ReplaceControl type="kpi" value={binding.laggingKpiId} label={laggingKpi?.name ?? "KPI"} onReplace={(id) => replaceBinding({ laggingKpiId: id })} />
+                            ) : (
+                              <AssignControl type="kpi" label="+ Lagging KPI" onAssign={(id) => replaceBinding({ laggingKpiId: id })} />
+                            )}
+                          </div>
+                        </div>
                       }
                     />
                   </HierarchyTreeRow>

@@ -19,6 +19,7 @@ export const REFERENCE_TYPE_LABELS: Record<string, string> = {
   goal: "Goal",
   task: "Task",
   project: "Project",
+  metric: "Metric",
   kpi: "KPI",
   business_plan: "Business Plan",
   milestone: "Milestone",
@@ -101,6 +102,14 @@ interface ProjectResult {
   status?: string;
   updatedAt?: string | Date;
   createdAt?: string | Date;
+}
+
+interface MetricResult {
+  id: string;
+  name?: string;
+  description?: string;
+  unit?: string;
+  updatedAt?: string | Date;
 }
 
 interface KpiResult {
@@ -306,7 +315,7 @@ export async function loadReferenceSuggestions(
 
   logger.debug("search", { query, allowedTypes, triggerChar });
 
-  const [library, people, tags, companies, goals, tasks, projects, kpis, businessPlans, wellnessActivities] =
+  const [library, people, tags, companies, goals, tasks, projects, metrics, kpis, businessPlans, wellnessActivities] =
     await Promise.all([
       allow("page") && query
         ? fetchJson<unknown>(`/api/info/library?search=${encoded}`, signal)
@@ -328,6 +337,12 @@ export async function loadReferenceSuggestions(
         : Promise.resolve(null),
       allow("project")
         ? fetchJson<unknown>(`/api/projects/projects`, signal)
+        : Promise.resolve(null),
+      allow("metric")
+        ? fetchJson<unknown>(
+            `/api/business/metrics${query ? `?query=${encoded}` : ""}`,
+            signal,
+          )
         : Promise.resolve(null),
       // KPI list is canonically `{ kpis: [...] }`; search param is `query`, not `q`.
       allow("kpi")
@@ -459,6 +474,21 @@ export async function loadReferenceSuggestions(
           description: project.status ? `Project · ${project.status}` : "Project",
         },
         { rankAt: bestTimestamp(project.updatedAt, project.createdAt) },
+      ),
+    );
+  }
+
+  for (const metric of asItemArray<MetricResult>(metrics, ["metrics"])) {
+    if (!metric?.id) continue;
+    suggestions.push(
+      withRankMeta(
+        {
+          type: "metric",
+          id: metric.id,
+          label: metric.name || metric.id,
+          description: metric.description || metric.unit || "Metric",
+        },
+        { rankAt: metric.updatedAt },
       ),
     );
   }
