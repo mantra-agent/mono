@@ -12,6 +12,7 @@ import {
 } from "../scoped-storage";
 import {
   MEMORY_VNEXT_LIFECYCLE_STAGE,
+  memoryVnextClaimLinkEvidence,
   memoryVnextClaimLinks,
   memoryVnextClaims,
   memoryVnextEntityLinks,
@@ -67,6 +68,12 @@ const vnextClaimLinkScopeColumns = {
   scope: memoryVnextClaimLinks.scope,
   ownerUserId: memoryVnextClaimLinks.ownerUserId,
   accountId: memoryVnextClaimLinks.accountId,
+};
+
+const vnextClaimLinkEvidenceScopeColumns = {
+  scope: memoryVnextClaimLinkEvidence.scope,
+  ownerUserId: memoryVnextClaimLinkEvidence.ownerUserId,
+  accountId: memoryVnextClaimLinkEvidence.accountId,
 };
 
 export interface VnextClaimSourceInput {
@@ -1853,11 +1860,33 @@ export class MemoryVnextClaimStorage {
 
   async deleteClaim(id: number): Promise<boolean> {
     const principal = requireCurrentUserPrincipal();
-    const deleted = await db.delete(memoryVnextClaims)
-      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
-      .returning({ id: memoryVnextClaims.id });
-    if (deleted.length > 0) log.info(`deleteClaim: deleted claimId=${id}`);
-    return deleted.length > 0;
+    return db.transaction(async (tx) => {
+      const [claim] = await tx.select({ id: memoryVnextClaims.id })
+        .from(memoryVnextClaims)
+        .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
+        .for("update")
+        .limit(1);
+      if (!claim) return false;
+
+      const sourceRefs = await tx.select({ id: memoryVnextSourceRefs.id })
+        .from(memoryVnextSourceRefs)
+        .where(combineWithWritableScope(principal, vnextSourceScopeColumns, eq(memoryVnextSourceRefs.claimId, id)))
+        .for("update");
+      if (sourceRefs.length > 0) {
+        await tx.delete(memoryVnextClaimLinkEvidence)
+          .where(combineWithWritableScope(
+            principal,
+            vnextClaimLinkEvidenceScopeColumns,
+            inArray(memoryVnextClaimLinkEvidence.sourceRefId, sourceRefs.map((source) => source.id)),
+          ));
+      }
+
+      const deleted = await tx.delete(memoryVnextClaims)
+        .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
+        .returning({ id: memoryVnextClaims.id });
+      if (deleted.length > 0) log.info(`deleteClaim: deleted claimId=${id}`);
+      return deleted.length > 0;
+    });
   }
 }
 

@@ -1,5 +1,7 @@
 # Memory Architecture
 
+A vNext claim is the deletion aggregate for its entity links, claim links, source refs, and any relationship evidence that cites those source refs. `MemoryVnextClaimStorage.deleteClaim(...)` is the sole ordinary aggregate deletion boundary: it locks the scoped claim and sources, removes principal-writable cross-link evidence first, then deletes the claim so existing cascades complete. The source-evidence foreign key remains restrictive for ordinary source deletion; do not weaken it globally to make claim deletion work.
+
 The memory subsystem is in staged retirement. vNext claims are the active semantic graph and the nightly sleep substrate. The ordinary HTTP registrar is vNext-only: legacy 410 shims, retention purge, document/workspace compatibility, and legacy maintenance routes are not registered. Legacy `memory_entries` tiers remain as compatibility/archive data while non-route readers migrate; automatic legacy propagation and maintenance launchers are disabled. The separately registered privileged migration boundary retains only explicit document-store migration controls and legacy-memory quarantine status/prepare/apply operations.
 
 ## Active Tables and Ownership
