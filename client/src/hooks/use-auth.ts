@@ -121,7 +121,7 @@ export function useSetup() {
 
 export function useRegister() {
   return useMutation({
-    mutationFn: async (data: { email: string; password: string; name: string; inviteToken?: string }) => {
+    mutationFn: async (data: { email: string; password: string; name: string; inviteToken?: string; smsConsent?: boolean; smsPhoneNumber?: string }) => {
       authLog.info("register:start", { emailHashHint: data.email.slice(0, 2) + "***" });
       const res = await apiRequest("POST", "/api/auth/register", data);
       authLog.info("register:response", { status: res.status, ok: res.ok, type: res.type, url: res.url });

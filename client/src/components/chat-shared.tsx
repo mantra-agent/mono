@@ -601,6 +601,40 @@ function PhoneCallConfirmationChip({
   );
 }
 
+type SmsConfirmationResult = {
+  kind: "sms_confirmation";
+  confirmationToken: string;
+  personName: string;
+  phoneNumber: string;
+  body: string;
+};
+
+function parseSmsConfirmation(result: unknown): SmsConfirmationResult | null {
+  try {
+    const value = typeof result === "string" ? JSON.parse(result) : result;
+    return value && typeof value === "object" && (value as { kind?: string }).kind === "sms_confirmation" ? value as SmsConfirmationResult : null;
+  } catch { return null; }
+}
+
+function SmsConfirmationChip({ confirmation }: { confirmation: SmsConfirmationResult }) {
+  const [state, setState] = useState<"ready" | "sending" | "sent" | "error">("ready");
+  const [detail, setDetail] = useState("");
+  const confirm = async () => {
+    setState("sending");
+    try {
+      const response = await apiRequest("POST", "/api/agent/tools/sms", { arguments: { action: "confirm", confirmationToken: confirmation.confirmationToken, reasoning: `User confirmed texting ${confirmation.personName}` } });
+      const body = await response.json() as { result?: string; error?: boolean };
+      if (body.error) throw new Error(body.result || "SMS failed");
+      setDetail("Message sent"); setState("sent");
+    } catch (error) { setDetail(error instanceof Error ? error.message : "SMS failed"); setState("error"); }
+  };
+  return <div className="ml-7 my-2 flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2" data-testid="sms-confirmation">
+    <MessageSquare className="h-4 w-4 shrink-0 text-active" />
+    <div className="min-w-0 flex-1"><div className="text-sm font-medium">Text {confirmation.personName}?</div><div className="truncate text-xs text-muted-foreground">{confirmation.body}</div>{detail ? <div className={`text-xs ${state === "error" ? "text-error" : "text-success"}`}>{detail}</div> : null}</div>
+    <Button size="sm" onClick={confirm} disabled={state !== "ready"} data-testid="button-confirm-sms">{state === "sending" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : state === "sent" ? "Sent" : "Send"}</Button>
+  </div>;
+}
+
 function isObservationStep(step: ExecutionStep): boolean {
   return (
     (step.toolName === "cognition" && step.arguments?.action === "observe") ||
@@ -669,6 +703,11 @@ function ToolStepRow({
   const phoneConfirmation =
     rawToolName === "phone_call" && isDone
       ? parsePhoneConfirmation(step.result)
+      : null;
+
+  const smsConfirmation =
+    rawToolName === "sms" && isDone
+      ? parseSmsConfirmation(step.result)
       : null;
 
   const filteredArgs = step.arguments
@@ -773,6 +812,9 @@ function ToolStepRow({
       </div>
       {phoneConfirmation && (
         <PhoneCallConfirmationChip confirmation={phoneConfirmation} />
+      )}
+      {smsConfirmation && (
+        <SmsConfirmationChip confirmation={smsConfirmation} />
       )}
       {expanded && (
         <div

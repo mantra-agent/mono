@@ -68,6 +68,8 @@ const INTERNAL_EXTERNAL_EFFECT_ALLOWLIST = new Set([
   "session:send_message",
   "phone_call:prepare",
   "phone_call:confirm",
+  "sms:prepare",
+  "sms:confirm",
 ]);
 
 function actionOf(args: Record<string, unknown>): string | undefined {

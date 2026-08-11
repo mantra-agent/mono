@@ -60,6 +60,7 @@ import { webTools } from "./tools/handlers/web";
 import { codeIntelTools } from "./tools/handlers/code-intel";
 import { memoryTools } from "./tools/handlers/memory";
 import { phoneCallHandler } from "./tools/handlers/phone";
+import { smsHandler } from "./tools/handlers/sms";
 import { contractReject } from "./tools/shared/failures";
 import { peopleReadHandlers } from "./tools/handlers/people-read";
 import { peopleRelationshipHandlers } from "./tools/handlers/people-relationships";
@@ -12177,6 +12178,7 @@ const cognitionTools: Record<string, ToolHandler> = {
 
 const localHandlers: Record<string, ToolHandler> = {
   phone_call: phoneCallHandler,
+  sms: smsHandler,
   ...buildExecutionHandlers,
   ...workspaceTools,
   ...persistentFileHandlers,
