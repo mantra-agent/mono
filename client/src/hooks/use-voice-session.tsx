@@ -27,7 +27,12 @@ import {
   admitVoiceTranscript,
   type VoiceEchoAdmissionEvidence,
 } from "@/lib/voice-echo-admission";
-import { createVoiceCaptionChunk } from "@/lib/voice-caption-timeline";
+import {
+  appendVoiceCaptionPhrase,
+  createVoiceCaptionChunk,
+  VOICE_CAPTION_FINAL_HOLD_MS,
+  type VoiceCaptionWindow,
+} from "@/lib/voice-caption-timeline";
 import {
   createVoiceFinalizationRequest,
   isVoiceFinalizationResponse,
@@ -411,6 +416,7 @@ export function VoiceSessionProvider({
   const conversationRef = useRef<Awaited<ReturnType<typeof Conversation.startSession>> | null>(null);
   const captionTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const captionQueueEndRef = useRef(0);
+  const captionWindowRef = useRef<VoiceCaptionWindow>({ text: "", pendingPhrase: "" });
   const transcriptRef = useRef<VoiceTranscriptEntry[]>([]);
   const reconnectAttemptRef = useRef(0);
   const intentionalEndRef = useRef(false);
@@ -578,6 +584,7 @@ export function VoiceSessionProvider({
     captionTimersRef.current.forEach((timer) => clearTimeout(timer));
     captionTimersRef.current = [];
     captionQueueEndRef.current = 0;
+    captionWindowRef.current = { text: "", pendingPhrase: "" };
     setVoiceCaption("");
   }, []);
 
@@ -591,18 +598,34 @@ export function VoiceSessionProvider({
 
     for (const cue of chunk.cues) {
       const delay = Math.max(0, chunkStartsAt + cue.atMs - now);
-      captionTimersRef.current.push(setTimeout(() => setVoiceCaption(cue.text), delay));
+      captionTimersRef.current.push(setTimeout(() => {
+        const nextWindow = appendVoiceCaptionPhrase(captionWindowRef.current, cue.text);
+        captionWindowRef.current = nextWindow;
+        if (nextWindow.text) setVoiceCaption(nextWindow.text);
+      }, delay));
     }
 
     const queuedEnd = captionQueueEndRef.current;
     const clearDelay = Math.max(0, queuedEnd + 650 - now);
     captionTimersRef.current.push(setTimeout(() => {
       if (captionQueueEndRef.current !== queuedEnd) return;
+      const pendingPhrase = captionWindowRef.current.pendingPhrase;
+      if (pendingPhrase) {
+        const finalText = [...captionWindowRef.current.text.split(/\s+/), ...pendingPhrase.split(/\s+/)]
+          .filter(Boolean)
+          .slice(-18)
+          .join(" ");
+        captionWindowRef.current = { text: finalText, pendingPhrase: "" };
+        setVoiceCaption(finalText);
+        captionTimersRef.current = [setTimeout(clearVoiceCaption, VOICE_CAPTION_FINAL_HOLD_MS)];
+        return;
+      }
       setVoiceCaption("");
       captionTimersRef.current = [];
       captionQueueEndRef.current = 0;
+      captionWindowRef.current = { text: "", pendingPhrase: "" };
     }, clearDelay));
-  }, []);
+  }, [clearVoiceCaption]);
 
   const resetEphemeralVoiceState = useCallback((options?: { clearTranscript?: boolean }) => {
     clearVoiceCaption();
