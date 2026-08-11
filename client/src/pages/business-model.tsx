@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, ChevronRight, Loader2 } from "lucide-react";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
+import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Button } from "@/components/ui/button";
 import { useSelectedBusiness } from "@/hooks/use-selected-business";
@@ -96,7 +97,6 @@ export default function BusinessModelPage() {
   const [draft, setDraft] = useState<Assumptions | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [period, setPeriod] = useState<PeriodMode>("monthly");
-  const [driversOpen, setDriversOpen] = useState(true);
   const [revenueOpen, setRevenueOpen] = useState(true);
   const [opexOpen, setOpexOpen] = useState(false);
   const loadedIdRef = useRef<string | null>(null);
@@ -172,42 +172,38 @@ export default function BusinessModelPage() {
     <div className="w-full space-y-6 p-4" data-testid="business-model-page">
       <BusinessPageHeader page="Model" businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} />
       <section className="overflow-hidden border-y border-border/20">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/20 px-2 py-3">
-          <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold text-foreground">Forecast</h2>
-            <SavedIndicator state={saveState} />
+        <ProfileDetailSection title="Assumptions" defaultOpen headerAction={<SavedIndicator state={saveState} />}>
+          <div className="divide-y divide-border/10">
+            <Driver label="Starting accounts"><NumericInput ariaLabel="Starting paying accounts" value={draft.startingAccounts} min={0} step={1} onChange={(startingAccounts) => updateGlobal({ startingAccounts })} /></Driver>
+            <Driver label="Starting users"><NumericInput ariaLabel="Starting users" value={draft.startingUsers} min={0} step={1} onChange={(startingUsers) => updateGlobal({ startingUsers })} /></Driver>
+            <Driver label="Q1 new accounts"><NumericInput ariaLabel="Quarter one new accounts" value={draft.quarterOneNewAccounts} min={0} step={1} onChange={(quarterOneNewAccounts) => updateGlobal({ quarterOneNewAccounts })} /></Driver>
+            <Driver label="Users per new account"><NumericInput ariaLabel="Average users per new account" value={draft.averageUsersPerNewAccount} min={1} step={1} onChange={(averageUsersPerNewAccount) => updateGlobal({ averageUsersPerNewAccount })} /></Driver>
+            <Driver label="New account growth"><NumericInput ariaLabel="New account growth every 90 days" value={draft.accountExpansion90d} min={0} step={0.05} suffix="× / 90d" onChange={(accountExpansion90d) => updateGlobal({ accountExpansion90d })} /></Driver>
+            <Driver label="Annual account churn"><NumericInput ariaLabel="Annual account churn" value={draft.annualAccountChurnPct} min={0} step={1} suffix="%" onChange={(annualAccountChurnPct) => updateGlobal({ annualAccountChurnPct })} /></Driver>
+            <Driver label="Existing-account user growth"><NumericInput ariaLabel="Annual user growth within existing accounts" value={draft.annualExistingAccountUserGrowthPct} min={0} step={5} suffix="% / yr" onChange={(annualExistingAccountUserGrowthPct) => updateGlobal({ annualExistingAccountUserGrowthPct })} /></Driver>
+            <Driver label="Account upgrades"><NumericInput ariaLabel="Annual account upgrade rate" value={draft.annualAccountUpgradePct} min={0} step={5} suffix="% / yr" onChange={(annualAccountUpgradePct) => updateGlobal({ annualAccountUpgradePct })} /></Driver>
+            <Driver label="Base plan"><NumericInput ariaLabel="Base plan monthly price" value={draft.maxSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} /></Driver>
+            <Driver label="Upgraded plan"><NumericInput ariaLabel="Upgraded plan monthly price" value={draft.maxPlusSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxPlusSubscriptionMonthly) => updateGlobal({ maxPlusSubscriptionMonthly })} /></Driver>
+            <Driver label="Additional user"><NumericInput ariaLabel="Additional user monthly price" value={draft.participantSeatMonthly} min={0} step={25} prefix="$" suffix="/ mo" onChange={(participantSeatMonthly) => updateGlobal({ participantSeatMonthly })} /></Driver>
           </div>
-          <div className="flex items-center gap-1 rounded-md border border-border/40 p-0.5">
-            {PERIOD_MODES.map((mode) => (
-              <button key={mode.key} type="button" onClick={() => setPeriod(mode.key)} className={cn("min-h-8 rounded px-3 text-xs font-medium transition-colors", period === mode.key ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}>
-                {mode.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        </ProfileDetailSection>
+      </section>
 
-        <div className="border-b border-border/20">
-          <button type="button" onClick={() => setDriversOpen((open) => !open)} className="flex min-h-11 w-full items-center gap-2 px-2 text-left text-sm font-medium text-foreground">
-            <ChevronRight className={cn("h-4 w-4 transition-transform", driversOpen && "rotate-90")} /> Forecast drivers
-          </button>
-          {driversOpen && (
-            <div className="grid border-t border-border/10 md:grid-cols-2 xl:grid-cols-3">
-              <Driver label="Starting accounts"><NumericInput ariaLabel="Starting paying accounts" value={draft.startingAccounts} min={0} step={1} onChange={(startingAccounts) => updateGlobal({ startingAccounts })} /></Driver>
-              <Driver label="Starting users"><NumericInput ariaLabel="Starting users" value={draft.startingUsers} min={0} step={1} onChange={(startingUsers) => updateGlobal({ startingUsers })} /></Driver>
-              <Driver label="Q1 new accounts"><NumericInput ariaLabel="Quarter one new accounts" value={draft.quarterOneNewAccounts} min={0} step={1} onChange={(quarterOneNewAccounts) => updateGlobal({ quarterOneNewAccounts })} /></Driver>
-              <Driver label="Users per new account"><NumericInput ariaLabel="Average users per new account" value={draft.averageUsersPerNewAccount} min={1} step={1} onChange={(averageUsersPerNewAccount) => updateGlobal({ averageUsersPerNewAccount })} /></Driver>
-              <Driver label="New account growth"><NumericInput ariaLabel="New account growth every 90 days" value={draft.accountExpansion90d} min={0} step={0.05} suffix="× / 90d" onChange={(accountExpansion90d) => updateGlobal({ accountExpansion90d })} /></Driver>
-              <Driver label="Annual account churn"><NumericInput ariaLabel="Annual account churn" value={draft.annualAccountChurnPct} min={0} step={1} suffix="%" onChange={(annualAccountChurnPct) => updateGlobal({ annualAccountChurnPct })} /></Driver>
-              <Driver label="Existing-account user growth"><NumericInput ariaLabel="Annual user growth within existing accounts" value={draft.annualExistingAccountUserGrowthPct} min={0} step={5} suffix="% / yr" onChange={(annualExistingAccountUserGrowthPct) => updateGlobal({ annualExistingAccountUserGrowthPct })} /></Driver>
-              <Driver label="Account upgrades"><NumericInput ariaLabel="Annual account upgrade rate" value={draft.annualAccountUpgradePct} min={0} step={5} suffix="% / yr" onChange={(annualAccountUpgradePct) => updateGlobal({ annualAccountUpgradePct })} /></Driver>
-              <Driver label="Base plan"><NumericInput ariaLabel="Base plan monthly price" value={draft.maxSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} /></Driver>
-              <Driver label="Upgraded plan"><NumericInput ariaLabel="Upgraded plan monthly price" value={draft.maxPlusSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxPlusSubscriptionMonthly) => updateGlobal({ maxPlusSubscriptionMonthly })} /></Driver>
-              <Driver label="Additional user"><NumericInput ariaLabel="Additional user monthly price" value={draft.participantSeatMonthly} min={0} step={25} prefix="$" suffix="/ mo" onChange={(participantSeatMonthly) => updateGlobal({ participantSeatMonthly })} /></Driver>
+      <section className="overflow-hidden border-y border-border/20">
+        <ProfileDetailSection
+          title="Forecast"
+          defaultOpen
+          headerAction={(
+            <div className="flex items-center gap-1 rounded-md border border-border/40 p-0.5">
+              {PERIOD_MODES.map((mode) => (
+                <button key={mode.key} type="button" onClick={() => setPeriod(mode.key)} className={cn("min-h-8 rounded px-3 text-xs font-medium normal-case tracking-normal transition-colors", period === mode.key ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}>
+                  {mode.label}
+                </button>
+              ))}
             </div>
           )}
-        </div>
-
-        <div className="overflow-x-auto">
+        >
+          <div className="overflow-x-auto">
           <table className="w-max border-collapse text-xs tabular-nums" data-testid="projection-table">
             <thead>
               <tr>
@@ -238,7 +234,8 @@ export default function BusinessModelPage() {
               <DataRow label="Cash Balance" periods={periods} render={(row) => fmtCurrency(row.endingCash)} tone={(row) => row.endingCash < 0 ? "font-medium text-destructive" : "text-foreground"} emphasize />
             </tbody>
           </table>
-        </div>
+          </div>
+        </ProfileDetailSection>
       </section>
     </div>
   );
