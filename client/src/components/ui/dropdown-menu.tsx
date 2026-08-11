@@ -250,7 +250,13 @@ function MobileMenuLevel({
             onClick={back}
           >
             <ChevronLeft className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{title}</span>
+            <span className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-hidden whitespace-nowrap [&_svg]:size-3.5 [&_svg]:shrink-0">
+              {React.Children.map(title, (child) =>
+                React.isValidElement(child)
+                  ? child
+                  : <span className="min-w-0 truncate">{child}</span>,
+              )}
+            </span>
           </button>
         </div>
       ) : null}
