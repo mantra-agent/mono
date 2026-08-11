@@ -15,30 +15,31 @@ export function BusinessPageHeader({
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
-  const selected = businesses.find((business) => business.id === selectedId) ?? null;
-  const title = selected ? `${selected.publicName} ${page}` : page;
-  const selector = useMemo(
+  const headerContent = useMemo(
     () => (
-      <Select value={selectedId ?? undefined} onValueChange={onSelect}>
-        <SelectTrigger
-          className="h-7 w-auto max-w-64 border-0 bg-transparent px-0 text-sm font-medium shadow-none focus:ring-0"
-          data-testid="business-page-selector"
-          aria-label="Select Business"
-        >
-          <SelectValue placeholder={`Select Business · ${page}`} />
-        </SelectTrigger>
-        <SelectContent>
-          {businesses.map((business) => (
-            <SelectItem key={business.id} value={business.id}>
-              {business.publicName} {page}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <div className="flex min-w-0 items-center gap-1">
+        <Select value={selectedId ?? undefined} onValueChange={onSelect}>
+          <SelectTrigger
+            className="h-7 w-auto max-w-64 border-0 bg-transparent px-0 text-sm font-medium shadow-none focus:ring-0"
+            data-testid="business-page-selector"
+            aria-label="Select Business"
+          >
+            <SelectValue placeholder="Select Business" />
+          </SelectTrigger>
+          <SelectContent>
+            {businesses.map((business) => (
+              <SelectItem key={business.id} value={business.id}>
+                {business.publicName}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <span className="shrink-0">{page}</span>
+      </div>
     ),
     [businesses, onSelect, page, selectedId],
   );
 
-  usePageHeader({ title, customContent: selector });
+  usePageHeader({ title: page, customContent: headerContent });
   return null;
 }
