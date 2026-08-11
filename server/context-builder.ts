@@ -41,7 +41,8 @@ import { getSkillDefinitionsForContext, getToolSchemas, getToolCatalog, filterTo
 import { withTimeout, isTimeoutError, SECTION_RESOLVE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
 import { requireCurrentPrincipal } from "./principal-context";
-import { resolveCurrentProfileIdentity, resolveCurrentProfileVoiceNote } from "./profile-identity";
+import { resolveCurrentProfileIdentity } from "./profile-identity";
+import { ROOT_PERSONA } from "./root-persona";
 import { eventBus } from "./event-bus";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { libraryPageIsLive } from "./library-trash";
@@ -153,7 +154,6 @@ const INVALIDATION_EVENT_MAP: Record<string, string[]> = {
   ],
   "data:profiles_changed": [
     "world_model.people.self.identity",
-    "world_model.people.self.voice",
     "world_model.people.partner.identity",
   ],
   "data:principles_changed": ["world_model.people.self.principles"],
@@ -348,24 +348,8 @@ async function resolveSelfIdentity(): Promise<string> {
   return identity.join("\n\n");
 }
 
-const CONCISE_RESPONSE_VOICE_INSTRUCTION = [
-  "Default to concise, replies. Think silently, then answer with the conclusion. Avoid stream-of-consciousness, unnecessary caveats, long setup, and exhaustive lists unless Ray explicitly asks for a deep dive. Prefer 1–3 short ideas or a compact bullet list. Density over completeness. No yapping.",
-].join("\n");
-
 async function resolveSelfVoice(): Promise<string> {
-  const profileVoice = await resolveCurrentProfileVoiceNote();
-  if (profileVoice) return `${profileVoice}\n\n${CONCISE_RESPONSE_VOICE_INSTRUCTION}`;
-
-  try {
-    const selfPerson = await findPersonByRole("self");
-    if (selfPerson?.notes) {
-      const voiceNote = selfPerson.notes.find(
-        (n: { title: string }) => n.title.toLowerCase() === "voice"
-      );
-      if (voiceNote) return `${voiceNote.content}\n\n${CONCISE_RESPONSE_VOICE_INSTRUCTION}`;
-    }
-  } catch (err) { log.warn(`resolveSelfVoice failed: ${safeStringify(err, { maxBytes: 4 * 1024, label: "ctx.resolveSelfVoice.err" })}`); }
-  return CONCISE_RESPONSE_VOICE_INSTRUCTION;
+  return ROOT_PERSONA;
 }
 
 async function resolveEmotionalExpression(request: ContextRequest): Promise<string> {
