@@ -243,7 +243,9 @@ export default function BusinessKpisPage() {
               >
                 <span className="whitespace-nowrap font-mono">
                   {formatValue(kpi.score?.value ?? null, kpi.score?.unit ?? "")}
-                  <span className="ml-2 font-sans text-muted-foreground">{BAND_LABEL[band]}</span>
+                  {band !== "unmeasured" ? (
+                    <span className="ml-2 font-sans text-muted-foreground">{BAND_LABEL[band]}</span>
+                  ) : null}
                 </span>
               </ProfileTreeRow>
             );
