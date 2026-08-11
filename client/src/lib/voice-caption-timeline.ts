@@ -55,8 +55,13 @@ function shouldCompleteCard(words: VoiceCaptionCue[]): boolean {
 }
 
 function createCard(words: VoiceCaptionCue[]): VoiceCaptionCue {
+  const text = words
+    .map((word) => word.text)
+    .join(" ")
+    .replace(/\s+([,.;:!?%…](?:["')\]]*)?)/g, "$1");
+
   return {
-    text: words.map((word) => word.text).join(" "),
+    text,
     atMs: words[0]?.atMs ?? 0,
   };
 }
