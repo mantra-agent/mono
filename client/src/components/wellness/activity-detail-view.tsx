@@ -30,10 +30,7 @@ interface ActivityWithStatus {
   name: string;
   benefit: string | null;
   risk: string | null;
-  estimatedMinutes: number | null;
-  estimatedCost: number | null;
   intervalDays: number;
-  requirements: string | null;
   category: string;
   isDefault: boolean;
   linkedMetricType: string | null;
@@ -197,7 +194,7 @@ function DetailEditableNumber({
 
   const commitEdit = useCallback(() => {
     setEditing(false);
-    const parsed = localValue ? (field === "estimatedCost" ? parseFloat(localValue) : parseInt(localValue, 10)) : null;
+    const parsed = localValue ? parseInt(localValue, 10) : null;
     if (parsed !== value) {
       saveMutation.mutate(parsed);
     }
@@ -286,16 +283,13 @@ export function ActivityDetailView({
       <div className="flex-1 overflow-y-auto">
         {/* Header */}
         <div className="p-4 border-b">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center">
             <DetailEditableText
               value={activity.name}
               activityId={activity.id}
               field="name"
               placeholder="Activity name"
             />
-            <Badge variant="outline" className="shrink-0 text-xs">
-              {CATEGORY_LABELS[activity.category] ?? activity.category}
-            </Badge>
           </div>
         </div>
 
@@ -320,37 +314,18 @@ export function ActivityDetailView({
             />
           </PropRow>
           <PropRow label="Frequency">
-            <DetailEditableNumber
-              value={activity.intervalDays}
-              activityId={activity.id}
-              field="intervalDays"
-              suffix=" days"
-              currentCategory={activity.category}
-            />
-          </PropRow>
-          <PropRow label="Est. time">
-            <DetailEditableNumber
-              value={activity.estimatedMinutes}
-              activityId={activity.id}
-              field="estimatedMinutes"
-              suffix=" min"
-            />
-          </PropRow>
-          <PropRow label="Est. cost">
-            <DetailEditableNumber
-              value={activity.estimatedCost}
-              activityId={activity.id}
-              field="estimatedCost"
-              suffix=""
-            />
-          </PropRow>
-          <PropRow label="Requirements">
-            <DetailEditableText
-              value={activity.requirements ?? ""}
-              activityId={activity.id}
-              field="requirements"
-              placeholder="Equipment, prerequisites"
-            />
+            <div className="flex items-center gap-2">
+              <DetailEditableNumber
+                value={activity.intervalDays}
+                activityId={activity.id}
+                field="intervalDays"
+                suffix=" days"
+                currentCategory={activity.category}
+              />
+              <Badge variant="outline" className="shrink-0 text-xs">
+                {CATEGORY_LABELS[activity.category] ?? activity.category}
+              </Badge>
+            </div>
           </PropRow>
           {activity.linkedMetricType && (
             <PropRow label="Linked metric">
@@ -378,6 +353,9 @@ export function ActivityDetailView({
           <h4 className="text-sm font-medium mb-2">Trends & History</h4>
           <ActivityDetailPanel
             activityId={activity.id}
+            category={activity.category}
+            windowStart={activity.windowStart}
+            windowEnd={activity.windowEnd}
             metricInfo={{
               linkedMetricType: activity.linkedMetricType,
               goodThreshold: activity.goodThreshold,

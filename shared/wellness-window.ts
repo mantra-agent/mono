@@ -71,6 +71,38 @@ const CATEGORY_CONFIG: Record<string, CategoryConfig> = {
   annual_checkup: { extract: (p) => p.month, minVal: 1, maxVal: 12 },
 };
 
+export function getWellnessWindowValue(category: string, now: Date, timezone: string): number | null {
+  const parts = getLocalParts(now, timezone);
+  return CATEGORY_CONFIG[category]?.extract(parts) ?? null;
+}
+
+export function getWellnessWindowBounds(category: string): { min: number; max: number } | null {
+  const config = CATEGORY_CONFIG[category];
+  return config ? { min: config.minVal, max: config.maxVal } : null;
+}
+
+export function getWellnessWindowAdherence(
+  category: string,
+  windowStart: number | null,
+  windowEnd: number | null,
+  completedAt: Date,
+  timezone: string,
+): number {
+  if (windowStart == null || windowEnd == null) return 100;
+  const bounds = getWellnessWindowBounds(category);
+  const value = getWellnessWindowValue(category, completedAt, timezone);
+  if (!bounds || value == null) return 0;
+  if (inRange(value, windowStart, windowEnd)) return 100;
+  const span = bounds.max - bounds.min + 1;
+  const distance = Math.min(
+    Math.abs(value - windowStart),
+    Math.abs(value - windowEnd),
+    span - Math.abs(value - windowStart),
+    span - Math.abs(value - windowEnd),
+  );
+  return Math.max(0, Math.round(100 * (1 - distance / Math.max(1, span / 2))));
+}
+
 // --- Core: isInWindow ---
 
 /**

@@ -2,7 +2,8 @@
 import { useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Check, X } from "lucide-react";
+import { Check, Loader2, X } from "lucide-react";
+import { useEffect, useState } from "react";
 
 interface WindowEditorProps {
   activityId: number;
@@ -90,13 +91,19 @@ function getDefaultsForCategory(category: string): { start: number; end: number 
 export function WindowEditor({ activityId, category, windowStart, windowEnd, inWindow }: WindowEditorProps) {
   const { toast } = useToast();
   const options = getOptionsForCategory(category);
-  const hasWindow = windowStart != null && windowEnd != null;
+  const [localWindow, setLocalWindow] = useState({ start: windowStart, end: windowEnd });
+  const hasWindow = localWindow.start != null && localWindow.end != null;
+
+  useEffect(() => {
+    setLocalWindow({ start: windowStart, end: windowEnd });
+  }, [windowStart, windowEnd]);
 
   const saveMutation = useMutation({
     mutationFn: async (payload: { windowStart: number | null; windowEnd: number | null }) => {
       await apiRequest("PATCH", `/api/wellness/activities/${activityId}`, payload);
     },
-    onSuccess: () => {
+    onSuccess: (_data, payload) => {
+      setLocalWindow({ start: payload.windowStart, end: payload.windowEnd });
       queryClient.invalidateQueries({ queryKey: ["/api/wellness/status"] });
     },
     onError: (err: Error) => {
@@ -106,8 +113,8 @@ export function WindowEditor({ activityId, category, windowStart, windowEnd, inW
 
   const handleChange = (field: "windowStart" | "windowEnd", value: number) => {
     const payload = {
-      windowStart: field === "windowStart" ? value : windowStart,
-      windowEnd: field === "windowEnd" ? value : windowEnd,
+      windowStart: field === "windowStart" ? value : localWindow.start,
+      windowEnd: field === "windowEnd" ? value : localWindow.end,
     };
     saveMutation.mutate(payload);
   };
@@ -127,9 +134,10 @@ export function WindowEditor({ activityId, category, windowStart, windowEnd, inW
         <span className="text-sm text-muted-foreground/50 italic">Not set</span>
         <button
           onClick={handleSetDefault}
-          className="text-xs text-primary hover:underline"
+          disabled={saveMutation.isPending}
+          className="min-h-11 text-sm text-cta hover:text-active disabled:opacity-50"
         >
-          Set window
+          {saveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Set window"}
         </button>
       </div>
     );
@@ -140,7 +148,7 @@ export function WindowEditor({ activityId, category, windowStart, windowEnd, inW
       <div className="flex items-center gap-1.5 flex-wrap">
         <select
           className="bg-background border border-border rounded px-1.5 py-0.5 text-sm outline-none min-w-0"
-          value={windowStart ?? ""}
+          value={localWindow.start ?? ""}
           onChange={(e) => handleChange("windowStart", parseInt(e.target.value, 10))}
         >
           {options.map((o) => (
@@ -150,7 +158,7 @@ export function WindowEditor({ activityId, category, windowStart, windowEnd, inW
         <span className="text-xs text-muted-foreground">to</span>
         <select
           className="bg-background border border-border rounded px-1.5 py-0.5 text-sm outline-none min-w-0"
-          value={windowEnd ?? ""}
+          value={localWindow.end ?? ""}
           onChange={(e) => handleChange("windowEnd", parseInt(e.target.value, 10))}
         >
           {options.map((o) => (
