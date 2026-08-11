@@ -264,9 +264,6 @@ function MetricTreeRow({
     >
       <span className={cn("whitespace-nowrap font-mono", !sample && "text-muted-foreground")}>
         {sample ? formatValue(sample.value, sample.unit) : "—"}
-        {series.coverage.status !== "finalized" ? (
-          <span className="ml-2 font-sans text-xs text-muted-foreground">{series.coverage.status}</span>
-        ) : null}
       </span>
     </ProfileTreeRow>
   );
@@ -411,28 +408,26 @@ export default function BusinessMetricsPage() {
   }, [data, query]);
 
   return (
-    <div className="p-4">
+    <div className={HIERARCHY_TREE_STACK_CLASS}>
       <BusinessPageHeader
         page="Metrics"
         businesses={businesses}
         selectedId={selectedId}
         onSelect={setSelectedId}
       />
-      <div className={HIERARCHY_TREE_STACK_CLASS}>
-        <div className="flex items-center gap-2">
-          <div className="min-w-0 flex-1">
-            <HierarchySearchInput
-              value={query}
-              onChange={setQuery}
-              inputTestId="metrics-search"
-              clearTestId="button-clear-metrics-search"
-              ariaLabel="Search metrics"
-            />
-          </div>
-          <SamplingMenu value={sampleSpan} onChange={setSampleSpan} />
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <HierarchySearchInput
+            value={query}
+            onChange={setQuery}
+            inputTestId="metrics-search"
+            clearTestId="button-clear-metrics-search"
+            ariaLabel="Search metrics"
+          />
         </div>
-        {selectedId ? <CreateMetricDialog businessId={selectedId} /> : null}
+        <SamplingMenu value={sampleSpan} onChange={setSampleSpan} />
       </div>
+      {selectedId ? <CreateMetricDialog businessId={selectedId} /> : null}
 
       {isLoading ? (
         <div className="flex items-center justify-center py-16 text-muted-foreground">
@@ -443,7 +438,7 @@ export default function BusinessMetricsPage() {
           No metrics yet.
         </div>
       ) : (
-        <div className="py-4">
+        <>
           <HierarchySectionHeader data-testid="metric-section-metrics">
             Metrics · {SAMPLE_SPANS.find((option) => option.key === sampleSpan)?.label}
           </HierarchySectionHeader>
@@ -454,7 +449,7 @@ export default function BusinessMetricsPage() {
               onRequestDelete={setDeleteTarget}
             />
           ))}
-        </div>
+        </>
       )}
 
       <AlertDialog
