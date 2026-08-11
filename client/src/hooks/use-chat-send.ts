@@ -92,7 +92,7 @@ export function useChatSend(deps: UseChatSendDeps) {
   }, [toast, createSessionPayload]);
 
   const sendMessage = useCallback(async (text: string): Promise<boolean> => {
-    if (!text.trim() || isSending || sendInFlightRef.current) return false;
+    if ((!text.trim() && attachedFiles.length === 0) || isSending || sendInFlightRef.current) return false;
 
     // React state is not a concurrency primitive. Flip the ref before any state
     // update or await so repeated UI events in the same tick cannot create
