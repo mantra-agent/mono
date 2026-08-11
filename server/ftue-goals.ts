@@ -6,7 +6,7 @@ import type { Principal } from "./principal";
 import { runWithPrincipal } from "./principal-context";
 import { getDateInTimezone, getTimezone } from "./timezone";
 
-const log = createLogger("FtuePriorities");
+const log = createLogger("FtueGoals");
 
 const FTUE_SAY_HELLO_TITLE = "Say hello";
 const FTUE_ADD_FIRST_GOAL_TITLE = "Add first goal";
@@ -63,7 +63,7 @@ export async function completeFtueSayHello(principal: UserPrincipal): Promise<vo
     });
   } catch (err) {
     // FTUE completion is best-effort side work after a durable user message.
-    // Never fail chat acceptance because priority migration/list threw.
+    // Never fail chat acceptance because FTUE goal completion failed.
     const error = err instanceof Error ? err : new Error(String(err));
     if (!(error as Error & { code?: string }).code) {
       (error as Error & { code?: string }).code = "FTUE_SAY_HELLO_FAILED";
@@ -75,7 +75,7 @@ export async function completeFtueSayHello(principal: UserPrincipal): Promise<vo
   }
 }
 
-export async function completeFtueFirstGoalAndAddGoalPriority(principal: UserPrincipal, goal: Pick<Goal, "id" | "shortName">): Promise<void> {
+export async function completeFtueFirstGoalAndProjectToToday(principal: UserPrincipal, goal: Pick<Goal, "id" | "shortName">): Promise<void> {
   await runWithPrincipal(principal, async () => {
     const date = today();
 

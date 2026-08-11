@@ -3,7 +3,7 @@ import { goalsService } from "./goals-service";
 import { createGoalSchema, updateGoalSchema } from "@shared/schema";
 import { requireAuth } from "./auth";
 import { getPrincipal } from "./principal";
-import { completeFtueFirstGoalAndAddGoalPriority } from "./ftue-goals";
+import { completeFtueFirstGoalAndProjectToToday } from "./ftue-goals";
 import type { GoalHorizon } from "@shared/schema";
 
 export function registerGoalRoutes(app: Express): void {
@@ -53,7 +53,7 @@ export function registerGoalRoutes(app: Express): void {
       const { goal } = await goalsService.create(parsed);
       const principal = getPrincipal(req);
       if (principal?.actorType === "user" && principal.userId && principal.accountId) {
-        await completeFtueFirstGoalAndAddGoalPriority(principal as typeof principal & { userId: string; accountId: string }, goal);
+        await completeFtueFirstGoalAndProjectToToday(principal as typeof principal & { userId: string; accountId: string }, goal);
       }
       res.status(201).json(goal);
     } catch (error: any) {
