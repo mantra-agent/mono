@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import {
   Plus,
   Pencil,
@@ -8,14 +8,11 @@ import {
   ChevronRight,
   Search,
   X,
-  Briefcase,
   Share2,
   MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
@@ -44,12 +41,6 @@ import {
 } from "@shared/models/vaults";
 
 const log = createLogger("VaultsAdmin");
-
-interface OpportunitySummary {
-  id: number;
-  title: string;
-  vaultId: string | null;
-}
 
 interface ColorDotProps {
   color: string;
@@ -288,78 +279,11 @@ function ArchiveDialog({ vault, open, onOpenChange }: { vault: Vault; open: bool
 
 // ── Vault row ──────────────────────────────────────────────────────────────
 
-function VaultOpportunitySelector({ vault, opportunities }: { vault: Vault; opportunities: OpportunitySummary[] }) {
-  const { toast } = useToast();
-  const assigned = useMemo(
-    () => opportunities.filter(opportunity => opportunity.vaultId === vault.id),
-    [opportunities, vault.id],
-  );
-  const mutation = useMutation({
-    mutationFn: async ({ opportunityId, vaultId }: { opportunityId: number; vaultId: string | null }) => {
-      const res = await apiRequest("PATCH", `/api/exec/opportunities/${opportunityId}/vault`, { vaultId });
-      return res.json() as Promise<OpportunitySummary>;
-    },
-    onSuccess: (updated) => {
-      queryClient.setQueryData<OpportunitySummary[]>(["/api/exec/opportunities"], current =>
-        current?.map(opportunity => opportunity.id === updated.id ? { ...opportunity, ...updated } : opportunity),
-      );
-      queryClient.invalidateQueries({ queryKey: ["/api/exec/opportunities"] });
-    },
-    onError: (error: Error) => {
-      toast({ title: "Failed to update Opportunity Vault", description: error.message, variant: "destructive" });
-    },
-  });
-
-  return (
-    <div className="ml-5 border-l border-border pl-3 pb-2">
-      <div className="flex min-h-11 items-center gap-2 rounded-md px-2 py-1.5 text-sm sm:min-h-9">
-        <Briefcase className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 text-muted-foreground">Opportunities</span>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" className="h-7 max-w-56 justify-end px-1.5 text-right text-xs font-normal">
-              <span className="truncate">{assigned.map(opportunity => opportunity.title).join(", ") || "Choose Opportunities"}</span>
-              <ChevronRight className="ml-1 h-3 w-3 shrink-0 rotate-90 text-muted-foreground" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-80 p-1">
-            {opportunities.length === 0 ? (
-              <div className="px-2 py-1.5 text-sm text-muted-foreground">No Opportunities yet.</div>
-            ) : opportunities.map(opportunity => {
-              const checked = opportunity.vaultId === vault.id;
-              return (
-                <label key={opportunity.id} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent sm:min-h-9">
-                  <Checkbox
-                    checked={checked}
-                    disabled={mutation.isPending}
-                    onCheckedChange={nextChecked => mutation.mutate({
-                      opportunityId: opportunity.id,
-                      vaultId: nextChecked ? vault.id : null,
-                    })}
-                    aria-label={`${checked ? "Unassign" : "Assign"} ${opportunity.title} ${checked ? "from" : "to"} ${vault.name}`}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{opportunity.title}</span>
-                  {opportunity.vaultId && !checked ? (
-                    <span className="max-w-24 truncate text-xs text-muted-foreground">
-                      {opportunity.vaultId === vault.id ? vault.name : "Reassign"}
-                    </span>
-                  ) : null}
-                </label>
-              );
-            })}
-          </PopoverContent>
-        </Popover>
-      </div>
-    </div>
-  );
-}
-
-function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: OpportunitySummary[] }) {
+function VaultRow({ vault }: { vault: Vault }) {
   const { activeVaultId, setActiveVault, vaults: allVaults } = useVaults();
   const isActive = vault.id === activeVaultId;
   const [renameOpen, setRenameOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
 
   const nonArchivedCount = allVaults.filter((item) => !item.isArchived).length;
@@ -374,18 +298,7 @@ function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: Oppor
           aria-hidden="true"
         />
         <span className="min-w-0 flex-1 truncate font-medium text-foreground">{vault.name}</span>
-        {isActive && <span className="shrink-0 text-xs font-medium text-active">Active</span>}
-        {vault.isDefault && <span className="shrink-0 text-xs text-muted-foreground">Default</span>}
         <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={() => setDetailsOpen(open => !open)}
-            aria-label={`${detailsOpen ? "Collapse" : "Expand"} ${vault.name} details`}
-            aria-expanded={detailsOpen}
-          >
-            <ChevronRight className={`h-3.5 w-3.5 transition-transform ${detailsOpen ? "rotate-90" : ""}`} />
-          </button>
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <button type="button" className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={`More actions for ${vault.name}`}>
@@ -407,7 +320,6 @@ function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: Oppor
           </DropdownMenu>
         </div>
       </div>
-      {detailsOpen ? <VaultOpportunitySelector vault={vault} opportunities={opportunities} /> : null}
       <ShareSheet objectType="vault" objectId={vault.id} title={vault.name} open={shareOpen} onOpenChange={setShareOpen} />
       <RenameDialog vault={vault} open={renameOpen} onOpenChange={setRenameOpen} />
       <ArchiveDialog vault={vault} open={archiveOpen} onOpenChange={setArchiveOpen} />
@@ -420,9 +332,6 @@ function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: Oppor
 export default function VaultsAdminPage() {
   usePageHeader({ title: "Vaults" });
   const { vaults, isLoading } = useVaults();
-  const { data: opportunities = [], isLoading: opportunitiesLoading } = useQuery<OpportunitySummary[]>({
-    queryKey: ["/api/exec/opportunities"],
-  });
   const [createOpen, setCreateOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [sectionOpen, setSectionOpen] = useState(true);
@@ -471,7 +380,7 @@ export default function VaultsAdminPage() {
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="space-y-0">
-                {isLoading || opportunitiesLoading ? (
+                {isLoading ? (
                   <div className="flex items-center px-2 py-1.5 text-sm text-muted-foreground">
                     <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> Loading Vaults
                   </div>
@@ -480,7 +389,7 @@ export default function VaultsAdminPage() {
                     {normalizedQuery ? "No matching vaults." : "No vaults yet."}
                   </div>
                 ) : (
-                  filteredVaults.map((vault) => <VaultRow key={vault.id} vault={vault} opportunities={opportunities} />)
+                  filteredVaults.map((vault) => <VaultRow key={vault.id} vault={vault} />)
                 )}
               </div>
             </CollapsibleContent>
