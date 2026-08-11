@@ -3,6 +3,7 @@ import type { Express } from "express";
 import { db, APP_NAME } from "../db";
 import type { ClientConfig } from "pg";
 import { createDedicatedDatabaseClient } from "../database-adapters";
+import { inspectBackupCoverage, type BackupCoverage } from "../backup-completeness";
 import { pathExists } from "./shared";
 import { WORKSPACE_DIR } from "../paths";
 import { documentStorage } from "../memory";
@@ -726,6 +727,23 @@ export interface ExportBrainResult {
   durationMs: number;
   cancelled: boolean;
   mode: ExportMode;
+  coverage: BackupCoverage;
+}
+
+async function loadBackupCoverage(): Promise<BackupCoverage> {
+  const client = createDedicatedDatabaseClient("brain-preflight", {
+    connectionString: process.env.DATABASE_URL,
+    application_name: `${APP_NAME}-backup-completeness`,
+    keepAlive: true,
+  });
+  try {
+    await client.connect();
+    await client.query("SET default_transaction_read_only = on");
+    await client.query("SET statement_timeout = '30s'");
+    return await inspectBackupCoverage(client, TABLE_REGISTRY.map(entry => getTableName(entry.table)));
+  } finally {
+    await client.end().catch(() => {});
+  }
 }
 
 // Returns the column projection to use when exporting `key` in `mode`.
@@ -746,6 +764,16 @@ function columnsForMode(key: string, mode: ExportMode): ColumnProjection | null 
 
 export async function exportBrain(options: ExportBrainOptions): Promise<ExportBrainResult> {
   const { mode } = options;
+  // Establish completeness before creating staging state. Unknown relations or
+  // unsafe cycles therefore cannot yield an artifact later reported complete.
+  const coverage = await loadBackupCoverage();
+  const includedNames = new Set(coverage.included.map(entry => entry.relation));
+  const exportEntries = INSERT_ORDER.filter(entry => includedNames.has(getTableName(entry.table)));
+  const registeredNames = new Set(exportEntries.map(entry => getTableName(entry.table)));
+  const unregisteredIncludes = coverage.included.filter(entry => !registeredNames.has(entry.relation));
+  if (unregisteredIncludes.length > 0) {
+    throw new Error(`Backup completeness preflight found ${unregisteredIncludes.length} recovery-required relation(s) without an exporter mapping: ${unregisteredIncludes.map(entry => entry.relation).join(", ")}`);
+  }
   await mkdir(BRAIN_EXPORT_DIR, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const stagingDir = join(BRAIN_EXPORT_DIR, `brain-${timestamp}`);
@@ -756,7 +784,7 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
   const failed: string[] = [];
   let cancelled = false;
 
-  log.debug(`Starting export of ${INSERT_ORDER.length} tables (mode=${mode})`);
+  log.debug(`Starting export of ${exportEntries.length} included tables from ${coverage.discovered.length} discovered relations (mode=${mode})`);
 
   // Pre-flight count: for data/data_plus modes, sum count(*) across every
   // table that will actually emit rows so the orchestrator can drive a
@@ -779,7 +807,7 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
     });
     try {
       await preflightClient.connect();
-      const countable = INSERT_ORDER.filter(
+      const countable = exportEntries.filter(
         (e) => columnsForMode(e.key, mode) !== null,
       );
       let totalRowsExpected = 0;
@@ -825,20 +853,20 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
   // path without re-reading state.
   let totalRowsSoFar = 0;
 
-  for (let i = 0; i < INSERT_ORDER.length; i++) {
-    const entry = INSERT_ORDER[i];
+  for (let i = 0; i < exportEntries.length; i++) {
+    const entry = exportEntries[i];
 
     if (options.shouldCancel) {
       const stop = await options.shouldCancel();
       if (stop) {
         cancelled = true;
-        log.debug(`Export cancelled before table "${entry.key}" (${i}/${INSERT_ORDER.length})`);
+        log.debug(`Export cancelled before table "${entry.key}" (${i}/${exportEntries.length})`);
         break;
       }
     }
 
     if (options.onTableStart) {
-      await options.onTableStart(entry.key, i, INSERT_ORDER.length);
+      await options.onTableStart(entry.key, i, exportEntries.length);
     }
 
     log.debug(`${entry.key}: starting (${entry.domain})`);
@@ -881,7 +909,7 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
     }
 
     if (options.onTableDone) {
-      await options.onTableDone(entry.key, i, INSERT_ORDER.length, results[results.length - 1].rows);
+      await options.onTableDone(entry.key, i, exportEntries.length, results[results.length - 1].rows);
     }
 
     // Re-check cancel AFTER each table completes (not just at the top of
@@ -895,7 +923,7 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
       const stop = await options.shouldCancel();
       if (stop) {
         cancelled = true;
-        log.debug(`Export cancelled during/after table "${entry.key}" (${i + 1}/${INSERT_ORDER.length})`);
+        log.debug(`Export cancelled during/after table "${entry.key}" (${i + 1}/${exportEntries.length})`);
         break;
       }
     }
@@ -917,13 +945,25 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
     format: BRAIN_FORMAT_VERSION,
     mode,
     exportedAt: new Date().toISOString(),
-    totalTables: INSERT_ORDER.length,
-    successfulTables: INSERT_ORDER.length - failed.length,
+    totalTables: exportEntries.length,
+    successfulTables: exportEntries.length - failed.length,
     failedTables: failed,
     totalRows,
     durationMs: totalDuration,
     cancelled,
     domains,
+    coverage: {
+      version: coverage.version,
+      discoveredCount: coverage.discovered.length,
+      includedCount: coverage.included.length,
+      excludedCount: coverage.excluded.length,
+      included: coverage.included,
+      excluded: coverage.excluded,
+      insertOrder: coverage.insertOrder,
+      schemaFingerprint: coverage.schemaFingerprint,
+      manifestFingerprint: coverage.manifestFingerprint,
+      relations: coverage.discovered,
+    },
   };
 
   await writeFile(join(stagingDir, "manifest.json"), JSON.stringify(manifest, null, 2));
@@ -938,12 +978,13 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
       archiveName: "",
       sizeBytes: 0,
       totalRows,
-      totalTables: INSERT_ORDER.length,
+      totalTables: exportEntries.length,
       failedTables: failed,
       domains,
       durationMs: totalDuration,
       cancelled: true,
       mode,
+      coverage,
     };
   }
 
@@ -960,19 +1001,20 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
   await rm(stagingDir, { recursive: true, force: true });
 
   const stats = await stat(archivePath);
-  log.debug(`Export complete: ${totalRows} rows across ${INSERT_ORDER.length} tables in ${totalDuration}ms (${failed.length} failures, mode=${mode})`);
+  log.debug(`Export complete: ${totalRows} rows across ${exportEntries.length} tables in ${totalDuration}ms (${failed.length} failures, mode=${mode})`);
 
   return {
     archivePath,
     archiveName,
     sizeBytes: stats.size,
     totalRows,
-    totalTables: INSERT_ORDER.length,
+    totalTables: exportEntries.length,
     failedTables: failed,
     domains,
     durationMs: totalDuration,
     cancelled: false,
     mode,
+    coverage,
   };
 }
 
