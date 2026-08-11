@@ -43,6 +43,8 @@ export interface DriveResource {
   resourceType: "file" | "folder";
   iconUrl: string | null;
   webViewLink: string | null;
+  origin: "bind" | "upload";
+  sourceSessionId: string | null;
 }
 
 export interface FilesChild {
