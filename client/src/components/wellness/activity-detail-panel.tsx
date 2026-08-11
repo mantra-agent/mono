@@ -49,7 +49,7 @@ function HeartbeatHistory({ logs, category, windowStart, windowEnd }: Omit<Activ
 
     return entries.map((entry, index) => ({
       entry,
-      x: entries.length === 1 ? 50 : 5 + ((timestamps[index] - firstTimestamp) / elapsed) * 90,
+      x: entries.length === 1 ? 500 : 24 + ((timestamps[index] - firstTimestamp) / elapsed) * 952,
       adherence: getWellnessWindowAdherence(category, windowStart, windowEnd, new Date(entry.completedAt), timezone),
     }));
   }, [logs, category, windowStart, windowEnd, timezone]);
@@ -60,15 +60,16 @@ function HeartbeatHistory({ logs, category, windowStart, windowEnd }: Omit<Activ
 
   return (
     <div className="space-y-2">
-      <svg viewBox="0 0 100 52" className="h-40 w-full overflow-visible" role="img" aria-label="Activity completion timeline; each heartbeat blip marks when the activity was completed">
-        <line x1="3" y1="29" x2="97" y2="29" className="stroke-border" strokeWidth="0.6" />
+      <svg viewBox="0 0 1000 240" preserveAspectRatio="none" className="h-56 w-full" role="img" aria-label="Activity completion timeline; each heartbeat blip marks when the activity was completed">
+        <line x1="16" y1="128" x2="984" y2="128" className="stroke-border" strokeWidth="1" vectorEffect="non-scaling-stroke" />
         {events.map(({ entry, x, adherence }) => (
           <path
             key={entry.id}
-            d={`M ${Math.max(3, x - 3.5)} 29 L ${x - 2.1} 29 L ${x - 1.35} 25 L ${x - 0.55} 34 L ${x + 0.45} 15 L ${x + 1.15} 32 L ${x + 2.05} 27 L ${Math.min(97, x + 3.5)} 29`}
+            d={`M ${Math.max(16, x - 5)} 128 L ${x - 2.6} 128 L ${x - 1.5} 110 L ${x - 0.6} 150 L ${x + 0.5} 62 L ${x + 1.3} 142 L ${x + 2.6} 118 L ${Math.min(984, x + 5)} 128`}
             fill="none"
             className="stroke-foreground"
-            strokeWidth="1.15"
+            strokeWidth="0.75"
+            vectorEffect="non-scaling-stroke"
             strokeLinecap="round"
             strokeLinejoin="round"
             style={{ opacity: Math.max(0.12, adherence / 100) }}
