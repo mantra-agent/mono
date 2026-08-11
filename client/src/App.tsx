@@ -76,6 +76,7 @@ const MeetingsPage = lazyWithRetry(() => import("@/pages/meetings"));
 const CompaniesPage = lazyWithRetry(() => import("@/pages/companies"));
 const BusinessDefinitionPage = lazyWithRetry(() => import("@/pages/business-definition"));
 const BusinessModelPage = lazyWithRetry(() => import("@/pages/business-model"));
+const BusinessBudgetsPage = lazyWithRetry(() => import("@/pages/business-budgets"));
 const BusinessAdvantagePage = lazyWithRetry(() => import("@/pages/business-advantage"));
 const BusinessKpisPage = lazyWithRetry(() => import("@/pages/business-kpis"));
 const BusinessMetricsPage = lazyWithRetry(() => import("@/pages/business-metrics"));
@@ -332,6 +333,7 @@ function Router() {
         <Route path="/companies" component={CompaniesPage} />
         <Route path="/business/definition">{() => <RequirePermission permission="system:read"><BusinessDefinitionPage /></RequirePermission>}</Route>
         <Route path="/business/model">{() => <RequirePermission permission="system:read"><BusinessModelPage /></RequirePermission>}</Route>
+        <Route path="/business/budgets">{() => <RequirePermission permission="system:read"><BusinessBudgetsPage /></RequirePermission>}</Route>
         <Route path="/business/advantage" component={BusinessAdvantagePage} />
         <Route path="/business/roles">{() => <RequirePermission permission="system:read"><JobRolesPage /></RequirePermission>}</Route>
         <Route path="/business/kpis">{() => <RequirePermission permission="system:read"><BusinessKpisPage /></RequirePermission>}</Route>
