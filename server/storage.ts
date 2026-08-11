@@ -98,12 +98,17 @@ export interface IStorage {
   getTotalApiCallCount(): Promise<number>;
 
   getIssues(options?: { status?: string; excludeStatus?: string; lightweight?: boolean }): Promise<Issue[] | Partial<Issue>[]>;
+  getIssuesForAdmin(principal: Principal, options?: { status?: string; excludeStatus?: string; lightweight?: boolean }): Promise<Issue[] | Partial<Issue>[]>;
   getIssue(id: number): Promise<Issue | undefined>;
+  getIssueForAdmin(principal: Principal, id: number): Promise<Issue | undefined>;
   createIssue(issue: InsertIssue): Promise<Issue>;
   updateIssue(id: number, updates: Partial<InsertIssue>): Promise<Issue | undefined>;
+  updateIssueForAdmin(principal: Principal, id: number, updates: Partial<InsertIssue>): Promise<Issue | undefined>;
   resolveIssueWithEvidence(id: number, note: string): Promise<Issue | undefined>;
   addIssueNote(id: number, text: string, author?: "user" | "agent"): Promise<Issue | undefined>;
+  addIssueNoteForAdmin(principal: Principal, id: number, text: string, author?: "user" | "agent"): Promise<Issue | undefined>;
   deleteIssue(id: number): Promise<boolean>;
+  deleteIssueForAdmin(principal: Principal, id: number): Promise<boolean>;
 
   getGmailSkipList(): Promise<{ email: string; name?: string; skippedAt: string }[]>;
   addToGmailSkipList(entries: { email: string; name?: string }[]): Promise<void>;
@@ -329,8 +334,16 @@ export class HybridStorage implements IStorage {
     return fileIssueStorage.getIssues(options);
   }
 
+  async getIssuesForAdmin(principal: Principal, options?: { status?: string; excludeStatus?: string; lightweight?: boolean }): Promise<Issue[] | Partial<Issue>[]> {
+    return fileIssueStorage.getIssuesForAdmin(principal, options);
+  }
+
   async getIssue(id: number): Promise<Issue | undefined> {
     return fileIssueStorage.getIssue(id);
+  }
+
+  async getIssueForAdmin(principal: Principal, id: number): Promise<Issue | undefined> {
+    return fileIssueStorage.getIssueForAdmin(principal, id);
   }
 
   async createIssue(issue: InsertIssue): Promise<Issue> {
@@ -341,6 +354,10 @@ export class HybridStorage implements IStorage {
     return fileIssueStorage.updateIssue(id, updates);
   }
 
+  async updateIssueForAdmin(principal: Principal, id: number, updates: Partial<InsertIssue>): Promise<Issue | undefined> {
+    return fileIssueStorage.updateIssueForAdmin(principal, id, updates);
+  }
+
   async resolveIssueWithEvidence(id: number, note: string): Promise<Issue | undefined> {
     return fileIssueStorage.resolveWithEvidence(id, note);
   }
@@ -349,8 +366,16 @@ export class HybridStorage implements IStorage {
     return fileIssueStorage.addNote(id, text, author);
   }
 
+  async addIssueNoteForAdmin(principal: Principal, id: number, text: string, author: "user" | "agent" = "agent"): Promise<Issue | undefined> {
+    return fileIssueStorage.addNoteForAdmin(principal, id, text, author);
+  }
+
   async deleteIssue(id: number): Promise<boolean> {
     return fileIssueStorage.deleteIssue(id);
+  }
+
+  async deleteIssueForAdmin(principal: Principal, id: number): Promise<boolean> {
+    return fileIssueStorage.deleteIssueForAdmin(principal, id);
   }
 
   async getGmailSkipList(): Promise<{ email: string; name?: string; skippedAt: string }[]> {
