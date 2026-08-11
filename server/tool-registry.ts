@@ -493,7 +493,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         action: {
           type: "string",
           enum: [
-            "list", "get", "create", "rename", "delete", "set_thematic_goal", "clear_thematic_goal", "add_initiative", "remove_initiative", "add_kpi", "remove_kpi", "assign_vault",
+            "list", "get", "create", "rename", "delete", "set_thematic_goal", "clear_thematic_goal", "add_initiative", "remove_initiative", "set_leading_metric", "clear_leading_metric", "set_lagging_kpi", "clear_lagging_kpi", "add_kpi", "remove_kpi", "assign_vault",
             "list_kpis", "get_kpi", "create_kpi", "update_kpi", "delete_kpi",
             "list_metrics", "get_metric", "create_metric", "update_metric", "delete_metric", "sample_range", "sample_usage", "list_samples", "record_sample", "delete_sample",
             "list_businesses", "get_business", "create_business", "update_business", "archive_business", "list_business_vaults", "add_business_vault", "remove_business_vault", "set_business_vaults",
@@ -503,9 +503,9 @@ export const TOOLS: Record<string, ToolMeta> = {
         id: { type: "string", description: "Business Plan ID (required for plan get/rename/delete/set_thematic_goal/clear_thematic_goal/add_initiative/remove_initiative/add_kpi/remove_kpi/assign_vault)" },
         name: { type: "string", description: "Name (plan create/rename; KPI create; Metric create)" },
         goalId: { type: "string", description: "Thematic Goal ID (plan create/set_thematic_goal)" },
-        projectId: { type: "number", description: "Initiative Project ID (add/remove_initiative)" },
-        kpiId: { type: "string", description: "KPI ID (plan add_kpi/remove_kpi and KPI get_kpi/update_kpi/delete_kpi)" },
-        metricId: { type: "string", description: "Metric ID (required for create_kpi and metric get/update/delete/list_samples/record_sample actions)" },
+        projectId: { type: "number", description: "Initiative Project ID (add/remove_initiative and initiative measurement actions)" },
+        kpiId: { type: "string", description: "KPI ID (set_lagging_kpi, legacy plan add_kpi/remove_kpi, and KPI get/update/delete)" },
+        metricId: { type: "string", description: "Metric ID (set_leading_metric, create_kpi, and metric get/update/delete/list_samples/record_sample actions)" },
         sampleId: { type: "string", description: "Metric sample ID (required for delete_sample)" },
         vaultId: { type: "string", description: "Visible live Vault ID (plan create/assign_vault)" },
         query: { type: "string", description: "Search filter (list_kpis/list_metrics)" },

@@ -1,3 +1,10 @@
+<!-- 2026-08-10 Business Plan initiative measurement boundary:
+- Assets/data: principal/account/Vault-owned Business Plans, initiative Project IDs, Metric IDs, KPI IDs, and Business measurement definitions (A01/A03/A07; S1/S2 business state).
+- Flow/threat: authenticated UI or Agent tool -> Business Plan storage -> initiative measurement bindings. Metric/KPI IDs and Plan patches remain untrusted; accepting a Metric ID as a KPI ID or a binding to a foreign/invisible initiative could corrupt scorecard meaning or disclose cross-Vault metadata (STRIDE tampering/information disclosure plus agentic contract confusion; DATA-01/AGENT-03).
+- Controls/owner: `business-plan-storage.ts` remains the sole mutation boundary, retains principal/account/Vault predicates and row locks, validates the initiative belongs to the Plan, resolves leading IDs only through principal-scoped Metric storage and lagging IDs only through principal-scoped KPI storage, and encodes at most one pair per initiative. The additive JSONB column preserves rolling compatibility; legacy `kpi_ids` remains KPI-only and is not reinterpreted or destructively migrated. Owner: Business Plans + Metrics. Severity: high integrity/confidentiality. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: legacy plan-level KPI bindings remain visible until deliberately reconciled and cannot be inferred into initiative slots without an authoritative mapping. Revert the additive column/contracts/UI and this record to restore the old plan-level KPI model; existing additive rows may remain inert.
+-->
+
 <!-- 2026-08-10 Vault creation transaction-composition repair:
 - Assets/data: account-owned Vault identity, user visible-Vault state, and the protected Meetings Library root (A01/A03/A07; S1 metadata).
 - Flow/boundary: authenticated user -> POST /api/vaults -> one account-scoped database transaction -> Vault insert, visibility update, and reserved-root provisioning. Names and requested presentation fields remain untrusted and grant no authority.

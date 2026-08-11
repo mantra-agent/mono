@@ -1,9 +1,9 @@
 import { randomBytes } from "crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { businessPlans, projects, vaults, type BusinessPlan, type BusinessPlanCreate, type BusinessPlanPatch } from "@shared/schema";
+import { businessPlans, projects, vaults, type BusinessPlan, type BusinessPlanCreate, type BusinessPlanPatch, type InitiativeMeasurementBinding } from "@shared/schema";
 import { db } from "./db";
 import { goalStorage } from "./goal-storage";
-import { kpiStorage } from "./metrics-storage";
+import { kpiStorage, metricsStorage } from "./metrics-storage";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { assertWritable, combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 
@@ -28,6 +28,7 @@ export async function ensureBusinessPlansSchema(): Promise<void> {
       name text NOT NULL,
       thematic_goal_id text,
       initiative_project_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+      initiative_measurement_bindings jsonb NOT NULL DEFAULT '[]'::jsonb,
       kpi_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
       vault_id text NOT NULL REFERENCES vaults(id) ON DELETE RESTRICT,
       scope text NOT NULL DEFAULT 'user',
@@ -41,6 +42,7 @@ export async function ensureBusinessPlansSchema(): Promise<void> {
   // Existing installs created thematic_goal_id as NOT NULL during bootstrap.
   // Drop that constraint so plans can exist with no assigned goal until the user picks one.
   await db.execute(sql`ALTER TABLE business_plans ALTER COLUMN thematic_goal_id DROP NOT NULL`);
+  await db.execute(sql`ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS initiative_measurement_bindings jsonb NOT NULL DEFAULT '[]'::jsonb`);
   await db.execute(sql`ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS business_id text REFERENCES businesses(id) ON DELETE RESTRICT`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_business_plans_business ON business_plans(business_id)`);
   await db.execute(sql`
@@ -97,12 +99,29 @@ async function assertKpis(kpiIds: string[]): Promise<void> {
   for (const id of kpiIds) await kpiStorage.get(id);
 }
 
+async function assertMetrics(metricIds: string[]): Promise<void> {
+  for (const id of metricIds) await metricsStorage.get(id);
+}
+
+async function assertMeasurementBindings(bindings: InitiativeMeasurementBinding[], initiativeProjectIds: number[]): Promise<void> {
+  const initiativeIds = new Set(initiativeProjectIds);
+  if (bindings.some((binding) => !initiativeIds.has(binding.initiativeProjectId))) {
+    throw Object.assign(new Error("Measurement bindings must belong to an initiative in this plan"), { status: 400 });
+  }
+  if (new Set(bindings.map((binding) => binding.initiativeProjectId)).size !== bindings.length) {
+    throw Object.assign(new Error("Each initiative may have only one measurement binding"), { status: 400 });
+  }
+  await assertMetrics(bindings.flatMap((binding) => binding.leadingMetricId ? [binding.leadingMetricId] : []));
+  await assertKpis(bindings.flatMap((binding) => binding.laggingKpiId ? [binding.laggingKpiId] : []));
+}
+
 async function insertPlan(input: {
   businessId?: string;
   name: string;
   vaultId: string;
   thematicGoalId: string | null;
   initiativeProjectIds: number[];
+  initiativeMeasurementBindings: InitiativeMeasurementBinding[];
   kpiIds: string[];
 }): Promise<BusinessPlan> {
   const principal = requireCurrentUserPrincipal();
@@ -114,6 +133,7 @@ async function insertPlan(input: {
     name: input.name,
     thematicGoalId: input.thematicGoalId,
     initiativeProjectIds: input.initiativeProjectIds,
+    initiativeMeasurementBindings: input.initiativeMeasurementBindings,
     kpiIds: input.kpiIds,
     vaultId: input.vaultId,
     createdByUserId: principal.userId,
@@ -140,6 +160,7 @@ export const businessPlanStorage = {
       vaultId,
       thematicGoalId: null,
       initiativeProjectIds: [],
+      initiativeMeasurementBindings: [],
       kpiIds: [],
     })];
   },
@@ -168,6 +189,7 @@ export const businessPlanStorage = {
       vaultId,
       thematicGoalId,
       initiativeProjectIds: [],
+      initiativeMeasurementBindings: [],
       kpiIds: [],
     });
   },
@@ -182,6 +204,9 @@ export const businessPlanStorage = {
     if (patch.vaultId) await assertVault(patch.vaultId);
     if (typeof patch.thematicGoalId === "string") await assertGoal(patch.thematicGoalId);
     if (patch.initiativeProjectIds) await assertProjects(patch.initiativeProjectIds);
+    const nextInitiativeIds = patch.initiativeProjectIds ?? current.initiativeProjectIds;
+    const nextBindings = patch.initiativeMeasurementBindings ?? current.initiativeMeasurementBindings;
+    await assertMeasurementBindings(nextBindings, nextInitiativeIds);
     if (patch.kpiIds) await assertKpis(patch.kpiIds);
 
     const [updated] = await db.update(businessPlans).set({ ...patch, updatedAt: new Date() })
@@ -211,7 +236,37 @@ export const businessPlanStorage = {
       const ids = current.initiativeProjectIds;
       const next = operation === "add" ? (ids.includes(projectId) ? ids : [...ids, projectId]) : ids.filter((candidate) => candidate !== projectId);
       if (next.length === ids.length && next.every((candidate, index) => candidate === ids[index])) return current;
-      const [updated] = await tx.update(businessPlans).set({ initiativeProjectIds: next, updatedAt: new Date() })
+      const initiativeMeasurementBindings = current.initiativeMeasurementBindings.filter((binding) => next.includes(binding.initiativeProjectId));
+      const [updated] = await tx.update(businessPlans).set({ initiativeProjectIds: next, initiativeMeasurementBindings, updatedAt: new Date() })
+        .where(combineWithWritableScope(principal, planScope, eq(businessPlans.id, id))).returning();
+      return updated;
+    });
+  },
+
+  async setInitiativeMeasurement(id: string, projectId: number, kind: "leading" | "lagging", measurementId: string | null): Promise<BusinessPlan> {
+    const principal = requireCurrentUserPrincipal();
+    if (measurementId) {
+      if (kind === "leading") await assertMetrics([measurementId]);
+      else await assertKpis([measurementId]);
+    }
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(businessPlans)
+        .where(combineWithWritableScope(principal, planScope, eq(businessPlans.id, id)))
+        .limit(1).for("update");
+      assertWritable(principal, current as unknown as Record<string, unknown> | undefined, "Business Plan");
+      if (!current.initiativeProjectIds.includes(projectId)) {
+        throw Object.assign(new Error("Initiative not found in this Business Plan"), { status: 404 });
+      }
+      const existing = current.initiativeMeasurementBindings.find((binding) => binding.initiativeProjectId === projectId) ?? {
+        initiativeProjectId: projectId,
+        leadingMetricId: null,
+        laggingKpiId: null,
+      };
+      const replacement = kind === "leading" ? { ...existing, leadingMetricId: measurementId } : { ...existing, laggingKpiId: measurementId };
+      const next = current.initiativeMeasurementBindings.filter((binding) => binding.initiativeProjectId !== projectId);
+      if (replacement.leadingMetricId || replacement.laggingKpiId) next.push(replacement);
+      if (JSON.stringify(next) === JSON.stringify(current.initiativeMeasurementBindings)) return current;
+      const [updated] = await tx.update(businessPlans).set({ initiativeMeasurementBindings: next, updatedAt: new Date() })
         .where(combineWithWritableScope(principal, planScope, eq(businessPlans.id, id))).returning();
       return updated;
     });
