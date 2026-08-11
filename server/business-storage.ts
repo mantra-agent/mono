@@ -34,6 +34,7 @@ export interface Business {
   valuesPageId: string | null;
   visionPageId: string | null;
   missionPageId: string | null;
+  dataRoomUrl: string | null;
   status: string;
   isPlatformInstrument: boolean;
   vaultIds: string[];
@@ -64,6 +65,7 @@ export async function ensureBusinessesSchema(): Promise<void> {
       values_page_id text,
       vision_page_id text,
       mission_page_id text,
+      data_room_url text,
       status text NOT NULL DEFAULT 'active',
       is_platform_instrument boolean NOT NULL DEFAULT false,
       scope text NOT NULL DEFAULT 'user',
@@ -75,6 +77,7 @@ export async function ensureBusinessesSchema(): Promise<void> {
     )
   `);
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS is_platform_instrument boolean NOT NULL DEFAULT false`);
+  await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS data_room_url text`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_businesses_owner ON businesses(owner_user_id, account_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_businesses_scope_owner ON businesses(scope, owner_user_id)`);
 
@@ -138,6 +141,7 @@ function hydrate(row: BusinessRow, vaultIds: string[]): Business {
     valuesPageId: row.valuesPageId ?? null,
     visionPageId: row.visionPageId ?? null,
     missionPageId: row.missionPageId ?? null,
+    dataRoomUrl: row.dataRoomUrl ?? null,
     status: row.status,
     isPlatformInstrument: row.isPlatformInstrument,
     vaultIds,
@@ -199,6 +203,7 @@ export const businessStorage = {
         valuesPageId: input.valuesPageId ?? null,
         visionPageId: input.visionPageId ?? null,
         missionPageId: input.missionPageId ?? null,
+        dataRoomUrl: input.dataRoomUrl ?? null,
         status: "active",
         createdByUserId: principal.userId,
         createdAt: now,
@@ -247,6 +252,7 @@ export const businessStorage = {
     if (patch.valuesPageId !== undefined) updates.valuesPageId = patch.valuesPageId;
     if (patch.visionPageId !== undefined) updates.visionPageId = patch.visionPageId;
     if (patch.missionPageId !== undefined) updates.missionPageId = patch.missionPageId;
+    if (patch.dataRoomUrl !== undefined) updates.dataRoomUrl = patch.dataRoomUrl;
     if (patch.status !== undefined) updates.status = patch.status;
 
     const updated = await db

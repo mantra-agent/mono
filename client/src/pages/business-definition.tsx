@@ -127,6 +127,8 @@ function NarrativeSlot({
 function DefinitionEditor({ business }: { business: BusinessDefinition }) {
   const { toast } = useToast();
   const { vaults } = useVaults();
+  const [dataRoomOpen, setDataRoomOpen] = useState(false);
+  const [dataRoomUrl, setDataRoomUrl] = useState("");
   const patch = useMutation({
     mutationFn: async (body: Record<string, unknown>) => {
       const res = await apiRequest("PATCH", `/api/business/definition/${business.id}`, body);
@@ -204,23 +206,75 @@ function DefinitionEditor({ business }: { business: BusinessDefinition }) {
           <ProfileTreeRow
             label="Data Room"
             icon={<ExternalLink className="h-3.5 w-3.5" />}
-            hasValue
+            hasValue={Boolean(business.dataRoomUrl)}
+            showEmpty
             mobileLayout="inline"
             testId="business-row-data-room"
           >
-            <a
-              href="https://app.box.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-cta underline-offset-4 hover:text-active hover:underline"
-              data-testid="link-business-data-room"
-            >
-              Open in Box
-              <ExternalLink className="h-3 w-3" />
-            </a>
+            {business.dataRoomUrl ? (
+              <a
+                href={business.dataRoomUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-cta underline-offset-4 hover:text-active hover:underline"
+                data-testid="link-business-data-room"
+              >
+                Open Data Room
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : (
+              <button
+                type="button"
+                className="text-xs text-cta underline-offset-4 hover:text-active hover:underline"
+                onClick={() => {
+                  setDataRoomUrl("");
+                  setDataRoomOpen(true);
+                }}
+                data-testid="button-configure-business-data-room"
+              >
+                Add URL
+              </button>
+            )}
           </ProfileTreeRow>
         </div>
       </div>
+
+      <Dialog open={dataRoomOpen} onOpenChange={setDataRoomOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Data Room</DialogTitle>
+            <DialogDescription>Paste the secure link for this Business.</DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            type="url"
+            inputMode="url"
+            value={dataRoomUrl}
+            onChange={(event) => setDataRoomUrl(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && dataRoomUrl.trim() && !patch.isPending) {
+                patch.mutate({ dataRoomUrl: dataRoomUrl.trim() }, { onSuccess: () => setDataRoomOpen(false) });
+              }
+            }}
+            placeholder="https://app.box.com/s/..."
+            aria-label="Data Room URL"
+            data-testid="input-business-data-room-url"
+          />
+          <DialogFooter>
+            <Button
+              onClick={() => patch.mutate(
+                { dataRoomUrl: dataRoomUrl.trim() },
+                { onSuccess: () => setDataRoomOpen(false) },
+              )}
+              disabled={!dataRoomUrl.trim() || patch.isPending}
+              data-testid="button-save-business-data-room"
+            >
+              {patch.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className={HIERARCHY_TREE_STACK_CLASS}>
         <HierarchySectionHeader>Narrative</HierarchySectionHeader>

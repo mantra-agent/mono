@@ -19,6 +19,7 @@ export interface BusinessDefinition {
   valuesPageId: string | null;
   visionPageId: string | null;
   missionPageId: string | null;
+  dataRoomUrl: string | null;
   status: string;
   isPlatformInstrument: boolean;
   vaultIds: string[];

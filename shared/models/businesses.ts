@@ -22,6 +22,9 @@ export const businesses = pgTable(
     valuesPageId: text("values_page_id"),
     visionPageId: text("vision_page_id"),
     missionPageId: text("mission_page_id"),
+    // User-configured external destination for the Business data room. The
+    // server mutation boundary accepts HTTPS URLs only.
+    dataRoomUrl: text("data_room_url"),
     status: text("status").notNull().default("active"),
     // Stable capability identity for Mantra's own platform telemetry. Public and
     // legal names remain presentation and may change without moving adapters.
@@ -76,6 +79,7 @@ export const businessCreateSchema = z.object({
   valuesPageId: z.string().min(1).nullable().optional(),
   visionPageId: z.string().min(1).nullable().optional(),
   missionPageId: z.string().min(1).nullable().optional(),
+  dataRoomUrl: z.string().url().max(2048).refine((value) => new URL(value).protocol === "https:", "Data Room URL must use HTTPS").nullable().optional(),
   vaultIds: z.array(z.string().min(1)).max(64).optional(),
 });
 
@@ -87,6 +91,7 @@ export const businessPatchSchema = z
     valuesPageId: z.string().min(1).nullable().optional(),
     visionPageId: z.string().min(1).nullable().optional(),
     missionPageId: z.string().min(1).nullable().optional(),
+    dataRoomUrl: z.string().url().max(2048).refine((value) => new URL(value).protocol === "https:", "Data Room URL must use HTTPS").nullable().optional(),
     status: businessStatusSchema.optional(),
   })
   .refine((patch) => Object.keys(patch).length > 0, "At least one change is required");
