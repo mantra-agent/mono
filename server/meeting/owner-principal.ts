@@ -1,6 +1,8 @@
 import type { MeetingSessionMeta } from "@shared/models/chat";
+import { documentStoreDocuments } from "@shared/schema";
+import { and, eq, sql } from "drizzle-orm";
+import { db } from "../db";
 import {
-  createNamedSystemPrincipal,
   createUserPrincipalFromUser,
   type Principal,
 } from "../principal";
@@ -27,11 +29,37 @@ export interface MeetingOwnerIdentity {
 export async function resolveMeetingTransportSession(
   sessionId: string,
 ): Promise<Session | null> {
-  return runWithPrincipal(
-    createNamedSystemPrincipal("meeting-transport", ["system:read"]),
+  const [identity] = await db
+    .select({
+      ownerUserId: documentStoreDocuments.ownerUserId,
+      accountId: documentStoreDocuments.accountId,
+      vaultId: documentStoreDocuments.vaultId,
+    })
+    .from(documentStoreDocuments)
+    .where(and(
+      eq(documentStoreDocuments.documentType, "chat"),
+      eq(documentStoreDocuments.documentId, sessionId),
+      eq(documentStoreDocuments.scope, "user"),
+      sql`${documentStoreDocuments.metadata}->>'type' = 'meeting'`,
+    ))
+    .limit(1);
+  if (!identity?.ownerUserId || !identity.accountId) return null;
+
+  return runWithMeetingOwnerIdentity(
+    {
+      ownerUserId: identity.ownerUserId,
+      accountId: identity.accountId,
+      vaultId: identity.vaultId ?? undefined,
+    },
     async () => {
       const session = await chatStorage.getSession(sessionId);
-      return session?.type === "meeting" && session.meeting ? session : null;
+      if (
+        session?.type !== "meeting"
+        || !session.meeting
+        || session.meeting.ownerUserId !== identity.ownerUserId
+        || session.meeting.principalAccountId !== identity.accountId
+      ) return null;
+      return session;
     },
   );
 }
