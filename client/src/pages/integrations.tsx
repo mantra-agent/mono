@@ -161,8 +161,6 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "quickbooks", name: "QuickBooks", icon: Landmark, statusFields: ["quickbooks"], healthField: "quickbooksHealthy", route: "quickbooks" },
   { id: "brave", name: "Brave Search", icon: Globe, statusFields: ["brave"], route: "brave" },
   { id: "github", name: "GitHub", icon: Github, statusFields: ["github"], route: "github" },
-  { id: "railway", name: "Railway", icon: Train, statusFields: [], route: "railway" },
-  { id: "cloudflare", name: "Cloudflare", icon: Globe, statusFields: [], route: "cloudflare" },
   { id: "automation-auth", name: "Automation Auth", icon: Shield, statusFields: ["automationAuth"], route: "automation-auth" },
   { id: "expo", name: "Expo Mobile", icon: Smartphone, statusFields: ["expo"], route: "expo" },
   { id: "sentry", name: "Sentry", icon: Shield, statusFields: ["sentry"], route: "sentry" },

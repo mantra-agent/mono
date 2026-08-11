@@ -93,8 +93,6 @@ const build: ModDefinition = {
     ],
     integrations: [
       integration("build.integration.github", "github", "available", ["source"]),
-      integration("build.integration.railway", "railway", "available", ["hosting"]),
-      integration("build.integration.cloudflare", "cloudflare", "available", ["hosting", "dns"]),
       integration("build.integration.expo", "expo", "available", ["mobile-build"]),
       integration("build.integration.sentry", "sentry", "available", ["error-tracking"]),
     ],
