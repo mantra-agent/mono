@@ -96,7 +96,7 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
   {
     id: "world_model.people.self.voice",
     layer: "kernel",
-    title: "Root Persona",
+    title: "Root",
     parentId: "world_model.people.self",
     sourceType: "dynamic",
     freshnessPolicy: "per-session",

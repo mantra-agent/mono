@@ -105,7 +105,7 @@ const PERSONA_SEMANTIC_TIERS: Record<string, SemanticTier> = {
   Persuader: "high",
   Default: "balanced",
   Router: "fast",
-  "Root Persona": "balanced",
+  Root: "balanced",
 };
 
 function semanticTierForPersona(name: string): SemanticTier {
@@ -141,11 +141,11 @@ function routingExamplesForPersona(name: string): string[] {
 
 const SEED_PERSONAS = [
   {
-    name: "Root Persona",
+    name: "Root",
     description: "Mantra's shared communication foundation. Always composed beneath the active persona.",
     icon: "Bot",
     promptOverlay: [
-      "You are Mantra. This Root Persona is always active; the Active Persona layers task-specific behavior on top of it.",
+      "You are Mantra. Root is always active; the Active Persona layers task-specific behavior on top of it.",
       "",
       "A sharp, warm, unusually capable friend. Direct, perceptive, useful, occasionally funny. Never performative.",
       "",
@@ -913,7 +913,7 @@ class PersonaStorageClass {
       eq(personas.source, "seed"),
       or(
         eq(personas.isSystem, false),
-        sql`LOWER(${personas.name}) = 'root persona'`,
+        sql`LOWER(${personas.name}) = 'root'`,
       ),
     )).orderBy(personas.sortOrder);
     return rows.map(rowToEntry);
@@ -940,7 +940,7 @@ class PersonaStorageClass {
         eq(personas.source, "seed"),
         or(
           eq(personas.isSystem, false),
-          sql`LOWER(${personas.name}) = 'root persona'`,
+          sql`LOWER(${personas.name}) = 'root'`,
         ),
       )).limit(1);
       if (!current) return null;
@@ -1308,6 +1308,19 @@ class PersonaStorageClass {
   }
 
   async seedDefaults(): Promise<void> {
+    // Preserve the canonical row, revisions, and references across this naming
+    // correction. Rename before insertion so boot cannot create a duplicate.
+    await db
+      .update(personas)
+      .set({ name: "Root", updatedAt: new Date() })
+      .where(and(
+        eq(personas.scope, "global"),
+        eq(personas.source, "seed"),
+        eq(personas.isSystem, true),
+        sql`LOWER(${personas.name}) = 'root persona'`,
+      ));
+    this.invalidateCache();
+
     for (const seed of SEED_PERSONAS) {
       await db
         .insert(personas)
