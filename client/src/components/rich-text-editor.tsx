@@ -18,6 +18,10 @@ import { useWikiLinks } from "@/hooks/use-wiki-links";
 import { isEditorEmpty } from "@/lib/editor-utils";
 import { tiptapToMarkdown as jsonToMarkdownShared, markdownToTiptap, normalizeTiptapDoc } from "@shared/markdown-tiptap";
 import { ReferenceWidgetExtension } from "@/components/references/tiptap-reference-extension";
+import { ReferenceSuggestionRow } from "@/components/references/reference-suggestion-row";
+import { loadReferenceSuggestions, type ReferenceSuggestion } from "@/lib/reference-search";
+import { queryClient } from "@/lib/queryClient";
+import { normalizeReferenceType, serializeReference } from "@shared/references";
 import { ImageIcon } from "lucide-react";
 
 const log = createLogger("RichTextEditor");
@@ -45,6 +49,7 @@ interface RichTextEditorProps {
   "data-testid"?: string;
   readOnly?: boolean;
   onInsertLink?: () => void;
+  enableReferencePicker?: boolean;
   plainTextFallback?: string;
   onFocusChange?: (focused: boolean) => void;
   contentFooter?: ReactNode;
@@ -165,6 +170,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     "data-testid": testId,
     readOnly = false,
     onInsertLink,
+    enableReferencePicker = false,
     plainTextFallback,
     onFocusChange,
     contentFooter,
@@ -185,6 +191,12 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
   plainTextFallbackRef.current = plainTextFallback;
   const [initFailed, setInitFailed] = useState(false);
   const [isEditorFocused, setIsEditorFocused] = useState(false);
+  const [referenceAnchor, setReferenceAnchor] = useState<EditorMenuAnchor | null>(null);
+  const [referenceQuery, setReferenceQuery] = useState("");
+  const [referenceSuggestions, setReferenceSuggestions] = useState<ReferenceSuggestion[]>([]);
+  const [referenceLoading, setReferenceLoading] = useState(false);
+  const [selectedReferenceIdx, setSelectedReferenceIdx] = useState(0);
+  const referenceTriggerFromRef = useRef<number | null>(null);
 
   const {
     wikiQuery,
@@ -500,6 +512,47 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     setSelectedCommandIdx(0);
   }, []);
 
+  const closeReferencePicker = useCallback(() => {
+    referenceTriggerFromRef.current = null;
+    setReferenceAnchor(null);
+    setReferenceQuery("");
+    setReferenceSuggestions([]);
+    setSelectedReferenceIdx(0);
+  }, []);
+
+  const openReferencePickerAtSelection = useCallback((triggerPos: number) => {
+    const ed = editorRef.current;
+    const container = editorContainerRef.current;
+    if (!ed || !container || readOnly || !enableReferencePicker) return;
+    const coords = ed.view.coordsAtPos(ed.state.selection.from);
+    const box = container.getBoundingClientRect();
+    referenceTriggerFromRef.current = triggerPos;
+    setReferenceAnchor({
+      top: coords.bottom - box.top + 6,
+      left: Math.max(8, coords.left - box.left),
+    });
+    setReferenceQuery("");
+    setSelectedReferenceIdx(0);
+  }, [enableReferencePicker, readOnly]);
+
+  const insertReference = useCallback((suggestion: ReferenceSuggestion) => {
+    const ed = editorRef.current;
+    const triggerFrom = referenceTriggerFromRef.current;
+    if (!ed || triggerFrom === null) return;
+    const type = normalizeReferenceType(suggestion.type);
+    const token = serializeReference({ type, id: suggestion.id });
+    if (suggestion.label && suggestion.label !== suggestion.id) {
+      queryClient.setQueryData(["reference-label", type, suggestion.id], suggestion.label);
+    }
+    ed.chain()
+      .focus()
+      .deleteRange({ from: triggerFrom, to: ed.state.selection.from })
+      .insertContent(`${token} `)
+      .run();
+    emitEditorChange(ed, onChangeRef);
+    closeReferencePicker();
+  }, [closeReferencePicker]);
+
   const BLOCK_SELECTOR = ".ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror li, .ProseMirror blockquote, .ProseMirror pre";
 
   const updateBlockHandleFromMouse = useCallback((target: EventTarget | null, clientX?: number, clientY?: number) => {
@@ -638,6 +691,82 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     return () => { ed.off("transaction", handler); };
   }, [readOnly, openCommandMenuAtSelection, closeCommandMenu]);
 
+  // Detect "@" through editor transactions so physical and mobile keyboards share one path.
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed || readOnly || !enableReferencePicker) return;
+    const handler = () => {
+      const cursorPos = ed.state.selection.from;
+      const docSize = ed.state.doc.content.size;
+      const triggerFrom = referenceTriggerFromRef.current;
+      if (triggerFrom !== null) {
+        const queryStart = Math.min(triggerFrom + 1, docSize);
+        const queryEnd = Math.min(cursorPos, docSize);
+        if (queryEnd < queryStart) {
+          closeReferencePicker();
+          return;
+        }
+        const text = ed.state.doc.textBetween(queryStart, queryEnd, "");
+        if (/[\n\r`]/.test(text) || text.includes(":")) {
+          closeReferencePicker();
+          return;
+        }
+        setReferenceQuery((previous) => previous === text ? previous : text);
+        return;
+      }
+      if (cursorPos < 1 || cursorPos > docSize) return;
+      if (ed.state.doc.textBetween(cursorPos - 1, cursorPos, "") !== "@") return;
+      if (cursorPos >= 2) {
+        const previous = ed.state.doc.textBetween(cursorPos - 2, cursorPos - 1, "");
+        if (previous && !/[\s([{]/.test(previous)) return;
+      }
+      closeCommandMenu();
+      openReferencePickerAtSelection(cursorPos - 1);
+    };
+    ed.on("transaction", handler);
+    return () => ed.off("transaction", handler);
+  }, [closeCommandMenu, closeReferencePicker, enableReferencePicker, openReferencePickerAtSelection, readOnly]);
+
+  useEffect(() => {
+    setSelectedReferenceIdx(0);
+  }, [referenceQuery]);
+
+  useEffect(() => {
+    if (!referenceAnchor) return;
+    const handler = (event: MouseEvent) => {
+      const element = event.target instanceof Element ? event.target : null;
+      if (element?.closest('[data-testid="editor-reference-picker"]')) return;
+      closeReferencePicker();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [closeReferencePicker, referenceAnchor]);
+
+  useEffect(() => {
+    if (!referenceAnchor) return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      setReferenceLoading(true);
+      loadReferenceSuggestions({ query: referenceQuery, signal: controller.signal, triggerChar: "@" })
+        .then((suggestions) => {
+          if (!controller.signal.aborted) setReferenceSuggestions(suggestions);
+        })
+        .catch((error) => {
+          if (error?.name !== "AbortError") {
+            log.warn("reference picker search failed", { error: error?.message || String(error) });
+            setReferenceSuggestions([]);
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setReferenceLoading(false);
+        });
+    }, 120);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [referenceAnchor, referenceQuery]);
+
   if (!editor) {
     if (initFailed) {
       return (
@@ -712,6 +841,31 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
         }
       }}
       onKeyDown={(e) => {
+        if (referenceAnchor) {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setSelectedReferenceIdx((idx) => Math.min(idx + 1, Math.max(referenceSuggestions.length - 1, 0)));
+            return;
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setSelectedReferenceIdx((idx) => Math.max(idx - 1, 0));
+            return;
+          }
+          if (e.key === "Enter" || e.key === "Tab") {
+            const suggestion = referenceSuggestions[selectedReferenceIdx];
+            if (suggestion) {
+              e.preventDefault();
+              insertReference(suggestion);
+            }
+            return;
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            closeReferencePicker();
+            return;
+          }
+        }
         if (menuAnchor) {
           if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -823,6 +977,34 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
                 </span>
                 {command.shortcut && <span className="text-[10px] text-muted-foreground">{command.shortcut}</span>}
               </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {referenceAnchor && !readOnly && (
+        <div
+          className="absolute z-50 w-80 max-w-[calc(100%-1rem)] overflow-hidden rounded-md border border-border bg-popover shadow-md"
+          style={{ top: referenceAnchor.top, left: referenceAnchor.left }}
+          data-testid="editor-reference-picker"
+        >
+          <div className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground">
+            @{referenceQuery}
+          </div>
+          <div className="max-h-72 overflow-y-auto py-1">
+            {referenceLoading && referenceSuggestions.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-muted-foreground">Searching…</div>
+            ) : referenceSuggestions.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-muted-foreground">No matches</div>
+            ) : referenceSuggestions.map((suggestion, idx) => (
+              <ReferenceSuggestionRow
+                key={`${suggestion.type}:${suggestion.id}`}
+                suggestion={suggestion}
+                active={idx === selectedReferenceIdx}
+                dense
+                showToken={false}
+                onSelect={insertReference}
+                onHover={() => setSelectedReferenceIdx(idx)}
+              />
             ))}
           </div>
         </div>
