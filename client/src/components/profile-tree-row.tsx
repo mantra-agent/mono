@@ -75,12 +75,12 @@ export function ProfileTreeRow({
           : "grid-cols-[max-content_minmax(0,1fr)] gap-y-0";
   const inlineNoValueGrid =
     trailingCount === 3
-      ? "grid-cols-[max-content_auto_auto_auto] gap-y-0"
+      ? "grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-y-0"
       : trailingCount === 2
-        ? "grid-cols-[max-content_auto_auto] gap-y-0"
+        ? "grid-cols-[minmax(0,1fr)_auto_auto] gap-y-0"
         : trailingCount === 1
-          ? "grid-cols-[max-content_auto] gap-y-0"
-          : "grid-cols-[max-content] gap-y-0";
+          ? "grid-cols-[minmax(0,1fr)_auto] gap-y-0"
+          : "grid-cols-[minmax(0,1fr)] gap-y-0";
   const stackedValueGrid =
     trailingCount === 3
       ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto_auto] sm:gap-y-1"
