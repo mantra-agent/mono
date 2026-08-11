@@ -1982,9 +1982,29 @@ export async function runSchemaBootstrap(
         `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS updated_by_user_id TEXT`,
       );
     }
-    await pool.query(
-      `ALTER TABLE personas ADD COLUMN IF NOT EXISTS template_persona_id INTEGER`,
-    );
+    await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS template_persona_id INTEGER`);
+    await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS base_revision_id TEXT`);
+    await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS current_revision_id TEXT`);
+    await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS update_state TEXT NOT NULL DEFAULT 'pinned_legacy'`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS persona_revisions (
+      id TEXT PRIMARY KEY,
+      persona_identity_id INTEGER NOT NULL REFERENCES personas(id) ON DELETE CASCADE,
+      scope TEXT NOT NULL CHECK (scope IN ('platform', 'user')),
+      owner_user_id TEXT,
+      account_id TEXT,
+      parent_revision_id TEXT REFERENCES persona_revisions(id),
+      platform_base_revision_id TEXT REFERENCES persona_revisions(id),
+      payload JSONB NOT NULL,
+      content_hash TEXT NOT NULL,
+      change_summary TEXT NOT NULL,
+      created_by_user_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CHECK ((scope = 'platform' AND owner_user_id IS NULL AND account_id IS NULL) OR (scope = 'user' AND owner_user_id IS NOT NULL AND account_id IS NOT NULL))
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_persona_revisions_identity_created ON persona_revisions(persona_identity_id, created_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_persona_revisions_scope_owner ON persona_revisions(scope, owner_user_id)`);
+    await pool.query(`DROP INDEX IF EXISTS idx_persona_revisions_identity_hash`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_persona_revisions_identity_hash ON persona_revisions(persona_identity_id, content_hash)`);
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_sessions_scope_owner ON sessions(scope, owner_user_id)`,
     );
