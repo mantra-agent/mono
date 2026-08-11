@@ -24,7 +24,7 @@ function TabFallback() {
 
 const brainTabs = [
   { value: "observations", label: "Observations", icon: <Activity className="h-3.5 w-3.5" />, testId: "tab-brain-observations" },
-  { value: "context", label: "Context", icon: <FileText className="h-3.5 w-3.5" />, testId: "tab-brain-context" },
+  { value: "context", label: "Context", icon: <FileText className="h-3.5 w-3.5" />, testId: "tab-brain-context", permission: "system:read" },
   { value: "emotion", label: "Emotion", icon: <Heart className="h-3.5 w-3.5" />, testId: "tab-brain-emotion" },
   { value: "persona", label: "Persona", icon: <User className="h-3.5 w-3.5" />, testId: "tab-brain-persona" },
   { value: "model", label: "Model", icon: <SlidersHorizontal className="h-3.5 w-3.5" />, testId: "tab-brain-model", permission: "system:read" },
@@ -79,7 +79,7 @@ export default function BrainPage() {
     <div className="flex flex-col h-full min-w-0 overflow-hidden">
       <Suspense fallback={<TabFallback />}>
         {activeTab === "observations" && <ObservationsContent embedded={true} />}
-        {activeTab === "context" && <ContextContent embedded={true} />}
+        {activeTab === "context" && hasPermission("system:read") && <ContextContent embedded={true} />}
         {activeTab === "emotion" && (
           <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin">
             <EmotionContent />

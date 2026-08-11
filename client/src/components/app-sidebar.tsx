@@ -244,6 +244,7 @@ const navSections: NavSection[] = [
       navItem("People", "navigation.people.open", Users),
       navItem("Meetings", "navigation.meetings.open", MessagesSquare),
       navItem("Companies", "navigation.companies.open", Briefcase),
+      navItem("Pipelines", "navigation.pipelines.open", Waypoints),
     ],
   },
   {
@@ -253,7 +254,6 @@ const navSections: NavSection[] = [
       navItem("Goals", "navigation.goals.open", Target, "muted"),
       navItem("Decisions", "navigation.decisions.open", Scale),
       navItem("Scenarios", "navigation.scenarios.open", Swords),
-      navItem("Tags", "navigation.tags.open", Tags),
     ],
   },
   {
@@ -262,7 +262,6 @@ const navSections: NavSection[] = [
     items: [
       navItem("Identity", "navigation.definition.open", FileText),
       navItem("Plan", "navigation.advantage.open", Target),
-      navItem("Pipelines", "navigation.pipelines.open", Waypoints),
       navItem("Model", "navigation.businessModel.open", LineChart),
       navItem("Roles", "navigation.roles.open", Briefcase),
       navItem("KPIs", "navigation.kpis.open", Gauge),
@@ -297,6 +296,7 @@ const navSections: NavSection[] = [
       navItem("Layers", "navigation.memoryLayers.open", DatabaseZap),
       navItem("Graph", "navigation.memoryGraph.open", Share2),
       navItem("Journal", "navigation.memoryJournal.open", ScrollText),
+      navItem("Tags", "navigation.tags.open", Tags),
     ],
   },
   {

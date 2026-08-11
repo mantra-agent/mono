@@ -357,7 +357,7 @@ function Router() {
         <Route path="/profile" component={ProfilePage} />
         <Route path="/workflows/:id" component={WorkflowsPage} />
         <Route path="/workflows" component={WorkflowsPage} />
-        <Route path="/pipelines" component={PipelinesPage} />
+        <Route path="/pipelines">{() => <RequireComposedRoute routeId="network.route.pipelines"><PipelinesPage /></RequireComposedRoute>}</Route>
         <Route path="/zero" component={ZeroPage} />
         <Route path="/interface-preview" component={InterfacePreviewPage} />
         <Route path="/dev/orb">{() => <RequirePermission permission="system:read"><DevOrbPage /></RequirePermission>}</Route>
