@@ -12,6 +12,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { createLogger } from "@/lib/logger";
 import { useToast } from "@/hooks/use-toast";
 import { useFocusSession } from "@/hooks/use-focus-session";
+import { createVoiceCaptionCards, type VoiceCaptionCue } from "@/lib/voice-caption-timeline";
 
 const log = createLogger("NativeMeetingTranscription");
 const SOCKET_READY_TIMEOUT_MS = 12_000;
@@ -44,6 +45,7 @@ interface ActiveNativeMeeting {
 interface NativeMeetingTranscriptionContextValue {
   activeSessionId: string | null;
   isStarting: boolean;
+  voiceCaption: string;
   readAudioLevel: () => number;
   start: (options?: NativeMeetingStartOptions) => Promise<NativeMeetingStartResult | null>;
   setSpeechPlaybackEnabled: (enabled: boolean, sessionId?: string) => void;
@@ -129,6 +131,18 @@ function buildSilentWavUrl(): string {
   return URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
 }
 
+function decodeMeetingCaption(encoded: string | null): string {
+  if (!encoded || encoded.length > 6_000) return "";
+  try {
+    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+    const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+    return new TextDecoder().decode(bytes).trim();
+  } catch {
+    return "";
+  }
+}
+
 /** Abortable delay used for playback backoff between failed long-poll attempts. */
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -159,14 +173,23 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
   const silentUnlockUrlRef = useRef<string | null>(null);
   const speechGenerationRef = useRef(0);
   const startPromiseRef = useRef<Promise<NativeMeetingStartResult | null> | null>(null);
+  const captionTimersRef = useRef<Array<ReturnType<typeof window.setTimeout>>>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
+  const [voiceCaption, setVoiceCaption] = useState("");
+
+  const clearVoiceCaption = useCallback(() => {
+    captionTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    captionTimersRef.current = [];
+    setVoiceCaption("");
+  }, []);
 
   const stopSpeechPlayback = useCallback(() => {
     speechPlaybackEnabledRef.current = false;
     speechGenerationRef.current += 1;
     speechPollAbortRef.current?.abort();
     speechPollAbortRef.current = null;
+    clearVoiceCaption();
     // Flush any in-flight utterance but keep the element so its iOS autoplay
     // authorization survives across mute/leave/re-enable cycles.
     const audio = speechAudioRef.current;
@@ -175,7 +198,7 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
       audio.removeAttribute("src");
       audio.load();
     }
-  }, []);
+  }, [clearVoiceCaption]);
 
   const runSpeechPlayback = useCallback((capture: ActiveNativeMeeting) => {
     if (speechPollAbortRef.current || !speechPlaybackEnabledRef.current) return;
@@ -206,12 +229,29 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
     // streaming from a long-poll endpoint is impossible with a bare media
     // element (it cannot see the idle 204) and MSE is unsupported on iPhone
     // Safari, so each 200 utterance plays from its own object URL.
-    const playClip = (url: string) =>
+    const playClip = (url: string, captions: VoiceCaptionCue[]) =>
       new Promise<void>((resolve, reject) => {
+        let captionsStarted = false;
+        const startCaptions = () => {
+          if (captionsStarted || captions.length === 0) return;
+          captionsStarted = true;
+          clearVoiceCaption();
+          setVoiceCaption(captions[0].text);
+          const totalWeight = captions.reduce((sum, caption) => sum + Math.max(1, caption.text.length), 0);
+          if (!Number.isFinite(audio.duration) || audio.duration <= 0 || captions.length === 1) return;
+          let elapsedWeight = Math.max(1, captions[0].text.length);
+          for (let index = 1; index < captions.length; index += 1) {
+            const delayMs = Math.round((elapsedWeight / totalWeight) * audio.duration * 1000);
+            captionTimersRef.current.push(window.setTimeout(() => setVoiceCaption(captions[index].text), delayMs));
+            elapsedWeight += Math.max(1, captions[index].text.length);
+          }
+        };
         const settle = (error?: unknown) => {
           abortController.signal.removeEventListener("abort", handleAbort);
           audio.onended = null;
           audio.onerror = null;
+          audio.onplaying = null;
+          clearVoiceCaption();
           if (error) reject(error);
           else resolve();
         };
@@ -222,6 +262,7 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
         abortController.signal.addEventListener("abort", handleAbort, { once: true });
         audio.onended = () => settle();
         audio.onerror = () => settle(new Error("Native meeting speech playback failed"));
+        audio.onplaying = startCaptions;
         audio.src = url;
         void audio.play().catch(settle);
       });
@@ -252,8 +293,9 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
           }
           const clip = await response.blob();
           if (clip.size === 0) continue;
+          const captions = createVoiceCaptionCards(decodeMeetingCaption(response.headers.get("X-Meeting-Caption")));
           clipUrl = URL.createObjectURL(clip);
-          await playClip(clipUrl);
+          await playClip(clipUrl, captions);
         } catch (error) {
           if (abortController.signal.aborted) return;
           if (error instanceof DOMException && error.name === "AbortError") return;
@@ -284,7 +326,7 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
     void loop().finally(() => {
       if (speechPollAbortRef.current === abortController) speechPollAbortRef.current = null;
     });
-  }, [stopSpeechPlayback, toast]);
+  }, [clearVoiceCaption, stopSpeechPlayback, toast]);
 
   const setSpeechPlaybackEnabled = useCallback((enabled: boolean, sessionId?: string) => {
     const capture = activeRef.current;
@@ -481,11 +523,12 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
   const value = useMemo<NativeMeetingTranscriptionContextValue>(() => ({
     activeSessionId,
     isStarting,
+    voiceCaption,
     readAudioLevel,
     start,
     setSpeechPlaybackEnabled,
     stopLocalCapture,
-  }), [activeSessionId, isStarting, readAudioLevel, setSpeechPlaybackEnabled, start, stopLocalCapture]);
+  }), [activeSessionId, isStarting, readAudioLevel, setSpeechPlaybackEnabled, start, stopLocalCapture, voiceCaption]);
 
   return (
     <NativeMeetingTranscriptionContext.Provider value={value}>

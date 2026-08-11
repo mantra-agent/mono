@@ -98,6 +98,14 @@ export function flushVoiceCaptionBuffer(buffer: VoiceCaptionBuffer): VoiceCaptio
   };
 }
 
+/** Splits untimed spoken text into the same immutable sentence cards. */
+export function createVoiceCaptionCards(text: string): VoiceCaptionCue[] {
+  const words = text.trim().split(/\s+/).filter(Boolean).map((word) => ({ text: word, atMs: 0 }));
+  const appended = appendVoiceCaptionWords({ pendingWords: [] }, words);
+  const flushed = flushVoiceCaptionBuffer(appended.buffer);
+  return [...appended.cards, ...flushed.cards];
+}
+
 /** Converts provider character timing into word timing for sentence lookahead. */
 export function createVoiceCaptionChunk(alignment: AudioAlignmentEvent): VoiceCaptionChunk {
   const { chars, char_start_times_ms: starts, char_durations_ms: durations } = alignment;
