@@ -99,7 +99,11 @@ export function registerIssueRoutes(app: Express) {
     if (!/^issue-\d+\.png$/.test(filename)) {
       return res.status(400).json({ error: "Invalid filename" });
     }
-    const doc = await documentStorage.getDocument("issue_attachment" as any, filename);
+    let doc = await documentStorage.getDocument("issue_attachment" as any, filename);
+    if (!doc && req.principal?.permissions.includes("system:read")) {
+      const { fileIssueStorage } = await import("../file-storage/issues");
+      doc = await fileIssueStorage.readAttachmentForAdmin(req.principal, filename);
+    }
     if (!doc) {
       return res.status(404).json({ error: "Screenshot not found" });
     }
@@ -187,7 +191,7 @@ export function registerIssueRoutes(app: Express) {
       const status = req.query.status as string | undefined;
       const excludeStatus = req.query.exclude_status as string | undefined;
       const lightweight = req.query.lightweight === "true";
-      const allIssues = await storage.getIssues({ status, excludeStatus, lightweight });
+      const allIssues = await storage.getIssuesForAdmin(req.principal!, { status, excludeStatus, lightweight });
       res.json({ issues: allIssues });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -198,7 +202,7 @@ export function registerIssueRoutes(app: Express) {
     try {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid issue ID" });
-      const issue = await storage.getIssue(id);
+      const issue = await storage.getIssueForAdmin(req.principal!, id);
       if (!issue) return res.status(404).json({ error: "Issue not found" });
       res.json(issue);
     } catch (error: any) {
@@ -226,7 +230,7 @@ export function registerIssueRoutes(app: Express) {
 
       const updates = updateIssueSchema.parse(req.body);
 
-      const updated = await storage.updateIssue(id, updates);
+      const updated = await storage.updateIssueForAdmin(req.principal!, id, updates);
       if (!updated) {
         return res.status(404).json({ error: "Issue not found" });
       }
@@ -247,7 +251,7 @@ export function registerIssueRoutes(app: Express) {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid issue ID" });
 
-      const issue = await storage.getIssue(id);
+      const issue = await storage.getIssueForAdmin(req.principal!, id);
       if (!issue) return res.status(404).json({ error: "Issue not found" });
 
       const noteSchema = z.object({
@@ -257,7 +261,7 @@ export function registerIssueRoutes(app: Express) {
 
       const data = noteSchema.parse(req.body);
       // Canonical append-only path — same primitive the issues tool uses.
-      const updated = await storage.addIssueNote(id, data.content, data.author);
+      const updated = await storage.addIssueNoteForAdmin(req.principal!, id, data.content, data.author);
 
       res.json(updated);
     } catch (error: any) {
@@ -273,19 +277,12 @@ export function registerIssueRoutes(app: Express) {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid issue ID" });
 
-      const issue = await storage.getIssue(id);
+      const issue = await storage.getIssueForAdmin(req.principal!, id);
       if (!issue) {
         return res.status(404).json({ error: "Issue not found" });
       }
 
-      if (issue.screenshot) {
-        const filenameMatch = issue.screenshot.match(/issue-\d+\.png$/);
-        if (filenameMatch) {
-          try { await documentStorage.deleteDocument("issue_attachment" as any, filenameMatch[0]); } catch { /* already gone */ }
-        }
-      }
-
-      await storage.deleteIssue(id);
+      await storage.deleteIssueForAdmin(req.principal!, id);
       res.json({ message: "Issue deleted" });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

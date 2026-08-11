@@ -1,7 +1,12 @@
 import { documentStorage } from "../memory/document-storage";
-import { issueKindEnum, issueStatusEnum, type Issue, type InsertIssue, type IssueStatus, type IssueNote } from "@shared/schema";
+import { documentStoreDocuments, issueKindEnum, issueStatusEnum, users, type Issue, type InsertIssue, type IssueStatus, type IssueNote } from "@shared/schema";
 import { createLogger } from "../log";
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction } from "../db";
+import { and, eq, sql } from "drizzle-orm";
+import type { Principal } from "../principal";
+import { createUserPrincipalFromUser } from "../principal";
+import { principalHasPermission } from "../permissions";
+import { runWithPrincipal } from "../principal-context";
 
 const log = createLogger("StoreIssues");
 
@@ -176,6 +181,37 @@ function issueMetadata(issue: Issue): Record<string, unknown> {
   };
 }
 
+interface ReportedIssueOwner {
+  userId: string;
+  accountId: string;
+  vaultId: string | null;
+}
+
+function requireAdminIssuePermission(principal: Principal, permission: "system:read" | "system:write"): void {
+  if (principal.actorType !== "user" || !principal.userId || !principalHasPermission(principal, permission)) {
+    throw Object.assign(new Error(`Permission required: ${permission}`), { statusCode: 403 });
+  }
+}
+
+function adminOwnerPrincipal(
+  principal: Principal,
+  user: typeof users.$inferSelect,
+  owner: ReportedIssueOwner,
+): Principal {
+  const restored = createUserPrincipalFromUser(user, owner.accountId);
+  return {
+    ...restored,
+    activeVaultId: owner.vaultId,
+    visibleVaultIds: owner.vaultId ? [owner.vaultId] : [],
+    impersonation: {
+      impersonatedByActorType: principal.actorType,
+      impersonatedByUserId: principal.userId,
+      impersonatedByAccountId: principal.accountId,
+      reason: "admin reported-Issue triage",
+    },
+  };
+}
+
 export class FileIssueStorage {
   async getIssues(options?: { status?: string; excludeStatus?: string; lightweight?: boolean }): Promise<Issue[] | Partial<Issue>[]> {
     const filters: Record<string, unknown> = {};
@@ -229,6 +265,133 @@ export class FileIssueStorage {
       log.error(`getIssue id=${id} parse error`, err);
       return undefined;
     }
+  }
+
+  /** Admin queue projection: own Issues plus every explicitly reported Issue. */
+  async getIssuesForAdmin(
+    principal: Principal,
+    options?: { status?: string; excludeStatus?: string; lightweight?: boolean },
+  ): Promise<Issue[] | Partial<Issue>[]> {
+    requireAdminIssuePermission(principal, "system:read");
+    const conditions = [
+      eq(documentStoreDocuments.documentType, "issue"),
+      sql`${documentStoreDocuments.metadata}->>'kind' = 'reported'`,
+    ];
+    if (options?.status) conditions.push(sql`${documentStoreDocuments.metadata}->>'status' = ${options.status}`);
+    const docs = await db
+      .select({ content: documentStoreDocuments.content, metadata: documentStoreDocuments.metadata })
+      .from(documentStoreDocuments)
+      .where(and(...conditions))
+      .orderBy(sql`${documentStoreDocuments.createdAt} DESC`)
+      .limit(500);
+
+    const ownIssues = await this.getIssues(options);
+    const byId = new Map<number, Issue>();
+    for (const issue of ownIssues) byId.set(Number(issue.id), issue as Issue);
+    for (const doc of docs) {
+      try {
+        const issue = docToIssue({ content: doc.content, metadata: (doc.metadata || {}) as Record<string, unknown> });
+        if (options?.excludeStatus && issue.status === options.excludeStatus) continue;
+        byId.set(issue.id, issue);
+      } catch (error) {
+        log.error("admin reported Issue projection parse failed", {
+          errorType: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
+    }
+    const issues = Array.from(byId.values()).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    if (!options?.lightweight) return issues;
+    return issues.map((issue) => ({
+      id: issue.id,
+      title: issue.title,
+      status: issue.status,
+      kind: issue.kind,
+      page: issue.page,
+      platformEnvironmentId: issue.platformEnvironmentId,
+      buildId: issue.buildId,
+      createdAt: issue.createdAt,
+    }));
+  }
+
+  async getIssueForAdmin(principal: Principal, id: number): Promise<Issue | undefined> {
+    return this.withAdminIssueOwner(principal, id, "system:read", () => this.getIssue(id));
+  }
+
+  async updateIssueForAdmin(principal: Principal, id: number, updates: Partial<InsertIssue>): Promise<Issue | undefined> {
+    return this.withAdminIssueOwner(principal, id, "system:write", () => this.updateIssue(id, updates));
+  }
+
+  async addNoteForAdmin(
+    principal: Principal,
+    id: number,
+    text: string,
+    author: "user" | "agent" = "agent",
+  ): Promise<Issue | undefined> {
+    return this.withAdminIssueOwner(principal, id, "system:write", () => this.addNote(id, text, author));
+  }
+
+  async readAttachmentForAdmin(
+    principal: Principal,
+    filename: string,
+  ): Promise<Awaited<ReturnType<typeof documentStorage.getDocument>>> {
+    requireAdminIssuePermission(principal, "system:read");
+    const [issueRow] = await db
+      .select({ issueId: documentStoreDocuments.documentId })
+      .from(documentStoreDocuments)
+      .where(and(
+        eq(documentStoreDocuments.documentType, "issue"),
+        sql`${documentStoreDocuments.metadata}->>'kind' = 'reported'`,
+        sql`${documentStoreDocuments.metadata}->>'screenshot' = ${`/api/issues/screenshots/${filename}`}`,
+      ))
+      .limit(1);
+    const issueId = Number(issueRow?.issueId);
+    if (!Number.isInteger(issueId) || issueId <= 0) return null;
+    return (await this.withAdminIssueOwner(
+      principal,
+      issueId,
+      "system:read",
+      () => documentStorage.getDocument("issue_attachment" as any, filename),
+    )) ?? null;
+  }
+
+  async deleteIssueForAdmin(principal: Principal, id: number): Promise<boolean> {
+    return (await this.withAdminIssueOwner(principal, id, "system:write", async () => {
+      const issue = await this.getIssue(id);
+      if (!issue) return false;
+      const filename = issue.screenshot?.match(/issue-\d+\.png$/)?.[0];
+      if (filename) await documentStorage.deleteDocument("issue_attachment" as any, filename);
+      return this.deleteIssue(id);
+    })) ?? false;
+  }
+
+  private async withAdminIssueOwner<T>(
+    principal: Principal,
+    id: number,
+    permission: "system:read" | "system:write",
+    operation: () => Promise<T>,
+  ): Promise<T | undefined> {
+    requireAdminIssuePermission(principal, permission);
+    if (await this.getIssue(id)) return operation();
+
+    const [row] = await db
+      .select({ userId: documentStoreDocuments.ownerUserId, accountId: documentStoreDocuments.accountId, vaultId: documentStoreDocuments.vaultId })
+      .from(documentStoreDocuments)
+      .where(and(
+        eq(documentStoreDocuments.documentType, "issue"),
+        eq(documentStoreDocuments.documentId, String(id)),
+        sql`${documentStoreDocuments.metadata}->>'kind' = 'reported'`,
+        eq(documentStoreDocuments.scope, "user"),
+        sql`${documentStoreDocuments.ownerUserId} IS NOT NULL`,
+        sql`${documentStoreDocuments.accountId} IS NOT NULL`,
+      ))
+      .limit(1);
+    if (!row?.userId || !row.accountId) return undefined;
+    const [ownerUser] = await db.select().from(users).where(eq(users.id, row.userId)).limit(1);
+    if (!ownerUser) return undefined;
+    return runWithPrincipal(
+      adminOwnerPrincipal(principal, ownerUser, { userId: row.userId, accountId: row.accountId, vaultId: row.vaultId }),
+      operation,
+    );
   }
 
   async createIssue(issue: InsertIssue): Promise<Issue> {
