@@ -1109,6 +1109,7 @@ function VnextLinksSection({
 
 function VnextJournalTab() {
   const { timezone } = useTimezone();
+  const { toast } = useToast();
   const [granularity, setGranularity] = useState<LogGranularity>("month");
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedClaimId, setSelectedClaimId] = useState<number | null>(null);
@@ -1204,9 +1205,13 @@ function VnextJournalTab() {
   const selectedClaim = selectedClaimResponse?.claim;
   const deleteClaim = useMutation({
     mutationFn: async (id: number) => apiRequest("DELETE", `/api/memory/vnext/claims/${id}`),
-    onSuccess: () => {
+    onSuccess: async () => {
       setSelectedClaimId(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims"] });
+      toast({ title: "Memory deleted" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Deletion failed", description: error.message, variant: "destructive" });
     },
   });
 
@@ -1388,7 +1393,7 @@ function VnextJournalTab() {
                                           </AlertDialogTrigger>
                                           <AlertDialogContent>
                                             <AlertDialogHeader><AlertDialogTitle>Delete this memory?</AlertDialogTitle><AlertDialogDescription>This permanently removes the claim and its source, entity, and claim references.</AlertDialogDescription></AlertDialogHeader>
-                                            <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction className="bg-destructive text-destructive-foreground" onClick={() => deleteClaim.mutate(selectedClaim.id)}>Delete</AlertDialogAction></AlertDialogFooter>
+                                            <AlertDialogFooter><AlertDialogCancel disabled={deleteClaim.isPending}>Cancel</AlertDialogCancel><AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={deleteClaim.isPending} onClick={(event) => { event.preventDefault(); deleteClaim.mutate(selectedClaim.id); }}>{deleteClaim.isPending ? "Deleting…" : "Delete"}</AlertDialogAction></AlertDialogFooter>
                                           </AlertDialogContent>
                                         </AlertDialog>
 
