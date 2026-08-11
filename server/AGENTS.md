@@ -28,9 +28,9 @@ Normal `git.clone` has no caller-owned repository coordinates. `server/git-sourc
 
 ## Persona catalog and bundle data
 
-`server/root-persona.ts` is the globally shared communication foundation for Mantra. Context assembly always loads it as the kernel-level Root Persona before rendering the session's Active Persona overlay; principal-owned profile metadata and People notes must not become alternate authorities for shared identity or voice. Active Personas remain task-specific overlays and may specialize behavior without replacing the Root Persona.
-
 `SEED_PERSONAS` in `server/file-storage/persona-storage.ts` is the authoritative identity catalog. Persona `context_sections` and `tool_bundle` are persisted configuration owned by each persona row and mutated only through principal-scoped `PersonaStorage` APIs/tools. Boot reconciliation may maintain seed identity, overlay, icon, tier, and routing metadata; it must never define, inherit, version, or rewrite bundle values. Empty tool bundles preserve the passthrough contract.
+
+The canonical global system Persona named `Root Persona` is Mantra's shared communication foundation. It uses the same Persona row, revision, publication, and management infrastructure as every Platform Default; its only special behavior is context composition, which always loads its prompt overlay before the session's selectable Active Persona. It is system-owned and therefore cannot be selected, copied, deleted, or overridden by a user.
 
 Persona evolution is Core identity infrastructure. `persona_revisions` is immutable history while `personas` remains the runtime-ready effective projection. `updateMyPersona` semantics create only owner-scoped revisions; platform publication requires `system:write`, a global non-system seed, impact review, required summary, explicit confirmation, and one atomic revision/projection transaction. Typed-field three-way merge auto-merges only independently changed fields; same-field conflicts require human choice and prompt overlays are never AI-rewritten. Sessions pin the exact current revision, and migration attaches ancestry only on exact content-hash evidence; ambiguity remains `pinned_legacy`.
 
