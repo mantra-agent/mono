@@ -93,6 +93,8 @@ export default function BusinessModelPage() {
   const [draft, setDraft] = useState<Assumptions | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [period, setPeriod] = useState<PeriodMode>("monthly");
+  const [accountsOpen, setAccountsOpen] = useState(true);
+  const [usersOpen, setUsersOpen] = useState(true);
   const [revenueOpen, setRevenueOpen] = useState(true);
   const [opexOpen, setOpexOpen] = useState(false);
   const loadedIdRef = useRef<string | null>(null);
@@ -176,7 +178,8 @@ export default function BusinessModelPage() {
             <Driver label="Users per new account"><NumericInput ariaLabel="Average users per new account" value={draft.averageUsersPerNewAccount} min={1} step={1} onChange={(averageUsersPerNewAccount) => updateGlobal({ averageUsersPerNewAccount })} /></Driver>
             <Driver label="New account growth"><NumericInput ariaLabel="New account growth every 90 days" value={draft.accountExpansion90d} min={0} step={0.05} suffix="× / 90d" onChange={(accountExpansion90d) => updateGlobal({ accountExpansion90d })} /></Driver>
             <Driver label="Annual account churn"><NumericInput ariaLabel="Annual account churn" value={draft.annualAccountChurnPct} min={0} step={1} suffix="%" onChange={(annualAccountChurnPct) => updateGlobal({ annualAccountChurnPct })} /></Driver>
-            <Driver label="Existing-account user growth"><NumericInput ariaLabel="Annual user growth within existing accounts" value={draft.annualExistingAccountUserGrowthPct} min={0} step={5} suffix="% / yr" onChange={(annualExistingAccountUserGrowthPct) => updateGlobal({ annualExistingAccountUserGrowthPct })} /></Driver>
+            <Driver label="User expansion"><NumericInput ariaLabel="Annual user expansion within existing accounts" value={draft.annualExistingAccountUserGrowthPct} min={0} step={5} suffix="% / yr" onChange={(annualExistingAccountUserGrowthPct) => updateGlobal({ annualExistingAccountUserGrowthPct })} /></Driver>
+            <Driver label="User contraction"><NumericInput ariaLabel="Annual user contraction within existing accounts" value={draft.annualExistingAccountUserContractionPct} min={0} step={5} suffix="% / yr" onChange={(annualExistingAccountUserContractionPct) => updateGlobal({ annualExistingAccountUserContractionPct })} /></Driver>
             <Driver label="Account upgrades"><NumericInput ariaLabel="Annual account upgrade rate" value={draft.annualAccountUpgradePct} min={0} step={5} suffix="% / yr" onChange={(annualAccountUpgradePct) => updateGlobal({ annualAccountUpgradePct })} /></Driver>
             <Driver label="Base plan"><NumericInput ariaLabel="Base plan monthly price" value={draft.maxSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} /></Driver>
             <Driver label="Upgraded plan"><NumericInput ariaLabel="Upgraded plan monthly price" value={draft.maxPlusSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxPlusSubscriptionMonthly) => updateGlobal({ maxPlusSubscriptionMonthly })} /></Driver>
@@ -208,16 +211,19 @@ export default function BusinessModelPage() {
               </tr>
             </thead>
             <tbody>
-              <DataRow label="Paying Accounts" periods={periods} render={(row) => Math.round(row.activeAccounts).toLocaleString()} emphasize />
-              <DataRow label="New Accounts" periods={periods} render={(row) => row.newAccounts >= 0.05 ? `+${trimNum(row.newAccounts)}` : "—"} />
-              <DataRow label="Churned Accounts" periods={periods} render={(row) => row.churnedAccounts >= 0.05 ? `-${trimNum(row.churnedAccounts)}` : "—"} tone={() => "text-muted-foreground"} />
-              <DataRow label="Users" periods={periods} render={(row) => Math.round(row.activeUsers).toLocaleString()} emphasize />
-              <DataRow label="New Users" periods={periods} render={(row) => row.newUsers >= 0.05 ? `+${trimNum(row.newUsers)}` : "—"} />
+              <DataRow label="Accounts" periods={periods} render={(row) => Math.round(row.activeAccounts).toLocaleString()} onToggle={() => setAccountsOpen((open) => !open)} open={accountsOpen} />
+              {accountsOpen && <DataRow label="New Accounts" indent periods={periods} render={(row) => row.newAccounts >= 0.05 ? `+${trimNum(row.newAccounts)}` : "—"} />}
+              {accountsOpen && <DataRow label="Churned Accounts" indent periods={periods} render={(row) => row.churnedAccounts >= 0.05 ? `-${trimNum(row.churnedAccounts)}` : "—"} tone={() => "text-muted-foreground"} />}
+              <DataRow label="Users" periods={periods} render={(row) => Math.round(row.activeUsers).toLocaleString()} onToggle={() => setUsersOpen((open) => !open)} open={usersOpen} />
+              {usersOpen && <DataRow label="New Users" indent periods={periods} render={(row) => row.newUsers >= 0.05 ? `+${trimNum(row.newUsers)}` : "—"} />}
+              {usersOpen && <DataRow label="Expanded Users" indent periods={periods} render={(row) => row.expandedUsers >= 0.05 ? `+${trimNum(row.expandedUsers)}` : "—"} />}
+              {usersOpen && <DataRow label="Contracted Users" indent periods={periods} render={(row) => row.contractedUsers >= 0.05 ? `-${trimNum(row.contractedUsers)}` : "—"} tone={() => "text-muted-foreground"} />}
               <DataRow label="Net Revenue Retention" periods={periods} render={(row) => row.startingCohortRevenue > 0 ? fmtPercent(row.cohortNrr) : "—"} emphasize />
               <DataRow label="Revenue" periods={periods} render={(row) => fmtCurrency(row.totalCashRevenue)} onToggle={() => setRevenueOpen((open) => !open)} open={revenueOpen} />
               {revenueOpen && <DataRow label="Starting Cohort" indent periods={periods} render={(row) => fmtCurrency(row.startingCohortRevenue)} />}
-              {revenueOpen && <DataRow label="Churn / Downgrades" indent periods={periods} render={(row) => row.churnedRevenue > 0 ? fmtCurrency(-row.churnedRevenue) : "—"} tone={() => "text-muted-foreground"} />}
+              {revenueOpen && <DataRow label="Account Churn" indent periods={periods} render={(row) => row.churnedRevenue > 0 ? fmtCurrency(-row.churnedRevenue) : "—"} tone={() => "text-muted-foreground"} />}
               {revenueOpen && <DataRow label="Added Users" indent periods={periods} render={(row) => row.userExpansionRevenue > 0 ? `+${fmtCurrency(row.userExpansionRevenue)}` : "—"} />}
+              {revenueOpen && <DataRow label="Lost Users" indent periods={periods} render={(row) => row.userContractionRevenue > 0 ? fmtCurrency(-row.userContractionRevenue) : "—"} tone={() => "text-muted-foreground"} />}
               {revenueOpen && <DataRow label="Upgrades" indent periods={periods} render={(row) => row.tierExpansionRevenue > 0 ? `+${fmtCurrency(row.tierExpansionRevenue)}` : "—"} />}
               <DataRow label="COGS" periods={periods} render={(row) => fmtCurrency(-row.cogs)} tone={() => "text-muted-foreground"} />
               <DataRow label="Gross Profit" periods={periods} render={(row) => fmtCurrency(row.grossProfit)} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />

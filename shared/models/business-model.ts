@@ -107,6 +107,7 @@ export interface Assumptions {
   downsideAccountExpansion90d: number;
   annualAccountChurnPct: number;
   annualExistingAccountUserGrowthPct: number;
+  annualExistingAccountUserContractionPct: number;
   annualAccountUpgradePct: number;
   /** @deprecated Compatibility projection derived from account churn. */
   annualGrossLogoRetentionPct: number;
@@ -241,6 +242,7 @@ export function defaultAssumptions(): Assumptions {
     downsideAccountExpansion90d: 1.35,
     annualAccountChurnPct: 10,
     annualExistingAccountUserGrowthPct: 35,
+    annualExistingAccountUserContractionPct: 0,
     annualAccountUpgradePct: 20,
     annualGrossLogoRetentionPct: 90,
     annualNrrPct: 150,
@@ -313,7 +315,7 @@ const legacyStageSchema = z.object({
 const rawAssumptionsSchema = z.object({
   modelVersion: z.number().optional(), horizonMonths: z.number().optional(), startCalendarMonth: z.string().optional(), openingCash: z.number().optional(), startingCash: z.number().optional(),
   startingAccounts: z.number().optional(), startingCustomers: z.number().optional(), startingUsers: z.number().optional(), quarterOneNewAccounts: z.number().optional(), averageUsersPerNewAccount: z.number().optional(), accountExpansion90d: z.number().optional(), downsideAccountExpansion90d: z.number().optional(),
-  annualAccountChurnPct: z.number().optional(), annualExistingAccountUserGrowthPct: z.number().optional(), annualAccountUpgradePct: z.number().optional(),
+  annualAccountChurnPct: z.number().optional(), annualExistingAccountUserGrowthPct: z.number().optional(), annualExistingAccountUserContractionPct: z.number().optional(), annualAccountUpgradePct: z.number().optional(),
   annualGrossLogoRetentionPct: z.number().optional(), annualNrrPct: z.number().optional(), individualEntrySharePct: z.number().optional(), maxSubscriptionMonthly: z.number().optional(), revenuePerCustomerMonthly: z.number().optional(),
   maxPlusSubscriptionMonthly: z.number().optional(), participantSeatMonthly: z.number().optional(), averageEntrySeatsPerTeamAccount: z.number().optional(),
   maxIncludedTokensMillions: z.number().optional(), maxPlusIncludedTokensMillions: z.number().optional(), blendedTokenCostPerMillion: z.number().optional(), overageMarkupPct: z.number().optional(),
@@ -524,6 +526,7 @@ export function normalizeAssumptions(input: unknown): Assumptions {
     accountExpansion90d: nonNegative(compatibility.accountExpansion90d, defaults.accountExpansion90d), downsideAccountExpansion90d: nonNegative(raw.downsideAccountExpansion90d, defaults.downsideAccountExpansion90d),
     annualAccountChurnPct: bounded(raw.annualAccountChurnPct, 0, 100, 100 - bounded(raw.annualGrossLogoRetentionPct, 0, 100, defaults.annualGrossLogoRetentionPct)),
     annualExistingAccountUserGrowthPct: nonNegative(raw.annualExistingAccountUserGrowthPct, defaults.annualExistingAccountUserGrowthPct),
+    annualExistingAccountUserContractionPct: bounded(raw.annualExistingAccountUserContractionPct, 0, 100, defaults.annualExistingAccountUserContractionPct),
     annualAccountUpgradePct: bounded(raw.annualAccountUpgradePct, 0, 100, defaults.annualAccountUpgradePct),
     annualGrossLogoRetentionPct: 100 - bounded(raw.annualAccountChurnPct, 0, 100, 100 - bounded(raw.annualGrossLogoRetentionPct, 0, 100, defaults.annualGrossLogoRetentionPct)), annualNrrPct: nonNegative(compatibility.annualNrrPct, defaults.annualNrrPct),
     individualEntrySharePct: bounded(raw.individualEntrySharePct, 0, 100, defaults.individualEntrySharePct),
@@ -572,8 +575,8 @@ interface Cohort {
 export interface MonthRow {
   month: number; calendarMonth: string; label: string; phaseKey: PhaseKey; phaseLabel: string;
   newAccounts: number; newPlgAccounts: number; newTopDownAccounts: number; churnedAccounts: number; activeAccounts: number;
-  newUsers: number; existingAccountUsers: number; activeUsers: number;
-  startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; tierExpansionRevenue: number; sameCohortRecurringRevenue: number; cohortNrr: number;
+  newUsers: number; expandedUsers: number; contractedUsers: number; existingAccountUsers: number; activeUsers: number;
+  startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; userContractionRevenue: number; tierExpansionRevenue: number; sameCohortRecurringRevenue: number; cohortNrr: number;
   subscriptionRevenue: number; seatExpansionRevenue: number; overageRevenue: number; productRevenue: number; productArr: number;
   activeSeats: number; requiredTierUpgrades: number; overageDominant: boolean;
   consultingRevenue: number; totalCashRevenue: number; includedTokenCogs: number; seatCogs: number; overageTokenCogs: number; requiredOverageTokensMillions: number; totalTokenUsageMillions: number; overageGrossMargin: number;
@@ -586,8 +589,8 @@ export interface MonthRow {
 export interface PeriodRow {
   key: string; label: string; startMonth: number; endMonth: number; monthCount: number;
   phaseKey: PhaseKey; phaseLabel: string; financingKey: FinancingKey;
-  activeAccounts: number; newAccounts: number; churnedAccounts: number; activeUsers: number; newUsers: number;
-  startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; tierExpansionRevenue: number; cohortNrr: number;
+  activeAccounts: number; newAccounts: number; churnedAccounts: number; activeUsers: number; newUsers: number; expandedUsers: number; contractedUsers: number;
+  startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; userContractionRevenue: number; tierExpansionRevenue: number; cohortNrr: number;
   totalCashRevenue: number; productRevenue: number; consultingRevenue: number; productCogs: number; consultingCogs: number; cogs: number; grossProfit: number;
   staffOpex: number; marketingOpex: number; gaOpex: number; totalOpex: number; operatingIncome: number;
   acquisitionSpend: number; netCashChange: number; financingCash: number; endingCash: number;
@@ -675,13 +678,15 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     }
   }
   const accountSurvivalMonthly = Math.pow(1 - assumptions.annualAccountChurnPct / 100, 1 / 12);
-  const userGrowthMonthly = Math.pow(1 + assumptions.annualExistingAccountUserGrowthPct / 100, 1 / 12);
+  const userExpansionMonthly = Math.pow(1 + assumptions.annualExistingAccountUserGrowthPct / 100, 1 / 12);
+  const userRetentionMonthly = Math.pow(1 - assumptions.annualExistingAccountUserContractionPct / 100, 1 / 12);
+  const netUserMovementMonthly = userExpansionMonthly * userRetentionMonthly;
   const upgradeMonthly = 1 - Math.pow(1 - assumptions.annualAccountUpgradePct / 100, 1 / 12);
   const representativeStartingUsers = Math.max(1, assumptions.startingAccounts > 0 ? assumptions.startingUsers / assumptions.startingAccounts : assumptions.averageUsersPerNewAccount);
   const representativeStartingRevenue = assumptions.maxSubscriptionMonthly + Math.max(0, representativeStartingUsers - 1) * assumptions.participantSeatMonthly;
   const representativeRetainedRevenue = (1 - assumptions.annualAccountChurnPct / 100) * (
     assumptions.maxSubscriptionMonthly
-    + Math.max(0, representativeStartingUsers * (1 + assumptions.annualExistingAccountUserGrowthPct / 100) - 1) * assumptions.participantSeatMonthly
+    + Math.max(0, Math.max(1, representativeStartingUsers * (1 + assumptions.annualExistingAccountUserGrowthPct / 100) * (1 - assumptions.annualExistingAccountUserContractionPct / 100)) - 1) * assumptions.participantSeatMonthly
     + assumptions.annualAccountUpgradePct / 100 * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly)
   );
   const calculatedAnnualNrrPct = safeRatio(representativeRetainedRevenue, representativeStartingRevenue) * 100;
@@ -709,38 +714,46 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     let activeAccounts = 0;
     let activeUsers = 0;
     let newUsers = 0;
+    let expandedUsers = 0;
+    let contractedUsers = 0;
     let startingCohortRevenue = 0;
     let churnedRevenue = 0;
     let userExpansionRevenue = 0;
+    let userContractionRevenue = 0;
     let tierExpansionRevenue = 0;
     for (const cohort of cohorts) {
       const age = month - cohort.birthMonth;
       const startOfMonthAge = Math.max(0, age - 1);
       const startAccounts = cohort.accounts * Math.pow(accountSurvivalMonthly, startOfMonthAge);
       const survivingAccounts = cohort.accounts * Math.pow(accountSurvivalMonthly, age);
-      const startUsersPerAccount = cohort.usersPerAccount * Math.pow(userGrowthMonthly, startOfMonthAge);
-      const usersPerAccount = cohort.usersPerAccount * Math.pow(userGrowthMonthly, age);
+      const startUsersPerAccount = cohort.usersPerAccount * Math.pow(netUserMovementMonthly, startOfMonthAge);
+      const expandedUsersPerAccount = startUsersPerAccount * userExpansionMonthly;
+      const usersPerAccount = Math.max(1, expandedUsersPerAccount * userRetentionMonthly);
       const startUpgradeShare = 1 - Math.pow(1 - upgradeMonthly, startOfMonthAge);
       const upgradeShare = 1 - Math.pow(1 - upgradeMonthly, age);
       const startRevenue = startAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, startUsersPerAccount - 1) * assumptions.participantSeatMonthly + startUpgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
       const retainedBaseRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, startUsersPerAccount - 1) * assumptions.participantSeatMonthly + startUpgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
+      const retainedExpandedRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, expandedUsersPerAccount - 1) * assumptions.participantSeatMonthly + startUpgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
       const retainedUserRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, usersPerAccount - 1) * assumptions.participantSeatMonthly + startUpgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
       const retainedRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, usersPerAccount - 1) * assumptions.participantSeatMonthly + upgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
       activeAccounts += survivingAccounts;
       activeUsers += survivingAccounts * usersPerAccount;
       if (age === 0) newUsers += survivingAccounts * usersPerAccount;
       if (age > 0) {
+        expandedUsers += survivingAccounts * Math.max(0, expandedUsersPerAccount - startUsersPerAccount);
+        contractedUsers += survivingAccounts * Math.max(0, expandedUsersPerAccount - usersPerAccount);
         startingCohortRevenue += startRevenue;
         churnedRevenue += Math.max(0, startRevenue - retainedBaseRevenue);
-        userExpansionRevenue += Math.max(0, retainedUserRevenue - retainedBaseRevenue);
+        userExpansionRevenue += Math.max(0, retainedExpandedRevenue - retainedBaseRevenue);
+        userContractionRevenue += Math.max(0, retainedExpandedRevenue - retainedUserRevenue);
         tierExpansionRevenue += Math.max(0, retainedRevenue - retainedUserRevenue);
       }
     }
     const newAccountRevenue = newAccounts * entryRevenuePerAccount;
-    const sameCohortRecurringRevenue = startingCohortRevenue - churnedRevenue + userExpansionRevenue + tierExpansionRevenue;
+    const sameCohortRecurringRevenue = startingCohortRevenue - churnedRevenue + userExpansionRevenue - userContractionRevenue + tierExpansionRevenue;
     const cohortNrr = safeRatio(sameCohortRecurringRevenue, startingCohortRevenue);
     const subscriptionRevenue = Math.max(0, startingCohortRevenue - churnedRevenue) + newAccountRevenue;
-    const seatExpansionRevenue = userExpansionRevenue;
+    const seatExpansionRevenue = userExpansionRevenue - userContractionRevenue;
     const overageRevenue = 0;
     const productRevenue = subscriptionRevenue + seatExpansionRevenue + tierExpansionRevenue;
     const activeSeats = activeUsers;
@@ -796,7 +809,7 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     months.push({
       month, calendarMonth: calendarMonthAt(assumptions.startCalendarMonth, month), label: calendarMonthLabel(assumptions.startCalendarMonth, month), phaseKey: phaseForMonth(assumptions.phases, month).key, phaseLabel: PHASE_LABELS[phaseForMonth(assumptions.phases, month).key],
       newAccounts, newPlgAccounts, newTopDownAccounts: newAccounts - newPlgAccounts, churnedAccounts, activeAccounts,
-      newUsers, existingAccountUsers, activeUsers, startingCohortRevenue, churnedRevenue, userExpansionRevenue, tierExpansionRevenue, sameCohortRecurringRevenue, cohortNrr,
+      newUsers, expandedUsers, contractedUsers, existingAccountUsers, activeUsers, startingCohortRevenue, churnedRevenue, userExpansionRevenue, userContractionRevenue, tierExpansionRevenue, sameCohortRecurringRevenue, cohortNrr,
       subscriptionRevenue, seatExpansionRevenue, overageRevenue, productRevenue, productArr: productRevenue * 12,
       activeSeats, requiredTierUpgrades, overageDominant: false,
       consultingRevenue, totalCashRevenue, includedTokenCogs, seatCogs, overageTokenCogs, requiredOverageTokensMillions, totalTokenUsageMillions: activeAccounts * assumptions.maxIncludedTokensMillions + requiredOverageTokensMillions, overageGrossMargin,
@@ -966,9 +979,12 @@ export function aggregateMonths(months: MonthRow[], mode: PeriodMode): PeriodRow
       churnedAccounts: sum((row) => row.churnedAccounts),
       activeUsers: last.activeUsers,
       newUsers: sum((row) => row.newUsers),
+      expandedUsers: sum((row) => row.expandedUsers),
+      contractedUsers: sum((row) => row.contractedUsers),
       startingCohortRevenue: sum((row) => row.startingCohortRevenue),
       churnedRevenue: sum((row) => row.churnedRevenue),
       userExpansionRevenue: sum((row) => row.userExpansionRevenue),
+      userContractionRevenue: sum((row) => row.userContractionRevenue),
       tierExpansionRevenue: sum((row) => row.tierExpansionRevenue),
       cohortNrr: safeRatio(sum((row) => row.sameCohortRecurringRevenue), sum((row) => row.startingCohortRevenue)),
       totalCashRevenue: sum((row) => row.totalCashRevenue),
