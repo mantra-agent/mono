@@ -593,7 +593,7 @@ Environment knobs:
 
 ### Delegated Engineering Children
 
-`session.spawn_child` supports a structured `delegation=engineering` mode for independent coding missions. The spawn handler must validate the parent through `authorizeToolInvocation()` against a representative `build:write` Git action, persist `spawnerTool=session.spawn_child.engineering`, and set Engineer persona before first context assembly. Resumed child runs reconstruct authority only from that durable server-written provenance. Free-text topic/reason fields never grant authority. Every engineering child still owns an isolated `repos/*-{childSessionId[:8]}` clone; parent and sibling clones are not writable.
+`session.spawn_child` children inherit the spawner's server-validated execution authority. The spawn handler evaluates the parent through `authorizeToolInvocation()` and persists trusted provenance whenever allowed, including when the optional delegation argument is omitted. `delegation=engineering` additionally selects Engineer persona and fails closed when the parent cannot delegate. Resumed runs reconstruct authority only from server-written provenance; named permissions, provider readiness, human gates, and session-owned clone isolation remain independent. Free text never grants authority.
 
 ### Git Session Isolation
 

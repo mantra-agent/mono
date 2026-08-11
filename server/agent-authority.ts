@@ -221,7 +221,7 @@ function describeAuthorityFilteredActions(
     return [
       `Current execution authority permits only: ${allowedActions.join(", ")}.`,
       "Omitted Git actions are intentionally unavailable under this session's provenance, not evidence of a broken provider credential.",
-      "Plan/workflow children and session.spawn_child calls with delegation=engineering receive delegated write authority; ordinary conversational children do not.",
+      "Plan/workflow children and session.spawn_child children inherit trusted engineering provenance when their spawner already holds it; every named permission and session-clone boundary remains independently enforced.",
     ].join(" ");
   }
   return `Current execution authority permits only: ${allowedActions.join(", ")}.`;
