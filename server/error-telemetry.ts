@@ -2,6 +2,9 @@ import { createHash } from "crypto";
 import { pool } from "./db";
 import { enqueueTelemetryWrite } from "./telemetry-write";
 import { deriveSafeErrorCallsite, selectErrorStack } from "@shared/error-callsite";
+import type { Principal } from "./principal";
+import { principalHasPermission } from "./permissions";
+import type { Permission } from "@shared/permissions-vocabulary";
 
 const MAX_IDENTITY_LENGTH = 160;
 const MAX_SOURCE_LENGTH = 240;
@@ -17,6 +20,15 @@ export interface AggregatedApplicationError {
   firstSeenAt: string;
   lastSeenAt: string;
   occurrenceCount: number;
+}
+
+function requireApplicationErrorPermission(principal: Principal, permission: Permission): void {
+  if (!principalHasPermission(principal, permission)) {
+    throw Object.assign(new Error(`Permission required: ${permission}`), {
+      statusCode: 403,
+      permission,
+    });
+  }
 }
 
 let schemaReady: Promise<void> | null = null;
@@ -165,6 +177,12 @@ export function captureApplicationError(error: unknown, logger = "ExpressFallbac
   });
 }
 
+/**
+ * Platform-health projection. The aggregate is intentionally global and keyed
+ * only by privacy-safe fingerprint, so one defect recurring for many users is
+ * one operational error with a platform-wide occurrence count. Callers must
+ * establish their own authority; admin wrappers below add named permissions.
+ */
 export async function listRecentApplicationErrors(
   limit = 25,
   offset = 0,
@@ -191,6 +209,15 @@ export async function listRecentApplicationErrors(
   }));
 }
 
+export async function listPlatformApplicationErrors(
+  principal: Principal,
+  limit = 25,
+  offset = 0,
+): Promise<AggregatedApplicationError[]> {
+  requireApplicationErrorPermission(principal, "system:read");
+  return listRecentApplicationErrors(limit, offset);
+}
+
 export async function dismissApplicationError(fingerprint: string): Promise<boolean> {
   if (!/^[a-f0-9]{64}$/i.test(fingerprint)) return false;
   await ensureSchema();
@@ -201,4 +228,12 @@ export async function dismissApplicationError(fingerprint: string): Promise<bool
     [fingerprint.toLowerCase()],
   );
   return (result.rowCount ?? 0) > 0;
+}
+
+export async function dismissPlatformApplicationError(
+  principal: Principal,
+  fingerprint: string,
+): Promise<boolean> {
+  requireApplicationErrorPermission(principal, "system:write");
+  return dismissApplicationError(fingerprint);
 }
