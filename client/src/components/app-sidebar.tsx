@@ -333,6 +333,7 @@ const navSections: NavSection[] = [
       navItem("Campaigns", "navigation.campaigns.open", Megaphone),
       navItem("Users", "navigation.users.open", Users),
       navItem("Vaults", "navigation.vaults.open", Vault),
+      navItem("Teams", "navigation.teams.open", Users),
       navItem("Secrets", "navigation.secrets.open", KeyRound),
       navItem("Integrations", "navigation.integrations.open", Plug),
       navItem("Account", "navigation.account.open", Settings),

@@ -63,6 +63,7 @@ const IssueCaptureDialog = lazyWithRetry(() => import("@/components/issue-captur
 const LogsPage = lazyWithRetry(() => import("@/pages/logs"));
 const UserDetailsPage = lazyWithRetry(() => import("@/pages/user-details"));
 const VaultsPage = lazyWithRetry(() => import("@/pages/vaults-admin"));
+const TeamsPage = lazyWithRetry(() => import("@/pages/teams"));
 const LoginPage = lazyWithRetry(() => import("@/pages/login"));
 const RegisterPage = lazyWithRetry(() => import("@/pages/register"));
 const RecipientRecapPage = lazyWithRetry(() => import("@/pages/recipient-recap"));
@@ -369,6 +370,7 @@ function Router() {
         <Route path="/campaigns">{() => <RequirePermission permission="system:read"><CampaignsPage /></RequirePermission>}</Route>
         <Route path="/account" component={UserDetailsPage} />
         <Route path="/vaults" component={VaultsPage} />
+        <Route path="/teams" component={TeamsPage} />
         <Route component={NotFound} />
       </Switch>
     </RouteLoadBoundary>
