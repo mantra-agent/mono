@@ -40,7 +40,7 @@ import {
   Timer,
 } from "lucide-react";
 import { isDurablyActiveSession, type ChatSession } from "@shared/models/chat";
-import { SessionActionsMenuItems } from "@/components/session-actions-menu";
+import { useSessionActionsMenuItems } from "@/components/session-actions-menu";
 import { SessionDetailsModal } from "@/components/session-details-modal";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
@@ -318,6 +318,24 @@ export function ConversationItem({
   const hasUnreadResult = !!conv.hasUnreadResult;
   const isLastSenderAgent = conv.lastMessageRole === "assistant" || conv.lastMessageRole === "tool";
   const isPinned = !!conv.isPinned;
+  const sessionActionItems = useSessionActionsMenuItems({
+    sessionId: conv.id,
+    sessionTitle: conv.title,
+    sessionVaultId: conv.vaultId,
+    sessionType: conv.type,
+    parentSessionId: conv.parentSessionId,
+    onRename: startRename,
+    onSelectSession: onSelect,
+    onArchive,
+    onDelete: setDeleteConfirmId,
+    isArchived: !!conv.archivedAt,
+    isPinned,
+    onTogglePin,
+    onOpenInParent,
+    onShowDetails: () => setDetailsOpen(true),
+    testIdPrefix: `button-conversation-${conv.id}`,
+    stopPropagation: true,
+  });
 
   // Build status text class — error/active are semantic states; unread uses foreground.
   // Read/already-viewed sessions are muted, including pinned sessions.
@@ -511,24 +529,7 @@ export function ConversationItem({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" onCloseAutoFocus={(e) => e.preventDefault()}>
-          <SessionActionsMenuItems
-            sessionId={conv.id}
-            sessionTitle={conv.title}
-            sessionVaultId={conv.vaultId}
-            sessionType={conv.type}
-            parentSessionId={conv.parentSessionId}
-            onRename={startRename}
-            onSelectSession={onSelect}
-            onArchive={onArchive}
-            onDelete={setDeleteConfirmId}
-            isArchived={!!conv.archivedAt}
-            isPinned={isPinned}
-            onTogglePin={onTogglePin}
-            onOpenInParent={onOpenInParent}
-            onShowDetails={() => setDetailsOpen(true)}
-            testIdPrefix={`button-conversation-${conv.id}`}
-            stopPropagation
-          />
+          {sessionActionItems}
         </DropdownMenuContent>
       </DropdownMenu>
       <AlertDialog open={!!deleteConfirmId} onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}>

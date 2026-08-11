@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { SessionReminderPopover } from "@/components/session-reminder";
+import { useSessionReminderMenuItem } from "@/components/session-reminder";
 import type { LinkedEntity } from "@/hooks/use-linked-entities";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { emitSessionListChanged } from "@/hooks/use-data-sync";
@@ -115,7 +115,7 @@ interface SessionMoveSubmenuProps {
  * its descendants (cycle prevention), and its current parent from the target
  * list. The server enforces the same invariants.
  */
-function SessionMoveSubmenu({
+function useSessionMoveSubmenu({
   sessionId,
   parentSessionId,
   stopPropagation,
@@ -222,7 +222,7 @@ interface SessionVaultSubmenuProps {
   testIdPrefix: string;
 }
 
-function SessionVaultSubmenu({
+function useSessionVaultSubmenu({
   sessionId,
   sessionVaultId,
   stopPropagation,
@@ -286,7 +286,7 @@ function SessionVaultSubmenu({
   );
 }
 
-export function SessionActionsMenuItems({
+export function useSessionActionsMenuItems({
   sessionId,
   onRename,
   sessionTitle,
@@ -309,6 +309,23 @@ export function SessionActionsMenuItems({
   hideRename = false,
 }: SessionActionsMenuItemsProps) {
   const { toast } = useToast();
+  const moveSubmenu = useSessionMoveSubmenu({
+    sessionId,
+    parentSessionId: parentSessionId ?? "",
+    stopPropagation,
+    testIdPrefix,
+  });
+  const vaultSubmenu = useSessionVaultSubmenu({
+    sessionId,
+    sessionVaultId,
+    stopPropagation,
+    testIdPrefix,
+  });
+  const reminderMenuItem = useSessionReminderMenuItem({
+    sessionId,
+    sessionTitle,
+    onReminderSet,
+  });
 
   return (
     <>
@@ -363,23 +380,9 @@ export function SessionActionsMenuItems({
         <GitBranch className="h-3.5 w-3.5 mr-2" />
         Fork
       </DropdownMenuItem>
-      {parentSessionId && (
-        <SessionMoveSubmenu
-          sessionId={sessionId}
-          parentSessionId={parentSessionId}
-          stopPropagation={stopPropagation}
-          testIdPrefix={testIdPrefix}
-        />
-      )}
-      {sessionType !== "meeting" && (
-        <SessionVaultSubmenu
-          sessionId={sessionId}
-          sessionVaultId={sessionVaultId}
-          stopPropagation={stopPropagation}
-          testIdPrefix={testIdPrefix}
-        />
-      )}
-      <SessionReminderPopover sessionId={sessionId} sessionTitle={sessionTitle} onReminderSet={onReminderSet} />
+      {parentSessionId ? moveSubmenu : null}
+      {sessionType !== "meeting" ? vaultSubmenu : null}
+      {reminderMenuItem}
       {onOpenInParent && (
         <>
           <DropdownMenuSeparator />
