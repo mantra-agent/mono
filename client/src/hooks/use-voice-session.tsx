@@ -28,10 +28,11 @@ import {
   type VoiceEchoAdmissionEvidence,
 } from "@/lib/voice-echo-admission";
 import {
-  appendVoiceCaptionPhrase,
+  appendVoiceCaptionWords,
   createVoiceCaptionChunk,
+  flushVoiceCaptionBuffer,
   VOICE_CAPTION_FINAL_HOLD_MS,
-  type VoiceCaptionWindow,
+  type VoiceCaptionBuffer,
 } from "@/lib/voice-caption-timeline";
 import {
   createVoiceFinalizationRequest,
@@ -416,7 +417,7 @@ export function VoiceSessionProvider({
   const conversationRef = useRef<Awaited<ReturnType<typeof Conversation.startSession>> | null>(null);
   const captionTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const captionQueueEndRef = useRef(0);
-  const captionWindowRef = useRef<VoiceCaptionWindow>({ text: "", pendingPhrase: "" });
+  const captionBufferRef = useRef<VoiceCaptionBuffer>({ pendingWords: [] });
   const transcriptRef = useRef<VoiceTranscriptEntry[]>([]);
   const reconnectAttemptRef = useRef(0);
   const intentionalEndRef = useRef(false);
@@ -584,24 +585,28 @@ export function VoiceSessionProvider({
     captionTimersRef.current.forEach((timer) => clearTimeout(timer));
     captionTimersRef.current = [];
     captionQueueEndRef.current = 0;
-    captionWindowRef.current = { text: "", pendingPhrase: "" };
+    captionBufferRef.current = { pendingWords: [] };
     setVoiceCaption("");
   }, []);
 
   const queueVoiceCaption = useCallback((alignment: AudioAlignmentEvent) => {
     const chunk = createVoiceCaptionChunk(alignment);
-    if (chunk.cues.length === 0) return;
+    if (chunk.words.length === 0) return;
 
     const now = performance.now();
     const chunkStartsAt = Math.max(captionQueueEndRef.current, now + 80);
     captionQueueEndRef.current = chunkStartsAt + chunk.durationMs;
+    const timedWords = chunk.words.map((word) => ({
+      ...word,
+      atMs: chunkStartsAt + word.atMs,
+    }));
+    const nextCards = appendVoiceCaptionWords(captionBufferRef.current, timedWords);
+    captionBufferRef.current = nextCards.buffer;
 
-    for (const cue of chunk.cues) {
-      const delay = Math.max(0, chunkStartsAt + cue.atMs - now);
+    for (const card of nextCards.cards) {
+      const delay = Math.max(0, card.atMs - now);
       captionTimersRef.current.push(setTimeout(() => {
-        const nextWindow = appendVoiceCaptionPhrase(captionWindowRef.current, cue.text);
-        captionWindowRef.current = nextWindow;
-        if (nextWindow.text) setVoiceCaption(nextWindow.text);
+        setVoiceCaption(card.text);
       }, delay));
     }
 
@@ -609,21 +614,18 @@ export function VoiceSessionProvider({
     const clearDelay = Math.max(0, queuedEnd + 650 - now);
     captionTimersRef.current.push(setTimeout(() => {
       if (captionQueueEndRef.current !== queuedEnd) return;
-      const pendingPhrase = captionWindowRef.current.pendingPhrase;
-      if (pendingPhrase) {
-        const finalText = [...captionWindowRef.current.text.split(/\s+/), ...pendingPhrase.split(/\s+/)]
-          .filter(Boolean)
-          .slice(-18)
-          .join(" ");
-        captionWindowRef.current = { text: finalText, pendingPhrase: "" };
-        setVoiceCaption(finalText);
+      const finalCards = flushVoiceCaptionBuffer(captionBufferRef.current);
+      captionBufferRef.current = finalCards.buffer;
+      const finalCard = finalCards.cards[0];
+      if (finalCard) {
+        setVoiceCaption(finalCard.text);
         captionTimersRef.current = [setTimeout(clearVoiceCaption, VOICE_CAPTION_FINAL_HOLD_MS)];
         return;
       }
       setVoiceCaption("");
       captionTimersRef.current = [];
       captionQueueEndRef.current = 0;
-      captionWindowRef.current = { text: "", pendingPhrase: "" };
+      captionBufferRef.current = { pendingWords: [] };
     }, clearDelay));
   }, [clearVoiceCaption]);
 
