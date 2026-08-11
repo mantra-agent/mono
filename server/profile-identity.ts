@@ -14,6 +14,8 @@ export interface ProfileIdentity {
   userFirstName: string;
 }
 
+type AgentProfileMetadata = Record<string, unknown>;
+
 function cleanName(value: string | null | undefined): string | null {
   const name = value?.trim();
   return name || null;
@@ -67,5 +69,29 @@ export async function resolveCurrentProfileIdentity(): Promise<ProfileIdentity> 
   } catch (error) {
     log.warn("Profile identity lookup failed; using safe defaults", error);
     return defaultProfileIdentity();
+  }
+}
+
+/** Resolve the current agent's canonical Voice note from the principal-owned profile. */
+export async function resolveCurrentProfileVoiceNote(): Promise<string | null> {
+  const principal = getCurrentPrincipal();
+  if (!principal?.userId) return null;
+
+  try {
+    const [profile] = await withQueryAttributionAsync(
+      "context-build",
+      () => db
+        .select({ metadata: agentProfiles.metadata })
+        .from(agentProfiles)
+        .where(eq(agentProfiles.userId, principal.userId))
+        .limit(1),
+      "profile-voice",
+    );
+    const metadata = profile?.metadata as AgentProfileMetadata | null | undefined;
+    const voiceNote = typeof metadata?.voiceNote === "string" ? metadata.voiceNote.trim() : "";
+    return voiceNote || null;
+  } catch (error) {
+    log.warn("Profile Voice lookup failed; using legacy fallback", error);
+    return null;
   }
 }
