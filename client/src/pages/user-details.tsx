@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useLocation } from "wouter";
-import { Bot, Check, Clock, Image, KeyRound, Loader2, LogOut, Mail, MessageSquareText, Monitor, Save, X } from "lucide-react";
+import { Bot, Check, Clock, Image, KeyRound, Loader2, LogOut, Mail, MessageSquareText, Monitor, Save } from "lucide-react";
+import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,6 @@ export default function UserDetailsPage() {
   const { user } = useAuth();
   const logout = useLogout();
   const { toast } = useToast();
-  const [, setLocation] = useLocation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [email, setEmail] = useState(user?.email || "");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -104,18 +103,14 @@ export default function UserDetailsPage() {
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-auto bg-background" data-testid="account-page">
-      <div className="flex items-center justify-end p-2">
-        <Button size="icon" variant="ghost" onClick={() => setLocation("/home")} data-testid="button-close-account" aria-label="Close account">
-          <X className="h-4 w-4" />
-        </Button>
-      </div>
-
-      <div className="space-y-0 px-2 pb-4">
-        <ProfileTreeRow
-          label="Profile photo"
+      <div className="w-full space-y-4 px-2 py-2 md:w-1/3 md:min-w-[22rem]">
+        <ProfileDetailSection title="Profile" defaultOpen testId="account-profile-section">
+          <ProfileTreeRow
+          label="Photo"
           icon={<Image className="h-3.5 w-3.5" />}
           hasValue
           showEmpty
+          mobileLayout="inline"
           testId="account-profile-photo-row"
           expandedContent={(
             <div className="flex min-w-0 flex-wrap items-center gap-4 py-1">
@@ -140,22 +135,21 @@ export default function UserDetailsPage() {
                 type="button"
                 variant="outline"
                 size="sm"
-                className="min-h-11"
                 disabled={uploadPhoto.isPending}
                 onClick={() => fileInputRef.current?.click()}
                 data-testid="button-upload-profile-photo"
               >
                 {uploadPhoto.isPending && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin text-active" />}
-                Upload photo
+                Upload
               </Button>
             </div>
           )}
         >
-          <Avatar className="h-8 w-8 shrink-0">
+          <Avatar className="h-6 w-6 shrink-0">
             {user.avatarObjectPath && (
               <AvatarImage src={user.avatarObjectPath} alt="Profile photo" className="object-cover" />
             )}
-            <AvatarFallback className="text-xs font-semibold">{initials}</AvatarFallback>
+            <AvatarFallback className="text-2xs font-semibold">{initials}</AvatarFallback>
           </Avatar>
         </ProfileTreeRow>
 
@@ -164,51 +158,42 @@ export default function UserDetailsPage() {
           icon={<Mail className="h-3.5 w-3.5" />}
           hasValue
           showEmpty
-          defaultOpen
+          mobileLayout="inline"
           testId="account-email-row"
-          expandedContent={(
-            <div className="max-w-xl space-y-3 py-1">
-              <div className="space-y-1.5">
-                <Label htmlFor="email" className="text-xs">Email address</Label>
-                <Input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} data-testid="input-email" />
-              </div>
-              <Button
-                size="sm"
-                onClick={() => email.trim() && updateProfile.mutate({ email: email.trim() })}
-                disabled={updateProfile.isPending || !email.trim() || email.trim() === user.email}
-                data-testid="button-save-profile"
-              >
-                {updateProfile.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                Save
-              </Button>
-            </div>
-          )}
         >
-          <span className="max-w-48 truncate text-foreground">{user.email}</span>
+          <div className="flex min-w-0 items-center justify-end gap-1">
+            <Input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} data-testid="input-email" />
+            {email.trim() !== user.email && (
+              <Button size="icon" variant="ghost" onClick={() => email.trim() && updateProfile.mutate({ email: email.trim() })} disabled={updateProfile.isPending || !email.trim()} data-testid="button-save-profile" aria-label="Save email">
+                {updateProfile.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              </Button>
+            )}
+          </div>
         </ProfileTreeRow>
+        </ProfileDetailSection>
 
-        <ProfileTreeRow
+        <ProfileDetailSection title="Preferences" defaultOpen testId="account-preferences-section">
+          <DisplayTreeRow />
+          <VoiceCaptionsTreeRow />
+          <MeetingAgentTreeRow />
+          <TimezoneTreeRow />
+        </ProfileDetailSection>
+
+        <ProfileDetailSection title="Security" defaultOpen testId="account-security-section">
+          <ProfileTreeRow
           label="Password"
           icon={<KeyRound className="h-3.5 w-3.5" />}
           hasValue
           showEmpty
+          mobileLayout="inline"
           testId="account-password-row"
           expandedContent={(
-            <div className="max-w-xl space-y-3 py-1">
-              <div className="space-y-1.5">
-                <Label htmlFor="currentPassword" className="text-xs">Current password</Label>
-                <Input id="currentPassword" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} data-testid="input-current-password" />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="newPassword" className="text-xs">New password</Label>
-                <Input id="newPassword" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} data-testid="input-new-password" />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="confirmPassword" className="text-xs">Confirm new password</Label>
-                <Input id="confirmPassword" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} data-testid="input-confirm-password" />
-              </div>
-              <Button size="sm" onClick={handleChangePassword} disabled={changePassword.isPending || !currentPassword || !newPassword || !confirmPassword} data-testid="button-change-password">
-                {changePassword.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            <div className="space-y-2 py-1">
+              <Input id="currentPassword" aria-label="Current password" placeholder="Current password" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} data-testid="input-current-password" />
+              <Input id="newPassword" aria-label="New password" placeholder="New password" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} data-testid="input-new-password" />
+              <Input id="confirmPassword" aria-label="Confirm new password" placeholder="Confirm new password" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} data-testid="input-confirm-password" />
+              <Button size="sm" variant="outline" onClick={handleChangePassword} disabled={changePassword.isPending || !currentPassword || !newPassword || !confirmPassword} data-testid="button-change-password">
+                {changePassword.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
                 Change password
               </Button>
             </div>
@@ -217,31 +202,25 @@ export default function UserDetailsPage() {
           <span className="text-muted-foreground">••••••••</span>
         </ProfileTreeRow>
 
-        <DisplayTreeRow />
-        <VoiceCaptionsTreeRow />
-        <MeetingAgentTreeRow />
-        <TimezoneTreeRow />
-
         <ProfileTreeRow
           label="Log out"
           icon={<LogOut className="h-3.5 w-3.5 text-destructive" />}
           hasValue
           showEmpty
-          actionContent={(
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive hover:text-destructive"
-              onClick={() => logout.mutate()}
-              disabled={logout.isPending}
-              data-testid="button-logout"
-            >
-              {logout.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Log out"}
-            </Button>
-          )}
+          mobileLayout="inline"
         >
-          <span className="text-muted-foreground">End session</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            onClick={() => logout.mutate()}
+            disabled={logout.isPending}
+            data-testid="button-logout"
+          >
+            {logout.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Log out"}
+          </Button>
         </ProfileTreeRow>
+        </ProfileDetailSection>
       </div>
     </div>
   );
@@ -256,6 +235,7 @@ function DisplayTreeRow() {
       icon={<Monitor className="h-3.5 w-3.5" />}
       hasValue
       showEmpty
+      mobileLayout="inline"
       testId="account-display-row"
       expandedContent={(
         <div className="max-w-xl space-y-3 py-1">
@@ -300,6 +280,7 @@ function VoiceCaptionsTreeRow() {
       icon={<MessageSquareText className="h-3.5 w-3.5" />}
       hasValue
       showEmpty
+      mobileLayout="inline"
       testId="account-voice-captions-row"
       actionContent={isLoading ? <Skeleton className="h-6 w-10" /> : (
         <Switch
@@ -351,6 +332,7 @@ function MeetingAgentTreeRow() {
       icon={<Bot className="h-3.5 w-3.5" />}
       hasValue
       showEmpty
+      mobileLayout="inline"
       testId="account-meeting-agent-row"
       expandedContent={(
         <div className="max-w-xl space-y-3 py-1">
@@ -441,6 +423,7 @@ function TimezoneTreeRow() {
       icon={<Clock className="h-3.5 w-3.5" />}
       hasValue
       showEmpty
+      mobileLayout="inline"
       testId="account-timezone-row"
       expandedContent={(
         <div className="max-w-xl space-y-3 py-1">
