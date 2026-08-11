@@ -35,6 +35,13 @@ import {
   tasks,
   projects,
   principles,
+  principleRevisions,
+  subscriptionOAuthTransactions,
+  toolOutputAdmissions,
+  tagsTable,
+  tagAliasesTable,
+  tagAssignmentsTable,
+  tagMigrationsTable,
   persons,
   personMergeAliases,
   simplePeopleSurfaceState,
@@ -68,7 +75,7 @@ import {
   thesisPredictions,
 } from "@shared/schema";
 import { workspaceDocuments, codeEmbeddings } from "@shared/models/memory";
-import { chatSessions, messages } from "@shared/models/chat";
+import { chatSessions, conversationMessages, conversationRevisions, messages } from "@shared/models/chat";
 import { strategies, strategyActors, strategyMoveDefinitions, strategyMoveInstances, strategyAssumptions, strategyEndConditions, strategyContextEntries, strategyArtifacts, strategySimulationRuns, strategyStates, strategyAssumptionLinks, strategyMoveEndConditionEffects, decisions, decisionUpdates, decisionLinks } from "@shared/models/strategy";
 import { skills, skillReferences, skillRuns, skillFailureDismissals } from "@shared/models/skills";
 import { infoNotes, libraryPages, libraryPageLinks, libraryAnnotations, libraryPageViews } from "@shared/models/info";
@@ -82,7 +89,8 @@ import { plaidAccounts, plaidTransactions, plaidSecurities, plaidHoldings, plaid
 import { signalSources, signalItems, scanRuns } from "@shared/models/signal";
 import { execSkills, execExperience, execMetrics, execEducation, execPassions, experienceSkills } from "@shared/models/exec";
 import { opportunities, opportunitySkills, opportunityArtifacts } from "@shared/models/opportunities";
-import { platforms, platformProducts, platformProductEnvironments, environmentBuildLifecycleConfigs, providerConnections, environmentSourceBindings, environmentHostingBindings, environmentRuntimeVariables, environmentCapabilityBindings } from "@shared/models/platforms";
+import { platforms, platformVaultMemberships, platformProducts, platformProductEnvironments, environmentBuildLifecycleConfigs, providerConnections, environmentSourceBindings, environmentHostingBindings, environmentRuntimeVariables, environmentCapabilityBindings } from "@shared/models/platforms";
+import { buildDeploymentHomeProjections, platformDeploymentObservations } from "@shared/models/build-deployments";
 import { promptModules, promptModuleVersions } from "@shared/models/prompt-modules";
 import { systemHooks, systemHookExecutions } from "@shared/models/events";
 import { reflectionEntries } from "@shared/models/health";
@@ -162,7 +170,14 @@ export const TABLE_REGISTRY: TableRegistryEntry[] = [
 
   { key: "tasks", table: tasks, domain: "core", hasSerial: true },
   { key: "projects", table: projects, domain: "core", hasSerial: true },
-  { key: "principles", table: principles, domain: "core", hasSerial: true },
+  { key: "principles", table: principles, domain: "core", hasSerial: false },
+  { key: "principle_revisions", table: principleRevisions, domain: "core", hasSerial: false, dependsOn: ["principles"] },
+  { key: "subscription_oauth_transactions", table: subscriptionOAuthTransactions, domain: "core", hasSerial: false, sensitiveFields: ["codeVerifier"] },
+  { key: "tool_output_admissions", table: toolOutputAdmissions, domain: "core", hasSerial: true },
+  { key: "tags", table: tagsTable, domain: "core", hasSerial: false, dependsOn: ["accounts", "users"] },
+  { key: "tag_aliases", table: tagAliasesTable, domain: "core", hasSerial: false, dependsOn: ["tags", "accounts", "users"] },
+  { key: "tag_assignments", table: tagAssignmentsTable, domain: "core", hasSerial: false, dependsOn: ["tags", "accounts", "users"] },
+  { key: "tag_migrations", table: tagMigrationsTable, domain: "core", hasSerial: false, dependsOn: ["accounts"] },
   { key: "persons", table: persons, domain: "core", hasSerial: false },
   { key: "person_merge_aliases", table: personMergeAliases, domain: "core", hasSerial: false, dependsOn: ["persons"] },
   { key: "person_emails", table: personEmails, domain: "core", hasSerial: false, dependsOn: ["persons"] },
@@ -218,6 +233,7 @@ export const TABLE_REGISTRY: TableRegistryEntry[] = [
   { key: "prompt_module_versions", table: promptModuleVersions, domain: "other", hasSerial: true, dependsOn: ["prompt_modules"] },
 
   { key: "platforms", table: platforms, domain: "other", hasSerial: true },
+  { key: "platform_vault_memberships", table: platformVaultMemberships, domain: "other", hasSerial: true, dependsOn: ["platforms"] },
   { key: "platform_products", table: platformProducts, domain: "other", hasSerial: true, dependsOn: ["platforms"] },
   { key: "platform_product_environments", table: platformProductEnvironments, domain: "other", hasSerial: true, dependsOn: ["platform_products"] },
   { key: "provider_connections", table: providerConnections, domain: "other", hasSerial: true, sensitiveFields: ["encryptedCredential", "credentialIv", "credentialTag"] },
@@ -226,6 +242,8 @@ export const TABLE_REGISTRY: TableRegistryEntry[] = [
   { key: "environment_runtime_variables", table: environmentRuntimeVariables, domain: "other", hasSerial: true, dependsOn: ["platform_product_environments"] },
   { key: "environment_capability_bindings", table: environmentCapabilityBindings, domain: "other", hasSerial: true, dependsOn: ["platform_product_environments", "provider_connections"] },
   { key: "environment_build_lifecycle_configs", table: environmentBuildLifecycleConfigs, domain: "other", hasSerial: true, dependsOn: ["platform_product_environments"] },
+  { key: "platform_deployment_observations", table: platformDeploymentObservations, domain: "other", hasSerial: false, dependsOn: ["platform_product_environments"] },
+  { key: "build_deployment_home_projections", table: buildDeploymentHomeProjections, domain: "other", hasSerial: false, dependsOn: ["platform_deployment_observations", "platform_product_environments"] },
 
   { key: "exec_skills", table: execSkills, domain: "other", hasSerial: true },
   { key: "exec_experience", table: execExperience, domain: "other", hasSerial: true },
@@ -262,6 +280,8 @@ export const TABLE_REGISTRY: TableRegistryEntry[] = [
   { key: "code_embeddings", table: codeEmbeddings, domain: "memory", hasSerial: true },
 
   { key: "sessions", table: chatSessions, domain: "chat", hasSerial: true },
+  { key: "conversation_messages", table: conversationMessages, domain: "chat", hasSerial: true, dependsOn: ["sessions"] },
+  { key: "conversation_revisions", table: conversationRevisions, domain: "chat", hasSerial: true, dependsOn: ["sessions"] },
   { key: "session_tree", table: sessionTree, domain: "chat", hasSerial: true, dependsOn: ["sessions"] },
   { key: "session_output_buffer", table: sessionOutputBuffer, domain: "chat", hasSerial: true, dependsOn: ["sessions"] },
   { key: "session_artifacts", table: sessionArtifacts, domain: "chat", hasSerial: true, dependsOn: ["sessions"] },
