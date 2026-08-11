@@ -347,11 +347,16 @@ async function resolveSelfIdentity(): Promise<string> {
   return identity.join("\n\n");
 }
 
-async function resolveSelfVoice(): Promise<string> {
-  const root = await personaStorage.getSystemSeedByName("Root");
-  if (!root?.promptOverlay) {
-    throw new Error("Canonical Root is missing its prompt overlay");
+async function resolveSelfVoice(request: ContextRequest): Promise<string> {
+  const session = request.sessionId ? await chatFileStorage.getSession(request.sessionId) : null;
+  if (session?.rootRevisionId) {
+    const revision = await personaStorage.getRevision(session.rootRevisionId);
+    const promptOverlay = (revision?.payload as { promptOverlay?: unknown } | undefined)?.promptOverlay;
+    if (typeof promptOverlay === "string" && promptOverlay.trim()) return promptOverlay;
+    throw new Error(`Pinned Root revision ${session.rootRevisionId} is unavailable or invalid`);
   }
+  const root = await personaStorage.getSystemSeedByName("Root");
+  if (!root?.promptOverlay) throw new Error("Canonical Root is missing its prompt overlay");
   return root.promptOverlay;
 }
 

@@ -545,7 +545,7 @@ class PersonaStorageClass {
     this._cache.invalidateAll();
   }
 
-  private async getRevision(id: string) {
+  async getRevision(id: string) {
     const principal = requireCurrentUserPrincipal();
     const [revision] = await db.select().from(personaRevisions).where(and(
       eq(personaRevisions.id, id),
@@ -923,7 +923,9 @@ class PersonaStorageClass {
     const template = (await this.platformTemplates()).find((persona) => persona.id === id);
     if (!template) return null;
     const payload = { ...revisionPayload(template), ...input } as PersonaRevisionPayload;
-    const rows = await db.select({ updateState: personas.updateState }).from(personas).where(eq(personas.templatePersonaId, id));
+    const rows = template.isSystem
+      ? []
+      : await db.select({ updateState: personas.updateState }).from(personas).where(eq(personas.templatePersonaId, id));
     return { template, payload, changedFields: changedFields(revisionPayload(template), payload), impact: { advancing: rows.filter((row) => row.updateState === "following").length, updateAvailable: rows.filter((row) => row.updateState !== "following").length } };
   }
 
@@ -948,8 +950,10 @@ class PersonaStorageClass {
       const revision = this.revisionValues(effective, { scope: "platform", parentRevisionId: current.currentRevisionId, changeSummary: changeSummary.trim() });
       await tx.insert(personaRevisions).values(revision);
       await tx.update(personas).set({ ...preview.payload, currentRevisionId: revision.id, baseRevisionId: revision.id, updateState: "following", updatedAt: new Date(), updatedByUserId: principal.userId }).where(eq(personas.id, id));
-      await tx.update(personas).set({ baseRevisionId: revision.id, currentRevisionId: revision.id, updateState: "following", ...preview.payload, updatedAt: new Date() }).where(and(eq(personas.templatePersonaId, id), eq(personas.updateState, "following")));
-      await tx.update(personas).set({ updateState: "update_available" }).where(and(eq(personas.templatePersonaId, id), sql`${personas.updateState} <> 'following'`));
+      if (!current.isSystem) {
+        await tx.update(personas).set({ baseRevisionId: revision.id, currentRevisionId: revision.id, updateState: "following", ...preview.payload, updatedAt: new Date() }).where(and(eq(personas.templatePersonaId, id), eq(personas.updateState, "following")));
+        await tx.update(personas).set({ updateState: "update_available" }).where(and(eq(personas.templatePersonaId, id), sql`${personas.updateState} <> 'following'`));
+      }
       this.invalidateCache();
       log.info("Platform Persona revision published", { personaId: id, revisionId: revision.id, actorUserId: principal.userId, parentRevisionId: current.currentRevisionId, contentHash: revision.contentHash, changeSummary: changeSummary.trim() });
       return { ...effective, currentRevisionId: revision.id, baseRevisionId: revision.id, updateState: "following" };

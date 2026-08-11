@@ -1,6 +1,6 @@
 import { createLogger } from "./log";
 import { chatFileStorage } from "./chat-file-storage";
-import { personaStorage, type PersonaEntry } from "./file-storage/persona-storage";
+import { personaStorage, type PersonaEntry, type PersonaRevisionPayload } from "./file-storage/persona-storage";
 import type { PersonaSnapshot } from "@shared/models/chat";
 
 const log = createLogger("SessionPersona");
@@ -21,6 +21,13 @@ export async function resolveSessionPersona(
     const session = await chatFileStorage.getSession(sessionId);
     if (session?.personaId) {
       const persona = await personaStorage.get(session.personaId);
+      if (persona && session.selectedPersonaRevisionId) {
+        const revision = await personaStorage.getRevision(session.selectedPersonaRevisionId);
+        if (!revision || revision.personaIdentityId !== persona.id) {
+          throw new Error(`Session ${sessionId} has invalid selected Persona revision provenance`);
+        }
+        return { ...persona, ...(revision.payload as PersonaRevisionPayload), currentRevisionId: revision.id };
+      }
       if (persona) return persona;
       log.warn(`session=${sessionId} references missing personaId=${session.personaId}; using compatibility fallback`);
     }

@@ -1097,6 +1097,10 @@ export interface ChatSession {
   modelTier: SessionModelTierOverride | null;
   /** Current persona for this session. Conversational authority is session-scoped. */
   personaId?: number | null;
+  /** Immutable Root revision used by this session. Absent means legacy provenance is unknown. */
+  rootRevisionId?: string;
+  /** Immutable selectable Persona revision used by this session. Absent means legacy provenance is unknown. */
+  selectedPersonaRevisionId?: string;
   /** True when the user manually pinned the persona from the UI. When true, the agent must not auto-switch personas for this session. Absent/false means Auto (agent owns persona selection). */
   personaPinnedByUser?: boolean;
   createdAt: string;
