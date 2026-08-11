@@ -229,7 +229,7 @@ function ExternalOpenLink({
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
       aria-label={label}
       title={label}
       onClick={(event) => event.stopPropagation()}
