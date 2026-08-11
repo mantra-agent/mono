@@ -2,7 +2,7 @@ import { db } from "../db";
 import { personas, personaRevisions } from "@shared/models/cognition";
 import { createHash, randomUUID } from "node:crypto";
 import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
-import { eq, and, inArray, sql } from "drizzle-orm";
+import { eq, and, inArray, or, sql } from "drizzle-orm";
 import { TTLCache } from "../utils/ttl-cache";
 import { createLogger } from "../log";
 import { isUniqueViolationError, getPostgresConstraintName } from "../postgres-errors";
@@ -105,6 +105,7 @@ const PERSONA_SEMANTIC_TIERS: Record<string, SemanticTier> = {
   Persuader: "high",
   Default: "balanced",
   Router: "fast",
+  "Root Persona": "balanced",
 };
 
 function semanticTierForPersona(name: string): SemanticTier {
@@ -139,6 +140,39 @@ function routingExamplesForPersona(name: string): string[] {
 }
 
 const SEED_PERSONAS = [
+  {
+    name: "Root Persona",
+    description: "Mantra's shared communication foundation. Always composed beneath the active persona.",
+    icon: "Bot",
+    promptOverlay: [
+      "You are Mantra. This Root Persona is always active; the Active Persona layers task-specific behavior on top of it.",
+      "",
+      "A sharp, warm, unusually capable friend. Direct, perceptive, useful, occasionally funny. Never performative.",
+      "",
+      "Act with intention. Know what each response is trying to accomplish. Don’t announce the agenda unless naming it helps the user decide or move.",
+      "",
+      "Answer the practical question first. Style should sharpen the answer, never delay it.",
+      "",
+      "For requests that require tool use or extended reasoning, immediately send one brief, substantive acknowledgment before beginning the work. Skip this for simple questions. Never add filler or narrate obvious steps.",
+      "",
+      "Don’t turn every answer into a memorable line. Use aphorisms only when they compress real insight.",
+      "",
+      "Adapt voice to the task: practical tasks should be crisp and literal; strategic questions should be opinionated and framing-aware; emotional moments should be warm, spacious, and human; creative work can be bolder, stranger, and more musical.",
+      "",
+      "Common failures to avoid: over-polish, over-framing, announcing intent, sounding like a founder podcast, adding structure when the user asked for a judgment, and being clever before being useful.",
+      "",
+      "Core line: Have intent. Don’t perform intentionality.",
+      "",
+      "Default to concise replies. Think silently, then answer with the conclusion. Avoid stream-of-consciousness, unnecessary caveats, long setup, and exhaustive lists unless the user explicitly asks for a deep dive. Prefer 1–3 short ideas or a compact bullet list. Density over completeness. No yapping.",
+    ].join("\n"),
+    expressionTags: [] as string[],
+    cognitiveOverrides: {},
+    isDefault: false,
+    isActive: false,
+    isSystem: true,
+    sortOrder: -2,
+    source: "seed" as const,
+  },
   {
     name: "Default",
     description:
@@ -874,7 +908,14 @@ class PersonaStorageClass {
   async platformTemplates(): Promise<PersonaEntry[]> {
     const principal = requireCurrentUserPrincipal();
     if (!principalHasPermission(principal, "system:write")) throw new Error("system:write permission required");
-    const rows = await db.select().from(personas).where(and(eq(personas.scope, "global"), eq(personas.source, "seed"), eq(personas.isSystem, false))).orderBy(personas.sortOrder);
+    const rows = await db.select().from(personas).where(and(
+      eq(personas.scope, "global"),
+      eq(personas.source, "seed"),
+      or(
+        eq(personas.isSystem, false),
+        sql`LOWER(${personas.name}) = 'root persona'`,
+      ),
+    )).orderBy(personas.sortOrder);
     return rows.map(rowToEntry);
   }
 
@@ -893,7 +934,15 @@ class PersonaStorageClass {
     const principal = requireCurrentUserPrincipal();
     return db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(7101, ${id})`);
-      const [current] = await tx.select().from(personas).where(and(eq(personas.id, id), eq(personas.scope, "global"), eq(personas.source, "seed"), eq(personas.isSystem, false))).limit(1);
+      const [current] = await tx.select().from(personas).where(and(
+        eq(personas.id, id),
+        eq(personas.scope, "global"),
+        eq(personas.source, "seed"),
+        or(
+          eq(personas.isSystem, false),
+          sql`LOWER(${personas.name}) = 'root persona'`,
+        ),
+      )).limit(1);
       if (!current) return null;
       const effective = { ...rowToEntry(current), ...preview.payload } as PersonaEntry;
       const revision = this.revisionValues(effective, { scope: "platform", parentRevisionId: current.currentRevisionId, changeSummary: changeSummary.trim() });

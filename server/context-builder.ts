@@ -42,7 +42,6 @@ import { withTimeout, isTimeoutError, SECTION_RESOLVE_TIMEOUT_MS } from "./timeo
 import { createLogger } from "./log";
 import { requireCurrentPrincipal } from "./principal-context";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
-import { ROOT_PERSONA } from "./root-persona";
 import { eventBus } from "./event-bus";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { libraryPageIsLive } from "./library-trash";
@@ -349,7 +348,11 @@ async function resolveSelfIdentity(): Promise<string> {
 }
 
 async function resolveSelfVoice(): Promise<string> {
-  return ROOT_PERSONA;
+  const root = await personaStorage.getSystemSeedByName("Root Persona");
+  if (!root?.promptOverlay) {
+    throw new Error("Canonical Root Persona is missing its prompt overlay");
+  }
+  return root.promptOverlay;
 }
 
 async function resolveEmotionalExpression(request: ContextRequest): Promise<string> {
