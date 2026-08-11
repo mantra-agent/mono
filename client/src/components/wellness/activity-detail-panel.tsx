@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { getWellnessWindowAdherence, getWellnessWindowBounds, getWellnessWindowValue } from "@shared/wellness-window";
+import { getWellnessWindowAdherence } from "@shared/wellness-window";
 import { Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ActivityTrends } from "@shared/models/health";
@@ -40,55 +40,47 @@ function formatMetricValue(value: number, metricType?: string | null): string {
 
 function HeartbeatHistory({ logs, category, windowStart, windowEnd }: Omit<ActivityDetailPanelProps, "activityId" | "metricInfo"> & { logs: WellnessLogEntry[] }) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const bounds = getWellnessWindowBounds(category);
-  const points = useMemo(() => logs.slice(0, 30).reverse().map((entry, index, entries) => {
-    const completedAt = new Date(entry.completedAt);
-    const value = getWellnessWindowValue(category, completedAt, timezone) ?? bounds?.min ?? 0;
-    const adherence = getWellnessWindowAdherence(category, windowStart, windowEnd, completedAt, timezone);
-    const range = Math.max(1, (bounds?.max ?? 1) - (bounds?.min ?? 0));
-    return {
-      entry,
-      x: entries.length === 1 ? 50 : 4 + (index / (entries.length - 1)) * 92,
-      y: 88 - ((value - (bounds?.min ?? 0)) / range) * 72,
-      adherence,
-    };
-  }), [logs, category, timezone, bounds?.min, bounds?.max, windowStart, windowEnd]);
+  const events = useMemo(() => {
+    const entries = logs.slice(0, 30).reverse();
+    const timestamps = entries.map((entry) => new Date(entry.completedAt).getTime());
+    const firstTimestamp = timestamps[0] ?? 0;
+    const lastTimestamp = timestamps[timestamps.length - 1] ?? firstTimestamp;
+    const elapsed = Math.max(1, lastTimestamp - firstTimestamp);
 
-  if (!bounds || points.length === 0) {
+    return entries.map((entry, index) => ({
+      entry,
+      x: entries.length === 1 ? 50 : 5 + ((timestamps[index] - firstTimestamp) / elapsed) * 90,
+      adherence: getWellnessWindowAdherence(category, windowStart, windowEnd, new Date(entry.completedAt), timezone),
+    }));
+  }, [logs, category, windowStart, windowEnd, timezone]);
+
+  if (events.length === 0) {
     return <p className="px-2 py-1.5 text-sm text-muted-foreground">No completions yet.</p>;
   }
 
-  const windowY = (value: number) => 88 - ((value - bounds.min) / Math.max(1, bounds.max - bounds.min)) * 72;
-  const startY = windowStart == null ? 16 : windowY(windowStart);
-  const endY = windowEnd == null ? 88 : windowY(windowEnd);
-  const bandTop = Math.min(startY, endY);
-  const bandHeight = Math.max(2, Math.abs(endY - startY));
-  const path = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} 52 L ${point.x - 1.2} 52 L ${point.x} ${point.y} L ${point.x + 1.2} 52`).join(" ");
-
   return (
     <div className="space-y-2">
-      <svg viewBox="0 0 100 100" className="h-40 w-full" role="img" aria-label="Activity completion heartbeat plotted against the ideal window">
-        <rect x="3" y={bandTop} width="94" height={bandHeight} rx="1" className="fill-muted/40" />
-        <line x1="3" y1="52" x2="97" y2="52" className="stroke-border" strokeWidth="0.5" />
-        <path d={path} fill="none" className="stroke-muted-foreground/30" strokeWidth="0.7" />
-        {points.map(({ entry, x, y, adherence }) => (
-          <line
+      <svg viewBox="0 0 100 52" className="h-40 w-full overflow-visible" role="img" aria-label="Activity completion timeline; each heartbeat blip marks when the activity was completed">
+        <line x1="3" y1="29" x2="97" y2="29" className="stroke-border" strokeWidth="0.6" />
+        {events.map(({ entry, x, adherence }) => (
+          <path
             key={entry.id}
-            x1={x}
-            y1="52"
-            x2={x}
-            y2={y}
-            className="stroke-white"
-            strokeWidth="1.5"
-            style={{ opacity: adherence / 100 }}
+            d={`M ${Math.max(3, x - 3.5)} 29 L ${x - 2.1} 29 L ${x - 1.35} 25 L ${x - 0.55} 34 L ${x + 0.45} 15 L ${x + 1.15} 32 L ${x + 2.05} 27 L ${Math.min(97, x + 3.5)} 29`}
+            fill="none"
+            className="stroke-foreground"
+            strokeWidth="1.15"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{ opacity: Math.max(0.12, adherence / 100) }}
           >
             <title>{`${new Date(entry.completedAt).toLocaleString()} · ${adherence}% on track`}</title>
-          </line>
+          </path>
         ))}
       </svg>
       <div className="flex justify-between text-xs text-muted-foreground">
-        <span>{points.length} recent completion{points.length === 1 ? "" : "s"}</span>
-        <span>White = inside ideal window</span>
+        <span>{new Date(events[0].entry.completedAt).toLocaleDateString()}</span>
+        <span>Each blip is one completion</span>
+        <span>{new Date(events[events.length - 1].entry.completedAt).toLocaleDateString()}</span>
       </div>
     </div>
   );
