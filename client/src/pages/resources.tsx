@@ -383,6 +383,14 @@ function sortChatMetrics<T extends { name: string }>(metrics: T[]): T[] {
   });
 }
 
+function chatMetricDefinition(name: string): string {
+  if (name === "submit_to_ack") return "Send → server acceptance";
+  if (name === "submit_to_first_progress") return "Send → first visible thinking, tool use, or assistant text";
+  if (name === "submit_to_first_token") return "Send → first visible assistant text";
+  if (name === "submit_to_complete") return "Send → completed assistant turn";
+  return "Browser-observed chat latency";
+}
+
 function formatNavigationDiagnosis(value: string): string {
   return value.replace(/_/g, " ");
 }
@@ -943,6 +951,8 @@ function ResourcesView({
                           detail={(
                             <DetailList
                               items={[
+                                chatMetricDefinition(metric.name),
+                                `Browser-observed Chat telemetry · ${frontendExperience.windowHours}h window`,
                                 `Ordinary experience (mean of best 95%) vs target ${formatFrontendMetricValue(metric.kind, metric.name, budget)}`,
                                 metric.count < 20
                                   ? `n=${metric.count} · fewer than 20 samples; no slow samples trimmed`
@@ -1134,42 +1144,6 @@ function ResourcesView({
                         testId="tile-context-population"
                       />
                       <MetricRow
-                        label="First progress"
-                        value={formatMs(contextHealth.upperTrimmedMean95TtfpMs)}
-                        status={contextHealth.ttfpSampleCount === 0
-                          ? "unknown"
-                          : againstTarget(contextHealth.upperTrimmedMean95TtfpMs, contextHealth.budgets.providerTtfpP95Ms)}
-                        detail={(
-                          <DetailList
-                            items={[
-                              "Provider request → first progress (thinking/text/tool)",
-                              `Ordinary experience (mean of best 95%) vs target ${formatMs(contextHealth.budgets.providerTtfpP95Ms)}`,
-                              `avg ${formatMs(contextHealth.avgTtfpMs)} · p95 ${formatMs(contextHealth.p95TtfpMs)} · n=${contextHealth.ttfpSampleCount}`,
-                              "Supporting diagnostic — does not gate Context section status.",
-                            ]}
-                          />
-                        )}
-                        testId="tile-context-ttfp"
-                      />
-                      <MetricRow
-                        label="First text"
-                        value={formatMs(contextHealth.upperTrimmedMean95TtftMs)}
-                        status={contextHealth.ttftSampleCount === 0
-                          ? "unknown"
-                          : againstTarget(contextHealth.upperTrimmedMean95TtftMs, contextHealth.budgets.providerTtftP95Ms)}
-                        detail={(
-                          <DetailList
-                            items={[
-                              "Provider request → first visible text",
-                              `Ordinary experience (mean of best 95%) vs target ${formatMs(contextHealth.budgets.providerTtftP95Ms)}`,
-                              `avg ${formatMs(contextHealth.avgTtftMs)} · p95 ${formatMs(contextHealth.p95TtftMs)} · n=${contextHealth.ttftSampleCount}`,
-                              "Supporting diagnostic — does not gate Context section status.",
-                            ]}
-                          />
-                        )}
-                        testId="tile-context-ttft"
-                      />
-                      <MetricRow
                         label="Tokens"
                         value={formatTokens(contextHealth.medianContextTokens)}
                         detail={(
@@ -1233,7 +1207,7 @@ function ResourcesView({
                             items={contextHealth.byModel.length
                               ? [
                                 contextHealth.measurementContract.modelRows,
-                                ...contextHealth.byModel.map(item => `${item.provider} · ${item.model} · ${item.tier} · ${formatUsageSemantics(item.usageSemantics)} · window ${item.contextWindowStatus === "known" ? formatTokens(item.contextWindow) : "unknown"} · rows ${item.callCount} (${item.comparableCallCount} comparable, ${item.excludedCallCount} excluded)${item.exclusionReasons.length ? ` · excluded: ${item.exclusionReasons.map(reason => `${formatExclusionReason(reason.reason)} ${reason.count}`).join(", ")}` : ""} · p95 context ${formatTokens(item.p95ContextTokens)} · max ${formatTokens(item.maxContextTokens)} · avg TTFT ${formatMs(item.avgTtftMs)}`),
+                                ...contextHealth.byModel.map(item => `${item.provider} · ${item.model} · ${item.tier} · ${formatUsageSemantics(item.usageSemantics)} · window ${item.contextWindowStatus === "known" ? formatTokens(item.contextWindow) : "unknown"} · rows ${item.callCount} (${item.comparableCallCount} comparable, ${item.excludedCallCount} excluded)${item.exclusionReasons.length ? ` · excluded: ${item.exclusionReasons.map(reason => `${formatExclusionReason(reason.reason)} ${reason.count}`).join(", ")}` : ""} · p95 context ${formatTokens(item.p95ContextTokens)} · max ${formatTokens(item.maxContextTokens)}`),
                               ]
                               : ["No model calls in this window."]}
                           />
