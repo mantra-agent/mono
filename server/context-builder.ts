@@ -41,7 +41,7 @@ import { getSkillDefinitionsForContext, getToolSchemas, getToolCatalog, filterTo
 import { withTimeout, isTimeoutError, SECTION_RESOLVE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
 import { requireCurrentPrincipal } from "./principal-context";
-import { resolveCurrentProfileIdentity } from "./profile-identity";
+import { resolveCurrentProfileIdentity, resolveCurrentProfileVoiceNote } from "./profile-identity";
 import { eventBus } from "./event-bus";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { libraryPageIsLive } from "./library-trash";
@@ -153,6 +153,7 @@ const INVALIDATION_EVENT_MAP: Record<string, string[]> = {
   ],
   "data:profiles_changed": [
     "world_model.people.self.identity",
+    "world_model.people.self.voice",
     "world_model.people.partner.identity",
   ],
   "data:principles_changed": ["world_model.people.self.principles"],
@@ -352,6 +353,9 @@ const CONCISE_RESPONSE_VOICE_INSTRUCTION = [
 ].join("\n");
 
 async function resolveSelfVoice(): Promise<string> {
+  const profileVoice = await resolveCurrentProfileVoiceNote();
+  if (profileVoice) return `${profileVoice}\n\n${CONCISE_RESPONSE_VOICE_INSTRUCTION}`;
+
   try {
     const selfPerson = await findPersonByRole("self");
     if (selfPerson?.notes) {
