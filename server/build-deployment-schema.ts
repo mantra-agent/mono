@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-const MIGRATION_LOCK_KEY = "build-deployment-home-schema-v3";
+const MIGRATION_LOCK_KEY = "build-deployment-home-schema-v4";
 
 /** Additive, replay-safe schema convergence for Build deployment observations. */
 export async function ensureBuildDeploymentSchema(pool: Pool): Promise<void> {
@@ -20,7 +20,9 @@ export async function ensureBuildDeploymentSchema(pool: Pool): Promise<void> {
         product_name TEXT NOT NULL,
         environment_name TEXT NOT NULL,
         commit_sha TEXT,
+        started_at TIMESTAMPTZ,
         deployed_at TIMESTAMPTZ NOT NULL,
+        duration_ms INTEGER,
         observed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         scope TEXT NOT NULL DEFAULT 'user',
         owner_user_id TEXT NOT NULL,
@@ -38,6 +40,26 @@ export async function ensureBuildDeploymentSchema(pool: Pool): Promise<void> {
         CONSTRAINT platform_deployment_observations_commit_check CHECK (
           commit_sha IS NULL OR char_length(commit_sha) BETWEEN 1 AND 200
         )
+      )
+    `);
+    await client.query(`
+      ALTER TABLE platform_deployment_observations
+      ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ
+    `);
+    await client.query(`
+      ALTER TABLE platform_deployment_observations
+      ADD COLUMN IF NOT EXISTS duration_ms INTEGER
+    `);
+    await client.query(`
+      ALTER TABLE platform_deployment_observations
+      DROP CONSTRAINT IF EXISTS platform_deployment_observations_timing_check
+    `);
+    await client.query(`
+      ALTER TABLE platform_deployment_observations
+      ADD CONSTRAINT platform_deployment_observations_timing_check CHECK (
+        (started_at IS NULL AND duration_ms IS NULL)
+        OR (started_at IS NOT NULL AND duration_ms IS NOT NULL
+          AND duration_ms >= 0 AND deployed_at >= started_at)
       )
     `);
     // Migration 0116 left a global unique on (provider, provider_deployment_id).

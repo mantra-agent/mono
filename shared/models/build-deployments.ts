@@ -29,7 +29,9 @@ export const platformDeploymentObservations = pgTable(
     productName: text("product_name").notNull(),
     environmentName: text("environment_name").notNull(),
     commitSha: text("commit_sha"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
     deployedAt: timestamp("deployed_at", { withTimezone: true }).notNull(),
+    durationMs: integer("duration_ms"),
     observedAt: timestamp("observed_at", { withTimezone: true }).notNull().defaultNow(),
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id").notNull(),
@@ -64,6 +66,12 @@ export const platformDeploymentObservations = pgTable(
     check(
       "platform_deployment_observations_commit_check",
       sql`${table.commitSha} IS NULL OR char_length(${table.commitSha}) BETWEEN 1 AND 200`,
+    ),
+    check(
+      "platform_deployment_observations_timing_check",
+      sql`(${table.startedAt} IS NULL AND ${table.durationMs} IS NULL)
+        OR (${table.startedAt} IS NOT NULL AND ${table.durationMs} IS NOT NULL
+          AND ${table.durationMs} >= 0 AND ${table.deployedAt} >= ${table.startedAt})`,
     ),
   ],
 );
@@ -119,3 +127,27 @@ export const buildDeploymentHomeProjections = pgTable(
 
 export type PlatformDeploymentObservation = typeof platformDeploymentObservations.$inferSelect;
 export type BuildDeploymentHomeProjection = typeof buildDeploymentHomeProjections.$inferSelect;
+
+export interface BuildDeploymentTimingSample {
+  observationId: string;
+  durationMs: number;
+  startedAt: string;
+  deployedAt: string;
+  commitSha: string | null;
+}
+
+export interface BuildDeploymentTimingEnvironment {
+  platformEnvironmentId: number;
+  platformName: string;
+  productName: string;
+  environmentName: string;
+  sampleCount: number;
+  latestDurationMs: number;
+  medianDurationMs: number;
+  samples: BuildDeploymentTimingSample[];
+}
+
+export interface BuildDeploymentTimingSummary {
+  generatedAt: string;
+  environments: BuildDeploymentTimingEnvironment[];
+}

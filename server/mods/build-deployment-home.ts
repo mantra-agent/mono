@@ -1,4 +1,8 @@
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull } from "drizzle-orm";
+import type {
+  BuildDeploymentTimingEnvironment,
+  BuildDeploymentTimingSummary,
+} from "@shared/models/build-deployments";
 import {
   buildDeploymentHomeProjections,
   environmentPromotionReleases,
@@ -34,10 +38,15 @@ const projectionScope: ScopeColumns = {
 
 const MAX_DEPLOYMENTS_PER_OBSERVATION = 20;
 const MAX_HOME_DEPLOYMENT_ITEMS = 100;
+const MAX_TIMING_ROWS = 100;
+const MAX_TIMING_SAMPLES_PER_ENVIRONMENT = 20;
+const TIMING_WINDOW_DAYS = 30;
 
 export interface SuccessfulRailwayDeploymentObservation {
   providerDeploymentId: string;
   deployedAt: Date;
+  startedAt: Date | null;
+  durationMs: number | null;
   commitSha: string | null;
 }
 
@@ -181,7 +190,18 @@ export async function recordSuccessfulRailwayDeployments(
     const providerDeploymentId = boundedText(deployment.providerDeploymentId, 200);
     const commitSha = deployment.commitSha ? boundedText(deployment.commitSha, 200) : null;
     if (!providerDeploymentId || Number.isNaN(deployment.deployedAt.getTime())) return [];
-    return [{ providerDeploymentId, commitSha, deployedAt: deployment.deployedAt }];
+    const timingIsValid = deployment.startedAt
+      && !Number.isNaN(deployment.startedAt.getTime())
+      && deployment.startedAt <= deployment.deployedAt
+      && Number.isInteger(deployment.durationMs)
+      && deployment.durationMs! >= 0;
+    return [{
+      providerDeploymentId,
+      commitSha,
+      deployedAt: deployment.deployedAt,
+      startedAt: timingIsValid ? deployment.startedAt : null,
+      durationMs: timingIsValid ? deployment.durationMs : null,
+    }];
   });
   if (canonicalDeployments.length === 0) {
     return { observationsCreated: 0, projectionsCreated: 0, completions: [] };
@@ -212,7 +232,9 @@ export async function recordSuccessfulRailwayDeployments(
           productName,
           environmentName,
           commitSha: deployment.commitSha,
+          startedAt: deployment.startedAt,
           deployedAt: deployment.deployedAt,
+          durationMs: deployment.durationMs,
           ...ownedInsertValues(principal, observationScope),
           createdByUserId: owner.userId,
         })
@@ -403,6 +425,83 @@ export async function listBuildDeploymentHomeItems(
       }),
     };
   });
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? Math.round((sorted[middle - 1] + sorted[middle]) / 2)
+    : sorted[middle];
+}
+
+/** Bounded database-only Performance projection; never probes Railway. */
+export async function getBuildDeploymentTimingSummary(
+  principal: Principal,
+): Promise<BuildDeploymentTimingSummary> {
+  requireOwner(principal);
+  if (!(await hasActiveBuildAccess(principal))) {
+    return { generatedAt: new Date().toISOString(), environments: [] };
+  }
+
+  const cutoff = new Date(Date.now() - TIMING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const rows = await db
+    .select({
+      observationId: platformDeploymentObservations.id,
+      platformEnvironmentId: platformDeploymentObservations.platformEnvironmentId,
+      platformName: platformDeploymentObservations.platformName,
+      productName: platformDeploymentObservations.productName,
+      environmentName: platformDeploymentObservations.environmentName,
+      commitSha: platformDeploymentObservations.commitSha,
+      startedAt: platformDeploymentObservations.startedAt,
+      deployedAt: platformDeploymentObservations.deployedAt,
+      durationMs: platformDeploymentObservations.durationMs,
+    })
+    .from(platformDeploymentObservations)
+    .where(combineWithVisibleScope(
+      principal,
+      observationScope,
+      and(
+        eq(platformDeploymentObservations.deploymentState, "SUCCESS"),
+        gte(platformDeploymentObservations.deployedAt, cutoff),
+      ),
+    ))
+    .orderBy(desc(platformDeploymentObservations.deployedAt))
+    .limit(MAX_TIMING_ROWS);
+
+  const grouped = new Map<number, BuildDeploymentTimingEnvironment>();
+  for (const row of rows) {
+    if (!row.startedAt || row.durationMs === null || row.durationMs < 0) continue;
+    let environment = grouped.get(row.platformEnvironmentId);
+    if (!environment) {
+      environment = {
+        platformEnvironmentId: row.platformEnvironmentId,
+        platformName: row.platformName,
+        productName: row.productName,
+        environmentName: row.environmentName,
+        sampleCount: 0,
+        latestDurationMs: row.durationMs,
+        medianDurationMs: row.durationMs,
+        samples: [],
+      };
+      grouped.set(row.platformEnvironmentId, environment);
+    }
+    if (environment.samples.length >= MAX_TIMING_SAMPLES_PER_ENVIRONMENT) continue;
+    environment.samples.push({
+      observationId: row.observationId,
+      durationMs: row.durationMs,
+      startedAt: row.startedAt.toISOString(),
+      deployedAt: row.deployedAt.toISOString(),
+      commitSha: row.commitSha,
+    });
+  }
+
+  const environments = Array.from(grouped.values()).map((environment) => ({
+    ...environment,
+    sampleCount: environment.samples.length,
+    medianDurationMs: median(environment.samples.map((sample) => sample.durationMs)),
+  }));
+  return { generatedAt: new Date().toISOString(), environments };
 }
 
 /** Durable dismissal preserves both provider evidence and projection history. */

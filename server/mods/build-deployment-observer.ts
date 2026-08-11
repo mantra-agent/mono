@@ -148,12 +148,18 @@ async function observeEnvironment(
     if (deployment.status !== "SUCCESS") return [];
     const deployedAtValue = deployment.updatedAt ?? deployment.createdAt;
     const deployedAt = deployedAtValue ? new Date(deployedAtValue) : null;
+    const startedAt = deployment.createdAt ? new Date(deployment.createdAt) : null;
     if (!deployment.id?.trim() || !deployedAt || Number.isNaN(deployedAt.getTime())) return [];
+    const validStartedAt = startedAt && !Number.isNaN(startedAt.getTime()) && startedAt <= deployedAt
+      ? startedAt
+      : null;
     const meta = extractDeploymentMeta(deployment.meta);
     const commitSha = meta.commitHash?.trim() || null;
     return [{
       providerDeploymentId: deployment.id.trim(),
       deployedAt,
+      startedAt: validStartedAt,
+      durationMs: validStartedAt ? deployedAt.getTime() - validStartedAt.getTime() : null,
       commitSha,
     }];
   });
