@@ -76,7 +76,7 @@ export function BoxSection({ vaultId }: { vaultId?: string }) {
       ))}
       <HierarchyTreeRow
         leading={<Box className="h-3.5 w-3.5 text-muted-foreground" />}
-        label={status.data?.oauthConfigured ? "Connect Box" : "Add Box credentials to connect"}
+        label={status.data?.oauthConfigured ? "Connect Box" : "Box connection unavailable"}
         trailing={
           <button
             type="button"
