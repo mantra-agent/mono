@@ -1463,7 +1463,7 @@ export async function registerIntegrationsRoutes(app: Express) {
   });
 
   // ---------------------------------------------------------------------------
-  // Twilio + Deepgram (phone agent)
+  // Twilio + ElevenLabs (phone agent)
   // ---------------------------------------------------------------------------
 
   const twilioStatus = async (req: any) => {
@@ -1475,6 +1475,10 @@ export async function registerIntegrationsRoutes(app: Express) {
       : { connected: false, ownedNumbers: [], configuredNumberOwned: false };
     const runtime = await getRuntimeIdentity();
     const callbackBase = await getRuntimePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
+    if (test.connected && test.configuredNumberOwned && config.phoneNumber) {
+      const { bindConfiguredTwilioNumber } = await import("../phone/storage");
+      await bindConfiguredTwilioNumber(req.principal, config.phoneNumber);
+    }
     return {
       ...test,
       hasAccountSid: config.hasAccountSid,
@@ -1482,7 +1486,7 @@ export async function registerIntegrationsRoutes(app: Express) {
       hasPhoneNumber: config.hasPhoneNumber,
       configuredPhoneNumber: config.phoneNumber,
       voiceWebhookUrl: `${callbackBase}/api/webhooks/twilio/voice`,
-      mediaStreamUrl: `${callbackBase.replace(/^http/, "ws")}/api/webhooks/twilio/media`,
+      voiceProvider: "ElevenLabs register-call",
       runtimeEnvironment: runtime.environmentName,
       servingHost: runtime.servingHost,
       publicUrl: runtime.publicUrl,
