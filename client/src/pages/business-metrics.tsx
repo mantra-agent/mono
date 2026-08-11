@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Database, FunctionSquare, Loader2, Plus, PenLine, Trash2 } from "lucide-react";
+import { Database, FunctionSquare, Loader2, Plus, PenLine, SlidersHorizontal, Trash2 } from "lucide-react";
 import {
   METRIC_ADAPTER_KINDS,
   METRIC_DIRECTIONS,
@@ -32,7 +32,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
@@ -84,6 +94,57 @@ const DERIVED_METRICS: readonly DerivedMetricDefinition[] = [
   { key: "meetings", label: "Meetings", unit: "" },
   { key: "newUsers", label: "New Users", unit: "users" },
 ];
+
+const SAMPLE_SPANS = [
+  { key: "today", label: "Today", days: 0 },
+  { key: "7d", label: "Last 7 days", days: 7 },
+  { key: "30d", label: "Last 30 days", days: 30 },
+  { key: "90d", label: "Last 90 days", days: 90 },
+] as const;
+
+type SampleSpan = (typeof SAMPLE_SPANS)[number]["key"];
+
+function rangeStart(span: SampleSpan, end: Date): Date {
+  if (span === "today") {
+    return new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
+  }
+  const days = SAMPLE_SPANS.find((option) => option.key === span)?.days ?? 7;
+  return new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+}
+
+function SamplingMenu({ value, onChange }: { value: SampleSpan; onChange: (value: SampleSpan) => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="mb-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          aria-label="Metric sampling"
+          data-testid="metrics-sampling-menu"
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Sampling span
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <DropdownMenuRadioGroup value={value} onValueChange={(next) => onChange(next as SampleSpan)}>
+              {SAMPLE_SPANS.map((option) => (
+                <DropdownMenuRadioItem key={option.key} value={option.key}>
+                  {option.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 const DIRECTION_LABEL: Record<MetricDirection, string> = {
   higher_is_better: "Higher is better",
@@ -333,24 +394,24 @@ export default function BusinessMetricsPage() {
   const { toast } = useToast();
   const { businesses, selectedId, setSelectedId, selected } = useSelectedBusiness();
   const [query, setQuery] = useState("");
+  const [sampleSpan, setSampleSpan] = useState<SampleSpan>("today");
   const [deleteTarget, setDeleteTarget] = useState<Metric | null>(null);
 
+  const samplingRange = useMemo(() => {
+    const end = new Date();
+    return { start: rangeStart(sampleSpan, end), end };
+  }, [sampleSpan]);
   const metricsUrl = selectedId
-    ? `/api/business/metrics?businessId=${encodeURIComponent(selectedId)}`
+    ? `/api/business/metrics?businessId=${encodeURIComponent(selectedId)}&start=${encodeURIComponent(samplingRange.start.toISOString())}&end=${encodeURIComponent(samplingRange.end.toISOString())}`
     : "/api/business/metrics";
   const { data, isLoading } = useQuery<MetricsResponse>({
     queryKey: [metricsUrl],
     enabled: Boolean(selectedId),
   });
-  const usageDayStart = useMemo(() => {
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
-  }, []);
   const { data: usage } = useQuery<RangeSample>({
-    queryKey: ["/api/business/metrics/range-sample", selectedId, usageDayStart],
+    queryKey: ["/api/business/metrics/range-sample", selectedId, sampleSpan],
     queryFn: async () => {
-      const end = new Date().toISOString();
-      const url = `/api/business/metrics/range-sample?businessId=${encodeURIComponent(selectedId ?? "")}&start=${encodeURIComponent(usageDayStart)}&end=${encodeURIComponent(end)}`;
+      const url = `/api/business/metrics/range-sample?businessId=${encodeURIComponent(selectedId ?? "")}&start=${encodeURIComponent(samplingRange.start.toISOString())}&end=${encodeURIComponent(samplingRange.end.toISOString())}`;
       const response = await apiRequest("GET", url);
       return response.json();
     },
@@ -405,20 +466,25 @@ export default function BusinessMetricsPage() {
         onSelect={setSelectedId}
       />
       <div className={HIERARCHY_TREE_STACK_CLASS}>
-        <HierarchySearchInput
-          value={query}
-          onChange={setQuery}
-          inputTestId="metrics-search"
-          clearTestId="button-clear-metrics-search"
-          ariaLabel="Search metrics"
-        />
+        <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <HierarchySearchInput
+              value={query}
+              onChange={setQuery}
+              inputTestId="metrics-search"
+              clearTestId="button-clear-metrics-search"
+              ariaLabel="Search metrics"
+            />
+          </div>
+          <SamplingMenu value={sampleSpan} onChange={setSampleSpan} />
+        </div>
         {selectedId ? <CreateMetricDialog businessId={selectedId} /> : null}
       </div>
 
       {usage ? (
         <div className="py-4">
           <HierarchySectionHeader data-testid="metric-section-current">
-            Current · {usage.coverage.status}
+            Current · {SAMPLE_SPANS.find((option) => option.key === sampleSpan)?.label} · {usage.coverage.status}
           </HierarchySectionHeader>
           {DERIVED_METRICS.map((metric) => {
             const isPartial = metric.key === "newUsers" && usage.newUsersCoverage.status === "partial";
