@@ -145,6 +145,11 @@ export type {
 function classifySystemToolError(err: unknown): ToolFailure {
   const message = err instanceof Error ? err.message : String(err);
   if (
+    /^(?:Invalid history rollup |History rollup summary must contain |History rollup candidate is no longer current|History rollup source entries changed; list candidates again)/i.test(message)
+  ) {
+    return inputFailure("system_input_invalid", message.slice(0, 160));
+  }
+  if (
     /pgCode=42P01|undefined_table|relation .* does not exist/i.test(message)
   ) {
     return internalFailure("system_schema_missing", message.slice(0, 160));
