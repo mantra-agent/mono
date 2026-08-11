@@ -449,7 +449,8 @@ export function IssueCaptureDialog() {
               value={reproSteps}
               onChange={(e) => setReproSteps(e.target.value)}
               placeholder="Repro steps (required) — numbered steps to reproduce..."
-              className="min-h-[80px] text-sm"
+              rows={1}
+              className="min-h-0 text-sm"
               data-testid="input-issue-repro"
             />
 
