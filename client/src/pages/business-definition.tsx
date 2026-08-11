@@ -15,7 +15,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
-import { HierarchySectionHeader, HIERARCHY_TREE_STACK_CLASS } from "@/components/hierarchy-section-header";
+import {
+  HIERARCHY_PRIMARY_ACTION_CLASS,
+  HierarchySectionHeader,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
 import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
 import { useToast } from "@/hooks/use-toast";
 import { useVaults } from "@/hooks/use-vaults";
@@ -241,11 +245,11 @@ function NewBusinessAction({ onCreated }: { onCreated: (business: BusinessDefini
     <>
       <button
         type="button"
-        className="flex w-full items-center gap-2 rounded-md bg-cta px-2 py-1.5 text-sm font-medium text-cta-foreground transition-colors hover:bg-cta/90"
+        className={HIERARCHY_PRIMARY_ACTION_CLASS}
         onClick={() => setOpen(true)}
         data-testid="button-new-business"
       >
-        <Plus className="h-3.5 w-3.5" />
+        <Plus className="h-3.5 w-3.5 shrink-0" />
         <span>New Business</span>
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
@@ -283,7 +287,7 @@ export default function BusinessDefinitionPage() {
   return (
     <div className="p-4">
       <BusinessPageHeader
-        page="Definition"
+        page="Identity"
         businesses={businesses}
         selectedId={selectedId}
         onSelect={setSelectedId}
