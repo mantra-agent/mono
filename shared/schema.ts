@@ -1460,23 +1460,7 @@ export const insertEmailMessageSchema = createInsertSchema(emailMessages).omit({
 export type EmailMessage = typeof emailMessages.$inferSelect;
 export type InsertEmailMessage = z.infer<typeof insertEmailMessageSchema>;
 
-export const emailCacheDeletions = pgTable("email_cache_deletions", {
-  id: serial("id").primaryKey(),
-  provider: text("provider").notNull(),
-  accountId: text("account_id").notNull(),
-  providerMessageId: text("provider_message_id").notNull(),
-  ownerUserId: text("owner_user_id"),
-  principalAccountId: text("principal_account_id"),
-  vaultId: text("vault_id"),
-  deletedAt: timestamp("deleted_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [
-  unique("email_cache_deletions_provider_account_message_unique").on(table.provider, table.accountId, table.providerMessageId),
-  index("idx_email_cache_deletions_owner").on(table.ownerUserId),
-  index("idx_email_cache_deletions_principal_account").on(table.principalAccountId),
-  index("idx_email_cache_deletions_vault").on(table.vaultId),
-]);
 
-export type EmailCacheDeletion = typeof emailCacheDeletions.$inferSelect;
 
 export const personEmails = pgTable("person_emails", {
   accountId: text("account_id").notNull(),
