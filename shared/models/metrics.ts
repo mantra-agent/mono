@@ -312,6 +312,63 @@ export interface MetricSample {
   createdAt: string;
 }
 
+export type MetricValueStatus = "actual" | "estimated" | "projected";
+
+export type MetricCoverage =
+  | { status: "finalized" }
+  | { status: "provisional"; finalizesAt: string }
+  | { status: "partial"; availableFrom: string | null; reason: string };
+
+/** One canonical read shape regardless of whether a Metric is materialized or
+ * resolved from an owning domain at query time. */
+export interface MetricSeries {
+  metric: Metric;
+  samples: MetricSample[];
+  valueStatus: MetricValueStatus;
+  coverage: MetricCoverage;
+}
+
+export interface MetricCollection {
+  start: string;
+  end: string;
+  series: MetricSeries[];
+}
+
+/** Stable semantic identities shared by Forecast and every downstream Metric
+ * consumer. Scenario math may vary; these business quantities do not. */
+export const FORECAST_METRIC_CATALOG = {
+  payingAccounts: { slug: "paying-accounts", name: "Paying Accounts", unit: "accounts" },
+  newAccounts: { slug: "new-accounts", name: "New Accounts", unit: "accounts" },
+  churnedAccounts: { slug: "churned-accounts", name: "Churned Accounts", unit: "accounts" },
+  users: { slug: "users", name: "Users", unit: "users" },
+  newUsers: { slug: "new-users", name: "New Users", unit: "users" },
+  nrr: { slug: "net-revenue-retention", name: "Net Revenue Retention", unit: "%" },
+  revenue: { slug: "revenue", name: "Revenue", unit: "USD" },
+  cogs: { slug: "cogs", name: "COGS", unit: "USD" },
+  grossProfit: { slug: "gross-profit", name: "Gross Profit", unit: "USD" },
+  opex: { slug: "operating-expense", name: "Operating Expense", unit: "USD" },
+  operatingIncome: { slug: "operating-income", name: "Operating Income", unit: "USD" },
+  netCashFlow: { slug: "net-cash-flow", name: "Net Cash Flow", unit: "USD" },
+  cashBalance: { slug: "cash-balance", name: "Cash Balance", unit: "USD" },
+} as const;
+
+export interface ProjectedMetricObservation {
+  metricSlug: string;
+  value: number;
+  unit: string;
+  periodStart: string;
+  periodEnd: string;
+  valueStatus: "projected";
+  scenarioId: string;
+}
+
+export interface ProjectedMetricSeries {
+  metricSlug: string;
+  name: string;
+  unit: string;
+  observations: ProjectedMetricObservation[];
+}
+
 export interface KpiScore {
   band: KpiScoreBand;
   value: number | null;

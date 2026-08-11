@@ -18,6 +18,8 @@ import {
   type MetricDirection,
   type MetricSample,
   type MetricSampleCreate,
+  type MetricCollection,
+  type MetricCoverage,
   type MetricUpdate,
   type StandingObjectiveKey,
 } from "@shared/models/metrics";
@@ -108,6 +110,44 @@ function mapSample(row: typeof metricSamples.$inferSelect): MetricSample {
     periodStart: toIso(row.periodStart),
     periodEnd: toIso(row.periodEnd),
     createdAt: toIso(row.createdAt) ?? new Date(0).toISOString(),
+  };
+}
+
+const CURRENT_METRIC_DEFINITIONS = [
+  { key: "hoursUsed", slug: "hours-used", name: "Hours Used", unit: "hours" },
+  { key: "activeUsers", slug: "active-users", name: "Active Users", unit: "users" },
+  { key: "currentUsers", slug: "current-users", name: "Current Users", unit: "users" },
+  { key: "shippedPrs", slug: "shipped-prs", name: "Shipped PRs", unit: "" },
+  { key: "meetings", slug: "meetings", name: "Meetings", unit: "" },
+  { key: "newUsers", slug: "new-users", name: "New Users", unit: "users" },
+] as const;
+
+function virtualCurrentMetric(
+  businessId: string,
+  definition: (typeof CURRENT_METRIC_DEFINITIONS)[number],
+  sample: MetricSample,
+): Metric {
+  const now = new Date().toISOString();
+  return {
+    id: `metric_current_${businessId}_${definition.slug.replace(/-/g, "_")}`,
+    businessId,
+    name: definition.name,
+    slug: definition.slug,
+    description: "Current product data resolved from its owning system.",
+    unit: definition.unit,
+    direction: "higher_is_better",
+    samplePeriod: "custom",
+    adapterKind: "internal",
+    adapterConfig: { key: definition.slug, mode: "query" },
+    status: "active",
+    scope: "user",
+    ownerUserId: null,
+    accountId: sample.accountId,
+    vaultId: sample.vaultId,
+    createdByUserId: null,
+    createdAt: now,
+    updatedAt: now,
+    latestSample: sample,
   };
 }
 
@@ -450,6 +490,76 @@ export const metricsStorage = {
         status: finalizesAt.getTime() > Date.now() ? "provisional" : "finalized",
         finalizesAt: finalizesAt.toISOString(),
       },
+    };
+  },
+
+  /** Unified Metrics read. Domain-owned current values stay query-time and
+   * durable observations stay in metric_samples, but every consumer receives
+   * the same MetricSeries contract and one readiness boundary. */
+  async collection(businessId: string, start: Date, end: Date): Promise<MetricCollection> {
+    const principal = currentPrincipal();
+    const durable = await this.list(undefined, businessId, { start, end });
+    let current: Awaited<ReturnType<typeof this.sampleRange>> | null = null;
+    try {
+      current = await this.sampleRange(businessId, start, end);
+    } catch (error) {
+      if ((error as { status?: number })?.status !== 409) throw error;
+    }
+    const bySlug = new Map(durable.map((metric) => [metric.slug, metric]));
+    if (!current) {
+      return {
+        start: start.toISOString(),
+        end: end.toISOString(),
+        series: durable.map((metric) => ({
+          metric,
+          samples: metric.latestSample ? [metric.latestSample] : [],
+          valueStatus: "actual" as const,
+          coverage: { status: "finalized" as const },
+        })),
+      };
+    }
+    const rangeCoverage: MetricCoverage = current.coverage.status === "provisional"
+      ? { status: "provisional", finalizesAt: current.coverage.finalizesAt }
+      : { status: "finalized" };
+    const currentSeries = CURRENT_METRIC_DEFINITIONS.map((definition) => {
+      const existing = bySlug.get(definition.slug);
+      if (existing) bySlug.delete(definition.slug);
+      const coverage: MetricCoverage = definition.key === "newUsers"
+        ? {
+            status: "partial",
+            availableFrom: current.newUsersCoverage.availableFrom,
+            reason: "Historical signup provenance is incomplete.",
+          }
+        : rangeCoverage;
+      const sample: MetricSample = {
+        id: `query_${businessId}_${definition.slug}_${start.getTime()}_${end.getTime()}`,
+        metricId: existing?.id ?? `metric_current_${businessId}_${definition.slug.replace(/-/g, "_")}`,
+        accountId: principal.accountId!,
+        vaultId: existing?.vaultId ?? principal.activeVaultId ?? null,
+        value: Number(current[definition.key]),
+        unit: definition.unit,
+        observedAt: end.toISOString(),
+        sourceRef: `internal/${definition.slug}-query-v1`,
+        evidence: "Resolved from the owning product system for the selected range.",
+        periodStart: start.toISOString(),
+        periodEnd: end.toISOString(),
+        createdAt: end.toISOString(),
+      };
+      const metric = existing
+        ? { ...existing, latestSample: sample }
+        : virtualCurrentMetric(businessId, definition, sample);
+      return { metric, samples: [sample], valueStatus: "actual" as const, coverage };
+    });
+    const durableSeries = [...bySlug.values()].map((metric) => ({
+      metric,
+      samples: metric.latestSample ? [metric.latestSample] : [],
+      valueStatus: "actual" as const,
+      coverage: { status: "finalized" as const },
+    }));
+    return {
+      start: start.toISOString(),
+      end: end.toISOString(),
+      series: [...currentSeries, ...durableSeries],
     };
   },
 

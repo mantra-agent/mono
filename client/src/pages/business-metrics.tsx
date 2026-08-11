@@ -7,7 +7,9 @@ import {
   METRIC_SAMPLE_PERIODS,
   type Metric,
   type MetricAdapterKind,
+  type MetricCollection,
   type MetricDirection,
+  type MetricSeries,
 } from "@shared/models/metrics";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,41 +61,6 @@ import { useSelectedBusiness } from "@/hooks/use-selected-business";
 interface MetricsResponse {
   metrics: Metric[];
 }
-
-interface RangeSample {
-  start: string;
-  end: string;
-  hoursUsed: number;
-  activeUsers: number;
-  currentUsers: number;
-  shippedPrs: number;
-  meetings: number;
-  newUsers: number;
-  coverage: {
-    status: "provisional" | "finalized";
-    finalizesAt: string;
-  };
-  newUsersCoverage: {
-    status: "partial";
-    availableFrom: string | null;
-    historicalRows: "unclassified";
-  };
-}
-
-interface DerivedMetricDefinition {
-  key: keyof Pick<RangeSample, "hoursUsed" | "activeUsers" | "currentUsers" | "shippedPrs" | "meetings" | "newUsers">;
-  label: string;
-  unit: string;
-}
-
-const DERIVED_METRICS: readonly DerivedMetricDefinition[] = [
-  { key: "hoursUsed", label: "Hours Used", unit: "hours" },
-  { key: "activeUsers", label: "Active Users", unit: "users" },
-  { key: "currentUsers", label: "Current Users", unit: "users" },
-  { key: "shippedPrs", label: "Shipped PRs", unit: "" },
-  { key: "meetings", label: "Meetings", unit: "" },
-  { key: "newUsers", label: "New Users", unit: "users" },
-];
 
 const SAMPLE_SPANS = [
   { key: "today", label: "Today", days: 0 },
@@ -156,12 +123,6 @@ const ADAPTER_ICON: Record<MetricAdapterKind, typeof Database> = {
   manual: PenLine,
   internal: Database,
   expression: FunctionSquare,
-};
-
-const ADAPTER_SECTION_LABEL: Record<MetricAdapterKind, string> = {
-  manual: "Manual",
-  internal: "Internal",
-  expression: "Expression",
 };
 
 function formatValue(value: number, unit: string): string {
@@ -254,12 +215,13 @@ function RecordSampleForm({ metric }: { metric: Metric }) {
 }
 
 function MetricTreeRow({
-  metric,
+  series,
   onRequestDelete,
 }: {
-  metric: Metric;
+  series: MetricSeries;
   onRequestDelete: (metric: Metric) => void;
 }) {
+  const metric = series.metric;
   const AdapterIcon = ADAPTER_ICON[metric.adapterKind] ?? Database;
   const sample = metric.latestSample;
   const isManual = metric.adapterKind === "manual";
@@ -274,7 +236,12 @@ function MetricTreeRow({
       valueLayout="compact"
       menuVisibility="hover"
       testId={`metric-row-${metric.slug}`}
-      expandedContent={<RecordSampleForm metric={metric} />}
+      expandedContent={isManual ? <RecordSampleForm metric={metric} /> : (
+        <div className="space-y-1 py-1 text-xs text-muted-foreground">
+          <div>{sample?.sourceRef ?? "Source unavailable"}</div>
+          {sample?.evidence ? <div>{sample.evidence}</div> : null}
+        </div>
+      )}
       menuContent={
         isManual ? (
           <DropdownMenuItem
@@ -297,6 +264,9 @@ function MetricTreeRow({
     >
       <span className={cn("whitespace-nowrap font-mono", !sample && "text-muted-foreground")}>
         {sample ? formatValue(sample.value, sample.unit) : "—"}
+        {series.coverage.status !== "finalized" ? (
+          <span className="ml-2 font-sans text-xs text-muted-foreground">{series.coverage.status}</span>
+        ) : null}
       </span>
     </ProfileTreeRow>
   );
@@ -392,7 +362,7 @@ function CreateMetricDialog({ businessId }: { businessId: string }) {
 
 export default function BusinessMetricsPage() {
   const { toast } = useToast();
-  const { businesses, selectedId, setSelectedId, selected } = useSelectedBusiness();
+  const { businesses, selectedId, setSelectedId } = useSelectedBusiness();
   const [query, setQuery] = useState("");
   const [sampleSpan, setSampleSpan] = useState<SampleSpan>("today");
   const [deleteTarget, setDeleteTarget] = useState<Metric | null>(null);
@@ -401,21 +371,14 @@ export default function BusinessMetricsPage() {
     const end = new Date();
     return { start: rangeStart(sampleSpan, end), end };
   }, [sampleSpan]);
-  const metricsUrl = selectedId
-    ? `/api/business/metrics?businessId=${encodeURIComponent(selectedId)}&start=${encodeURIComponent(samplingRange.start.toISOString())}&end=${encodeURIComponent(samplingRange.end.toISOString())}`
-    : "/api/business/metrics";
-  const { data, isLoading } = useQuery<MetricsResponse>({
-    queryKey: [metricsUrl],
-    enabled: Boolean(selectedId),
-  });
-  const { data: usage } = useQuery<RangeSample>({
-    queryKey: ["/api/business/metrics/range-sample", selectedId, sampleSpan],
+  const { data, isLoading } = useQuery<MetricCollection>({
+    queryKey: ["/api/business/metrics/collection", selectedId, sampleSpan],
     queryFn: async () => {
-      const url = `/api/business/metrics/range-sample?businessId=${encodeURIComponent(selectedId ?? "")}&start=${encodeURIComponent(samplingRange.start.toISOString())}&end=${encodeURIComponent(samplingRange.end.toISOString())}`;
+      const url = `/api/business/metrics/collection?businessId=${encodeURIComponent(selectedId ?? "")}&start=${encodeURIComponent(samplingRange.start.toISOString())}&end=${encodeURIComponent(samplingRange.end.toISOString())}`;
       const response = await apiRequest("GET", url);
       return response.json();
     },
-    enabled: Boolean(selectedId && selected?.isPlatformInstrument),
+    enabled: Boolean(selectedId),
     refetchInterval: 60_000,
   });
 
@@ -440,22 +403,12 @@ export default function BusinessMetricsPage() {
     },
   });
 
-  const metrics = useMemo(() => {
-    const list = data?.metrics ?? [];
+  const series = useMemo(() => {
+    const list = data?.series ?? [];
     const q = query.trim().toLowerCase();
     if (!q) return list;
-    return list.filter((m) => m.name.toLowerCase().includes(q) || m.slug.toLowerCase().includes(q));
+    return list.filter(({ metric }) => metric.name.toLowerCase().includes(q) || metric.slug.toLowerCase().includes(q));
   }, [data, query]);
-
-  const sections = useMemo(
-    () =>
-      METRIC_ADAPTER_KINDS.map((kind) => ({
-        kind,
-        label: ADAPTER_SECTION_LABEL[kind] ?? kind,
-        items: metrics.filter((m) => m.adapterKind === kind),
-      })).filter((section) => section.items.length > 0),
-    [metrics],
-  );
 
   return (
     <div className="p-4">
@@ -481,57 +434,25 @@ export default function BusinessMetricsPage() {
         {selectedId ? <CreateMetricDialog businessId={selectedId} /> : null}
       </div>
 
-      {usage ? (
-        <div className="py-4">
-          <HierarchySectionHeader data-testid="metric-section-current">
-            Current · {SAMPLE_SPANS.find((option) => option.key === sampleSpan)?.label} · {usage.coverage.status}
-          </HierarchySectionHeader>
-          {DERIVED_METRICS.map((metric) => {
-            const isPartial = metric.key === "newUsers" && usage.newUsersCoverage.status === "partial";
-            return (
-              <ProfileTreeRow
-                key={metric.key}
-                label={metric.label}
-                icon={<Database className="h-3.5 w-3.5" />}
-                hasValue
-                showEmpty
-                mobileLayout="inline"
-                valueLayout="compact"
-                testId={`derived-metric-${metric.key}`}
-              >
-                <span className="whitespace-nowrap font-mono">
-                  {formatValue(usage[metric.key], metric.unit)}
-                  {isPartial ? <span className="ml-2 font-sans text-xs text-warning">partial</span> : null}
-                </span>
-              </ProfileTreeRow>
-            );
-          })}
-        </div>
-      ) : null}
-
       {isLoading ? (
         <div className="flex items-center justify-center py-16 text-muted-foreground">
           <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading metrics…
         </div>
-      ) : metrics.length === 0 ? (
+      ) : series.length === 0 ? (
         <div className="px-2 py-1.5 text-sm text-muted-foreground">
-          No custom metrics yet.
+          No metrics yet.
         </div>
       ) : (
-        <div className="space-y-2">
-          {sections.map((section) => (
-            <div key={section.kind} className={HIERARCHY_TREE_STACK_CLASS}>
-              <HierarchySectionHeader data-testid={`metric-section-${section.kind}`}>
-                {section.label}
-              </HierarchySectionHeader>
-              {section.items.map((metric) => (
-                <MetricTreeRow
-                  key={metric.id}
-                  metric={metric}
-                  onRequestDelete={setDeleteTarget}
-                />
-              ))}
-            </div>
+        <div className="py-4">
+          <HierarchySectionHeader data-testid="metric-section-metrics">
+            Metrics · {SAMPLE_SPANS.find((option) => option.key === sampleSpan)?.label}
+          </HierarchySectionHeader>
+          {series.map((item) => (
+            <MetricTreeRow
+              key={item.metric.id}
+              series={item}
+              onRequestDelete={setDeleteTarget}
+            />
           ))}
         </div>
       )}
