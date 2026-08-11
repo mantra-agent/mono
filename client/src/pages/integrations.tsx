@@ -98,10 +98,12 @@ import {
 } from "lucide-react";
 import { SiX } from "react-icons/si";
 import { SecretsForSection } from "@/components/SecretControl";
+import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
+  HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
   HIERARCHY_SESSION_ROW_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
@@ -5480,34 +5482,25 @@ function GitHubDetail() {
         </Card>
       )}
 
-      {/* Accounts + platform connections */}
-      <Card className="min-w-0 overflow-hidden" data-testid="github-detail">
-        <CardContent className="space-y-0 p-0">
-          <IntegrationTreeSection
-            label="Legacy accounts"
-            initialOpen
-            testIdPrefix="github-accounts"
-            actions={(
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                className="mr-1 h-8 w-8 text-muted-foreground"
-                onClick={() => setShowAddDialog(true)}
-                aria-label="Add legacy GitHub account"
-                data-testid="button-github-add-account"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            )}
+      {/* Canonical Design TreeView: flat settings sections, object branches, row-local actions. */}
+      <div className={HIERARCHY_TREE_STACK_CLASS} data-testid="github-detail">
+        <ProfileDetailSection title="Legacy accounts" defaultOpen testId="github-accounts">
+          <button
+            type="button"
+            className={HIERARCHY_PRIMARY_ACTION_CLASS}
+            onClick={() => setShowAddDialog(true)}
+            data-testid="button-github-add-account"
           >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">Add legacy account</span>
+          </button>
             {credentials.length === 0 ? (
               <p className="px-2 py-1.5 text-sm text-muted-foreground">
                 No legacy accounts connected. Platform connections below are preferred for new git operations.
               </p>
-            ) : credentials.map((cred) => (
+            ) : credentials.map((cred, index) => (
+              <HierarchyTreeRow key={cred.id} continues={index < credentials.length - 1} connectorAnchor="first-row-center">
               <ProfileTreeRow
-                key={cred.id}
                 label={cred.githubLogin ? `@${cred.githubLogin}` : cred.label}
                 icon={<CircleCheck className="h-3.5 w-3.5 text-active" />}
                 hasValue
@@ -5515,6 +5508,7 @@ function GitHubDetail() {
                 mobileLayout="inline"
                 valueLayout="compact"
                 testId={`github-credential-${cred.id}`}
+                menuVisibility="hover"
                 menuContent={(
                   <>
                     {!cred.isDefault ? (
@@ -5555,37 +5549,30 @@ function GitHubDetail() {
                   <span className="text-muted-foreground">connected</span>
                 )}
               </ProfileTreeRow>
+              </HierarchyTreeRow>
             ))}
-          </IntegrationTreeSection>
+        </ProfileDetailSection>
 
-          <IntegrationTreeSection
-            label="Platform connections"
-            initialOpen
-            testIdPrefix="github-connections"
-            actions={(
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                className="mr-1 h-8 w-8 text-muted-foreground"
-                onClick={() => openProviderDialog()}
-                aria-label="New GitHub platform connection"
-                data-testid="button-github-add-provider-connection"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            )}
+        <ProfileDetailSection title="Platform connections" defaultOpen testId="github-connections">
+          <button
+            type="button"
+            className={HIERARCHY_PRIMARY_ACTION_CLASS}
+            onClick={() => openProviderDialog()}
+            data-testid="button-github-add-provider-connection"
           >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">New connection</span>
+          </button>
             {githubConnections.length === 0 ? (
               <p className="px-2 py-1.5 text-sm text-muted-foreground">
                 No GitHub platform connections yet. Credentials are stored encrypted and never displayed.
               </p>
-            ) : githubConnections.map((connection) => {
+            ) : githubConnections.map((connection, index) => {
               const usage = sourceUsageByConnectionId.get(connection.id) || [];
               const isTesting = testProviderConnectionMutation.isPending;
               return (
+                <HierarchyTreeRow key={connection.id} continues={index < githubConnections.length - 1} connectorAnchor="first-row-center">
                 <ProfileTreeRow
-                  key={connection.id}
                   label={connection.label}
                   icon={<CircleCheck className={cn("h-3.5 w-3.5", connection.status === "active" ? "text-active" : "text-muted-foreground")} />}
                   hasValue
@@ -5593,6 +5580,7 @@ function GitHubDetail() {
                   defaultOpen={usage.length > 0}
                   testId={`github-provider-connection-${connection.id}`}
                   expandedContentClassName="min-w-0 space-y-3"
+                  menuVisibility="hover"
                   menuContent={(
                     <>
                       <DropdownMenuItem
@@ -5658,11 +5646,11 @@ function GitHubDetail() {
                     <Badge variant={connection.status === "active" ? "secondary" : "destructive"} className="text-xs">{connection.status}</Badge>
                   </span>
                 </ProfileTreeRow>
+                </HierarchyTreeRow>
               );
             })}
-          </IntegrationTreeSection>
-        </CardContent>
-      </Card>
+        </ProfileDetailSection>
+      </div>
 
       <Dialog open={showProviderDialog} onOpenChange={(open) => { if (!open) resetProviderForm(); }}>
         <DialogContent>
@@ -5848,9 +5836,8 @@ function GitHubDetail() {
         </Card>
       )}
 
-      <Card className="min-w-0 overflow-hidden" data-testid="github-repo-card">
-        <CardContent className="space-y-0 p-0">
-          <IntegrationTreeSection label="Repository URL" initialOpen testIdPrefix="github-repo">
+      <div className={HIERARCHY_TREE_STACK_CLASS} data-testid="github-repo-card">
+        <ProfileDetailSection title="Repository URL" defaultOpen testId="github-repo">
             <ProfileTreeRow
               label="Configured"
               icon={<Github className="h-3.5 w-3.5" />}
@@ -5879,61 +5866,59 @@ function GitHubDetail() {
                 <span className="font-mono" data-testid="text-repo-url-display">{data.repoUrlDisplay}</span>
               </ProfileTreeRow>
             ) : null}
-            <div className="space-y-2 px-2 py-1.5">
-              <Input
-                type="text"
-                value={repoUrlInput}
-                onChange={(e) => setRepoUrlInput(e.target.value)}
-                placeholder="https://github.com/org/repo"
-                autoComplete="off"
-                spellCheck={false}
-                className="font-mono text-xs"
-                data-testid="input-repo-url"
-              />
-              <div className="flex items-center gap-2">
+            <ProfileTreeRow
+              label="URL"
+              icon={<Globe className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              menuVisibility="hover"
+              menuContent={data?.repoUrlSet ? (
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onClick={() => {
+                    if (confirm("Clear GITHUB_REPO_URL? GitNexus will not be able to sync the repo in production.")) {
+                      saveRepoUrlMutation.mutate("");
+                    }
+                  }}
+                  disabled={saveRepoUrlMutation.isPending}
+                  data-testid="button-repo-url-clear"
+                >
+                  <Trash2 className="mr-2 h-4 w-4" /> Clear
+                </DropdownMenuItem>
+              ) : undefined}
+              testId="row-repo-url-edit"
+            >
+              <div className="flex min-w-0 items-center gap-1.5">
+                <Input
+                  type="text"
+                  value={repoUrlInput}
+                  onChange={(e) => setRepoUrlInput(e.target.value)}
+                  placeholder="https://github.com/org/repo"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="font-mono"
+                  data-testid="input-repo-url"
+                />
                 <Button
                   type="button"
+                  variant="ghost"
                   size="sm"
-                  onClick={() => {
-                    saveRepoUrlMutation.mutate(repoUrlInput.trim());
-                  }}
+                  onClick={() => saveRepoUrlMutation.mutate(repoUrlInput.trim())}
                   disabled={saveRepoUrlMutation.isPending}
                   data-testid="button-repo-url-save"
                 >
-                  {saveRepoUrlMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
-                  Save
+                  {saveRepoUrlMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  <span className="sr-only">Save repository URL</span>
                 </Button>
-                {data?.repoUrlSet && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (confirm("Clear GITHUB_REPO_URL? GitNexus will not be able to sync the repo in production.")) {
-                        saveRepoUrlMutation.mutate("");
-                      }
-                    }}
-                    disabled={saveRepoUrlMutation.isPending}
-                    data-testid="button-repo-url-clear"
-                  >
-                    Clear
-                  </Button>
-                )}
               </div>
-              {repoMisconfigured && (
-                <div className="text-xs text-error-foreground" data-testid="text-repo-url-warning">
-                  Production is running without GITHUB_REPO_URL. GitNexus cannot sync the repo from origin. Set it above or add it as an environment variable.
-                </div>
-              )}
-              {!repoMisconfigured && !data?.repoUrlSet && (
-                <div className="text-xs text-muted-foreground">
-                  GITHUB_REPO_URL is optional in development. In production it is required so GitNexus can sync the repo on startup.
-                </div>
-              )}
-            </div>
-          </IntegrationTreeSection>
-        </CardContent>
-      </Card>
+            </ProfileTreeRow>
+            {repoMisconfigured ? (
+              <p className="px-2 py-1.5 text-xs text-error-foreground" data-testid="text-repo-url-warning">
+                Production is running without GITHUB_REPO_URL. GitNexus cannot sync the repo from origin.
+              </p>
+            ) : null}
+        </ProfileDetailSection>
+      </div>
     </div>
   );
 }
