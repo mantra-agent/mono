@@ -485,7 +485,7 @@ function PlatformPersonaItem({ persona, onPublished }: { persona: Persona; onPub
       <CollapsibleTrigger className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")}>
         <PersonaIconDisplay iconName={persona.icon} className="h-3.5 w-3.5 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate">{persona.name}</span>
-        <span className="text-xs text-muted-foreground">{persona.name === "Root Persona" ? "Always active" : "Platform"}</span>
+        <span className="text-xs text-muted-foreground">{persona.name === "Root" ? "Always active" : "Platform"}</span>
         <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
       </CollapsibleTrigger>
       <CollapsibleContent><div className="space-y-3 border-l border-border/40 py-3 pl-4">

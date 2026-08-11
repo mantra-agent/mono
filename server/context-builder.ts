@@ -348,9 +348,9 @@ async function resolveSelfIdentity(): Promise<string> {
 }
 
 async function resolveSelfVoice(): Promise<string> {
-  const root = await personaStorage.getSystemSeedByName("Root Persona");
+  const root = await personaStorage.getSystemSeedByName("Root");
   if (!root?.promptOverlay) {
-    throw new Error("Canonical Root Persona is missing its prompt overlay");
+    throw new Error("Canonical Root is missing its prompt overlay");
   }
   return root.promptOverlay;
 }
