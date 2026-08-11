@@ -381,6 +381,12 @@ function buildCodexInput(messages: Array<{ role: string; content: unknown; toolC
   if (!instructions) {
     instructions = "You are a helpful assistant.";
   }
+  // The Responses API requires an input-bearing request. Emergency context
+  // reduction may legitimately remove every non-system message, so preserve a
+  // minimal user turn rather than dispatching an invalid empty request.
+  if (input.length === 0) {
+    input.push({ role: "user", content: "." });
+  }
   return { instructions, input };
 }
 

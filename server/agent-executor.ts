@@ -3008,6 +3008,32 @@ export class AgentExecutor extends EventEmitter {
     ].join("\n\n");
   }
 
+  private preserveInterruptedProviderOutput(ctx: RunIterationContext): string {
+    this.flushChronologyThinking(ctx);
+    this.flushChronologyContent(ctx);
+    const partialContent = ctx.segmentChronology
+      .filter((entry): entry is Extract<SegmentChronologyEntry, { s: "content" }> => entry.s === "content")
+      .map((entry) => entry.c)
+      .join("");
+    if (!partialContent.trim() || !ctx.providerFailure) return "";
+
+    const marker = "\n\n[Response interrupted by the model provider. The partial response above was preserved.]";
+    const preservedContent = `${partialContent}${marker}`;
+    const lastContentIndex = ctx.segmentChronology.findLastIndex((entry) => entry.s === "content");
+    if (lastContentIndex >= 0) {
+      const entry = ctx.segmentChronology[lastContentIndex] as Extract<SegmentChronologyEntry, { s: "content" }>;
+      ctx.segmentChronology[lastContentIndex] = { s: "content", c: `${entry.c}${marker}` };
+    }
+    ctx.publish("delta", { content: marker });
+    log.warn("executor.provider_partial_output_preserved", {
+      operation: "provider_partial_output_preserved",
+      runId: ctx.runId,
+      partialContentLength: partialContent.length,
+      providerCode: ctx.providerFailure.providerCode,
+    });
+    return preservedContent;
+  }
+
   private async publishRunResult(
     ctx: RunIterationContext,
     options: ExecutorRunOptions,
@@ -5204,14 +5230,17 @@ export class AgentExecutor extends EventEmitter {
         sessionKey: options.sessionKey,
       });
 
-      // Flush chronology buffers for error path
-      this.flushChronologyThinking(ctx);
-      this.flushChronologyContent(ctx);
+      // A replay-unsafe provider failure may arrive after visible text. The
+      // provider cascade correctly refuses to replay at that point; preserve
+      // the exact accumulated text as terminal content instead of allowing an
+      // empty terminal result to erase the streamed chronology.
+      const interruptedProviderContent = this.preserveInterruptedProviderOutput(ctx);
+      const terminalContent = interruptedProviderContent || mergeIterationResults(iterationResults) || "";
 
       return {
         status: "failed" as const,
         lastStopReason: ctx.diagnosticLastModelStopReason,
-        content: mergeIterationResults(iterationResults) || "",
+        content: terminalContent,
         thinking: ctx.allThinking.join("\n\n"),
         toolCalls: ctx.resolvedToolCalls,
         model: ctx.resolvedModel,
