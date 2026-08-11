@@ -7,15 +7,20 @@ import {
   FileText,
   Folder,
   ChevronRight,
-  ChevronDown,
   ExternalLink,
+  MoreHorizontal,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { hexToRgba } from "@/lib/vault-title-color";
-import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
 import { createLogger } from "@/lib/logger";
 
@@ -503,37 +508,254 @@ function IndexStatusLabel({ status }: { status?: FileIndexUiStatus }) {
   );
 }
 
-function IndexToggle({
+/** Canonical TreeView disclosure chevron, matching ProfileTreeRow / section headers. */
+function RowChevron({
+  open,
+  onToggle,
+  label,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle();
+      }}
+      aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
+      aria-expanded={open}
+    >
+      <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
+    </button>
+  );
+}
+
+function humanizeDiscoveryState(state: string): string {
+  const trimmed = state.replace(/[_-]+/g, " ").trim();
+  if (!trimmed) return state;
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
+function formatIndexTimestamp(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toLocaleString();
+}
+
+/**
+ * Human-readable indexing metadata revealed when a file row is disclosed.
+ * Reads only already-authorized fields from the vault-scoped index status the
+ * server already delivered for this row; it introduces no new data fetch.
+ */
+function FileIndexMetadata({
+  status,
+  depth,
+}: {
+  status?: FileIndexStatus;
+  depth: number;
+}) {
+  const rows: { label: string; value: string }[] = [];
+  rows.push({
+    label: "Status",
+    value: formatIndexStatusLabel(status?.status) ?? "Not indexed",
+  });
+
+  const source = status?.indexedSource;
+  if (source?.name) rows.push({ label: "Indexed as", value: source.name });
+  const summary = source?.oneLiner || source?.summary;
+  if (summary) rows.push({ label: "Summary", value: summary });
+  if (source?.discoveryState) {
+    rows.push({ label: "Discovery", value: humanizeDiscoveryState(source.discoveryState) });
+  }
+
+  const run = status?.reconciliationRun;
+  if (run) {
+    rows.push({ label: "Last run", value: formatRunProgressLabel(run) });
+    const ts = formatIndexTimestamp(run.completedAt ?? run.updatedAt);
+    if (ts) rows.push({ label: "Updated", value: ts });
+    if (run.lastError) rows.push({ label: "Error", value: run.lastError });
+  }
+
+  return (
+    <div
+      className="flex flex-col gap-0.5 pb-1.5 text-xs text-muted-foreground"
+      style={{ paddingLeft: 8 + depth * 12 + 28 }}
+      data-testid="files-index-metadata"
+    >
+      {rows.map((row) => (
+        <div key={row.label} className="flex min-w-0 gap-2">
+          <span className="w-20 shrink-0 text-muted-foreground/70">{row.label}</span>
+          <span className="min-w-0 break-words text-foreground/80">{row.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Standard hover-revealed overflow menu carrying the indexing controls.
+ * Only bound resources can own a local index policy (v1), so unbound
+ * discovered children render an alignment spacer instead of a menu.
+ */
+function RowOverflowMenu({
   vaultId,
   driveResourceId,
   status,
-  disabled,
 }: {
   vaultId: string;
   driveResourceId: string | null | undefined;
   status?: FileIndexStatus;
-  disabled?: boolean;
 }) {
   const toggle = useIndexToggle(vaultId);
+  const retry = useRetryFailedRun(vaultId);
+
   if (!driveResourceId) {
-    // Discovered children without an explicit bind cannot own a local policy in v1.
-    return null;
+    return <span className="w-6 shrink-0" aria-hidden="true" />;
   }
+
   const checked =
     status?.mode === "self" ||
     status?.mode === "recursive" ||
     status?.status === "indexing";
+  const run = status?.reconciliationRun;
+  const showRetry =
+    !!run && (run.phase === "partial" || run.phase === "failed") && (run.filesFailed || 0) > 0;
+
   return (
-    <Switch
-      checked={!!checked}
-      disabled={disabled || toggle.isPending}
-      onCheckedChange={(next) => {
-        toggle.mutate({ driveResourceId, enabled: next });
-      }}
-      aria-label={checked ? "Disable indexing" : "Enable indexing"}
-      className="shrink-0 scale-90"
-      data-testid="files-index-toggle"
-    />
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 min-h-6 w-6 min-w-6 shrink-0 rounded-md text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
+          aria-label="Indexing actions"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <MoreHorizontal className="h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
+        <DropdownMenuItem
+          disabled={toggle.isPending}
+          onSelect={() => toggle.mutate({ driveResourceId, enabled: !checked })}
+          data-testid="files-index-toggle"
+        >
+          {checked ? "Disable indexing" : "Enable indexing"}
+        </DropdownMenuItem>
+        {showRetry ? (
+          <DropdownMenuItem
+            disabled={retry.isPending}
+            onSelect={() => retry.mutate(run!.id)}
+          >
+            {retry.isPending ? "Retrying…" : "Retry failed"}
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * One canonical Files tree row. Folders disclose their children (rendered by
+ * the caller); files disclose their stored indexing metadata inline.
+ */
+function FilesRow({
+  vaultId,
+  name,
+  mimeType,
+  resourceType,
+  provider,
+  providerFileId,
+  webViewLink,
+  driveResourceId,
+  status,
+  depth,
+  vaultColor,
+  isOpen,
+  onToggleOpen,
+}: {
+  vaultId: string;
+  name: string;
+  mimeType: string | null;
+  resourceType: "file" | "folder";
+  provider: "google" | "box" | "mantra";
+  providerFileId: string;
+  webViewLink: string | null;
+  driveResourceId: string | null | undefined;
+  status?: FileIndexStatus;
+  depth: number;
+  vaultColor?: string | null;
+  isOpen: boolean;
+  onToggleOpen: () => void;
+}) {
+  const [, setLocation] = useLocation();
+  const isFolder = resourceType === "folder";
+  const isPdf = !isFolder && isPdfResource({ name, mimeType });
+  const titleStyle = titleStyleForVault(vaultColor);
+
+  const openPdf = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (driveResourceId) {
+      setLocation(
+        pdfViewerHref({
+          id: driveResourceId,
+          source: "drive_resource",
+          vaultId,
+          provider,
+          webViewLink,
+        }),
+      );
+      return;
+    }
+    setLocation(
+      pdfViewerHref({
+        id: providerFileId,
+        source: "provider",
+        vaultId,
+        provider,
+        providerFileId,
+        webViewLink,
+      }),
+    );
+  };
+
+  return (
+    <>
+      <div
+        className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}
+        style={{ paddingLeft: 8 + depth * 12 }}
+      >
+        <RowChevron open={isOpen} onToggle={onToggleOpen} label={name} />
+        {resourceIcon({ resourceType })}
+        <ResourceTitle
+          name={name}
+          href={isPdf ? null : webViewLink}
+          titleStyle={titleStyle}
+          onOpen={isPdf ? openPdf : undefined}
+        />
+        {isPdf ? (
+          <ExternalOpenLink href={webViewLink} label={providerOpenLabel(provider)} />
+        ) : null}
+        <IndexStatusLabel status={status?.status} />
+        <RowOverflowMenu
+          vaultId={vaultId}
+          driveResourceId={driveResourceId}
+          status={status}
+        />
+      </div>
+      {!isFolder && isOpen ? (
+        <FileIndexMetadata status={status} depth={depth} />
+      ) : null}
+      {status?.reconciliationRun && driveResourceId ? (
+        <RowProgress vaultId={vaultId} run={status.reconciliationRun} />
+      ) : null}
+    </>
   );
 }
 
@@ -685,9 +907,7 @@ function FolderChildren({
   vaultColor?: string | null;
   statusByResourceId: Map<string, FileIndexStatus>;
 }) {
-  const [, setLocation] = useLocation();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const titleStyle = titleStyleForVault(vaultColor);
 
   const childrenQuery = useQuery<{ children: FilesChild[]; nextPageToken: string | null }>({
     queryKey: [
@@ -741,78 +961,26 @@ function FolderChildren({
         const key = c.providerFileId;
         const isOpen = !!expanded[key];
         const isFolder = c.resourceType === "folder";
-        const isPdf = !isFolder && isPdfResource(c);
         const status = c.driveResourceId
           ? statusByResourceId.get(c.driveResourceId)
           : undefined;
-        const openPdf = (event: MouseEvent) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (c.driveResourceId) {
-            setLocation(
-              pdfViewerHref({
-                id: c.driveResourceId,
-                source: "drive_resource",
-                vaultId,
-                provider: c.provider,
-                webViewLink: c.webViewLink,
-              }),
-            );
-            return;
-          }
-          setLocation(
-            pdfViewerHref({
-              id: c.providerFileId,
-              source: "provider",
-              vaultId,
-              provider: c.provider,
-              providerFileId: c.providerFileId,
-              webViewLink: c.webViewLink,
-            }),
-          );
-        };
         return (
           <li key={key}>
-            <div
-              className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}
-              style={{ paddingLeft: 8 + depth * 12 }}
-            >
-              {isFolder ? (
-                <button
-                  type="button"
-                  className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground"
-                  onClick={() => setExpanded((s) => ({ ...s, [key]: !s[key] }))}
-                  aria-label={isOpen ? "Collapse" : "Expand"}
-                >
-                  {isOpen ? (
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  ) : (
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  )}
-                </button>
-              ) : (
-                <span className="w-3.5 shrink-0" />
-              )}
-              {resourceIcon(c)}
-              <ResourceTitle
-                name={c.name}
-                href={isPdf ? null : c.webViewLink}
-                titleStyle={titleStyle}
-                onOpen={isPdf ? openPdf : undefined}
-              />
-              {isPdf ? (
-                <ExternalOpenLink href={c.webViewLink} label={providerOpenLabel(c.provider)} />
-              ) : null}
-              <IndexStatusLabel status={status?.status} />
-              <IndexToggle
-                vaultId={vaultId}
-                driveResourceId={c.driveResourceId}
-                status={status}
-              />
-            </div>
-            {status?.reconciliationRun && c.driveResourceId ? (
-              <RowProgress vaultId={vaultId} run={status.reconciliationRun} />
-            ) : null}
+            <FilesRow
+              vaultId={vaultId}
+              name={c.name}
+              mimeType={c.mimeType}
+              resourceType={c.resourceType}
+              provider={c.provider}
+              providerFileId={c.providerFileId}
+              webViewLink={c.webViewLink}
+              driveResourceId={c.driveResourceId}
+              status={status}
+              depth={depth}
+              vaultColor={vaultColor}
+              isOpen={isOpen}
+              onToggleOpen={() => setExpanded((s) => ({ ...s, [key]: !s[key] }))}
+            />
             {isFolder && isOpen && (
               <FolderChildren
                 vaultId={vaultId}
@@ -849,9 +1017,7 @@ export function DriveResourceTree({
   vaultColor?: string | null;
   statusByResourceId: Map<string, FileIndexStatus>;
 }) {
-  const [, setLocation] = useLocation();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const titleStyle = titleStyleForVault(vaultColor);
 
   if (resources.length === 0) {
     return (
@@ -866,59 +1032,24 @@ export function DriveResourceTree({
       {resources.map((r) => {
         const isOpen = !!expanded[r.id];
         const isFolder = r.resourceType === "folder";
-        const isPdf = !isFolder && isPdfResource(r);
         const status = statusByResourceId.get(r.id);
-        const openPdf = (event: MouseEvent) => {
-          event.preventDefault();
-          event.stopPropagation();
-          setLocation(
-            pdfViewerHref({
-              id: r.id,
-              source: "drive_resource",
-              vaultId,
-              provider: r.provider,
-              webViewLink: r.webViewLink,
-            }),
-          );
-        };
         return (
           <li key={r.id}>
-            <div
-              className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}
-              style={{ paddingLeft: 8 }}
-            >
-              {isFolder ? (
-                <button
-                  type="button"
-                  className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground"
-                  onClick={() => setExpanded((s) => ({ ...s, [r.id]: !s[r.id] }))}
-                  aria-label={isOpen ? "Collapse" : "Expand"}
-                >
-                  {isOpen ? (
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  ) : (
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  )}
-                </button>
-              ) : (
-                <span className="w-3.5 shrink-0" />
-              )}
-              {resourceIcon(r)}
-              <ResourceTitle
-                name={r.name}
-                href={isPdf ? null : r.webViewLink}
-                titleStyle={titleStyle}
-                onOpen={isPdf ? openPdf : undefined}
-              />
-              {isPdf ? (
-                <ExternalOpenLink href={r.webViewLink} label={providerOpenLabel(r.provider)} />
-              ) : null}
-              <IndexStatusLabel status={status?.status} />
-              <IndexToggle vaultId={vaultId} driveResourceId={r.id} status={status} />
-            </div>
-            {status?.reconciliationRun ? (
-              <RowProgress vaultId={vaultId} run={status.reconciliationRun} />
-            ) : null}
+            <FilesRow
+              vaultId={vaultId}
+              name={r.name}
+              mimeType={r.mimeType}
+              resourceType={r.resourceType}
+              provider={r.provider}
+              providerFileId={r.providerFileId}
+              webViewLink={r.webViewLink}
+              driveResourceId={r.id}
+              status={status}
+              depth={0}
+              vaultColor={vaultColor}
+              isOpen={isOpen}
+              onToggleOpen={() => setExpanded((s) => ({ ...s, [r.id]: !s[r.id] }))}
+            />
             {isFolder && isOpen && (
               <FolderChildren
                 vaultId={vaultId}
