@@ -1,3 +1,10 @@
+<!-- 2026-08-10 Email pipeline health scope diagnostic:
+- Assets/data: principal/Vault-scoped email pipeline counts and cross-account email metadata (A01/A03/A07; S2 communications metadata).
+- Flow/threat: authenticated or owner-restored pipeline health read -> `getEmailPipelineCounts()` -> sensitive email tables. The canonical counts were correctly principal/Vault scoped, but a second account-global query compared the platform backlog with one user's visible backlog. In a multi-user deployment that difference is expected; classifying it as an error made ordinary user-scoped health reads inspect cross-owner aggregate state and emitted a recurring misleading fingerprint (STRIDE information disclosure/repudiation; DATA-01/OBS-01).
+- Controls/owner: remove the account-global diagnostic query and its `systemAwaitingEnrichment`, `ownerNullEmailMessages`, and `visibilityMismatch` projections. Pipeline health now derives only from `combineWithSensitiveVisible(...)`. Cross-account email discovery remains exclusively owned by the system scheduler, which restores each exact owner principal and one Vault before email access. No message content or identity was exposed in responses or logs. Owner: Email Pipeline. Severity: high privacy/operability. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: this removes a malformed global diagnostic, not orphan remediation. Any future orphan audit must run behind an explicit named system-principal boundary and emit privacy-safe platform telemetry rather than user tool output. Revert this record and the scoped contract change only if such a boundary is implemented first.
+-->
+
 <!-- 2026-08-10 Vaults and Teams Admin presentation boundary:
 - Assets/data: account-owned Vault metadata and account-scoped Team rosters/grant subjects (A01/A03/A07; S1 identity/access metadata).
 - Flow/threat: authenticated user -> Core-composed Vaults or Teams route -> existing principal-scoped Vault and Team APIs. A new navigation route must not become an authorization bypass or imply that Team membership itself grants object access (STRIDE elevation/information disclosure; IAM-01/DATA-01).

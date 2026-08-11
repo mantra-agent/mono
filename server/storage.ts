@@ -216,7 +216,7 @@ export interface IStorage {
   // Email draft storage moved to server/email-draft-storage.ts
 
   getUnenrichedTriagedEmails(limit?: number): Promise<EmailMessage[]>;
-  getEmailPipelineCounts(): Promise<{ untriaged: number; awaitingEnrichment: number; reviewReady: number; ownerNullEmailMessages: number; systemAwaitingEnrichment: number; visibilityMismatch: boolean }>;
+  getEmailPipelineCounts(): Promise<{ untriaged: number; awaitingEnrichment: number; reviewReady: number }>;
   getLastEmailEnrichment(): Promise<EmailEnrichment | undefined>;
   upsertEmailEnrichment(data: InsertEmailEnrichment): Promise<EmailEnrichment>;
   getEnrichmentsByThreadIds(threadIds: string[], accountId?: string): Promise<EmailEnrichment[]>;
@@ -1762,7 +1762,7 @@ export class HybridStorage implements IStorage {
   }
 
 
-  async getEmailPipelineCounts(): Promise<{ untriaged: number; awaitingEnrichment: number; reviewReady: number; ownerNullEmailMessages: number; systemAwaitingEnrichment: number; visibilityMismatch: boolean }> {
+  async getEmailPipelineCounts(): Promise<{ untriaged: number; awaitingEnrichment: number; reviewReady: number }> {
     // Keep health counts aligned with the actual candidate queries.
     // Outbound messages are audit/history, not triage candidates.
     // Dismissed triage states are terminal and excluded from enrichment/review counts.
@@ -1796,38 +1796,11 @@ export class HybridStorage implements IStorage {
       ))
       .where(scopedRecent);
 
-    const [diagnostic] = await db.select({
-      ownerNullEmailMessages: sql<number>`COUNT(*) FILTER (
-        WHERE (${emailMessages.ownerUserId} IS NULL OR ${emailMessages.principalAccountId} IS NULL)
-      )::int`,
-      systemAwaitingEnrichment: sql<number>`COUNT(*) FILTER (
-        WHERE ${emailMessages.triageStatus} = 'triaged'
-          AND (${emailEnrichments.id} IS NULL OR ${emailEnrichments.updatedAt} < ${emailMessages.date})
-      )::int`,
-    }).from(emailMessages)
-      .leftJoin(emailEnrichments, and(
-        eq(emailEnrichments.providerThreadId, emailMessages.providerThreadId),
-        eq(emailEnrichments.accountId, emailMessages.accountId),
-      ))
-      .where(sql`${emailMessages.date} > NOW() - INTERVAL '30 days'`);
-
-    const counts = {
+    return {
       untriaged: Number(row?.untriaged ?? 0),
       awaitingEnrichment: Number(row?.awaitingEnrichment ?? 0),
       reviewReady: Number(row?.reviewReady ?? 0),
-      ownerNullEmailMessages: Number(diagnostic?.ownerNullEmailMessages ?? 0),
-      systemAwaitingEnrichment: Number(diagnostic?.systemAwaitingEnrichment ?? 0),
-      visibilityMismatch: Number(diagnostic?.systemAwaitingEnrichment ?? 0) > Number(row?.awaitingEnrichment ?? 0),
     };
-
-    if (counts.ownerNullEmailMessages > 0) {
-      log.error(`email pipeline invariant violation: owner-null email rows in recent pipeline count=${counts.ownerNullEmailMessages}`);
-    }
-    if (counts.visibilityMismatch) {
-      log.error(`email pipeline visibility mismatch: systemAwaitingEnrichment=${counts.systemAwaitingEnrichment} userVisibleAwaitingEnrichment=${counts.awaitingEnrichment}`);
-    }
-
-    return counts;
   }
 
   async getLastEmailEnrichment(): Promise<EmailEnrichment | undefined> {
