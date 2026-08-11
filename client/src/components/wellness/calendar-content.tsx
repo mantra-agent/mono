@@ -997,16 +997,12 @@ function AddActivityDialog({ open, onOpenChange }: { open: boolean; onOpenChange
     name: "",
     benefit: "",
     risk: "",
-    estimatedMinutes: 15,
-    estimatedCost: 0,
     intervalDays: 1,
-    requirements: "",
     category: "daily_practice",
   });
 
   const resetForm = () => setFormData({
-    name: "", benefit: "", risk: "", estimatedMinutes: 15,
-    estimatedCost: 0, intervalDays: 1, requirements: "", category: "daily_practice",
+    name: "", benefit: "", risk: "", intervalDays: 1, category: "daily_practice",
   });
 
   const createMutation = useMutation({
@@ -1091,41 +1087,7 @@ function AddActivityDialog({ open, onOpenChange }: { open: boolean; onOpenChange
               placeholder="What happens if you skip this"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="activity-time">Est. minutes</Label>
-              <Input
-                id="activity-time"
-                data-testid="input-activity-time"
-                type="number"
-                min={0}
-                value={formData.estimatedMinutes}
-                onChange={(e) => setFormData({ ...formData, estimatedMinutes: parseInt(e.target.value) || 0 })}
-              />
-            </div>
-            <div>
-              <Label htmlFor="activity-cost">Est. cost ($)</Label>
-              <Input
-                id="activity-cost"
-                data-testid="input-activity-cost"
-                type="number"
-                min={0}
-                step={0.01}
-                value={formData.estimatedCost}
-                onChange={(e) => setFormData({ ...formData, estimatedCost: parseFloat(e.target.value) || 0 })}
-              />
-            </div>
-          </div>
-          <div>
-            <Label htmlFor="activity-requirements">Requirements</Label>
-            <Input
-              id="activity-requirements"
-              data-testid="input-activity-requirements"
-              value={formData.requirements}
-              onChange={(e) => setFormData({ ...formData, requirements: e.target.value })}
-              placeholder="e.g. gym membership, equipment"
-            />
-          </div>
+
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => { resetForm(); onOpenChange(false); }} data-testid="button-cancel-activity">

@@ -389,10 +389,7 @@ export async function createWellnessActivity(data: {
   name: string;
   benefit?: string | null;
   risk?: string | null;
-  estimatedMinutes?: number | null;
-  estimatedCost?: number | null;
   intervalDays: number;
-  requirements?: string | null;
   category?: string;
   linkedMetricType?: string | null;
   greatThreshold?: number | null;
@@ -410,10 +407,7 @@ export async function createWellnessActivity(data: {
     ...sensitiveOwnershipValues(requireCurrentPrincipal()),
     benefit: data.benefit ?? null,
     risk: data.risk ?? null,
-    estimatedMinutes: data.estimatedMinutes ?? null,
-    estimatedCost: data.estimatedCost ?? null,
     intervalDays: data.intervalDays,
-    requirements: data.requirements ?? null,
     category,
     isDefault: false,
     linkedMetricType: data.linkedMetricType ?? null,
@@ -429,10 +423,7 @@ export async function updateWellnessActivity(id: number, data: Partial<{
   name: string;
   benefit: string | null;
   risk: string | null;
-  estimatedMinutes: number | null;
-  estimatedCost: number | null;
   intervalDays: number;
-  requirements: string | null;
   category: string;
   linkedMetricType: string | null;
   greatThreshold: number | null;
@@ -1312,12 +1303,12 @@ export async function registerWellnessRoutes(app: Express) {
 
   app.post("/api/wellness/activities", requireAuth, async (req, res) => {
     try {
-      const { name, benefit, risk, estimatedMinutes, estimatedCost, intervalDays, requirements, category, linkedMetricType, greatThreshold, goodThreshold, windowStart, windowEnd } = req.body;
+      const { name, benefit, risk, intervalDays, category, linkedMetricType, greatThreshold, goodThreshold, windowStart, windowEnd } = req.body;
       if (!name || !intervalDays) {
         return res.status(400).json({ error: "name and intervalDays are required" });
       }
       const activity = await createWellnessActivity({
-        name, benefit, risk, estimatedMinutes, estimatedCost, intervalDays, requirements, category,
+        name, benefit, risk, intervalDays, category,
         linkedMetricType, greatThreshold, goodThreshold, windowStart, windowEnd,
       });
       res.json(activity);
@@ -1455,7 +1446,7 @@ export async function registerWellnessRoutes(app: Express) {
       const allLogs = await db
         .select()
         .from(wellnessLogs)
-        .where(eq(wellnessLogs.activityId, id))
+        .where(visibleLog(eq(wellnessLogs.activityId, id)))
         .orderBy(desc(wellnessLogs.completedAt));
       const trends = computeActivityTrends(allLogs, activity.intervalDays);
       res.json(trends);
