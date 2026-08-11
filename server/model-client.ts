@@ -1361,7 +1361,13 @@ function providerFailureReference(failure: Pick<ModelProviderFailure, "providerR
 }
 
 function buildProviderUserMessage(failure: Omit<ModelProviderFailure, "userMessage">): string {
-  const providerName = failure.provider === "grok-subscription" ? "Grok" : failure.provider === "openai-subscription" ? "OpenAI Codex" : "OpenAI";
+  const providerName = failure.provider === "grok-subscription"
+    ? "Grok"
+    : failure.provider === "openai-subscription"
+      ? "OpenAI Codex"
+      : failure.provider === "anthropic" || failure.provider === "claude-cli"
+        ? "Anthropic"
+        : "OpenAI";
   const reference = providerFailureReference(failure);
   const referenceSuffix = reference ? ` Reference: ${reference}.` : "";
   const providerMessage = sanitizeProviderDiagnostic(failure.providerMessage);
@@ -1868,6 +1874,47 @@ function openaiSdkAttemptError(err: unknown, clientRequestId: string): ModelProv
       providerType,
       providerMessage,
       providerParam,
+      eventType: "sdk_error",
+    },
+  });
+}
+
+function anthropicSdkAttemptError(err: unknown, clientRequestId: string): ModelProviderAttemptError {
+  const sdkError = err as {
+    status?: number;
+    request_id?: string;
+    message?: string;
+    error?: { message?: string; type?: string };
+  };
+  const status = typeof sdkError?.status === "number" ? sdkError.status : 0;
+  const providerType = sanitizeProviderDiagnostic(sdkError?.error?.type);
+  const providerMessage = sanitizeProviderDiagnostic(sdkError?.error?.message || sdkError?.message);
+  const retryable = status === 408 || status === 409 || status === 429 || status >= 500 || providerType === "overloaded_error";
+  const bodySnippet = safeStringify(sdkError?.error || { message: sdkError?.message }, {
+    maxBytes: MAX_PROVIDER_DIAGNOSTIC_CHARS,
+    maxStrLen: MAX_PROVIDER_DIAGNOSTIC_CHARS,
+    label: "model-client.anthropicSdkError",
+  });
+
+  return new ModelProviderAttemptError({
+    kind: status === 429
+      ? "rate_limited"
+      : status > 0
+        ? (retryable ? "http_retryable" : "http_permanent")
+        : providerType === "overloaded_error"
+          ? "provider_failed"
+          : "transport",
+    retryable,
+    status,
+    message: providerMessage || (status > 0 ? `HTTP ${status}` : "Anthropic SDK transport error"),
+    bodySnippet,
+    clientRequestId,
+    providerRequestId: sanitizeProviderDiagnostic(sdkError?.request_id),
+    phase: status > 0 ? "fetch" : "stream",
+    diagnostics: {
+      providerType,
+      providerCode: providerType,
+      providerMessage,
       eventType: "sdk_error",
     },
   });
@@ -3158,6 +3205,7 @@ async function* anthropicStream(model: string, options: ChatCompletionStreamOpti
   yield { type: "request_sent", metadata: { buildMs: Date.now() - buildStart } };
 
   const OVERLOAD_RETRY_DELAYS_MS = [1000, 2000, 4000];
+  const clientRequestId = randomUUID();
   let lastOverloadErr: any = null;
 
   for (let attempt = 0; attempt <= OVERLOAD_RETRY_DELAYS_MS.length; attempt++) {
@@ -3272,24 +3320,30 @@ async function* anthropicStream(model: string, options: ChatCompletionStreamOpti
         continue;
       }
 
-      const streamError = normalizeLoggedModelError(
-        err,
-        "MODEL_PROVIDER_ERROR",
-        err?.message || "Anthropic stream error",
+      const providerError = modelProviderErrorFromAttempt(
+        anthropicSdkAttemptError(err, clientRequestId),
+        attempt + 1,
+        { provider: "anthropic", model, metadata: options.metadata },
       );
-      log.error(`anthropic stream ERROR model=${model}`, streamError);
-      yield { type: "error", error: streamError.message || "Anthropic stream error" };
+      yield {
+        type: "error",
+        error: providerError.message,
+        providerFailure: providerError.providerFailure,
+      };
       return;
     }
   }
 
-  const overloadError = normalizeLoggedModelError(
-    lastOverloadErr,
-    "PROVIDER_OVERLOADED",
-    lastOverloadErr?.message || "overloaded_error",
+  const overloadError = modelProviderErrorFromAttempt(
+    anthropicSdkAttemptError(lastOverloadErr, clientRequestId),
+    OVERLOAD_RETRY_DELAYS_MS.length + 1,
+    { provider: "anthropic", model, metadata: options.metadata },
   );
-  log.error(`anthropic stream overloaded after all retries model=${model}`, overloadError);
-  yield { type: "error", error: overloadError.message || "overloaded_error" };
+  yield {
+    type: "error",
+    error: overloadError.message,
+    providerFailure: overloadError.providerFailure,
+  };
 }
 
 /**
