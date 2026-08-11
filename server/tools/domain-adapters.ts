@@ -105,7 +105,7 @@ export const TOOL_DOMAIN_ADAPTERS: readonly ToolDomainAdapter[] = [
   {
     id: "communications",
     owner: "communications",
-    tools: ["phone_call", "gmail", "content", "meetings", "notion"],
+    tools: ["phone_call", "sms", "gmail", "content", "meetings", "notion"],
     authorizationDependencies: ["principal-context", "connected-account scope", "human external-effect gates"],
     normalizationExtensions: ["draft body mutation", "recipient normalization", "meeting draft validation"],
     artifactKinds: ["email_draft", "content_draft", "meeting", "meeting_draft"],

@@ -258,6 +258,12 @@ export const registerSchema = z.object({
   password: z.string().min(8),
   name: z.string().min(1).max(120),
   inviteToken: z.string().optional(),
+  smsConsent: z.boolean().optional().default(false),
+  smsPhoneNumber: z.string().trim().max(32).optional(),
+}).superRefine((value, context) => {
+  if (value.smsConsent && !value.smsPhoneNumber) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["smsPhoneNumber"], message: "Phone number is required for SMS consent" });
+  }
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;

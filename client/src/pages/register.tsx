@@ -8,6 +8,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2 } from "lucide-react";
 import { CopyableAuthError, type CopyableAuthErrorState } from "@/components/copyable-auth-error";
 import { MantraLogo } from "@/components/mantra-logo";
@@ -36,6 +37,8 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [name, setName] = useState("");
+  const [smsConsent, setSmsConsent] = useState(false);
+  const [smsPhoneNumber, setSmsPhoneNumber] = useState("");
   const [savingName, setSavingName] = useState(false);
   const [authError, setAuthError] = useState<CopyableAuthErrorState | null>(null);
   const emailRef = useRef<HTMLInputElement>(null);
@@ -98,6 +101,8 @@ export default function RegisterPage() {
         password,
         name: name.trim(),
         inviteToken: token || undefined,
+        smsConsent,
+        smsPhoneNumber: smsConsent ? smsPhoneNumber.trim() : undefined,
       });
       const result = await completeStartupOnboarding(name);
       setLocation(getStartupOnboardingDestination(result), { replace: true });
@@ -247,10 +252,21 @@ export default function RegisterPage() {
                 data-testid="input-register-name"
               />
             </div>
+            <div className="space-y-3 text-left">
+              <div className="flex items-start gap-3">
+                <Checkbox id="reg-sms-consent" checked={smsConsent} onCheckedChange={(checked) => setSmsConsent(checked === true)} data-testid="checkbox-register-sms-consent" />
+                <label htmlFor="reg-sms-consent" className="text-sm leading-5 text-muted-foreground">
+                  Send me service and conversational texts from Mantra. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help. Consent is not required to use Mantra. See the{" "}
+                  <a className="text-cta hover:text-active" href="https://www.trymantra.ai/terms/" target="_blank" rel="noreferrer">Terms</a>{" "}
+                  and{" "}<a className="text-cta hover:text-active" href="https://www.trymantra.ai/privacy/" target="_blank" rel="noreferrer">Privacy Policy</a>.
+                </label>
+              </div>
+              {smsConsent ? <Input id="reg-sms-phone" type="tel" value={smsPhoneNumber} onChange={(event) => setSmsPhoneNumber(event.target.value)} placeholder="Mobile number" autoComplete="tel" required className={authInputClass} data-testid="input-register-sms-phone" /> : null}
+            </div>
             <Button
               type="submit"
               className={authButtonClass}
-              disabled={savingName || !name.trim()}
+              disabled={savingName || !name.trim() || (smsConsent && !smsPhoneNumber.trim())}
               data-testid="button-register-finish"
             >
               {savingName ? (

@@ -111,6 +111,11 @@ export interface TwilioCall {
   status: TwilioCallStatus;
 }
 
+export interface TwilioMessage {
+  sid: string;
+  status: string;
+}
+
 interface TwilioCallResponse {
   sid?: string;
   status?: TwilioCallStatus;
@@ -147,4 +152,21 @@ export async function createTwilioCall(input: {
   );
   if (!call.sid || !call.status) throw new Error("Twilio returned an incomplete call response");
   return { sid: call.sid, status: call.status };
+}
+
+export async function createTwilioMessage(input: { to: string; body: string }): Promise<TwilioMessage> {
+  const config = getTwilioConfig();
+  if (!config.accountSid || !config.authToken || !config.phoneNumber) {
+    throw new Error("Twilio account SID, auth token, and phone number are required");
+  }
+  const form = new URLSearchParams({ To: input.to, From: config.phoneNumber, Body: input.body });
+  const encodedSid = encodeURIComponent(config.accountSid);
+  const message = await fetchTwilioJson<{ sid?: string; status?: string }>(
+    `${TWILIO_API_BASE}/Accounts/${encodedSid}/Messages.json`,
+    config.accountSid,
+    config.authToken,
+    { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: form.toString() },
+  );
+  if (!message.sid || !message.status) throw new Error("Twilio returned an incomplete message response");
+  return { sid: message.sid, status: message.status };
 }

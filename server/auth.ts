@@ -834,7 +834,7 @@ export function setupAuth(app: Express) {
       }
 
       const email = normalizeEmailAddress(parsed.data.email);
-      const { password, inviteToken, name } = parsed.data;
+      const { password, inviteToken, name, smsConsent, smsPhoneNumber } = parsed.data;
 
       const hashed = await bcrypt.hash(password, 12);
       const passwordSignupAt = new Date();
@@ -872,6 +872,14 @@ export function setupAuth(app: Express) {
       }
 
       const principal = await completeUserAuth(req, res, user, "register", name);
+      if (smsConsent && smsPhoneNumber) {
+        const { recordSignupConsent } = await import("./sms-service");
+        await runWithPrincipal(principal, () => recordSignupConsent({
+          principal,
+          phoneNumber: smsPhoneNumber,
+          source: inviteToken ? "invite_registration" : "public_registration",
+        }));
+      }
       res.json(userResponse(user, principal));
     } catch (error: any) {
       const message = error instanceof Error ? error.message : String(error);
