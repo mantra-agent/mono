@@ -22,6 +22,7 @@ import { filterModToolSchemas, requireModSkillAccess } from "./mods/mod-access";
 import { buildStructuralRunEvidence, evaluateStructuralItem } from "./skill-scoring";
 import { BUILD_OWNED_SKILL_FALLBACK_INSTRUCTIONS, BUILD_OWNED_SKILL_NAME_SET, resolveSkillRunName, type BuildOwnedSkillName } from "./skill-identities";
 import type { ChecklistItem } from "@shared/schema";
+import type { ChildMissionTerminalOutcome } from "@shared/models/chat";
 
 const logger = createLogger("AutonomousSkillRunner");
 const lifecycleLog = createLogger("AutonomousLifecycle");
@@ -138,6 +139,7 @@ async function persistExecutorResult(
   result: ExecutorRunResult,
   fallbackContent: string,
   isError?: boolean,
+  deferSettlementRelease = false,
 ): Promise<void> {
   try {
   if (!await conversationExists(sessionId)) {
@@ -190,9 +192,13 @@ async function persistExecutorResult(
   );
   logger.log(`[SkillChat] [${sessionId}] Persisted executor result: contentLen=${content.length} thinking=${!!thinking} toolCalls=${toolCalls?.length ?? 0} model=${model || "unknown"} systemSteps=${result.systemSteps?.length ?? 0} chronology=${result.segmentChronology?.length ?? 0}`);
   } finally {
-    // Tools are durable (or intentionally skipped) — release settling gate and
-    // apply any session.end that was deferred while the run was busy.
-    await applyPendingSessionEndAfterTools(sessionId);
+    // Tools are durable (or intentionally skipped). Ordinary autonomous runs
+    // can now release settling and apply session.end. Plan children retain the
+    // same fence until their source-owned mission outcome is durable, so the
+    // parent monitor cannot observe saved without the terminal discriminant.
+    if (!deferSettlementRelease) {
+      await applyPendingSessionEndAfterTools(sessionId);
+    }
   }
 }
 
@@ -492,6 +498,8 @@ export interface AutonomousRunResult {
   status: "succeeded" | "degraded" | "failed" | "yielded";
   summary?: string;
   error?: string;
+  /** Source-owned Plan child terminal truth, preserved from AgentExecutor when applicable. */
+  childMissionOutcome?: ChildMissionTerminalOutcome;
   /** Failed deterministic checklist requirements (present when status === "degraded"). */
   failedStructuralChecks?: string[];
   /** @deprecated Compatibility projection for callers expecting the old tool-only field. */
@@ -1140,7 +1148,18 @@ export async function executeAutonomousSkillRun(
           childMissionOutcome = terminalStep.status;
         }
       }
-      await chatFileStorage.setChildMissionOutcome(sessionId, childMissionOutcome);
+      if (childMissionOutcome) {
+        await chatFileStorage.setChildMissionOutcome(sessionId, childMissionOutcome);
+      } else if (options.planId && options.stepId) {
+        throw new Error(`Plan child ${sessionId} completed without an executor-owned mission terminal outcome`);
+      }
+      // Plan children kept AgentExecutor's settling fence closed across tool
+      // persistence. Release it only after the terminal discriminant is durable;
+      // a deferred session.end may now make the Session saved without racing the
+      // parent monitor into a false missing-outcome failure.
+      if (options.planId && options.stepId) {
+        await applyPendingSessionEndAfterTools(sessionId);
+      }
       const finalSessionStatus = result.status === "succeeded" || result.status === "degraded" ? "saved" : "failed";
       if (result.status === "failed") {
         await chatFileStorage.setErrorSeverity(sessionId, "error").catch((e: unknown) => {
@@ -1593,6 +1612,7 @@ async function runSkillPipeline(
 
     const durationMs = Date.now() - startTime;
     const content = result.content?.trim() || "";
+    const deferSettlementRelease = Boolean(options.planId && options.stepId);
 
     if (result.status === "yielded") {
       logger.log(`[SkillChat] [${sessionId}] Skill run yielded to interactive session — deferring`);
@@ -1604,11 +1624,17 @@ async function runSkillPipeline(
     if (result.status === "failed") {
       const abortSummary = formatAbortDetails(result.abortDetails);
       const errorMsg = abortSummary || result.abortReason || result.error || result.terminationReason || "Unknown error";
-      await persistExecutorResult(sessionId, result, describeExecutorFailure(result), true).catch((e: unknown) => {
+      await persistExecutorResult(sessionId, result, describeExecutorFailure(result), true, deferSettlementRelease).catch((e: unknown) => {
         logger.error(`[SkillChat] [${sessionId}] Failed to persist error result: ${e instanceof Error ? e.message : String(e)}`);
       });
       logger.warn(`[SkillChat] [${sessionId}] Skill failed: ${errorMsg} (${durationMs}ms, ${toolCallCount} tool calls)`);
-      return { sessionId, status: "failed", error: errorMsg, durationMs };
+      return {
+        sessionId,
+        status: "failed",
+        error: errorMsg,
+        durationMs,
+        childMissionOutcome: result.childMissionOutcome,
+      };
     }
 
     if (result.status === "degraded") {
@@ -1621,7 +1647,7 @@ async function runSkillPipeline(
       const degradedNotice = budgetExhausted
         ? "The executor reached its bounded work budget. Completed work remains saved; continue in a later run."
         : `The model reached its response generation limit before producing final text.${responseLimitDetail} Completed tool work remains saved.`;
-      await persistExecutorResult(sessionId, result, degradedNotice).catch((e: unknown) => {
+      await persistExecutorResult(sessionId, result, degradedNotice, false, deferSettlementRelease).catch((e: unknown) => {
         logger.error(`[SkillChat] [${sessionId}] Failed to persist degraded result: ${e instanceof Error ? e.message : String(e)}`);
       });
       logger.warn(
@@ -1639,10 +1665,11 @@ async function runSkillPipeline(
           : "Executor completed without final text; completed work remains saved.",
         error: reason,
         durationMs,
+        childMissionOutcome: result.childMissionOutcome,
       };
     }
 
-    await persistExecutorResult(sessionId, result, "Skill run completed.").catch((e: unknown) => {
+    await persistExecutorResult(sessionId, result, "Skill run completed.", false, deferSettlementRelease).catch((e: unknown) => {
       logger.error(`[SkillChat] [${sessionId}] Failed to persist success result: ${e instanceof Error ? e.message : String(e)}`);
     });
 
@@ -1688,7 +1715,13 @@ async function runSkillPipeline(
     }
 
     logger.log(`[SkillChat] [${sessionId}] Skill completed: ${config.label} in ${durationMs}ms, ${toolCallCount} tool calls`);
-    return { sessionId, status: "succeeded", summary: content.slice(0, 2000), durationMs };
+    return {
+      sessionId,
+      status: "succeeded",
+      summary: content.slice(0, 2000),
+      durationMs,
+      childMissionOutcome: result.childMissionOutcome,
+    };
 
   } finally {
     options.signal?.removeEventListener("abort", abortFromRuntime);
