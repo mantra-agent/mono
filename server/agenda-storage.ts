@@ -19,6 +19,10 @@ const AGENDA_NAME_MAX_CHARS = 80;
 const AGENDA_DESCRIPTION_MAX_CHARS = 1_000;
 const AGENDA_SEARCH_MAX_CHARS = 120;
 export const FTUE_AGENDA_RESERVED_KEY = "ftue";
+const RECAP_ONLY_FTUE_ITEM_IDS = new Set([
+  "review-meeting-notes",
+  "capture-meeting-detail-preference",
+]);
 
 const agendaScopeColumns = {
   scope: agendaDefinitions.scope,
@@ -258,8 +262,15 @@ export class AgendaDefinitionStorage {
     });
   }
 
-  async instantiateFtue(principal?: Principal): Promise<SessionAgenda> {
-    return instantiateAgendaDefinition(await this.ensureFtue(principal));
+  async instantiateFtue(
+    principal?: Principal,
+    options?: { recapAware?: boolean },
+  ): Promise<SessionAgenda> {
+    const definition = await this.ensureFtue(principal);
+    if (options?.recapAware) return instantiateAgendaDefinition(definition);
+    return instantiateAgendaDefinition({
+      items: definition.items.filter((item) => !RECAP_ONLY_FTUE_ITEM_IDS.has(item.id)),
+    });
   }
 }
 
