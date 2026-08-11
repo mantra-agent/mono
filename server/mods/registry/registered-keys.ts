@@ -132,8 +132,6 @@ export const REGISTERED_CONNECTOR_KEYS = [
   "quickbooks",
   "brave",
   "github",
-  "railway",
-  "cloudflare",
   "automation-auth",
   "expo",
   "sentry",
