@@ -18,7 +18,7 @@ import { useWikiLinks } from "@/hooks/use-wiki-links";
 import { isEditorEmpty } from "@/lib/editor-utils";
 import { tiptapToMarkdown as jsonToMarkdownShared, markdownToTiptap, normalizeTiptapDoc } from "@shared/markdown-tiptap";
 import { ReferenceWidgetExtension } from "@/components/references/tiptap-reference-extension";
-import { ReferenceSuggestionRow } from "@/components/references/reference-suggestion-row";
+import { ReferenceMentionMenu } from "@/components/mention-popover";
 import { loadReferenceSuggestions, type ReferenceSuggestion } from "@/lib/reference-search";
 import { queryClient } from "@/lib/queryClient";
 import { normalizeReferenceType, serializeReference } from "@shared/references";
@@ -982,32 +982,16 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
         </div>
       )}
       {referenceAnchor && !readOnly && (
-        <div
-          className="absolute z-50 w-80 max-w-[calc(100%-1rem)] overflow-hidden rounded-md border border-border bg-popover shadow-md"
+        <ReferenceMentionMenu
+          className="absolute w-80 max-w-[calc(100%-1rem)]"
           style={{ top: referenceAnchor.top, left: referenceAnchor.left }}
-          data-testid="editor-reference-picker"
-        >
-          <div className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground">
-            @{referenceQuery}
-          </div>
-          <div className="max-h-72 overflow-y-auto py-1">
-            {referenceLoading && referenceSuggestions.length === 0 ? (
-              <div className="px-3 py-2 text-xs text-muted-foreground">Searching…</div>
-            ) : referenceSuggestions.length === 0 ? (
-              <div className="px-3 py-2 text-xs text-muted-foreground">No matches</div>
-            ) : referenceSuggestions.map((suggestion, idx) => (
-              <ReferenceSuggestionRow
-                key={`${suggestion.type}:${suggestion.id}`}
-                suggestion={suggestion}
-                active={idx === selectedReferenceIdx}
-                dense
-                showToken={false}
-                onSelect={insertReference}
-                onHover={() => setSelectedReferenceIdx(idx)}
-              />
-            ))}
-          </div>
-        </div>
+          suggestions={referenceSuggestions}
+          isLoading={referenceLoading}
+          activeIndex={selectedReferenceIdx}
+          onSelect={insertReference}
+          onHover={setSelectedReferenceIdx}
+          testId="editor-reference-picker"
+        />
       )}
       {wikiQuery !== null && wikiAnchor && (
         <div

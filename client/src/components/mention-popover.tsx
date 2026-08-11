@@ -1,9 +1,23 @@
+import type { CSSProperties } from "react";
 import { Search } from "lucide-react";
 import type {
   ReferenceTrigger,
   ReferenceSuggestion,
 } from "@/hooks/use-mention-autocomplete";
 import { ReferenceSuggestionRow } from "@/components/references/reference-suggestion-row";
+import { cn } from "@/lib/utils";
+
+export interface ReferenceMentionMenuProps {
+  triggerChar?: "@" | "#";
+  suggestions: ReferenceSuggestion[];
+  isLoading: boolean;
+  activeIndex: number;
+  onSelect: (suggestion: ReferenceSuggestion) => void;
+  onHover: (index: number) => void;
+  className?: string;
+  style?: CSSProperties;
+  testId?: string;
+}
 
 export interface MentionPopoverProps {
   trigger: ReferenceTrigger | null;
@@ -15,9 +29,59 @@ export interface MentionPopoverProps {
   testIdSuffix?: string;
 }
 
+export function ReferenceMentionMenu({
+  triggerChar = "@",
+  suggestions,
+  isLoading,
+  activeIndex,
+  onSelect,
+  onHover,
+  className,
+  style,
+  testId = "mention-popover",
+}: ReferenceMentionMenuProps) {
+  return (
+    <div
+      data-testid={testId}
+      className={cn(
+        "z-50 w-full max-w-md overflow-hidden rounded-md border border-border bg-background text-foreground shadow-md",
+        className,
+      )}
+      style={style}
+    >
+      <div className="flex items-center gap-2 border-b border-border/60 px-2 py-1 text-xs text-muted-foreground">
+        <Search className="h-3 w-3" />
+        <span>
+          {triggerChar === "#"
+            ? "Link a task, project, goal…"
+            : "Mention a person, page, project…"}
+        </span>
+      </div>
+      <div className="max-h-64 overflow-y-auto overscroll-contain py-0.5">
+        {isLoading && suggestions.length === 0 && (
+          <div className="px-3 py-1 text-xs text-muted-foreground">Searching…</div>
+        )}
+        {!isLoading && suggestions.length === 0 && (
+          <div className="px-3 py-1 text-xs text-muted-foreground">No matches</div>
+        )}
+        {suggestions.map((suggestion, index) => (
+          <ReferenceSuggestionRow
+            key={`${suggestion.type}:${suggestion.id}`}
+            suggestion={suggestion}
+            active={index === activeIndex}
+            dense
+            showToken={false}
+            onSelect={onSelect}
+            onHover={() => onHover(index)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /**
- * Mention autocomplete popover. Compact single-line rows via shared
- * ReferenceSuggestionRow.
+ * Mention autocomplete popover using the shared reference menu presentation.
  *
  * Positioning is pure CSS: the popover is `absolute bottom-full` inside the
  * caller's `relative` composer/field wrapper, so it lives in that element's
@@ -43,37 +107,15 @@ export function MentionPopover({
   if (!trigger) return null;
 
   return (
-    <div
-      data-testid={`mention-popover${testIdSuffix}`}
-      className="absolute bottom-full left-0 z-50 mb-2 w-full max-w-md overflow-hidden rounded-md border border-border bg-background text-foreground shadow-md"
-    >
-      <div className="flex items-center gap-2 border-b border-border/60 px-2 py-1 text-xs text-muted-foreground">
-        <Search className="h-3 w-3" />
-        <span>
-          {trigger.char === "#"
-            ? "Link a task, project, goal…"
-            : "Mention a person, page, project…"}
-        </span>
-      </div>
-      <div className="max-h-64 overflow-y-auto overscroll-contain py-0.5">
-        {isLoading && suggestions.length === 0 && (
-          <div className="px-3 py-1 text-xs text-muted-foreground">Searching…</div>
-        )}
-        {!isLoading && suggestions.length === 0 && (
-          <div className="px-3 py-1 text-xs text-muted-foreground">No matches</div>
-        )}
-        {suggestions.map((s, i) => (
-          <ReferenceSuggestionRow
-            key={`${s.type}:${s.id}`}
-            suggestion={s}
-            active={i === activeIndex}
-            dense
-            showToken={false}
-            onSelect={onSelect}
-            onHover={() => onHover(i)}
-          />
-        ))}
-      </div>
-    </div>
+    <ReferenceMentionMenu
+      triggerChar={trigger.char}
+      suggestions={suggestions}
+      isLoading={isLoading}
+      activeIndex={activeIndex}
+      onSelect={onSelect}
+      onHover={onHover}
+      className="absolute bottom-full left-0 mb-2"
+      testId={`mention-popover${testIdSuffix}`}
+    />
   );
 }
