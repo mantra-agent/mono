@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, ChevronRight, Loader2 } from "lucide-react";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
+import { HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
-import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Button } from "@/components/ui/button";
 import { useSelectedBusiness } from "@/hooks/use-selected-business";
 import { usePageLoadActivity } from "@/hooks/use-page-activity";
@@ -56,8 +56,8 @@ interface NumericInputProps {
 
 function NumericInput({ value, onChange, prefix, suffix, min, step, ariaLabel }: NumericInputProps) {
   return (
-    <div className="relative flex h-7 w-48 max-w-full items-center rounded-md bg-muted/50 focus-within:ring-1 focus-within:ring-ring">
-      {prefix && <span className="pointer-events-none absolute left-2 text-xs text-muted-foreground">{prefix}</span>}
+    <div className="flex h-5 w-40 max-w-full items-center gap-1 rounded-md bg-muted/50 px-1.5 focus-within:ring-1 focus-within:ring-ring sm:w-48">
+      {prefix && <span className="shrink-0 text-xs text-muted-foreground">{prefix}</span>}
       <input
         aria-label={ariaLabel}
         type="number"
@@ -69,13 +69,9 @@ function NumericInput({ value, onChange, prefix, suffix, min, step, ariaLabel }:
           const next = Number(event.target.value);
           if (Number.isFinite(next)) onChange(next);
         }}
-        className={cn(
-          "h-7 w-full bg-transparent px-2 text-right text-sm tabular-nums outline-none",
-          prefix && "pl-5",
-          suffix && (suffix.length > 5 ? "pr-20" : suffix.length > 2 ? "pr-12" : "pr-7"),
-        )}
+        className="h-5 min-w-0 flex-1 bg-transparent p-0 text-right text-xs leading-none tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
       />
-      {suffix && <span className="pointer-events-none absolute right-2 whitespace-nowrap text-xs text-muted-foreground">{suffix}</span>}
+      {suffix && <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">{suffix}</span>}
     </div>
   );
 }
@@ -173,7 +169,7 @@ export default function BusinessModelPage() {
       <BusinessPageHeader page="Model" businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} />
       <section className="overflow-hidden border-y border-border/20">
         <ProfileDetailSection title="Assumptions" defaultOpen headerAction={<SavedIndicator state={saveState} />}>
-          <div className="divide-y divide-border/10">
+          <div className="space-y-0">
             <Driver label="Starting accounts"><NumericInput ariaLabel="Starting paying accounts" value={draft.startingAccounts} min={0} step={1} onChange={(startingAccounts) => updateGlobal({ startingAccounts })} /></Driver>
             <Driver label="Starting users"><NumericInput ariaLabel="Starting users" value={draft.startingUsers} min={0} step={1} onChange={(startingUsers) => updateGlobal({ startingUsers })} /></Driver>
             <Driver label="Q1 new accounts"><NumericInput ariaLabel="Quarter one new accounts" value={draft.quarterOneNewAccounts} min={0} step={1} onChange={(quarterOneNewAccounts) => updateGlobal({ quarterOneNewAccounts })} /></Driver>
@@ -242,7 +238,12 @@ export default function BusinessModelPage() {
 }
 
 function Driver({ label, children }: { label: string; children: ReactNode }) {
-  return <ProfileTreeRow label={label} hasValue showEmpty mobileLayout="inline">{children}</ProfileTreeRow>;
+  return (
+    <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
+      <span className="min-w-0 truncate text-muted-foreground">{label}</span>
+      <div className="min-w-0 shrink-0">{children}</div>
+    </div>
+  );
 }
 
 interface DataRowProps {
