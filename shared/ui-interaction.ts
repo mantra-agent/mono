@@ -22,6 +22,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.tags.open": { href: "/tags" },
   "navigation.definition.open": { href: "/business/definition", permission: "system:read" },
   "navigation.businessModel.open": { href: "/business/model", permission: "system:read" },
+  "navigation.budgets.open": { href: "/business/budgets", permission: "system:read" },
   "navigation.advantage.open": { href: "/business/advantage" },
   "navigation.roles.open": { href: "/business/roles", permission: "system:read" },
   "navigation.kpis.open": { href: "/business/kpis", permission: "system:read" },

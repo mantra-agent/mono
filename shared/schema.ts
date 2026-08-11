@@ -1162,6 +1162,30 @@ export const financialModels = pgTable("financial_models", {
 
 export type FinancialModelRow = typeof financialModels.$inferSelect;
 
+// ── Business Budgets (non-headcount operating expenses) ─────────
+// One aggregate per Business and calendar year. The nested document preserves
+// Department → Category → Line item ordering; monthly and annual totals derive
+// from line-item month amounts rather than becoming competing stored truth.
+export const businessBudgets = pgTable("business_budgets", {
+  id: text("id").primaryKey(),
+  businessId: text("business_id").notNull().references(() => businesses.id, { onDelete: "restrict" }),
+  year: integer("year").notNull(),
+  currency: text("currency").notNull().default("USD"),
+  departments: jsonb("departments").notNull().default([]),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  createdByUserId: text("created_by_user_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  uniqueIndex("uq_business_budgets_business_year").on(table.businessId, table.year),
+  index("idx_business_budgets_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_business_budgets_account").on(table.accountId),
+]);
+
+export type BusinessBudgetRow = typeof businessBudgets.$inferSelect;
+
 // ── Job Roles (headcount cost inputs) ────────────────────────────
 // Account-owned role definitions. Hiring plans will reference these stable
 // IDs instead of copying compensation assumptions into the financial model.

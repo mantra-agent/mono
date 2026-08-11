@@ -14,6 +14,7 @@ import { registerPeopleRoutes } from "./people-routes";
 import { registerPdfRoutes } from "./routes/pdf";
 import { registerCompanyRoutes } from "./company-routes";
 import { registerBusinessModelRoutes } from "./business-model-routes";
+import { registerBusinessBudgetRoutes } from "./business-budget-routes";
 import { registerBusinessPlanRoutes } from "./business-plan-routes";
 import { registerJobRoleRoutes } from "./job-role-routes";
 import { registerMetricsRoutes } from "./metrics-routes";
@@ -207,6 +208,7 @@ export async function registerRoutes(
   registerPdfRoutes(app);
   registerCompanyRoutes(app);
   registerBusinessModelRoutes(app);
+  registerBusinessBudgetRoutes(app);
   registerBusinessPlanRoutes(app);
   registerJobRoleRoutes(app);
   registerMetricsRoutes(app);
