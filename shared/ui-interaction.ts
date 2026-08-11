@@ -56,6 +56,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.users.open": { href: "/system?tab=users", permission: "system:read" },
   "navigation.secrets.open": { href: "/system?tab=secrets", permission: "system:read" },
   "navigation.vaults.open": { href: "/vaults" },
+  "navigation.teams.open": { href: "/teams" },
   "navigation.integrations.open": { href: "/integrations" },
   "navigation.mods.open": { href: "/mods", permission: "mods:read" },
   "navigation.account.open": { href: "/account" },

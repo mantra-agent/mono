@@ -1,3 +1,10 @@
+<!-- 2026-08-10 Vaults and Teams Admin presentation boundary:
+- Assets/data: account-owned Vault metadata and account-scoped Team rosters/grant subjects (A01/A03/A07; S1 identity/access metadata).
+- Flow/threat: authenticated user -> Core-composed Vaults or Teams route -> existing principal-scoped Vault and Team APIs. A new navigation route must not become an authorization bypass or imply that Team membership itself grants object access (STRIDE elevation/information disclosure; IAM-01/DATA-01).
+- Controls/owner: the change only separates existing presentation surfaces through the canonical Core route/navigation registry. Vault and Team reads/mutations retain their existing authenticated Principal, account membership, TeamService, audit, and per-object grant boundaries; the client route grants no authority. The obsolete Legacy migration control is removed from presentation without changing stored legacy objects or migration APIs. Owner: Core Vaults + Teams UI. Severity: low security delta. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: users with authenticated access retain the same Team management API authority they had when Teams was embedded under Vaults. Revert the route/navigation/page split and this record to restore the old presentation; no schema, permission, credential, or user-data mutation is involved.
+-->
+
 <!-- 2026-08-10 platform-wide application-error aggregation boundary:
 - Assets/data: application defect identity, sanitized source callsite, occurrence timing/count, admin triage state, and underlying user-triggered runtime events (A03/A07/A08; aggregate S1, source events may involve S2/S3).
 - Flow/threat: server/client error producer -> privacy-minimized fingerprint projection -> global PostgreSQL aggregate -> system-permission-gated admin ERRORS and Self Heal. Principal-scoping aggregates would hide platform defects behind account boundaries; retaining user identity, messages, raw stacks, URLs, or request data in a global row would create cross-user disclosure (STRIDE information disclosure/repudiation/availability; DATA-01/OBS-01/AGENT-03).
