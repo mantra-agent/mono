@@ -167,6 +167,16 @@ export async function registerSystemRoutes(app: Express, serverStartTime: Date) 
     }
   });
 
+  app.get("/api/performance/build-deployments", requireAuth, requirePermission("build:read"), async (req, res) => {
+    try {
+      const { getBuildDeploymentTimingSummary } = await import("../mods/build-deployment-home");
+      res.json(await getBuildDeploymentTimingSummary(req.principal!));
+    } catch (error: any) {
+      log.error("Build deployment timing summary failed", { errorName: error?.name || typeof error });
+      res.status(500).json({ error: "Build deployment timing is temporarily unavailable" });
+    }
+  });
+
   app.post("/api/client-logs", requireAuth, async (req, res) => {
     try {
       const { entries } = req.body || {};
