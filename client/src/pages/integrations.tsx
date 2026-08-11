@@ -5425,215 +5425,187 @@ function GitHubDetail() {
         </Card>
       )}
 
-      {/* Connected accounts */}
-      <Card data-testid="github-accounts-card">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-sm font-medium">Legacy Accounts</CardTitle>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setShowAddDialog(true)}
-              data-testid="button-github-add-account"
-            >
-              <Plus className="h-3.5 w-3.5 mr-1.5" />
-              Add Account
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {credentials.length === 0 && (
-            <p className="text-sm text-muted-foreground text-center py-4">
-              No legacy accounts connected. Platform Connections below are preferred for new git operations.
-            </p>
-          )}
-
-          {credentials.map((cred) => (
-            <div
-              key={cred.id}
-              className="flex items-start justify-between gap-3 p-3 rounded-lg border bg-card"
-              data-testid={`github-credential-${cred.id}`}
-            >
-              <div className="flex-1 min-w-0 space-y-1">
-                <div className="flex items-center gap-2">
-                  <CircleCheck className="h-3.5 w-3.5 text-success shrink-0" />
-                  <span className="text-sm font-medium truncate">
-                    {cred.githubLogin ? `@${cred.githubLogin}` : cred.label}
-                  </span>
-                  {cred.isDefault && (
-                    <Badge variant="outline" className="text-xs shrink-0">default</Badge>
-                  )}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {cred.label}{cred.last4 ? ` · ••••${cred.last4}` : ""}
-                </div>
-                {cred.urlPatterns.length > 0 && (
-                  <div className="text-xs text-muted-foreground font-mono">
-                    {cred.urlPatterns.join(", ")}
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                {!cred.isDefault && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="text-xs h-7 px-2"
-                    onClick={() => updateCredentialMutation.mutate({ id: cred.id, isDefault: true })}
-                    data-testid={`button-github-set-default-${cred.id}`}
-                  >
-                    Set default
-                  </Button>
-                )}
-                {credentials.length > 1 && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="text-xs h-7 px-2 text-muted-foreground hover:text-destructive"
-                    onClick={() => {
-                      if (confirm(`Remove @${cred.githubLogin || cred.label}? Git operations using this credential will stop working.`)) {
-                        deleteCredentialMutation.mutate(cred.id);
-                      }
-                    }}
-                    data-testid={`button-github-remove-${cred.id}`}
-                  >
-                    Remove
-                  </Button>
-                )}
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      <Card data-testid="github-platform-connections-card">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <CardTitle className="text-sm font-medium">Platform Connections</CardTitle>
-              <p className="text-xs text-muted-foreground mt-1">
-                GitHub provider connections used by Platforms source bindings. Credentials are stored encrypted and never displayed.
-              </p>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => openProviderDialog()}
-              data-testid="button-github-add-provider-connection"
-            >
-              <Plus className="h-3.5 w-3.5 mr-1.5" />
-              New Connection
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {githubConnections.length === 0 && (
-            <div className="py-12 text-center rounded-md border border-dashed">
-              <Github className="h-6 w-6 text-muted-foreground mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">No GitHub platform connections yet.</p>
-            </div>
-          )}
-
-          {githubConnections.map((connection) => {
-            const usage = sourceUsageByConnectionId.get(connection.id) || [];
-            const isTesting = testProviderConnectionMutation.isPending;
-            return (
-              <div
-                key={connection.id}
-                className="space-y-3 p-3 rounded-lg border bg-card"
-                data-testid={`github-provider-connection-${connection.id}`}
+      {/* Accounts + platform connections */}
+      <Card className="min-w-0 overflow-hidden" data-testid="github-detail">
+        <CardContent className="space-y-0 p-0">
+          <IntegrationTreeSection
+            label="Legacy accounts"
+            initialOpen
+            testIdPrefix="github-accounts"
+            actions={(
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="mr-1 h-8 w-8 text-muted-foreground"
+                onClick={() => setShowAddDialog(true)}
+                aria-label="Add legacy GitHub account"
+                data-testid="button-github-add-account"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <CircleCheck className={cn("h-3.5 w-3.5 shrink-0", connection.status === "active" ? "text-success" : "text-muted-foreground")} />
-                      <span className="text-sm font-medium truncate">{connection.label}</span>
-                      <Badge variant="outline" className="text-xs shrink-0">{connection.accountType || "source"}</Badge>
-                      <Badge variant={connection.status === "active" ? "secondary" : "destructive"} className="text-xs shrink-0">
-                        {connection.status}
-                      </Badge>
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      ID {connection.id}
-                      {connection.lastVerifiedAt ? ` · verified ${new Date(connection.lastVerifiedAt).toLocaleString()}` : " · not verified"}
-                    </div>
+                <Plus className="h-4 w-4" />
+              </Button>
+            )}
+          >
+            {credentials.length === 0 ? (
+              <p className="px-2 py-1.5 text-sm text-muted-foreground">
+                No legacy accounts connected. Platform connections below are preferred for new git operations.
+              </p>
+            ) : credentials.map((cred) => (
+              <ProfileTreeRow
+                key={cred.id}
+                label={cred.githubLogin ? `@${cred.githubLogin}` : cred.label}
+                icon={<CircleCheck className="h-3.5 w-3.5 text-active" />}
+                hasValue
+                showEmpty
+                mobileLayout="inline"
+                valueLayout="compact"
+                testId={`github-credential-${cred.id}`}
+                menuContent={(
+                  <>
+                    {!cred.isDefault ? (
+                      <DropdownMenuItem
+                        onClick={() => updateCredentialMutation.mutate({ id: cred.id, isDefault: true })}
+                        data-testid={`button-github-set-default-${cred.id}`}
+                      >
+                        <CircleCheck className="mr-2 h-4 w-4" /> Set default
+                      </DropdownMenuItem>
+                    ) : null}
+                    {credentials.length > 1 ? (
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onClick={() => {
+                          if (confirm(`Remove @${cred.githubLogin || cred.label}? Git operations using this credential will stop working.`)) {
+                            deleteCredentialMutation.mutate(cred.id);
+                          }
+                        }}
+                        data-testid={`button-github-remove-${cred.id}`}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" /> Remove
+                      </DropdownMenuItem>
+                    ) : null}
+                  </>
+                )}
+                expandedContent={(
+                  <div className="space-y-1">
+                    <p className="text-muted-foreground">{cred.label}{cred.last4 ? ` · ••••${cred.last4}` : ""}</p>
+                    {cred.urlPatterns.length > 0 ? (
+                      <p className="font-mono text-muted-foreground">{cred.urlPatterns.join(", ")}</p>
+                    ) : null}
                   </div>
-                  <div className="flex flex-wrap items-center justify-end gap-1 shrink-0">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => testProviderConnectionMutation.mutate(connection)}
-                      disabled={isTesting}
-                      data-testid={`button-github-test-provider-${connection.id}`}
-                    >
-                      {isTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Activity className="h-3.5 w-3.5 mr-1.5" />}
-                      Test
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => openProviderDialog(connection)}
-                      data-testid={`button-github-edit-provider-${connection.id}`}
-                    >
-                      <Pencil className="h-3.5 w-3.5 mr-1.5" />
-                      Edit
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                      onClick={() => {
-                        if (usage.length > 0) {
-                          toast({
-                            title: "Connection in use",
-                            description: "Remove or reassign Platform source bindings before deleting this connection.",
-                            variant: "destructive",
-                          });
-                          return;
-                        }
-                        if (confirm(`Delete GitHub connection ${connection.label}? This cannot be undone.`)) {
-                          deleteProviderConnectionMutation.mutate(connection);
-                        }
-                      }}
-                      data-testid={`button-github-delete-provider-${connection.id}`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                      Delete
-                    </Button>
-                  </div>
-                </div>
+                )}
+              >
+                {cred.isDefault ? (
+                  <Badge variant="outline" className="text-xs">default</Badge>
+                ) : (
+                  <span className="text-muted-foreground">connected</span>
+                )}
+              </ProfileTreeRow>
+            ))}
+          </IntegrationTreeSection>
 
-                <div className="space-y-2 border-t pt-3">
-                  <div className="text-xs font-medium text-muted-foreground">Used by</div>
-                  {usage.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No Platform source bindings currently use this connection.</p>
-                  ) : (
-                    <div className="space-y-1">
-                      {usage.map((item) => (
-                        <div key={item.id} className="flex items-center justify-between gap-3 text-xs rounded-md bg-muted/30 px-2 py-1.5">
-                          <span className="truncate">
-                            {item.platformName} / {item.productName} / {item.environmentName}
-                          </span>
-                          <span className="font-mono text-muted-foreground truncate max-w-[45%] text-right">
-                            {item.owner}/{item.repo}:{item.branch}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+          <IntegrationTreeSection
+            label="Platform connections"
+            initialOpen
+            testIdPrefix="github-connections"
+            actions={(
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="mr-1 h-8 w-8 text-muted-foreground"
+                onClick={() => openProviderDialog()}
+                aria-label="New GitHub platform connection"
+                data-testid="button-github-add-provider-connection"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            )}
+          >
+            {githubConnections.length === 0 ? (
+              <p className="px-2 py-1.5 text-sm text-muted-foreground">
+                No GitHub platform connections yet. Credentials are stored encrypted and never displayed.
+              </p>
+            ) : githubConnections.map((connection) => {
+              const usage = sourceUsageByConnectionId.get(connection.id) || [];
+              const isTesting = testProviderConnectionMutation.isPending;
+              return (
+                <ProfileTreeRow
+                  key={connection.id}
+                  label={connection.label}
+                  icon={<CircleCheck className={cn("h-3.5 w-3.5", connection.status === "active" ? "text-active" : "text-muted-foreground")} />}
+                  hasValue
+                  showEmpty
+                  defaultOpen={usage.length > 0}
+                  testId={`github-provider-connection-${connection.id}`}
+                  expandedContentClassName="min-w-0 space-y-3"
+                  menuContent={(
+                    <>
+                      <DropdownMenuItem
+                        onClick={() => testProviderConnectionMutation.mutate(connection)}
+                        disabled={isTesting}
+                        data-testid={`button-github-test-provider-${connection.id}`}
+                      >
+                        <Activity className="mr-2 h-4 w-4" /> Test
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => openProviderDialog(connection)}
+                        data-testid={`button-github-edit-provider-${connection.id}`}
+                      >
+                        <Pencil className="mr-2 h-4 w-4" /> Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onClick={() => {
+                          if (usage.length > 0) {
+                            toast({
+                              title: "Connection in use",
+                              description: "Remove or reassign Platform source bindings before deleting this connection.",
+                              variant: "destructive",
+                            });
+                            return;
+                          }
+                          if (confirm(`Delete GitHub connection ${connection.label}? This cannot be undone.`)) {
+                            deleteProviderConnectionMutation.mutate(connection);
+                          }
+                        }}
+                        data-testid={`button-github-delete-provider-${connection.id}`}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" /> Delete
+                      </DropdownMenuItem>
+                    </>
                   )}
-                </div>
-              </div>
-            );
-          })}
+                  expandedContent={(
+                    <>
+                      <p className="text-sm text-muted-foreground">
+                        ID {connection.id}
+                        {connection.lastVerifiedAt ? ` · verified ${new Date(connection.lastVerifiedAt).toLocaleString()}` : " · not verified"}
+                      </p>
+                      <div className="space-y-2">
+                        <div className="text-xs font-medium text-muted-foreground">Used by</div>
+                        {usage.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">No Platform source bindings currently use this connection.</p>
+                        ) : (
+                          <div className="space-y-1">
+                            {usage.map((item) => (
+                              <div key={item.id} className="flex items-center justify-between gap-3 text-xs rounded-md bg-muted/30 px-2 py-1.5">
+                                <span className="truncate">{item.platformName} / {item.productName} / {item.environmentName}</span>
+                                <span className="font-mono text-muted-foreground truncate max-w-[45%] text-right">{item.owner}/{item.repo}:{item.branch}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Badge variant="outline" className="text-xs">{connection.accountType || "source"}</Badge>
+                    <Badge variant={connection.status === "active" ? "secondary" : "destructive"} className="text-xs">{connection.status}</Badge>
+                  </span>
+                </ProfileTreeRow>
+              );
+            })}
+          </IntegrationTreeSection>
         </CardContent>
       </Card>
 
@@ -5821,94 +5793,90 @@ function GitHubDetail() {
         </Card>
       )}
 
-      <Card data-testid="github-repo-card">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-medium">GITHUB_REPO_URL</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Configured</span>
-            {data?.repoUrlSet ? (
-              <Badge
-                className="bg-success/15 text-success-foreground border-success/30"
-                data-testid="badge-repo-url-set"
-              >
-                Set
-              </Badge>
-            ) : (
-              <Badge
-                variant={repoMisconfigured ? "destructive" : "secondary"}
-                data-testid="badge-repo-url-set"
-              >
-                Not set
-              </Badge>
-            )}
-          </div>
-          {data?.repoUrlSet && (
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm text-muted-foreground">Repository</span>
-              <span
-                className="text-sm font-mono truncate max-w-[60%] text-right"
-                data-testid="text-repo-url-display"
-              >
-                {data.repoUrlDisplay}
-              </span>
-            </div>
-          )}
-
-          <div className="flex items-center gap-2">
-            <Input
-              type="text"
-              value={repoUrlInput}
-              onChange={(e) => setRepoUrlInput(e.target.value)}
-              placeholder="https://github.com/org/repo"
-              autoComplete="off"
-              spellCheck={false}
-              className="font-mono text-xs"
-              data-testid="input-repo-url"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                saveRepoUrlMutation.mutate(repoUrlInput.trim());
-              }}
-              disabled={saveRepoUrlMutation.isPending}
-              data-testid="button-repo-url-save"
+      <Card className="min-w-0 overflow-hidden" data-testid="github-repo-card">
+        <CardContent className="space-y-0 p-0">
+          <IntegrationTreeSection label="Repository URL" initialOpen testIdPrefix="github-repo">
+            <ProfileTreeRow
+              label="Configured"
+              icon={<Github className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              mobileLayout="inline"
+              valueLayout="compact"
+              testId="row-repo-url-configured"
             >
-              {saveRepoUrlMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
-              Save
-            </Button>
-            {data?.repoUrlSet && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  if (confirm("Clear GITHUB_REPO_URL? GitNexus will not be able to sync the repo in production.")) {
-                    saveRepoUrlMutation.mutate("");
-                  }
-                }}
-                disabled={saveRepoUrlMutation.isPending}
-                data-testid="button-repo-url-clear"
+              {data?.repoUrlSet ? (
+                <Badge className="bg-success/15 text-success-foreground border-success/30" data-testid="badge-repo-url-set">Set</Badge>
+              ) : (
+                <Badge variant={repoMisconfigured ? "destructive" : "secondary"} data-testid="badge-repo-url-set">Not set</Badge>
+              )}
+            </ProfileTreeRow>
+            {data?.repoUrlSet ? (
+              <ProfileTreeRow
+                label="Repository"
+                icon={<Globe className="h-3.5 w-3.5" />}
+                hasValue
+                showEmpty
+                mobileLayout="inline"
+                valueLayout="compact"
+                testId="row-repo-url-display"
               >
-                Clear
-              </Button>
-            )}
-          </div>
-
-          {repoMisconfigured && (
-            <div className="text-xs text-error-foreground border-t pt-3" data-testid="text-repo-url-warning">
-              Production is running without GITHUB_REPO_URL. GitNexus cannot sync the repo from origin. Set it below or add it as an environment variable.
+                <span className="font-mono" data-testid="text-repo-url-display">{data.repoUrlDisplay}</span>
+              </ProfileTreeRow>
+            ) : null}
+            <div className="space-y-2 px-2 py-1.5">
+              <Input
+                type="text"
+                value={repoUrlInput}
+                onChange={(e) => setRepoUrlInput(e.target.value)}
+                placeholder="https://github.com/org/repo"
+                autoComplete="off"
+                spellCheck={false}
+                className="font-mono text-xs"
+                data-testid="input-repo-url"
+              />
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    saveRepoUrlMutation.mutate(repoUrlInput.trim());
+                  }}
+                  disabled={saveRepoUrlMutation.isPending}
+                  data-testid="button-repo-url-save"
+                >
+                  {saveRepoUrlMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+                  Save
+                </Button>
+                {data?.repoUrlSet && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (confirm("Clear GITHUB_REPO_URL? GitNexus will not be able to sync the repo in production.")) {
+                        saveRepoUrlMutation.mutate("");
+                      }
+                    }}
+                    disabled={saveRepoUrlMutation.isPending}
+                    data-testid="button-repo-url-clear"
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+              {repoMisconfigured && (
+                <div className="text-xs text-error-foreground" data-testid="text-repo-url-warning">
+                  Production is running without GITHUB_REPO_URL. GitNexus cannot sync the repo from origin. Set it above or add it as an environment variable.
+                </div>
+              )}
+              {!repoMisconfigured && !data?.repoUrlSet && (
+                <div className="text-xs text-muted-foreground">
+                  GITHUB_REPO_URL is optional in development. In production it is required so GitNexus can sync the repo on startup.
+                </div>
+              )}
             </div>
-          )}
-          {!repoMisconfigured && !data?.repoUrlSet && (
-            <div className="text-xs text-muted-foreground border-t pt-3">
-              GITHUB_REPO_URL is optional in development. In production it is required so GitNexus can sync the repo on startup.
-            </div>
-          )}
+          </IntegrationTreeSection>
         </CardContent>
       </Card>
     </div>
