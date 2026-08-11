@@ -28,6 +28,8 @@ Normal `git.clone` has no caller-owned repository coordinates. `server/git-sourc
 
 ## Persona catalog and bundle data
 
+`server/root-persona.ts` is the globally shared communication foundation for Mantra. Context assembly always loads it as the kernel-level Root Persona before rendering the session's Active Persona overlay; principal-owned profile metadata and People notes must not become alternate authorities for shared identity or voice. Active Personas remain task-specific overlays and may specialize behavior without replacing the Root Persona.
+
 `SEED_PERSONAS` in `server/file-storage/persona-storage.ts` is the authoritative identity catalog. Persona `context_sections` and `tool_bundle` are persisted configuration owned by each persona row and mutated only through principal-scoped `PersonaStorage` APIs/tools. Boot reconciliation may maintain seed identity, overlay, icon, tier, and routing metadata; it must never define, inherit, version, or rewrite bundle values. Empty tool bundles preserve the passthrough contract.
 
 A user session must never be bound to, or edit, a read-only seed. `PersonaStorage.ensureOwnedCopy(id)` is the canonical copy-on-write materialization: for a user principal it resolves an ordinary global seed (even one already shadowed by the user's copy) to that user's own lineage copy, creating it if needed; system principals and system seeds are returned unchanged. Orientation persona selection, the `cognition.update_persona` tool, and the persona editor PUT route all fork through it, and `activate()` shares the same copy shape via `insertOwnedCopy`. Seeds carry empty bundles; a user configures their copy as data.
