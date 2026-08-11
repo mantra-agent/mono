@@ -2317,6 +2317,7 @@ export async function runSchemaBootstrap(
     const tables = [
       "email_triage_log",
       "email_messages",
+      "email_cache_deletions",
       "email_sync_cursors",
       "email_drafts",
       "calendar_event_metadata",
@@ -4106,6 +4107,25 @@ export async function runSchemaBootstrap(
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_email_messages_triage_status ON email_messages (triage_status)`,
     );
+  });
+
+  await heal("email_cache_deletions table", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_cache_deletions (
+        id SERIAL PRIMARY KEY,
+        provider TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        provider_message_id TEXT NOT NULL,
+        owner_user_id TEXT,
+        principal_account_id TEXT,
+        vault_id TEXT,
+        deleted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT email_cache_deletions_provider_account_message_unique UNIQUE (provider, account_id, provider_message_id)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_cache_deletions_owner ON email_cache_deletions (owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_cache_deletions_principal_account ON email_cache_deletions (principal_account_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_cache_deletions_vault ON email_cache_deletions (vault_id)`);
   });
 
   await heal("email_sync_cursors table", async () => {

@@ -5,7 +5,7 @@ import {
   users, skills, skillReferences, skillRuns, skillFailureDismissals, skillPersonaPreferences, promptModules, promptModuleVersions, systemSettings, insertSkillSchema,
   voiceSessionActive,
   emailTriageLog, emailMessages, emailSyncLog, emailSyncCursors, emailDrafts,
-  emailEnrichments, emailDismissals, connectedAccounts,
+  emailEnrichments, emailDismissals, emailCacheDeletions, connectedAccounts,
   type User, type InsertUser,
   type ApiCall, type InsertApiCall,
 
@@ -37,6 +37,7 @@ const emailSyncLogScopeColumns = { ownerUserId: emailSyncLog.ownerUserId, princi
 const emailSyncCursorScopeColumns = { ownerUserId: emailSyncCursors.ownerUserId, principalAccountId: emailSyncCursors.principalAccountId };
 const emailEnrichmentScopeColumns = { ownerUserId: emailEnrichments.ownerUserId, principalAccountId: emailEnrichments.principalAccountId };
 const emailDismissalScopeColumns = { ownerUserId: emailDismissals.ownerUserId, principalAccountId: emailDismissals.principalAccountId };
+const emailCacheDeletionScopeColumns = { ownerUserId: emailCacheDeletions.ownerUserId, principalAccountId: emailCacheDeletions.principalAccountId, vaultId: emailCacheDeletions.vaultId };
 const connectedAccountScopeColumns = { ownerUserId: connectedAccounts.ownerUserId, principalAccountId: connectedAccounts.principalAccountId };
 
 export type VoiceLeaseMutationAuthority =
@@ -1591,8 +1592,32 @@ export class HybridStorage implements IStorage {
   async deleteCachedEmail(id: number): Promise<boolean> {
     return db.transaction(async (tx) => {
       const writable = combineWithSensitiveWritable(emailMessageScopeColumns, eq(emailMessages.id, id));
-      const [owned] = await tx.select({ id: emailMessages.id }).from(emailMessages).where(writable).limit(1);
+      let [owned] = await tx.select({
+        id: emailMessages.id,
+        provider: emailMessages.provider,
+        accountId: emailMessages.accountId,
+        providerMessageId: emailMessages.providerMessageId,
+      }).from(emailMessages).where(writable).limit(1);
       if (!owned) return false;
+
+      const identityKey = `${owned.provider}:${owned.accountId}:${owned.providerMessageId}`;
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`email-cache:${identityKey}`}))`);
+      [owned] = await tx.select({
+        id: emailMessages.id,
+        provider: emailMessages.provider,
+        accountId: emailMessages.accountId,
+        providerMessageId: emailMessages.providerMessageId,
+      }).from(emailMessages).where(writable).limit(1);
+      if (!owned) return false;
+
+      await tx.insert(emailCacheDeletions).values({
+        provider: owned.provider,
+        accountId: owned.accountId,
+        providerMessageId: owned.providerMessageId,
+        ...sensitiveOwnershipValues(),
+      }).onConflictDoNothing({
+        target: [emailCacheDeletions.provider, emailCacheDeletions.accountId, emailCacheDeletions.providerMessageId],
+      });
       await tx.update(emailEnrichments).set({ messageId: null }).where(combineWithSensitiveWritable(emailEnrichmentScopeColumns, eq(emailEnrichments.messageId, id)));
       await tx.update(emailDismissals).set({ messageId: null }).where(combineWithSensitiveWritable(emailDismissalScopeColumns, eq(emailDismissals.messageId, id)));
       const deleted = await tx.delete(emailMessages).where(writable).returning({ id: emailMessages.id });
@@ -1711,6 +1736,9 @@ export class HybridStorage implements IStorage {
 
   async cleanupEmailAccountState(accountId: string): Promise<{ accountId: string; deleted: Record<string, number> }> {
     const deleted = await db.transaction(async (tx) => {
+      const cacheDeletionRows = await tx.delete(emailCacheDeletions)
+        .where(combineWithSensitiveWritable(emailCacheDeletionScopeColumns, eq(emailCacheDeletions.accountId, accountId)))
+        .returning({ id: emailCacheDeletions.id });
       const triageLogRows = await tx.delete(emailTriageLog).where(eq(emailTriageLog.accountId, accountId)).returning({ id: emailTriageLog.id });
       const dismissalRows = await tx.delete(emailDismissals).where(eq(emailDismissals.accountId, accountId)).returning({ id: emailDismissals.id });
       const enrichmentRows = await tx.delete(emailEnrichments).where(eq(emailEnrichments.accountId, accountId)).returning({ id: emailEnrichments.id });
@@ -1720,6 +1748,7 @@ export class HybridStorage implements IStorage {
       const syncLogRows = await tx.delete(emailSyncLog).where(eq(emailSyncLog.accountId, accountId)).returning({ id: emailSyncLog.id });
 
       return {
+        emailCacheDeletions: cacheDeletionRows.length,
         emailTriageLog: triageLogRows.length,
         emailDismissals: dismissalRows.length,
         emailEnrichments: enrichmentRows.length,

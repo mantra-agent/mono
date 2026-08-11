@@ -1,13 +1,13 @@
 import { createLogger } from './log';
 import { db } from './db';
 import { pool } from './db';
-import { connectedAccounts, emailMessages, emailSyncCursors, emailDismissals, emailSyncLog, emailEnrichments, emailDrafts, vaults } from '@shared/schema';
+import { connectedAccounts, emailMessages, emailCacheDeletions, emailSyncCursors, emailDismissals, emailSyncLog, emailEnrichments, emailDrafts, vaults } from '@shared/schema';
 import { eq, and, sql, inArray, or, isNull } from 'drizzle-orm';
 import { listGmailAccounts, listMessages, getMessage, getHistoryList, normalizeGmailMessage, getAccountLabelMap } from './gmail';
 import type { NormalizedMessage } from './gmail';
 import { storage } from './storage';
 import { requireCurrentUserPrincipal } from './principal-context';
-import { sensitiveOwnershipValues } from './sensitive-scope';
+import { combineWithSensitiveVisible, sensitiveOwnershipValues } from './sensitive-scope';
 import type { Principal } from './principal';
 
 const log = createLogger("EmailSync");
@@ -15,6 +15,11 @@ const log = createLogger("EmailSync");
 const FULL_SYNC_CAP = 500;
 const MAX_ACCOUNTS_PER_VAULT = 20;
 const EMAIL_SYNC_STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000;
+const emailCacheDeletionScopeColumns = {
+  ownerUserId: emailCacheDeletions.ownerUserId,
+  principalAccountId: emailCacheDeletions.principalAccountId,
+  vaultId: emailCacheDeletions.vaultId,
+};
 
 type EmailSyncOperation =
   | "sync_account"
@@ -315,49 +320,41 @@ async function upsertMessage(
     peopleSignalSource?: string;
     failOnPeopleSignalError?: boolean;
   } = {},
-): Promise<{ externallyArchived: boolean }> {
-  let shouldProcessPeopleSignal = false;
-  const existing = await db.select({
-    id: emailMessages.id,
-    isDone: emailMessages.isDone,
-    triageTier: emailMessages.triageTier,
-    providerThreadId: emailMessages.providerThreadId,
-    direction: emailMessages.direction,
-    fromAddress: emailMessages.fromAddress,
-    subject: emailMessages.subject,
-  }).from(emailMessages)
-    .where(and(
-      eq(emailMessages.provider, msg.provider),
-      eq(emailMessages.accountId, msg.accountId),
-      eq(emailMessages.providerMessageId, msg.providerMessageId),
-    ))
-    .limit(1);
+): Promise<{ outcome: "cached" | "externally_archived" | "retention_suppressed" }> {
+  const admission = await db.transaction(async (tx) => {
+    const identityKey = `${msg.provider}:${msg.accountId}:${msg.providerMessageId}`;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`email-cache:${identityKey}`}))`);
 
-  shouldProcessPeopleSignal = existing.length === 0 || existing[0]?.direction !== msg.direction;
+    const [cacheDeletion] = await tx.select({ id: emailCacheDeletions.id })
+      .from(emailCacheDeletions)
+      .where(combineWithSensitiveVisible(emailCacheDeletionScopeColumns, and(
+        eq(emailCacheDeletions.provider, msg.provider),
+        eq(emailCacheDeletions.accountId, msg.accountId),
+        eq(emailCacheDeletions.providerMessageId, msg.providerMessageId),
+      )))
+      .limit(1);
+    if (cacheDeletion) return { outcome: "retention_suppressed" as const, existing: [] };
 
-  await db.insert(emailMessages).values({
-    provider: msg.provider,
-    accountId: msg.accountId,
-    providerMessageId: msg.providerMessageId,
-    providerThreadId: msg.providerThreadId,
-    historyId: msg.historyId,
-    subject: msg.subject,
-    snippet: msg.snippet,
-    fromAddress: msg.fromAddress,
-    toAddresses: msg.toAddresses,
-    ccAddresses: msg.ccAddresses,
-    direction: msg.direction,
-    primaryAction: msg.primaryAction,
-    date: msg.date,
-    labelIds: msg.labelIds,
-    bodyText: msg.bodyText,
-    bodyHtml: msg.bodyHtml,
-    isRead: msg.isRead,
-    isStarred: msg.isStarred,
-    ...sensitiveOwnershipValues(),
-  }).onConflictDoUpdate({
-    target: [emailMessages.provider, emailMessages.accountId, emailMessages.providerMessageId],
-    set: {
+    const existing = await tx.select({
+      id: emailMessages.id,
+      isDone: emailMessages.isDone,
+      triageTier: emailMessages.triageTier,
+      providerThreadId: emailMessages.providerThreadId,
+      direction: emailMessages.direction,
+      fromAddress: emailMessages.fromAddress,
+      subject: emailMessages.subject,
+    }).from(emailMessages)
+      .where(and(
+        eq(emailMessages.provider, msg.provider),
+        eq(emailMessages.accountId, msg.accountId),
+        eq(emailMessages.providerMessageId, msg.providerMessageId),
+      ))
+      .limit(1);
+
+    await tx.insert(emailMessages).values({
+      provider: msg.provider,
+      accountId: msg.accountId,
+      providerMessageId: msg.providerMessageId,
       providerThreadId: msg.providerThreadId,
       historyId: msg.historyId,
       subject: msg.subject,
@@ -374,9 +371,34 @@ async function upsertMessage(
       isRead: msg.isRead,
       isStarred: msg.isStarred,
       ...sensitiveOwnershipValues(),
-      updatedAt: sql`CURRENT_TIMESTAMP`,
-    },
+    }).onConflictDoUpdate({
+      target: [emailMessages.provider, emailMessages.accountId, emailMessages.providerMessageId],
+      set: {
+        providerThreadId: msg.providerThreadId,
+        historyId: msg.historyId,
+        subject: msg.subject,
+        snippet: msg.snippet,
+        fromAddress: msg.fromAddress,
+        toAddresses: msg.toAddresses,
+        ccAddresses: msg.ccAddresses,
+        direction: msg.direction,
+        primaryAction: msg.primaryAction,
+        date: msg.date,
+        labelIds: msg.labelIds,
+        bodyText: msg.bodyText,
+        bodyHtml: msg.bodyHtml,
+        isRead: msg.isRead,
+        isStarred: msg.isStarred,
+        ...sensitiveOwnershipValues(),
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      },
+    });
+    return { outcome: "cached" as const, existing };
   });
+  if (admission.outcome === "retention_suppressed") return { outcome: admission.outcome };
+
+  const existing = admission.existing;
+  const shouldProcessPeopleSignal = existing.length === 0 || existing[0]?.direction !== msg.direction;
 
   // Reflect external archive (Gmail / Superhuman "Done") in local triage state.
   // The universal signal is removal of the INBOX label (Superhuman's "Done"
@@ -424,7 +446,7 @@ async function upsertMessage(
     } catch (err: any) {
       log.debug(`[upsertMessage] dismissal insert failed for msg=${row.id}: ${err.message}`);
     }
-    return { externallyArchived: true };
+    return { outcome: "externally_archived" };
   }
 
   if (shouldProcessPeopleSignal || options.forcePeopleSignal) {
@@ -437,7 +459,7 @@ async function upsertMessage(
     }
   }
 
-  return { externallyArchived: false };
+  return { outcome: "cached" };
 }
 
 export async function ingestSentGmailMessage(
@@ -539,11 +561,11 @@ async function fullSync(accountId: string): Promise<{ count: number; historyId: 
     try {
       const raw = await getMessage(stub.id, 'full', accountId);
       const normalized = normalizeGmailMessage(raw, accountId);
-      await upsertMessage(normalized);
+      const result = await upsertMessage(normalized);
+      if (result.outcome !== "retention_suppressed") synced++;
       if (raw.historyId && (!latestHistoryId || BigInt(raw.historyId) > BigInt(latestHistoryId))) {
         latestHistoryId = raw.historyId;
       }
-      synced++;
     } catch (err: any) {
       failed++;
       lastError = err.message;
@@ -584,8 +606,8 @@ async function incrementalSync(accountId: string, startHistoryId: string): Promi
       const raw = await getMessage(msgId, 'full', accountId);
       const normalized = normalizeGmailMessage(raw, accountId);
       const result = await upsertMessage(normalized);
-      if (result.externallyArchived) externallyArchived++;
-      synced++;
+      if (result.outcome === "externally_archived") externallyArchived++;
+      if (result.outcome !== "retention_suppressed") synced++;
     } catch (err: any) {
       if (err?.code === 404 || err?.status === 404) {
         skipped404++;
