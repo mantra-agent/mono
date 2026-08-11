@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Gauge, Loader2, Plus } from "lucide-react";
+import { Check, ChevronDown, Loader2, Plus } from "lucide-react";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HierarchySectionHeader,
@@ -351,6 +351,7 @@ export default function BusinessAdvantagePage() {
                 mobileLayout="inline"
                 hasValue={Boolean(thematicGoalId)}
                 showEmpty
+                menuVisibility="hover"
                 menuContent={
                   thematicGoalId ? (
                     <ReplaceControl
@@ -414,6 +415,7 @@ export default function BusinessAdvantagePage() {
                       mobileLayout="inline"
                       hasValue
                       showEmpty
+                      menuVisibility="hover"
                       menuContent={
                         <ReplaceControl
                           type="project"
@@ -475,7 +477,6 @@ export default function BusinessAdvantagePage() {
                     connectorAnchor="first-row-center"
                   >
                     <ProfileTreeRow
-                      icon={<Gauge className="h-3.5 w-3.5" />}
                       label={
                         <ReferenceRenderer
                           refValue={createReferenceRef({
@@ -489,6 +490,7 @@ export default function BusinessAdvantagePage() {
                       mobileLayout="inline"
                       hasValue
                       showEmpty
+                      menuVisibility="hover"
                       menuContent={
                         <ReplaceControl
                           type="kpi"
