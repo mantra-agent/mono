@@ -112,7 +112,7 @@ interface SetReminderInput {
   toastTimeLabel: string;
 }
 
-export function SessionReminderPopover({ sessionId, sessionTitle, onOpenChange, onReminderSet }: SessionReminderMenuItemProps) {
+export function useSessionReminderMenuItem({ sessionId, sessionTitle, onOpenChange, onReminderSet }: SessionReminderMenuItemProps) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [showCustom, setShowCustom] = useState(false);

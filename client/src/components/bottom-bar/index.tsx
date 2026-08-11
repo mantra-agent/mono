@@ -46,7 +46,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { SessionActionsMenuItems } from "@/components/session-actions-menu";
+import { useSessionActionsMenuItems } from "@/components/session-actions-menu";
 import { SessionDetailsModal } from "@/components/session-details-modal";
 import type { ChatSession as Session, PageContext, SessionModelTierOverride } from "@shared/models/chat";
 import type { AgendaDefinition } from "@shared/models/agendas";
@@ -316,6 +316,27 @@ function BottomBarMenu({
     }
   };
 
+  const sessionActionItems = useSessionActionsMenuItems({
+    sessionId: focusedSessionId ?? "",
+    sessionTitle: focusedSession?.title,
+    sessionVaultId: focusedSession?.vaultId,
+    sessionType: focusedSession?.type,
+    parentSessionId: focusedSession?.parentSessionId,
+    hideRename: true,
+    onSelectSession,
+    onArchive: (id) => archiveMutation.mutate(id),
+    onDelete: (id) => setDeleteConfirmId(id),
+    isArchived: !!focusedSession?.archivedAt,
+    isPinned: !!focusedSession?.isPinned,
+    onTogglePin: (id, pinned) => toggleAttention.mutate({ id, isPinned: pinned }),
+    onReminderSet,
+    onOpenInParent: focusedSession?.parentSessionId
+      ? () => onSelectSession(focusedSession.parentSessionId!)
+      : undefined,
+    onShowDetails: () => setDetailsOpen(true),
+    testIdPrefix: "bottom-bar-action",
+  });
+
   return (
     <>
       <DropdownMenu>
@@ -405,28 +426,7 @@ function BottomBarMenu({
           {focusedSessionId && (
             <>
               <DropdownMenuSeparator />
-              <SessionActionsMenuItems
-                sessionId={focusedSessionId}
-                sessionTitle={focusedSession?.title}
-                sessionVaultId={focusedSession?.vaultId}
-                sessionType={focusedSession?.type}
-                parentSessionId={focusedSession?.parentSessionId}
-                hideRename
-                onSelectSession={onSelectSession}
-                onArchive={(id) => archiveMutation.mutate(id)}
-                onDelete={(id) => setDeleteConfirmId(id)}
-                isArchived={!!focusedSession?.archivedAt}
-                isPinned={!!focusedSession?.isPinned}
-                onTogglePin={(id, pinned) => toggleAttention.mutate({ id, isPinned: pinned })}
-                onReminderSet={onReminderSet}
-                onOpenInParent={
-                  focusedSession?.parentSessionId
-                    ? () => onSelectSession(focusedSession.parentSessionId!)
-                    : undefined
-                }
-                onShowDetails={() => setDetailsOpen(true)}
-                testIdPrefix="bottom-bar-action"
-              />
+              {sessionActionItems}
             </>
           )}
         </DropdownMenuContent>

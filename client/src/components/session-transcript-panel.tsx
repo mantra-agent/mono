@@ -29,7 +29,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { SessionActionsMenuItems } from "@/components/session-actions-menu";
+import { useSessionActionsMenuItems } from "@/components/session-actions-menu";
 import { EditableSessionTitle, type EditableSessionTitleHandle } from "@/components/editable-session-title";
 import { SessionDetailsModal } from "@/components/session-details-modal";
 import { useToast } from "@/hooks/use-toast";
@@ -319,6 +319,29 @@ export function SessionTranscriptPanel({
         break;
     }
   }, [navigateToLibraryPage, navigateToNote, setLocation]);
+  const activeMenuSession = sessions.find((session) => session.id === activeSession);
+  const sessionActionItems = useSessionActionsMenuItems({
+    sessionId: activeSession ?? "",
+    sessionTitle: activeMenuSession?.title,
+    sessionVaultId: activeMenuSession?.vaultId,
+    sessionType: activeMenuSession?.type,
+    parentSessionId: activeMenuSession?.parentSessionId,
+    onRename: () => titleRenameRef.current?.startEditing(),
+    onSelectSession: setActiveSession,
+    onArchive: (id) => onArchiveSession?.(id),
+    onDelete: () => setShowDeleteConfirm(true),
+    isArchived: !!activeMenuSession?.archivedAt,
+    isPinned: !!activeMenuSession?.isPinned,
+    onTogglePin: onTogglePinSession,
+    onReminderSet: onSessionReminderSet,
+    onOpenInParent: activeMenuSession?.parentSessionId
+      ? () => setActiveSession(activeMenuSession.parentSessionId!)
+      : undefined,
+    onShowDetails: () => setShowDetails(true),
+    linkedEntities: isWidget ? [] : linkedEntities,
+    onLinkedEntityClick: navigateToEntity,
+    testIdPrefix: "menuitem-titlebar",
+  });
 
   const deleteConversation = useMutation({
     mutationFn: (id: string) => deleteSessionTree(id),
@@ -712,36 +735,7 @@ export function SessionTranscriptPanel({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {(() => {
-                const active = sessions.find((session) => session.id === activeSession);
-                if (!activeSession || !active) return null;
-                return (
-                  <SessionActionsMenuItems
-                    sessionId={activeSession}
-                    sessionTitle={active.title}
-                    sessionVaultId={active.vaultId}
-                    sessionType={active.type}
-                    parentSessionId={active.parentSessionId}
-                    onRename={() => titleRenameRef.current?.startEditing()}
-                    onSelectSession={setActiveSession}
-                    onArchive={(id) => onArchiveSession?.(id)}
-                    onDelete={() => setShowDeleteConfirm(true)}
-                    isArchived={!!active.archivedAt}
-                    isPinned={!!active.isPinned}
-                    onTogglePin={onTogglePinSession}
-                    onReminderSet={onSessionReminderSet}
-                    onOpenInParent={
-                      active.parentSessionId
-                        ? () => setActiveSession(active.parentSessionId!)
-                        : undefined
-                    }
-                    onShowDetails={() => setShowDetails(true)}
-                    linkedEntities={isWidget ? [] : linkedEntities}
-                    onLinkedEntityClick={navigateToEntity}
-                    testIdPrefix="menuitem-titlebar"
-                  />
-                );
-              })()}
+              {activeSession && activeMenuSession ? sessionActionItems : null}
             </DropdownMenuContent>
           </DropdownMenu>
           <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
