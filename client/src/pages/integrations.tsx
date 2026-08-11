@@ -120,7 +120,7 @@ import type {
 } from "@shared/model-connectors";
 import { SEMANTIC_TIERS } from "@shared/model-connectors";
 import { usePlaidLink } from "react-plaid-link";
-import { useRoute, useLocation } from "wouter";
+import { useLocation } from "wouter";
 
 
 
@@ -6726,16 +6726,18 @@ export default function IntegrationsPage() {
     refetchInterval: 15000,
   });
 
-  const [match, params] = useRoute("/integrations/:provider");
-  const integration = match && params?.provider
-    ? INTEGRATIONS.find((item) => item.route === params.provider)
+  const [location] = useLocation();
+  const providerMatch = /^\/integrations\/([^/]+)\/?$/.exec(location);
+  const provider = providerMatch ? decodeURIComponent(providerMatch[1]) : null;
+  const integration = provider
+    ? INTEGRATIONS.find((item) => item.route === provider)
     : null;
 
   usePageHeader({ title: integration?.name || "Integrations", titleHref: "/integrations" });
 
-  return match && params?.provider ? (
+  return provider ? (
     <div className="flex flex-col gap-6 p-6">
-      <IntegrationDetail provider={params.provider} />
+      <IntegrationDetail provider={provider} />
     </div>
   ) : (
     <IntegrationTree status={status} />
