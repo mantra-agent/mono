@@ -90,7 +90,13 @@ export function registerMetricsRoutes(app: Express): void {
         await ensureSeeded();
         const query = typeof req.query.query === "string" ? req.query.query : undefined;
         const businessId = typeof req.query.businessId === "string" ? req.query.businessId : undefined;
-        const list = await metricsStorage.list(query, businessId);
+        const start = typeof req.query.start === "string" ? new Date(req.query.start) : null;
+        const end = typeof req.query.end === "string" ? new Date(req.query.end) : null;
+        if ((start && !end) || (!start && end) || (start && end && (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start))) {
+          res.status(400).json({ error: "start and end must form a valid sampling range" });
+          return;
+        }
+        const list = await metricsStorage.list(query, businessId, start && end ? { start, end } : undefined);
         res.json({ metrics: list });
       } catch (error) {
         respondError(res, "list metrics", error);
