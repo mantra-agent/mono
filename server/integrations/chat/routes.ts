@@ -4196,24 +4196,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     };
   }
 
-  // External audio transports reuse the same durable turn intake. Phone
-  // playback remains transport-owned, so the queue worker speaks only through
-  // the registered callback for that live connection.
+  // Phone audio is provider-owned by ElevenLabs; Mantra retains the durable
+  // Session, custom LLM, context, tools, ownership, and callback boundaries.
   const { registerPhoneRoutes } = await import("../../phone/routes");
-  registerPhoneRoutes(app, {
-    ingestPhoneTurn: async (event) => {
-      meetingTurnCoordinator.registerPhoneResponse(event.sessionId, event.onResponse);
-      const result = await ingestMeetingEvent({
-        sessionId: event.sessionId,
-        speakerLabel: event.speakerLabel,
-        text: event.text,
-        participationMode: "always",
-        executionAffinityBootId: BOOT_ID,
-      });
-      return result;
-    },
-    releasePhoneTurn: (sessionId) => meetingTurnCoordinator.unregisterPhoneResponse(sessionId),
-  });
+  registerPhoneRoutes(app);
 
   // Recall.ai webhook receiver — registered with the canonical ingest path.
   const { registerRecallRoutes } = await import("../../routes/recall");
