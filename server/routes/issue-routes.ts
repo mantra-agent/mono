@@ -13,7 +13,7 @@ const log = createLogger("IssueRoutes");
 const createIssueSchema = z.object({
   title: z.string().max(500).optional().default(""),
   description: z.string().max(10000).default(""),
-  /** Explicit reproduction steps — required at create; storage enforces min length. */
+  /** Issue description — required at create; storage rejects whitespace-only input. */
   reproSteps: z.string().min(1).max(10000),
   page: z.string().optional(),
   screenshot: z.string().optional(),

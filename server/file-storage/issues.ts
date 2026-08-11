@@ -10,9 +10,6 @@ import { runWithPrincipal } from "../principal-context";
 
 const log = createLogger("StoreIssues");
 
-/** Minimum non-whitespace length for actionable repro steps. */
-const MIN_REPRO_STEPS_LENGTH = 12;
-
 export class IssueCreateValidationError extends Error {
   readonly code = "issue_create_validation";
   constructor(message: string) {
@@ -401,9 +398,9 @@ export class FileIssueStorage {
     }
 
     const reproSteps = normalizeReproSteps(issue.reproSteps);
-    if (reproSteps.length < MIN_REPRO_STEPS_LENGTH) {
+    if (!reproSteps) {
       throw new IssueCreateValidationError(
-        `Issue reproSteps is required (min ${MIN_REPRO_STEPS_LENGTH} non-whitespace characters). Do not file title-only shells.`,
+        "Issue reproSteps is required. Do not file title-only shells.",
       );
     }
 
@@ -515,9 +512,9 @@ export class FileIssueStorage {
 
     if (effectiveUpdates.reproSteps !== undefined) {
       const nextRepro = normalizeReproSteps(effectiveUpdates.reproSteps);
-      if (nextRepro.length < MIN_REPRO_STEPS_LENGTH) {
+      if (!nextRepro) {
         throw new IssueCreateValidationError(
-          `Issue reproSteps is required (min ${MIN_REPRO_STEPS_LENGTH} non-whitespace characters).`,
+          "Issue reproSteps is required.",
         );
       }
       effectiveUpdates.reproSteps = nextRepro;

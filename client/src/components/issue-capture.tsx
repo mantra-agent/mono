@@ -13,9 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { Camera, Loader2, X, ImageIcon, Pencil, Undo2, Check, Upload } from "lucide-react";
 
 const log = createLogger("IssueCapture");
@@ -245,22 +243,18 @@ export function openIssueCaptureDialog() {
 
 export function IssueCaptureDialog() {
   const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState("");
   const [reproSteps, setReproSteps] = useState("");
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
   const [annotating, setAnnotating] = useState(false);
-  const [includeLogs, setIncludeLogs] = useState(false);
   const routeRef = useRef<string>("/");
   const { toast } = useToast();
 
   useEffect(() => {
     const handler = () => {
       routeRef.current = getCurrentRoute();
-      setTitle("");
       setReproSteps("");
       setScreenshot(null);
-      setIncludeLogs(false);
       setOpen(true);
     };
     window.addEventListener("mantra-report-issue", handler);
@@ -269,12 +263,11 @@ export function IssueCaptureDialog() {
 
   const { data: recentLogs } = useQuery<any[]>({
     queryKey: ["/api/logs/recent?limit=50"],
-    enabled: includeLogs,
+    enabled: open,
   });
 
   const submitMutation = useMutation({
     mutationFn: async (payload: {
-      title: string;
       reproSteps: string;
       page: string;
       screenshot?: string;
@@ -285,10 +278,8 @@ export function IssueCaptureDialog() {
     },
     onSuccess: () => {
       toast({ title: "Issue reported" });
-      setTitle("");
       setReproSteps("");
       setScreenshot(null);
-      setIncludeLogs(false);
       setOpen(false);
       import("@/lib/queryClient").then(({ queryClient }) => {
         queryClient.invalidateQueries({ queryKey: ["/api/issues"] });
@@ -334,16 +325,15 @@ export function IssueCaptureDialog() {
     const trimmedRepro = reproSteps.trim();
     if (!trimmedRepro) {
       toast({
-        title: "Repro steps required",
-        description: "Describe how to reproduce the issue before filing.",
+        title: "Description required",
+        description: "Describe the issue before filing.",
         variant: "destructive",
       });
       return;
     }
-    if (!title.trim() && !trimmedRepro) return;
 
     let logsText: string | undefined;
-    if (includeLogs && recentLogs && recentLogs.length > 0) {
+    if (recentLogs && recentLogs.length > 0) {
       logsText = recentLogs
         .slice(0, 30)
         .map((l: any) => `[${l.level}] ${l.source}: ${l.message}`)
@@ -352,7 +342,6 @@ export function IssueCaptureDialog() {
 
     // platformEnvironmentId + buildId are filled server-side from runtime identity.
     submitMutation.mutate({
-      title: title.trim(),
       reproSteps: trimmedRepro,
       page: routeRef.current,
       screenshot: screenshot || undefined,
@@ -436,21 +425,13 @@ export function IssueCaptureDialog() {
               <span data-testid="text-issue-route">Page: {routeRef.current}</span>
             </div>
 
-            <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Title (optional — auto-generated if blank)"
-              className="text-sm"
-              autoFocus
-              data-testid="input-issue-title"
-            />
-
             <Textarea
               value={reproSteps}
               onChange={(e) => setReproSteps(e.target.value)}
-              placeholder="Repro steps (required) — numbered steps to reproduce..."
-              rows={1}
-              className="min-h-0 text-sm"
+              placeholder="Describe the issue that you're seeing."
+              rows={4}
+              className="min-h-0 resize-y text-sm scrollbar-thin is-scrolling"
+              autoFocus
               data-testid="input-issue-repro"
             />
 
@@ -496,10 +477,10 @@ export function IssueCaptureDialog() {
 
             <div className="flex flex-wrap items-center gap-2">
               <Button
-                variant="outline"
-                size="sm"
+                variant="secondary"
                 onClick={captureScreenshot}
                 disabled={capturing}
+                className="min-w-0 flex-1"
                 data-testid="button-take-screenshot"
               >
                 {screenshot ? <ImageIcon className="h-3.5 w-3.5 mr-1.5" /> : <Camera className="h-3.5 w-3.5 mr-1.5" />}
@@ -507,29 +488,17 @@ export function IssueCaptureDialog() {
               </Button>
 
               <Button
-                variant="outline"
-                size="sm"
+                variant="secondary"
                 onClick={() => fileInputRef.current?.click()}
+                className="min-w-0 flex-1"
                 data-testid="button-upload-image"
               >
                 <Upload className="h-3.5 w-3.5 mr-1.5" />
                 Upload
               </Button>
 
-              <div className="flex items-center gap-1.5">
-                <Switch
-                  checked={includeLogs}
-                  onCheckedChange={setIncludeLogs}
-                  data-testid="switch-include-logs"
-                />
-                <label className="text-sm text-muted-foreground cursor-pointer" onClick={() => setIncludeLogs(!includeLogs)}>
-                  Logs
-                </label>
-              </div>
-
               <Button
-                size="sm"
-                className="ml-auto"
+                className="w-full"
                 onClick={handleSubmit}
                 disabled={!reproSteps.trim() || submitMutation.isPending}
                 data-testid="button-submit-issue"
