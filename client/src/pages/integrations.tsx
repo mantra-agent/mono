@@ -170,6 +170,10 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "recall", name: "Recall", icon: Radio, statusFields: ["recall"], route: "recall" },
 ];
 
+// User-owned connections every account manages directly. Everything else is
+// system infrastructure and is only shown to admins.
+const USER_INTEGRATION_IDS = new Set(["google", "box", "twitter", "oura"]);
+
 function resolveStatus(
   integration: IntegrationDef,
   status: Record<string, any> | undefined,
@@ -4226,17 +4230,103 @@ interface IntegrationTreeProps {
   status: Record<string, any> | undefined;
 }
 
+interface IntegrationSectionProps {
+  title: string;
+  integrations: IntegrationDef[];
+  status: Record<string, any> | undefined;
+  hasQuery: boolean;
+  onOpen: (route: string) => void;
+  sectionTestId: string;
+}
+
+function IntegrationSection({
+  title,
+  integrations,
+  status,
+  hasQuery,
+  onOpen,
+  sectionTestId,
+}: IntegrationSectionProps) {
+  const [sectionOpen, setSectionOpen] = useState(true);
+  const isOpen = hasQuery || sectionOpen;
+
+  return (
+    <Collapsible
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!hasQuery) setSectionOpen(open);
+      }}
+    >
+      <CollapsibleTrigger
+        className={cn(
+          HIERARCHY_SECTION_HEADER_CLASS,
+          "min-h-11 hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:min-h-0",
+        )}
+        data-testid={sectionTestId}
+      >
+        <ChevronRight
+          className={cn("h-3.5 w-3.5 transition-transform", isOpen && "rotate-90")}
+          aria-hidden="true"
+        />
+        <span>{title}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-0.5">
+        {integrations.length === 0 ? (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+            No matching integrations.
+          </div>
+        ) : (
+          integrations.map((integration) => {
+            const integrationStatus = resolveStatus(integration, status);
+            const statusPresentation = INTEGRATION_STATUS_PRESENTATION[integrationStatus];
+            const Icon = integration.icon;
+            const StatusIcon = statusPresentation.icon;
+
+            return (
+              <button
+                key={integration.id}
+                type="button"
+                className={cn(
+                  HIERARCHY_SESSION_ROW_CLASS,
+                  "min-h-11 hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:min-h-0",
+                )}
+                onClick={() => onOpen(integration.route)}
+                data-testid={`row-integration-${integration.id}`}
+              >
+                <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate">{integration.name}</span>
+                <span className={cn("ml-auto flex shrink-0 items-center gap-1 text-xs", statusPresentation.className)}>
+                  <StatusIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                  {statusPresentation.label}
+                </span>
+              </button>
+            );
+          })
+        )}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function IntegrationTree({ status }: IntegrationTreeProps) {
   const [, setLocation] = useLocation();
+  const { hasPermission } = useAuth();
+  const canSeeSystem = hasPermission("system:read");
   const [search, setSearch] = useState("");
-  const [sectionOpen, setSectionOpen] = useState(true);
   const normalizedSearch = search.trim().toLowerCase();
   const hasQuery = normalizedSearch.length > 0;
-  const isOpen = hasQuery || sectionOpen;
-  const filteredIntegrations = useMemo(
-    () => INTEGRATIONS.filter((integration) => integration.name.toLowerCase().includes(normalizedSearch)),
-    [normalizedSearch],
-  );
+
+  const { userIntegrations, systemIntegrations } = useMemo(() => {
+    const matches = INTEGRATIONS.filter((integration) =>
+      integration.name.toLowerCase().includes(normalizedSearch),
+    );
+    return {
+      userIntegrations: matches.filter((integration) => USER_INTEGRATION_IDS.has(integration.id)),
+      systemIntegrations: matches.filter((integration) => !USER_INTEGRATION_IDS.has(integration.id)),
+    };
+  }, [normalizedSearch]);
+
+  const openIntegration = (route: string) => setLocation(`/integrations/${route}`);
 
   return (
     <div className="w-full min-w-0">
@@ -4251,60 +4341,25 @@ function IntegrationTree({ status }: IntegrationTreeProps) {
           />
         </div>
 
-        <Collapsible
-          open={isOpen}
-          onOpenChange={(open) => {
-            if (!hasQuery) setSectionOpen(open);
-          }}
-        >
-          <CollapsibleTrigger
-            className={cn(
-              HIERARCHY_SECTION_HEADER_CLASS,
-              "min-h-11 hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:min-h-0",
-            )}
-            data-testid="button-integrations-section"
-          >
-            <ChevronRight
-              className={cn("h-3.5 w-3.5 transition-transform", isOpen && "rotate-90")}
-              aria-hidden="true"
-            />
-            <span>Integrations</span>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-0.5">
-            {filteredIntegrations.length === 0 ? (
-              <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                No matching integrations.
-              </div>
-            ) : (
-              filteredIntegrations.map((integration) => {
-                const integrationStatus = resolveStatus(integration, status);
-                const statusPresentation = INTEGRATION_STATUS_PRESENTATION[integrationStatus];
-                const Icon = integration.icon;
-                const StatusIcon = statusPresentation.icon;
+        <IntegrationSection
+          title="User"
+          integrations={userIntegrations}
+          status={status}
+          hasQuery={hasQuery}
+          onOpen={openIntegration}
+          sectionTestId="button-integrations-section-user"
+        />
 
-                return (
-                  <button
-                    key={integration.id}
-                    type="button"
-                    className={cn(
-                      HIERARCHY_SESSION_ROW_CLASS,
-                      "min-h-11 hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:min-h-0",
-                    )}
-                    onClick={() => setLocation(`/integrations/${integration.route}`)}
-                    data-testid={`row-integration-${integration.id}`}
-                  >
-                    <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate">{integration.name}</span>
-                    <span className={cn("ml-auto flex shrink-0 items-center gap-1 text-xs", statusPresentation.className)}>
-                      <StatusIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                      {statusPresentation.label}
-                    </span>
-                  </button>
-                );
-              })
-            )}
-          </CollapsibleContent>
-        </Collapsible>
+        {canSeeSystem && (
+          <IntegrationSection
+            title="System"
+            integrations={systemIntegrations}
+            status={status}
+            hasQuery={hasQuery}
+            onOpen={openIntegration}
+            sectionTestId="button-integrations-section-system"
+          />
+        )}
       </div>
     </div>
   );
