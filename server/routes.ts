@@ -114,10 +114,6 @@ export async function registerRoutes(
           socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
           socket.destroy();
         });
-    } else if (pathname === "/ws/twilio-media") {
-      const handler = app.locals.twilioMediaUpgrade as ((request: IncomingMessage, socket: typeof socket, head: Buffer) => void) | undefined;
-      if (!handler) { wsLog.warn("Twilio media upgrade handler unavailable"); socket.destroy(); }
-      else handler(request, socket, head);
     } else if (pathname === "/ws/recall-participant-audio" || pathname === "/ws/recall-participant-audio/") {
       const handler = app.locals.recallMeetingAudioUpgrade as ((request: IncomingMessage, socket: typeof socket, head: Buffer) => void) | undefined;
       if (!handler) { wsLog.warn("Recall participant audio upgrade handler unavailable"); socket.destroy(); }

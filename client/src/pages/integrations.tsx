@@ -3507,7 +3507,7 @@ interface TwilioStatus {
   accountStatus?: string;
   ownedNumbers?: Array<{ sid: string; phoneNumber: string; friendlyName: string }>;
   voiceWebhookUrl?: string;
-  mediaStreamUrl?: string;
+  voiceProvider?: string;
   servingHost?: string | null;
   publicUrl?: string | null;
   error?: string;
@@ -3566,7 +3566,7 @@ function TwilioDetail() {
       </IntegrationTreeSection>
       <IntegrationTreeSection label="Phone endpoints">
         <ProfileTreeRow label="Voice webhook" icon={<Globe className="h-3.5 w-3.5" />} hasValue showEmpty><code className="break-all text-xs">{status?.voiceWebhookUrl ?? "Available after setup"}</code></ProfileTreeRow>
-        <ProfileTreeRow label="Media stream" icon={<Radio className="h-3.5 w-3.5" />} hasValue showEmpty><code className="break-all text-xs">{status?.mediaStreamUrl ?? "Available after setup"}</code></ProfileTreeRow>
+        <ProfileTreeRow label="Voice provider" icon={<Radio className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-sm text-muted-foreground">{status?.voiceProvider ?? "ElevenLabs register-call"}</span></ProfileTreeRow>
       </IntegrationTreeSection>
     </div>
   );

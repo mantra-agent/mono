@@ -90,5 +90,9 @@ Normal voice configuration is the sole source of truth for voice identity, model
 - `voice-session-engine.ts` and `/api/voice/sessions/save` remain a legacy voice-session archive consumed by persisted transcript UI. They are not call-lifecycle authority; canonical live and durable conversation state remains the chat Session plus `voice_session_active` lease. Retire the archive only after migrating stored `voice_session` documents and their UI.
 - Webhook base-URL override caching is process-local. The mutating request reconfigures ElevenLabs in its handling process; other replicas converge on restart/reload and must not treat their cache as provider truth.
 
+### Phone register-call transport
+
+Twilio phone calls enter the same VoiceSession/custom-LLM engine through `server/phone/voice-session.ts`. PostgreSQL `twilio_number_bindings` owns inbound number → user/account/Vault authority and `phone_call_records` owns call SID → Session/VoiceSession correlation and terminal interaction receipt. ElevenLabs owns phone audio through register-call; phone code must pass only the exact app VoiceSession ID in `custom_llm_extra_body.sessionId`. Do not restore a phone STT/TTS pipeline, `/ws/twilio-media`, or process-local accepted-call correlation.
+
 ### Provider-Owned System Tools
 ElevenLabs system tools arrive on each custom-LLM request as OpenAI-format tool definitions. `provider-system-tools.ts` is the allowlist and validation boundary. Merge only recognized provider tools into the voice executor, intercept them before ordinary bridge-tool dispatch, then return the selected call to ElevenLabs as OpenAI-format SSE so ElevenLabs remains the sole owner of conversation language and other provider state.
