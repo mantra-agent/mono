@@ -67,6 +67,9 @@ const patchSchema = z
     entityName: z.string().trim().min(1).max(200).nullable().optional(),
     status: z.enum(["active", "archived"]).optional(),
     vaultIds: z.array(z.string().trim().min(1)).min(1).max(64).optional(),
+    dataRoomUrl: z.string().trim().url().max(2048)
+      .refine((value) => new URL(value).protocol === "https:", "Data Room URL must use HTTPS")
+      .optional(),
   })
   .refine((patch) => Object.keys(patch).length > 0, "At least one change is required");
 
