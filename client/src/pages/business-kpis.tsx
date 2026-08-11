@@ -2,6 +2,13 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Gauge, Loader2, Plus, Target } from "lucide-react";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import {
+  HierarchySectionHeader,
+  HIERARCHY_PRIMARY_ACTION_CLASS,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { useSelectedBusiness } from "@/hooks/use-selected-business";
 import {
   METRIC_DIRECTIONS,
@@ -25,7 +32,6 @@ import {
 } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
 
 interface KpisResponse {
   kpis: Kpi[];
@@ -34,14 +40,14 @@ interface MetricsResponse {
   metrics: Metric[];
 }
 
-const BAND_STYLE: Record<KpiScoreBand, { label: string; className: string }> = {
-  bull: { label: "Bull", className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" },
-  on_track: { label: "On track", className: "bg-teal-500/15 text-teal-300 border-teal-500/30" },
-  bear: { label: "Bear", className: "bg-amber-500/15 text-amber-300 border-amber-500/30" },
-  critical: { label: "Critical", className: "bg-red-500/15 text-red-300 border-red-500/30" },
-  stale: { label: "Stale", className: "bg-slate-500/15 text-slate-300 border-slate-500/30" },
-  unavailable: { label: "Unavailable", className: "bg-slate-500/15 text-slate-400 border-slate-500/30" },
-  unmeasured: { label: "Unmeasured", className: "bg-muted text-muted-foreground border-border" },
+const BAND_LABEL: Record<KpiScoreBand, string> = {
+  bull: "Bull",
+  on_track: "On track",
+  bear: "Bear",
+  critical: "Critical",
+  stale: "Stale",
+  unavailable: "Unavailable",
+  unmeasured: "Unmeasured",
 };
 
 const DIRECTION_LABEL: Record<MetricDirection, string> = {
@@ -49,15 +55,6 @@ const DIRECTION_LABEL: Record<MetricDirection, string> = {
   lower_is_better: "Lower is better",
   target_band: "Target band",
 };
-
-function BandPill({ band }: { band: KpiScoreBand }) {
-  const style = BAND_STYLE[band] ?? BAND_STYLE.unmeasured;
-  return (
-    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium", style.className)}>
-      {style.label}
-    </span>
-  );
-}
 
 function formatValue(value: number | null, unit: string): string {
   if (value == null) return "—";
@@ -116,9 +113,15 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" disabled={metrics.length === 0} data-testid="create-kpi">
-          <Plus className="mr-1 h-4 w-4" /> New KPI
-        </Button>
+        <button
+          type="button"
+          className={HIERARCHY_PRIMARY_ACTION_CLASS}
+          disabled={metrics.length === 0}
+          data-testid="create-kpi"
+        >
+          <Plus className="h-3.5 w-3.5 shrink-0" />
+          <span>New KPI</span>
+        </button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
@@ -184,67 +187,65 @@ export default function BusinessKpisPage() {
   return (
     <div className="p-4">
       <BusinessPageHeader page="KPIs" businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} />
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 text-xl font-semibold">
-            <Gauge className="h-5 w-5 text-muted-foreground" /> KPIs
-          </h1>
-          <p className="text-sm text-muted-foreground">Targets and band thresholds over your metrics. Bands show where you stand.</p>
-        </div>
+      <div className={HIERARCHY_TREE_STACK_CLASS}>
+        <HierarchySearchInput
+          value={query}
+          onChange={setQuery}
+          inputTestId="kpis-search"
+          clearTestId="button-clear-kpis-search"
+          ariaLabel="Search KPIs"
+        />
         <CreateKpiDialog metrics={metricsData?.metrics ?? []} />
       </div>
-
-      <Input
-        placeholder="Search KPIs…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        className="mb-4"
-        data-testid="kpis-search"
-      />
 
       {isLoading ? (
         <div className="flex items-center justify-center py-16 text-muted-foreground">
           <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading KPIs…
         </div>
       ) : kpis.length === 0 ? (
-        <div className="rounded-lg border border-dashed py-16 text-center text-muted-foreground">
-          No KPIs yet. Create a metric first, then bind a KPI to it.
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">
+          No KPIs yet.
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="py-4">
+          <HierarchySectionHeader data-testid="kpi-section-current">Current</HierarchySectionHeader>
           {kpis.map((kpi) => {
             const band = kpi.score?.band ?? "unmeasured";
+            const details = [kpi.metric?.name, kpi.targetLabel, kpi.cadence, kpi.ownerLabel].filter(Boolean) as string[];
+            const thresholds = [
+              kpi.bullThreshold != null ? `Bull ≥ ${kpi.bullThreshold}` : null,
+              kpi.onTrackThreshold != null ? `On track ≥ ${kpi.onTrackThreshold}` : null,
+              kpi.bearThreshold != null ? `Bear ≥ ${kpi.bearThreshold}` : null,
+            ].filter(Boolean) as string[];
             return (
-              <div
+              <ProfileTreeRow
                 key={kpi.id}
-                className="rounded-lg border bg-card p-3"
-                data-testid={`kpi-row-${kpi.slug}`}
+                label={kpi.name}
+                icon={<Gauge className="h-3.5 w-3.5" />}
+                hasValue
+                showEmpty
+                mobileLayout="inline"
+                valueLayout="compact"
+                testId={`kpi-row-${kpi.slug}`}
+                expandedContent={
+                  details.length > 0 || thresholds.length > 0 ? (
+                    <div className="space-y-1 text-muted-foreground">
+                      {details.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          {kpi.targetLabel ? <Target className="h-3.5 w-3.5" /> : null}
+                          {details.map((detail) => <span key={detail}>{detail}</span>)}
+                        </div>
+                      ) : null}
+                      {thresholds.length > 0 ? <div>{thresholds.join(" · ")}</div> : null}
+                    </div>
+                  ) : undefined
+                }
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{kpi.name}</span>
-                      <BandPill band={band} />
-                    </div>
-                    <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                      {kpi.targetLabel ? <span className="inline-flex items-center gap-1"><Target className="h-3 w-3" />{kpi.targetLabel}</span> : null}
-                      {kpi.cadence ? <span>· {kpi.cadence}</span> : null}
-                      {kpi.ownerLabel ? <span>· {kpi.ownerLabel}</span> : null}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-mono text-sm">{formatValue(kpi.score?.value ?? null, kpi.score?.unit ?? "")}</div>
-                    {kpi.metric ? <div className="text-xs text-muted-foreground">{kpi.metric.name}</div> : null}
-                  </div>
-                </div>
-                {(kpi.bullThreshold != null || kpi.onTrackThreshold != null || kpi.bearThreshold != null) && (
-                  <div className="mt-2 flex gap-3 text-xs text-muted-foreground">
-                    {kpi.bullThreshold != null && <span>Bull ≥ {kpi.bullThreshold}</span>}
-                    {kpi.onTrackThreshold != null && <span>On track ≥ {kpi.onTrackThreshold}</span>}
-                    {kpi.bearThreshold != null && <span>Bear ≥ {kpi.bearThreshold}</span>}
-                  </div>
-                )}
-              </div>
+                <span className="whitespace-nowrap font-mono">
+                  {formatValue(kpi.score?.value ?? null, kpi.score?.unit ?? "")}
+                  <span className="ml-2 font-sans text-muted-foreground">{BAND_LABEL[band]}</span>
+                </span>
+              </ProfileTreeRow>
             );
           })}
         </div>
