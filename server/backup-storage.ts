@@ -247,7 +247,17 @@ async function runBackupAsync(jobId: string): Promise<void> {
         table_count = ${result.totalTables},
         total_rows = ${result.totalRows},
         duration_ms = ${durationMs},
-        table_manifest = ${JSON.stringify(manifest)}::jsonb,
+        table_manifest = ${JSON.stringify({
+          tables: manifest,
+          coverage: {
+            version: result.coverage.version,
+            discoveredCount: result.coverage.discovered.length,
+            includedCount: result.coverage.included.length,
+            excludedCount: result.coverage.excluded.length,
+            schemaFingerprint: result.coverage.schemaFingerprint,
+            manifestFingerprint: result.coverage.manifestFingerprint,
+          },
+        })}::jsonb,
         completed_at = CURRENT_TIMESTAMP
       WHERE id = ${jobId}
         AND status = 'in_progress'
