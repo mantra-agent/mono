@@ -477,6 +477,8 @@ interface SessionData {
   vaultId?: string;
   modelTier?: string | null;
   personaId?: number | null;
+  rootRevisionId?: string;
+  selectedPersonaRevisionId?: string;
   /** True when the user manually pinned the persona from the UI; suppresses agent auto-switching for this session. */
   personaPinnedByUser?: boolean;
   createdAt: string;
@@ -898,6 +900,8 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
     sessionKey: data.sessionKey,
     modelTier: normalizeSessionModelTierOverride(data.modelTier),
     personaId: data.personaId ?? null,
+    rootRevisionId: data.rootRevisionId,
+    selectedPersonaRevisionId: data.selectedPersonaRevisionId,
     personaPinnedByUser: data.personaPinnedByUser ?? false,
     messageCount: data.messages.length,
     lastMessageRole: getLastMessageRole(data.messages),
@@ -1245,6 +1249,8 @@ function convToMeta(data: SessionData): FileSession {
     vaultId: data.vaultId,
     modelTier: normalizeSessionModelTierOverride(data.modelTier),
     personaId: data.personaId ?? null,
+    rootRevisionId: data.rootRevisionId,
+    selectedPersonaRevisionId: data.selectedPersonaRevisionId,
     personaPinnedByUser: data.personaPinnedByUser ?? false,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
@@ -1408,6 +1414,8 @@ function docMetadataToSession(doc: {
     vaultId: doc.vaultId || undefined,
     modelTier: normalizeSessionModelTierOverride(metadataString(meta, "modelTier")),
     personaId: metadataNumber(meta, "personaId") ?? null,
+    rootRevisionId: metadataString(meta, "rootRevisionId"),
+    selectedPersonaRevisionId: metadataString(meta, "selectedPersonaRevisionId"),
     personaPinnedByUser: metadataBool(meta, "personaPinnedByUser"),
     createdAt,
     updatedAt,
@@ -1799,6 +1807,18 @@ export interface IChatFileStorage {
   deleteMessage(sessionId: string, messageId: string): Promise<boolean>;
 }
 
+async function resolvePersonaProvenance(personaId: number | null | undefined): Promise<{ rootRevisionId?: string; selectedPersonaRevisionId?: string }> {
+  const { personaStorage } = await import("./file-storage/persona-storage");
+  const [root, selected] = await Promise.all([
+    personaStorage.getSystemSeedByName("Root"),
+    personaId ? personaStorage.get(personaId) : Promise.resolve(null),
+  ]);
+  return {
+    rootRevisionId: root?.currentRevisionId ?? undefined,
+    selectedPersonaRevisionId: selected?.currentRevisionId ?? undefined,
+  };
+}
+
 async function resolvePersonaSnapshot(personaId: number | null | undefined): Promise<PersonaSnapshot | undefined> {
   if (!personaId) return undefined;
   try {
@@ -2066,6 +2086,7 @@ export const chatFileStorage: IChatFileStorage = {
       options?.provenance,
       provenanceFromSessionType(options?.sessionType || "user", title),
     );
+    const personaProvenance = await resolvePersonaProvenance(options?.personaId);
     const data: SessionData = {
       id,
       title,
@@ -2073,6 +2094,7 @@ export const chatFileStorage: IChatFileStorage = {
       sessionKey: sessionKey || null,
       modelTier: normalizeSessionModelTierOverride(modelTier),
       personaId: options?.personaId ?? null,
+      ...personaProvenance,
       createdAt: now,
       updatedAt: now,
       messages: [],
@@ -2413,6 +2435,7 @@ export const chatFileStorage: IChatFileStorage = {
       const data = await readConv(id);
       if (!data) return;
       data.personaId = personaId;
+      Object.assign(data, await resolvePersonaProvenance(personaId));
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
@@ -2425,6 +2448,7 @@ export const chatFileStorage: IChatFileStorage = {
       if (!data) return null;
       if (data.personaId) return { personaId: data.personaId, applied: false };
       data.personaId = personaId;
+      Object.assign(data, await resolvePersonaProvenance(personaId));
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
@@ -2438,6 +2462,7 @@ export const chatFileStorage: IChatFileStorage = {
       if (!data) return false;
       if (personaId !== null) {
         data.personaId = personaId;
+        Object.assign(data, await resolvePersonaProvenance(personaId));
         data.personaPinnedByUser = true;
       } else {
         data.personaPinnedByUser = false;
@@ -4278,6 +4303,7 @@ export const chatFileStorage: IChatFileStorage = {
     const { rootSessionId, depth } = await computeRootAndDepth(
       spawnMeta?.parentSessionId,
     );
+    const personaProvenance = await resolvePersonaProvenance(spawnMeta?.personaId);
     const data: SessionData = {
       id,
       title,
@@ -4285,6 +4311,7 @@ export const chatFileStorage: IChatFileStorage = {
       sessionKey: sessionKey || null,
       modelTier: normalizeSessionModelTierOverride(modelTier),
       personaId: spawnMeta?.personaId ?? null,
+      ...personaProvenance,
       createdAt: now,
       updatedAt: now,
       messages: [],

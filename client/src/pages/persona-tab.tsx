@@ -473,12 +473,16 @@ function PlatformPersonaItem({ persona, onPublished }: { persona: Persona; onPub
   const [promptOverlay, setPromptOverlay] = useState(persona.promptOverlay || "");
   const [changeSummary, setChangeSummary] = useState("");
   const [preview, setPreview] = useState<{ changedFields: string[]; impact: { advancing: number; updateAvailable: number } } | null>(null);
+  const { data: history = [] } = useQuery<Array<{ id: string; payload: Record<string, unknown>; changeSummary: string; createdAt: string }>>({
+    queryKey: ["/api/personas", persona.id, "history"],
+    enabled: open,
+  });
   const previewMutation = useMutation({ mutationFn: async () => {
     const response = await apiRequest("POST", `/api/personas/platform/${persona.id}/preview`, { changes: { description, promptOverlay } });
     return response.json();
   }, onSuccess: setPreview });
-  const publishMutation = useMutation({ mutationFn: async () => {
-    await apiRequest("POST", `/api/personas/platform/${persona.id}/publish`, { changes: { description, promptOverlay }, changeSummary, confirmed: true });
+  const publishMutation = useMutation({ mutationFn: async (changes: { description: string; promptOverlay: string }) => {
+    await apiRequest("POST", `/api/personas/platform/${persona.id}/publish`, { changes, changeSummary, confirmed: true });
   }, onSuccess: () => { setPreview(null); setOpen(false); onPublished(); } });
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -496,7 +500,21 @@ function PlatformPersonaItem({ persona, onPublished }: { persona: Persona; onPub
           <p>{preview.changedFields.length ? preview.changedFields.join(", ") : "No changes"}</p>
           <p className="text-muted-foreground">{preview.impact.advancing} advance automatically · {preview.impact.updateAvailable} receive Update available</p>
           <Label>Change summary<Input value={changeSummary} onChange={(event) => setChangeSummary(event.target.value)} /></Label>
-          <Button disabled={!changeSummary.trim() || preview.changedFields.length === 0 || publishMutation.isPending} onClick={() => publishMutation.mutate()}>Publish revision</Button>
+          <Button disabled={!changeSummary.trim() || preview.changedFields.length === 0 || publishMutation.isPending} onClick={() => publishMutation.mutate({ description, promptOverlay })}>Publish revision</Button>
+        </div>}
+        {history.length > 0 && <div className="border-l border-border/40 pl-3">
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">History</p>
+          {history.map((revision) => <div key={revision.id} className="flex min-h-11 items-center gap-2 border-b border-border/20 text-sm">
+            <span className="min-w-0 flex-1 truncate">{revision.changeSummary}</span>
+            <span className="text-xs text-muted-foreground">{timeAgo(revision.createdAt)}</span>
+            {revision.id !== persona.currentRevisionId && <Button size="sm" variant="ghost" onClick={() => {
+              const payload = revision.payload;
+              const priorDescription = typeof payload.description === "string" ? payload.description : "";
+              const priorOverlay = typeof payload.promptOverlay === "string" ? payload.promptOverlay : "";
+              setChangeSummary(`Republish ${revision.changeSummary}`);
+              publishMutation.mutate({ description: priorDescription, promptOverlay: priorOverlay });
+            }}>Republish</Button>}
+          </div>)}
         </div>}
       </div></CollapsibleContent>
     </Collapsible>
