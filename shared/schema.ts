@@ -857,7 +857,7 @@ export const driveResources = pgTable("drive_resources", {
   accountId: varchar("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
   vaultId: text("vault_id").notNull().references(() => vaults.id, { onDelete: "cascade" }),
   /** The connected account this file was picked from (drive.file grants per-file access for Google). */
-  connectedAccountId: text("connected_account_id").notNull(),
+  connectedAccountId: text("connected_account_id"),
   /** Provider discriminant — google | box | mantra. Part of the bind identity. */
   provider: text("provider").notNull().default("google"),
   /** Provider-native file id — the durable handle used for reads and (Step C) writes. */
@@ -867,6 +867,8 @@ export const driveResources = pgTable("drive_resources", {
   resourceType: text("resource_type", { enum: driveResourceTypes }).notNull().default("file"),
   iconUrl: text("icon_url"),
   webViewLink: text("web_view_link"),
+  origin: text("origin").notNull().default("bind"),
+  sourceSessionId: text("source_session_id"),
   addedByUserId: varchar("added_by_user_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
@@ -879,6 +881,19 @@ export const driveResources = pgTable("drive_resources", {
   ),
   check("drive_resources_resource_type_check", sql`${table.resourceType} IN ('file', 'folder')`),
   check("drive_resources_provider_check", sql`${table.provider} IN ('google', 'box', 'mantra')`),
+  check("drive_resources_origin_check", sql`${table.origin} IN ('bind', 'upload')`),
+]);
+
+export const uploadResourceSources = pgTable("upload_resource_sources", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  driveResourceId: text("drive_resource_id").notNull().references(() => driveResources.id, { onDelete: "cascade" }),
+  sessionId: text("session_id"),
+  messageId: text("message_id"),
+  sourceKind: text("source_kind").notNull().default("conversation"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  uniqueIndex("idx_upload_resource_sources_identity").on(table.driveResourceId, table.sourceKind, table.sessionId, table.messageId),
+  index("idx_upload_resource_sources_session").on(table.sessionId),
 ]);
 
 export type DriveResourceRow = typeof driveResources.$inferSelect;

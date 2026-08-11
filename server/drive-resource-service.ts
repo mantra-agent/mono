@@ -13,7 +13,7 @@ const PROVIDERS: ReadonlySet<string> = new Set(["google", "box", "mantra"]);
 
 export interface BindDriveResourceInput {
   vaultId: string;
-  connectedAccountId: string;
+  connectedAccountId?: string | null;
   /** Provider identity — defaults to google for the existing Picker path. */
   provider?: FilesProvider;
   providerFileId: string;
@@ -87,6 +87,9 @@ export class DriveResourceService {
     }
     const providerFileId = input.providerFileId.trim();
     const name = input.name.trim();
+    if (provider !== "mantra" && !input.connectedAccountId) {
+      throw Object.assign(new Error("connectedAccountId is required for external providers"), { status: 400 });
+    }
     if (!providerFileId) throw Object.assign(new Error("providerFileId is required"), { status: 400 });
     if (!name) throw Object.assign(new Error("name is required"), { status: 400 });
     // Idempotent: re-binding the same provider file into the same vault refreshes its metadata
@@ -96,7 +99,7 @@ export class DriveResourceService {
       .values({
         accountId: principal.accountId,
         vaultId: input.vaultId,
-        connectedAccountId: input.connectedAccountId,
+        connectedAccountId: input.connectedAccountId ?? null,
         provider,
         providerFileId,
         name,
@@ -109,7 +112,7 @@ export class DriveResourceService {
       .onConflictDoUpdate({
         target: [driveResources.vaultId, driveResources.provider, driveResources.providerFileId],
         set: {
-          connectedAccountId: input.connectedAccountId,
+          connectedAccountId: input.connectedAccountId ?? null,
           name,
           mimeType: input.mimeType ?? null,
           iconUrl: input.iconUrl ?? null,

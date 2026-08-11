@@ -1,7 +1,7 @@
 import { createLogger } from "./log";
 
 const log = createLogger("DriveResourcesSchema");
-const MIGRATION_LOCK_KEY = "migration.drive-resources-schema.v2";
+const MIGRATION_LOCK_KEY = "migration.drive-resources-schema.v3";
 
 type QueryableClient = {
   query: (sql: string, params?: unknown[]) => Promise<unknown>;
@@ -47,6 +47,10 @@ export async function ensureDriveResourcesSchema(pool: ConnectionPool): Promise<
     await client.query(`
       DO $migration$
       BEGIN
+        ALTER TABLE drive_resources ALTER COLUMN connected_account_id DROP NOT NULL;
+        ALTER TABLE drive_resources ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'bind';
+        ALTER TABLE drive_resources ADD COLUMN IF NOT EXISTS source_session_id TEXT;
+
         -- provider column
         IF NOT EXISTS (
           SELECT 1 FROM information_schema.columns
@@ -108,6 +112,18 @@ export async function ensureDriveResourcesSchema(pool: ConnectionPool): Promise<
       END $migration$
     `);
     await client.query(`
+      CREATE TABLE IF NOT EXISTS upload_resource_sources (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
+        drive_resource_id TEXT NOT NULL REFERENCES drive_resources(id) ON DELETE CASCADE,
+        session_id TEXT,
+        message_id TEXT,
+        source_kind TEXT NOT NULL DEFAULT 'conversation',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_upload_resource_sources_identity ON upload_resource_sources(drive_resource_id, source_kind, session_id, message_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_upload_resource_sources_session ON upload_resource_sources(session_id)`);
+    await client.query(`
       DO $migration$
       BEGIN
         IF to_regclass('public.accounts') IS NOT NULL AND NOT EXISTS (
@@ -129,6 +145,10 @@ export async function ensureDriveResourcesSchema(pool: ConnectionPool): Promise<
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'drive_resources_provider_check') THEN
           ALTER TABLE drive_resources ADD CONSTRAINT drive_resources_provider_check
             CHECK (provider IN ('google', 'box', 'mantra'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'drive_resources_origin_check') THEN
+          ALTER TABLE drive_resources ADD CONSTRAINT drive_resources_origin_check
+            CHECK (origin IN ('bind', 'upload'));
         END IF;
       END $migration$
     `);

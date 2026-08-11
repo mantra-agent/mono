@@ -26,6 +26,24 @@ function handleError(res: Response, error: unknown, fallback: string) {
 export function registerDriveResourceRoutes(app: Express) {
   // ── Bind surface (Picker whitelist) ──────────────────────────────────────
 
+  app.post("/api/files/uploads/reconcile", async (_req, res) => {
+    try {
+      const { reconcileUploadResources } = await import("./upload-resource-service");
+      res.json({ reconciliation: await reconcileUploadResources() });
+    } catch (error) {
+      handleError(res, error, "Failed to reconcile uploads");
+    }
+  });
+
+  app.get("/api/files/uploads/unassigned", async (_req, res) => {
+    try {
+      const { listUnassignedUploads } = await import("./upload-resource-service");
+      res.json({ uploads: await listUnassignedUploads() });
+    } catch (error) {
+      handleError(res, error, "Failed to list unassigned uploads");
+    }
+  });
+
   app.get("/api/drive/resources", async (req, res) => {
     try {
       const vaultId = typeof req.query.vaultId === "string" ? req.query.vaultId : "";
@@ -51,7 +69,7 @@ export function registerDriveResourceRoutes(app: Express) {
       const providerFileId = String(body.providerFileId ?? "");
       const resource = await driveResourceService.bind({
         vaultId: String(body.vaultId ?? ""),
-        connectedAccountId: String(body.connectedAccountId ?? ""),
+        connectedAccountId: body.connectedAccountId == null ? null : String(body.connectedAccountId),
         provider,
         providerFileId,
         name: String(body.name ?? ""),

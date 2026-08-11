@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { useQueries } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import { Loader2, Folder } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { apiRequest } from "@/lib/queryClient";
 import { HierarchySectionHeader } from "@/components/hierarchy-section-header";
@@ -32,6 +32,15 @@ export default function FilesPage() {
 
   const { visibleVaults, isLoading: vaultsLoading } = useVisibleVaults();
   const [searchQuery, setSearchQuery] = useState("");
+  const uploadReconciliation = useQuery({
+    queryKey: ["/api/files/uploads/reconcile"],
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/files/uploads/reconcile");
+      return res.json() as Promise<{ reconciliation: { scanned: number; registered: number; unassigned: number } }>;
+    },
+    staleTime: 60_000,
+    retry: 1,
+  });
   const trimmedQuery = searchQuery.trim().toLowerCase();
   const isSearching = trimmedQuery.length > 0;
 
@@ -123,22 +132,27 @@ export default function FilesPage() {
     () =>
       perVault.map(({ vault, resources, statusByResourceId }) => {
         const rootResources = resources.filter((resource) => {
+          if (resource.origin === "upload") return false;
           const rootId = statusByResourceId.get(resource.id)?.indexedSource
             ?.rootDriveResourceId;
           return !rootId || rootId === resource.id;
         });
+        const uploads = resources.filter((resource) => resource.origin === "upload");
         const visibleResources = isSearching
           ? rootResources.filter((resource) =>
               resource.name.toLowerCase().includes(trimmedQuery),
             )
           : rootResources;
-        return { vault, visibleResources, statusByResourceId };
+        const visibleUploads = isSearching
+          ? uploads.filter((resource) => resource.name.toLowerCase().includes(trimmedQuery))
+          : uploads;
+        return { vault, visibleResources, visibleUploads, statusByResourceId };
       }),
     [perVault, isSearching, trimmedQuery],
   );
 
   const noSearchMatches =
-    isSearching && vaultSections.every((s) => s.visibleResources.length === 0);
+    isSearching && vaultSections.every((s) => s.visibleResources.length === 0 && s.visibleUploads.length === 0);
 
   return (
     <div
@@ -154,6 +168,13 @@ export default function FilesPage() {
           <>
             <div className="pt-4">
               <FilesIndexProgressBanner statuses={allStatuses} />
+              {uploadReconciliation.isLoading ? (
+                <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Reconciling uploads…
+                </div>
+              ) : uploadReconciliation.isError ? (
+                <div className="px-2 py-1.5 text-sm text-destructive">Upload reconciliation failed</div>
+              ) : null}
             </div>
 
             <div className="pt-1">
@@ -190,8 +211,8 @@ export default function FilesPage() {
               </>
             )}
 
-            {vaultSections.map(({ vault, visibleResources, statusByResourceId }) => {
-              if (isSearching && visibleResources.length === 0) return null;
+            {vaultSections.map(({ vault, visibleResources, visibleUploads, statusByResourceId }) => {
+              if (isSearching && visibleResources.length === 0 && visibleUploads.length === 0) return null;
               return (
                 <div key={vault.id}>
                   <HierarchySectionHeader className="mt-4">
@@ -203,6 +224,22 @@ export default function FilesPage() {
                     vaultColor={vault.color ?? null}
                     statusByResourceId={statusByResourceId}
                   />
+                  {visibleUploads.length > 0 ? (
+                    <div className="mt-1">
+                      <div className="flex items-center gap-2 px-2 py-1.5 text-sm font-medium">
+                        <Folder className="h-4 w-4 text-muted-foreground" />
+                        <span>Uploads</span>
+                      </div>
+                      <div className="border-l border-border/60 pl-3">
+                        <DriveResourceTree
+                          vaultId={vault.id}
+                          resources={visibleUploads}
+                          vaultColor={vault.color ?? null}
+                          statusByResourceId={statusByResourceId}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               );
             })}

@@ -1388,9 +1388,18 @@ export async function registerChatRoutes(app: Express): Promise<void> {
                   visibility: "private",
                 },
               });
-              chatLog.log(
-                `[Upload] R2 OK: name="${f.originalname}" objectPath=${uploadedObject.objectPath}`,
-              );
+              const sessionId = typeof req.body?.sessionId === "string" ? req.body.sessionId : null;
+              const { registerUploadResource } = await import("../../upload-resource-service");
+              await registerUploadResource({
+                objectPath: uploadedObject.objectPath,
+                name: f.originalname,
+                mimeType: f.mimetype || "application/octet-stream",
+                sessionId,
+              });
+              chatLog.info("chat upload persisted and registered", {
+                objectPath: uploadedObject.objectPath,
+                sessionId,
+              });
               return {
                 name: f.originalname,
                 path: uploadedObject.objectPath,

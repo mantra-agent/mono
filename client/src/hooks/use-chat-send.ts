@@ -52,11 +52,12 @@ export function useChatSend(deps: UseChatSendDeps) {
   const pendingTurn = externalPendingTurn ? externalPendingTurn[0] : localPendingTurn;
   const setPendingTurn = externalPendingTurn ? externalPendingTurn[1] : setLocalPendingTurn;
 
-  const uploadAttachedFiles = useCallback(async (messageText: string, files: File[]): Promise<string> => {
+  const uploadAttachedFiles = useCallback(async (messageText: string, files: File[], sessionId: string): Promise<string> => {
     if (files.length === 0) return messageText;
     try {
       const formData = new FormData();
       files.forEach(f => formData.append("files", f));
+      formData.append("sessionId", sessionId);
       const uploadRes = await fetch("/api/chat/upload", { method: "POST", body: formData });
       if (uploadRes.ok) {
         const { files: uploaded } = await uploadRes.json();
@@ -111,12 +112,12 @@ export function useChatSend(deps: UseChatSendDeps) {
     let admittedSessionId: string | null = null;
 
     try {
-      const fullMessage = await uploadAttachedFiles(messageText, filesToUpload);
       const convId = await ensureConversation(activeSession);
       if (!convId) {
         setPendingTurn(null);
         return false;
       }
+      const fullMessage = await uploadAttachedFiles(messageText, filesToUpload, convId);
       setPendingTurn({ clientTurnId, sessionId: convId, submittedAt, status: "posting", content: fullMessage });
 
       if (!activeSession) {
