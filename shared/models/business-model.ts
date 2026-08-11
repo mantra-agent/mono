@@ -1,5 +1,9 @@
 import { z } from "zod";
 import type { JobRole } from "./job-roles";
+import {
+  FORECAST_METRIC_CATALOG,
+  type ProjectedMetricSeries,
+} from "./metrics";
 
 export const MODEL_VERSION = 6;
 export const HORIZON_MIN = 1;
@@ -617,6 +621,7 @@ export const PHASE_ONE_FIRST_CLOSE_AMOUNT = 750_000;
 
 export interface Projection {
   assumptions: Assumptions; months: MonthRow[]; gates: GateSummary[]; financing: FinancingSummary[]; financingNeed: FinancingNeed;
+  metricSeries: ProjectedMetricSeries[];
   impliedRetainedAccountArpaExpansionPct: number; entryContributionGrossMargin: number; baselineCacPaybackMonths: number;
 }
 
@@ -849,7 +854,40 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     confirmedConsultingNetCash: throughGate.reduce((sum, row) => sum + row.consultingRevenue - row.consultingCogs, 0), reserveAtGate: assumptions.reserveAtNextGate,
   };
 
-  return { assumptions, months, gates, financing, financingNeed, impliedRetainedAccountArpaExpansionPct: accountSurvivalMonthly > 0 ? calculatedAnnualNrrPct / (100 - assumptions.annualAccountChurnPct) * 100 : 0, entryContributionGrossMargin, baselineCacPaybackMonths };
+  const scenarioId = "baseline";
+  const metricValue = (row: MonthRow, key: keyof typeof FORECAST_METRIC_CATALOG): number => {
+    switch (key) {
+      case "payingAccounts": return row.activeAccounts;
+      case "newAccounts": return row.newAccounts;
+      case "churnedAccounts": return row.churnedAccounts;
+      case "users": return row.activeUsers;
+      case "newUsers": return row.newUsers;
+      case "nrr": return row.cohortNrr * 100;
+      case "revenue": return row.totalCashRevenue;
+      case "cogs": return row.productCogs + row.consultingCogs;
+      case "grossProfit": return row.grossProfit;
+      case "opex": return row.totalOpex;
+      case "operatingIncome": return row.operatingIncome;
+      case "netCashFlow": return row.netCashChange;
+      case "cashBalance": return row.endingCash;
+    }
+  };
+  const metricSeries: ProjectedMetricSeries[] = Object.entries(FORECAST_METRIC_CATALOG).map(([key, definition]) => ({
+    metricSlug: definition.slug,
+    name: definition.name,
+    unit: definition.unit,
+    observations: months.map((row) => ({
+      metricSlug: definition.slug,
+      value: metricValue(row, key as keyof typeof FORECAST_METRIC_CATALOG),
+      unit: definition.unit,
+      periodStart: `${row.calendarMonth}-01T00:00:00.000Z`,
+      periodEnd: `${calendarMonthAt(row.calendarMonth, 2)}-01T00:00:00.000Z`,
+      valueStatus: "projected" as const,
+      scenarioId,
+    })),
+  }));
+
+  return { assumptions, months, gates, financing, financingNeed, metricSeries, impliedRetainedAccountArpaExpansionPct: accountSurvivalMonthly > 0 ? calculatedAnnualNrrPct / (100 - assumptions.annualAccountChurnPct) * 100 : 0, entryContributionGrossMargin, baselineCacPaybackMonths };
 }
 
 /**

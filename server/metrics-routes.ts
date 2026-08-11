@@ -126,6 +126,28 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.get(
+    "/api/business/metrics/collection",
+    requireAuth,
+    requirePermission("system:read"),
+    async (req: Request, res: Response) => {
+      try {
+        await ensureReady();
+        await ensureSeeded();
+        const businessId = typeof req.query.businessId === "string" ? req.query.businessId : null;
+        const start = typeof req.query.start === "string" ? new Date(req.query.start) : null;
+        const end = typeof req.query.end === "string" ? new Date(req.query.end) : null;
+        if (!businessId || !start || !end || !Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
+          res.status(400).json({ error: "businessId, start, and end must form a valid sampling range" });
+          return;
+        }
+        res.json(await metricsStorage.collection(businessId, start, end));
+      } catch (error) {
+        respondError(res, "collect metrics", error);
+      }
+    },
+  );
+
+  app.get(
     "/api/business/metrics/:id",
     requireAuth,
     requirePermission("system:read"),

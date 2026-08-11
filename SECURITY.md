@@ -5,6 +5,13 @@
 - Residual/rollback: model v6 infers missing starting users from starting accounts and converts legacy gross-logo retention to churn; historical explicit annual-NRR targets remain compatibility data but no longer drive projection revenue or gates. Revert the v6 contract, forecast UI, calculation changes, and this record together; JSON storage requires no schema rollback.
 -->
 
+<!-- 2026-08-11 canonical Business Metrics collection boundary:
+- Assets/data: principal/account/Vault-owned Metric definitions and observations plus source-backed usage, work, identity, memory, and Sentry aggregates (A01/A03/A07; S1/S2 operational and business data).
+- Flow/threat: authenticated Business Metrics read -> Business visibility gate -> bounded current-domain adapters plus scoped durable samples -> one MetricSeries collection. Combining producers could accidentally widen a query across Businesses/accounts, replace partial truth with zero, or overwrite source-backed observations (STRIDE information disclosure/tampering; DATA-01/OBS-01).
+- Controls/owner: the collection retains requireAuth + system:read, canonical Business visibility, principal/account/Vault predicates, bounded sampling ranges, and source-owned computation. It is read-only composition: Current values remain query-time, User Memory/Hours Used/Sentry/manual observations remain durable, partial/provisional coverage is explicit, and no producer data is copied or deleted. Owner: Business Metrics. Severity: high confidentiality/integrity. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: query-time values and durable values can differ in freshness by design; each series carries coverage and provenance. Revert the collection route/client/contracts and this record to restore split loading without altering stored definitions or samples.
+-->
+
 <!-- 2026-08-11 user retention deletion boundary:
 - Assets/data: principal-owned S2 memory claims, source/entity/claim references, and cached email bodies/metadata (A01/A03/A07).
 - Flow/threat: authenticated Journal or Email Archive -> explicit confirmation -> canonical principal-scoped deletion. An unscoped ID mutation could destroy another user's private data; incomplete cleanup could strand semantic references or cached body copies (STRIDE tampering/information disclosure; DATA-01).
