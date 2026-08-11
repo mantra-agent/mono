@@ -3,7 +3,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { documentStorage } from "../memory";
 import { requireAuth, requireAdmin } from "../auth";
-import { listRecentApplicationErrors } from "../error-telemetry";
+import { listPlatformApplicationErrors } from "../error-telemetry";
 import { createLogger } from "../log";
 import { requireModRouteGroup } from "../mods/mod-access";
 const requireActiveBuild = requireModRouteGroup("build.issues");
@@ -161,7 +161,7 @@ export function registerIssueRoutes(app: Express) {
     const parsedLimit = Number.parseInt(String(req.query.limit ?? "25"), 10);
     const limit = Number.isFinite(parsedLimit) ? Math.min(100, Math.max(1, parsedLimit)) : 25;
     try {
-      res.json(await listRecentApplicationErrors(limit, 0));
+      res.json(await listPlatformApplicationErrors(req.principal!, limit, 0));
     } catch (error) {
       log.error("issue_errors.list_failed", {
         errorType: error instanceof Error ? error.name : "UnknownError",
@@ -172,8 +172,8 @@ export function registerIssueRoutes(app: Express) {
 
   app.post("/api/issues/errors/:fingerprint/dismiss", requireAdmin, async (req, res) => {
     try {
-      const { dismissApplicationError } = await import("../error-telemetry");
-      const dismissed = await dismissApplicationError(String(req.params.fingerprint ?? ""));
+      const { dismissPlatformApplicationError } = await import("../error-telemetry");
+      const dismissed = await dismissPlatformApplicationError(req.principal!, String(req.params.fingerprint ?? ""));
       if (!dismissed) {
         return res.status(404).json({ error: "Error aggregate not found" });
       }
