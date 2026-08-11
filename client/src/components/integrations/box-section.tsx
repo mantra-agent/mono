@@ -3,6 +3,7 @@ import { Box, Loader2, Plus, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
 
 interface BoxAccount {
@@ -53,31 +54,43 @@ export function BoxSection({ vaultId }: { vaultId?: string }) {
 
   return (
     <div className="space-y-0" data-testid="box-section">
-      {(accounts.data?.accounts || []).map((account) => (
+      {(accounts.data?.accounts || []).map((account, index, allAccounts) => (
         <HierarchyTreeRow
           key={account.accountId}
-          leading={<Box className="h-3.5 w-3.5 text-muted-foreground" />}
-          label={account.label}
-          meta={account.email || undefined}
-          trailing={
-            <button
-              type="button"
-              className="flex h-11 w-11 items-center justify-center text-muted-foreground hover:text-destructive"
-              aria-label={`Disconnect ${account.label}`}
-              onClick={() => disconnect.mutate(account)}
-              disabled={disconnect.isPending}
-            >
-              {disconnect.isPending
-                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                : <Trash2 className="h-3.5 w-3.5" />}
-            </button>
-          }
-        />
+          continues={index < allAccounts.length}
+          connectorAnchor="first-row-center"
+        >
+          <ProfileTreeRow
+            label={account.label}
+            icon={<Box className="h-3.5 w-3.5" />}
+            hasValue={Boolean(account.email)}
+            showEmpty
+            mobileLayout="inline"
+            valueLayout="compact"
+            actionContent={
+              <button
+                type="button"
+                className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-destructive"
+                aria-label={`Disconnect ${account.label}`}
+                onClick={() => disconnect.mutate(account)}
+                disabled={disconnect.isPending}
+              >
+                {disconnect.isPending
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <Trash2 className="h-3.5 w-3.5" />}
+              </button>
+            }
+          >
+            {account.email}
+          </ProfileTreeRow>
+        </HierarchyTreeRow>
       ))}
-      <HierarchyTreeRow
-        leading={<Box className="h-3.5 w-3.5 text-muted-foreground" />}
-        label={status.data?.oauthConfigured ? "Connect Box" : "Box connection unavailable"}
-        trailing={
+      <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
+        <div className="flex min-h-10 items-center gap-2 px-2 py-1.5">
+          <Box className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+            {status.data?.oauthConfigured ? "Connect Box" : "Box connection unavailable"}
+          </span>
           <button
             type="button"
             className={HIERARCHY_PRIMARY_ACTION_CLASS}
@@ -89,8 +102,8 @@ export function BoxSection({ vaultId }: { vaultId?: string }) {
               : <Plus className="h-3.5 w-3.5" />}
             <span>Connect</span>
           </button>
-        }
-      />
+        </div>
+      </HierarchyTreeRow>
     </div>
   );
 }
