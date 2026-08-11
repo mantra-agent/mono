@@ -444,15 +444,16 @@ export async function createUserWorkspace(
       const defaultTier = DEFAULT_ACTIVITY_ROUTING.chat || "high";
       const recapMeetingSessionId = cleanText(input.recapMeetingSessionId, 128);
       let ftueAgenda = recapMeetingSessionId ? createRecapFtueAgenda() : undefined;
-      if (recapMeetingSessionId) {
-        try {
-          const { agendaDefinitionStorage } = await import("./agenda-storage");
-          ftueAgenda = await agendaDefinitionStorage.instantiateFtue(workspacePrincipal);
-        } catch (error) {
-          log.warn("Canonical FTUE agenda unavailable; using bootstrap snapshot", {
-            errorName: error instanceof Error ? error.name : typeof error,
-          });
-        }
+      try {
+        const { agendaDefinitionStorage } = await import("./agenda-storage");
+        ftueAgenda = await agendaDefinitionStorage.instantiateFtue(workspacePrincipal, {
+          recapAware: Boolean(recapMeetingSessionId),
+        });
+      } catch (error) {
+        log.warn("Canonical FTUE agenda unavailable; using bootstrap snapshot", {
+          errorName: error instanceof Error ? error.name : typeof error,
+          recapAware: Boolean(recapMeetingSessionId),
+        });
       }
       const sessionOptions = {
         sessionType: "user" as const,
