@@ -49,8 +49,8 @@ function includeDisposition(relation: string, registered: boolean): BackupDispos
 export async function inspectBackupCoverage(client: ClientBase, registeredRelations: string[]): Promise<BackupCoverage> {
   const result = await client.query<CatalogRelation & { identity_columns: string[] | null; sequence_columns: Array<{ column: string; sequence: string }> | null; foreign_keys: Array<{ parent: string; deferrable: boolean }> | null }>(`
     SELECT c.oid::int AS oid, c.relname AS name, c.relkind,
-      COALESCE((SELECT jsonb_agg(a.attname ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attidentity <> ''), '[]') AS identity_columns,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('column', a.attname, 'sequence', pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname)) ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname) IS NOT NULL), '[]') AS sequence_columns,
+      COALESCE((SELECT jsonb_agg(a.attname ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND NOT a.attisdropped AND a.attidentity <> ''), '[]') AS identity_columns,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('column', a.attname, 'sequence', pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname)) ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND NOT a.attisdropped AND pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname) IS NOT NULL), '[]') AS sequence_columns,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('parent', pc.relname, 'deferrable', con.condeferrable) ORDER BY con.conname) FROM pg_constraint con JOIN pg_class pc ON pc.oid=con.confrelid WHERE con.conrelid=c.oid AND con.contype='f'), '[]') AS foreign_keys
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname=current_schema() AND c.relkind IN ('r','p') AND NOT c.relispartition
