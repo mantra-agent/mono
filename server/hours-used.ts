@@ -39,18 +39,6 @@ const USAGE_METRIC_DEFINITIONS = [
     unit: "hours",
     description: "Connected time unioned per authenticated user across tabs and devices.",
   },
-  {
-    key: "active-users",
-    name: "Active Users",
-    unit: "users",
-    description: "Distinct authenticated users connected at any point in the sampled range.",
-  },
-  {
-    key: "current-users",
-    name: "Current Users",
-    unit: "users",
-    description: "Authenticated users connected at the end of the sampled range.",
-  },
 ] as const;
 
 export async function ensureHoursUsedSchema(): Promise<void> {

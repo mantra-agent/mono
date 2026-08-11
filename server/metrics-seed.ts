@@ -7,6 +7,8 @@
  * card look instrumented. Manual metrics are user-authored only.
  */
 import { ADVANTAGE_STANDING_OBJECTIVES } from "@shared/models/advantage-dashboard";
+import { businessPlans } from "@shared/schema";
+import { and, eq, sql } from "drizzle-orm";
 import type {
   Kpi,
   Metric,
@@ -15,6 +17,7 @@ import type {
   StandingObjectiveKey,
 } from "@shared/models/metrics";
 import { kpiStorage, metricsStorage } from "./metrics-storage";
+import { db } from "./db";
 import { getCurrentPrincipal } from "./principal-context";
 
 interface LegacySeed {
@@ -180,6 +183,19 @@ const LEGACY_SEEDS: readonly LegacySeed[] = [
   },
 ];
 
+const SYNTHETIC_USAGE_METRICS = new Map([
+  ["active-users", {
+    name: "Active Users",
+    description: "Distinct authenticated users connected at any point in the sampled range.",
+    unit: "users",
+  }],
+  ["current-users", {
+    name: "Current Users",
+    description: "Authenticated users connected at the end of the sampled range.",
+    unit: "users",
+  }],
+]);
+
 const STANDING_OBJECTIVE_BY_KEY = new Map(
   ADVANTAGE_STANDING_OBJECTIVES.map((objective) => [
     objective.key as StandingObjectiveKey,
@@ -295,6 +311,56 @@ function sameVaultScope(
   // NULL vault rows are pre-scoping leftovers that still render in the active
   // vault's visible set; treat them as in-scope for retirement.
   return rowVaultId == null || rowVaultId === activeVaultId;
+}
+
+function isSyntheticUsageShell(metric: Metric): boolean {
+  const signature = SYNTHETIC_USAGE_METRICS.get(metric.slug);
+  return Boolean(
+    signature &&
+    metric.name === signature.name &&
+    metric.description === signature.description &&
+    metric.unit === signature.unit &&
+    metric.direction === "higher_is_better" &&
+    metric.samplePeriod === "custom" &&
+    metric.adapterKind === "internal" &&
+    sameAdapterConfig(metric.adapterConfig, metric.slug) &&
+    metric.status === "active"
+  );
+}
+
+async function isMetricBoundToPlan(metricId: string): Promise<boolean> {
+  const principal = getCurrentPrincipal();
+  const rows = await db.select({ id: businessPlans.id }).from(businessPlans).where(and(
+    eq(businessPlans.ownerUserId, principal.userId),
+    eq(businessPlans.accountId, principal.accountId),
+    sql`EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(${businessPlans.initiativeMeasurementBindings}) binding
+      WHERE binding ->> 'leadingMetricId' = ${metricId}
+    )`,
+  )).limit(1);
+  return rows.length > 0;
+}
+
+async function retireSyntheticUsageShells(
+  visibleVaultIds: readonly string[],
+): Promise<number> {
+  let retiredMetrics = 0;
+  const candidates = (await metricsStorage.list()).filter((metric) =>
+    visibleVaultIds.some((vaultId) => sameVaultScope(metric.vaultId, vaultId)) &&
+    isSyntheticUsageShell(metric),
+  );
+  const kpis = await kpiStorage.list();
+
+  for (const metric of candidates) {
+    if (kpis.some((kpi) => kpi.metricId === metric.id)) continue;
+    if ((await metricsStorage.listSamples(metric.id, 1)).length > 0) continue;
+    if (await isMetricBoundToPlan(metric.id)) continue;
+    await metricsStorage.delete(metric.id);
+    retiredMetrics += 1;
+  }
+
+  return retiredMetrics;
 }
 
 async function retireUntouchedLegacyDefaults(
@@ -414,6 +480,7 @@ export async function seedDefaultMetricsAndKpis(): Promise<{
   // including NULL-vault duplicates that still render in the active vault.
   const retiredLegacy = await retireUntouchedLegacyDefaults(visibleVaultIds);
   const retiredShells = await retireUntouchedManualStandingShells(visibleVaultIds);
+  const retiredUsageShells = await retireSyntheticUsageShells(visibleVaultIds);
 
   const kpis = (await kpiStorage.list()).filter((kpi) =>
     visibleVaultIds.some((vaultId) => sameVaultScope(kpi.vaultId, vaultId)),
@@ -436,7 +503,7 @@ export async function seedDefaultMetricsAndKpis(): Promise<{
     createdMetrics: 0,
     createdKpis: 0,
     createdSamples: 0,
-    retiredMetrics: retiredLegacy.retiredMetrics + retiredShells.retiredMetrics,
+    retiredMetrics: retiredLegacy.retiredMetrics + retiredShells.retiredMetrics + retiredUsageShells,
     retiredKpis: retiredLegacy.retiredKpis + retiredShells.retiredKpis,
     retiredSamples: retiredLegacy.retiredSamples,
     skipped,
