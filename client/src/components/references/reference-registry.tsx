@@ -12,6 +12,7 @@ import {
   FolderKanban,
   GitPullRequest,
   Globe,
+  Gauge,
   Hammer,
   Heart,
   Link2,
@@ -142,6 +143,11 @@ const registry: Record<string, RegistryEntry> = {
     Icon: FileJson2,
     fallbackLabel: ref => metadataString(ref, "label") || `Business Plan ${ref.id}`,
     href: ref => metadataString(ref, "href") || `/business/advantage?plan=${encodeURIComponent(ref.id)}`,
+  },
+  kpi: {
+    Icon: Gauge,
+    fallbackLabel: ref => metadataString(ref, "label") || `KPI ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/business/kpis?kpi=${encodeURIComponent(ref.id)}`,
   },
   wellness_activity: {
     Icon: Heart,

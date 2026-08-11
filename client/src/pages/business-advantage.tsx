@@ -15,7 +15,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -155,41 +154,43 @@ function PlanTitle({
   };
 
   return (
-    <div className="flex min-w-0 items-center gap-1">
-      <Input
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-          if (event.key === "Escape") {
-            setDraft(plan.name);
-            event.currentTarget.blur();
-          }
-        }}
-        aria-label="Business Plan name"
-        className="h-9 min-w-0 max-w-md border-transparent bg-transparent px-2 text-lg font-semibold hover:border-input focus-visible:border-input"
-      />
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" aria-label="Switch Business Plan">
-            <ChevronDown className="h-3.5 w-3.5" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-72">
-          <DropdownMenuLabel>Business Plans</DropdownMenuLabel>
-          {plans.map((candidate) => (
-            <DropdownMenuItem key={candidate.id} onSelect={() => onSelect(candidate.id)}>
-              <Check className={`mr-2 h-3.5 w-3.5 ${candidate.id === plan.id ? "opacity-100" : "opacity-0"}`} />
-              <span className="truncate">{candidate.name}</span>
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={onCreate}>
-            <Plus className="mr-2 h-3.5 w-3.5" /> New Business Plan
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+    <div className="min-w-0 space-y-1">
+      <button type="button" onClick={onCreate} className={HIERARCHY_PRIMARY_ACTION_CLASS}>
+        <Plus className="h-3.5 w-3.5 shrink-0" />
+        <span>New Business Plan</span>
+      </button>
+      <div className="flex min-w-0 items-center gap-1">
+        <Input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+            if (event.key === "Escape") {
+              setDraft(plan.name);
+              event.currentTarget.blur();
+            }
+          }}
+          aria-label="Business Plan name"
+          className="h-9 min-w-0 max-w-md border-transparent bg-transparent px-2 text-lg font-semibold hover:border-input focus-visible:border-input"
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" aria-label="Switch Business Plan">
+              <ChevronDown className="h-3.5 w-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-72">
+            <DropdownMenuLabel>Business Plans</DropdownMenuLabel>
+            {plans.map((candidate) => (
+              <DropdownMenuItem key={candidate.id} onSelect={() => onSelect(candidate.id)}>
+                <Check className={`mr-2 h-3.5 w-3.5 ${candidate.id === plan.id ? "opacity-100" : "opacity-0"}`} />
+                <span className="truncate">{candidate.name}</span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   );
 }
@@ -314,7 +315,7 @@ export default function BusinessAdvantagePage() {
   const thematicGoal = thematicGoalId ? goalsById.get(thematicGoalId) : undefined;
   return (
     <div className="h-full overflow-y-auto bg-background">
-      <div className="w-full max-w-xl space-y-6 px-4 py-4 sm:px-6">
+      <div className="w-full max-w-xl space-y-1 px-4 py-4 sm:px-6">
         <PlanTitle
           plan={plan}
           plans={plans}
@@ -324,7 +325,7 @@ export default function BusinessAdvantagePage() {
         />
 
         {/* key forces a full remount when the selected plan changes so no prior tree state lingers */}
-        <div key={plan.id} className="space-y-6">
+        <div key={plan.id} className="space-y-1">
           <section className="space-y-1">
             <HierarchySectionHeader>Thematic Goal</HierarchySectionHeader>
             <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
