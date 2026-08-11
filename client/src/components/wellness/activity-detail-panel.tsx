@@ -65,7 +65,7 @@ function HeartbeatHistory({ logs, category, windowStart, windowEnd }: Omit<Activ
         {events.map(({ entry, x, adherence }) => (
           <path
             key={entry.id}
-            d={`M ${Math.max(16, x - 5)} 128 L ${x - 2.6} 128 L ${x - 1.5} 110 L ${x - 0.6} 150 L ${x + 0.5} 62 L ${x + 1.3} 142 L ${x + 2.6} 118 L ${Math.min(984, x + 5)} 128`}
+            d={`M ${Math.max(16, x - 20)} 128 L ${x - 11} 128 L ${x - 7} 110 L ${x - 3} 150 L ${x + 2} 62 L ${x + 6} 142 L ${x + 11} 118 L ${Math.min(984, x + 20)} 128`}
             fill="none"
             className="stroke-foreground"
             strokeWidth="0.75"
