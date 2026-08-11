@@ -10,6 +10,9 @@ const log = createLogger("MeetingJoin");
 export const MEETING_URL_RE =
   /https?:\/\/[^\s<>"']*(?:zoom\.us\/j\/|zoom\.us\/wc\/|meet\.google\.com\/)[^\s<>"')]+/i;
 
+const LOCALLY_ACTIVE_BOT_STATUSES = new Set(["dialing", "in_lobby", "live", "leaving"]);
+const RECALL_TERMINAL_STATUS_CODES = new Set(["call_ended", "done", "fatal"]);
+
 /** Extract the first Zoom/Meet link from any of the provided text fragments. */
 export function extractMeetingUrl(...texts: Array<string | null | undefined>): string | null {
   const haystack = texts.filter(Boolean).join("\n");
@@ -78,12 +81,63 @@ export async function joinMeetingByUrl(opts: {
           providerEventId: identity.providerEventId,
         })
       : null;
-    if (existing?.meeting?.botId && ["dialing", "in_lobby", "live", "leaving"].includes(existing.meeting.botStatus)) {
-      log.info("meeting occurrence join replay reused active session", {
-        sessionId: existing.id,
-        botStatus: existing.meeting.botStatus,
+    if (existing?.meeting?.botId && LOCALLY_ACTIVE_BOT_STATUSES.has(existing.meeting.botStatus)) {
+      const recall = await import("../integrations/recall/client");
+      let providerBot: Awaited<ReturnType<typeof recall.getRecallBot>> | null = null;
+      let providerBotMissing = false;
+      try {
+        providerBot = await recall.getRecallBot(existing.meeting.botId);
+      } catch (error) {
+        if (error instanceof recall.RecallApiError && error.status === 404) {
+          providerBotMissing = true;
+        } else {
+          const detail = error instanceof Error ? error.message : String(error);
+          log.error("meeting occurrence provider liveness check failed", {
+            sessionId: existing.id,
+            botId: existing.meeting.botId,
+            detail,
+          });
+          throw new MeetingJoinError(
+            `Could not confirm whether the existing meeting bot is still active: ${detail}`,
+            existing.id,
+          );
+        }
+      }
+
+      const latestProviderStatus = providerBot?.status_changes?.at(-1)?.code ?? null;
+      if (providerBot && !latestProviderStatus) {
+        log.error("meeting occurrence provider liveness response was ambiguous", {
+          sessionId: existing.id,
+          botId: existing.meeting.botId,
+        });
+        throw new MeetingJoinError(
+          "Recall returned the existing meeting bot without lifecycle status; retry once its status is available.",
+          existing.id,
+        );
+      }
+
+      if (latestProviderStatus && !RECALL_TERMINAL_STATUS_CODES.has(latestProviderStatus)) {
+        log.info("meeting occurrence join replay reused provider-active session", {
+          sessionId: existing.id,
+          botStatus: existing.meeting.botStatus,
+          providerStatus: latestProviderStatus,
+        });
+        return { sessionId: existing.id, botId: existing.meeting.botId, platform, title: existing.meeting.title || existing.title };
+      }
+
+      await chatStorage.updateMeetingMeta(existing.id, {
+        botStatus: latestProviderStatus === "fatal" ? "failed" : "ended",
+        statusDetail: latestProviderStatus
+          ? `Prior meeting bot is no longer active (${latestProviderStatus}). Starting a fresh join…`
+          : "Prior meeting bot no longer exists at Recall. Starting a fresh join…",
+        endedAt: new Date().toISOString(),
       });
-      return { sessionId: existing.id, botId: existing.meeting.botId, platform, title: existing.meeting.title || existing.title };
+      log.warn("meeting occurrence stale local session terminalized", {
+        sessionId: existing.id,
+        botId: existing.meeting.botId,
+        localStatus: existing.meeting.botStatus,
+        providerStatus: latestProviderStatus ?? (providerBotMissing ? "not_found" : "unknown"),
+      });
     }
 
     const meetingPatch = {

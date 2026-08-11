@@ -122,7 +122,17 @@ export async function testRecallConnection(): Promise<{
 export interface RecallBot {
   id: string;
   metadata?: Record<string, string>;
-  status_changes?: Array<{ code: string; created_at: string }>;
+  status_changes?: Array<{ code: string; created_at?: string; updated_at?: string }>;
+}
+
+/**
+ * Retrieve one bot from Recall's canonical lifecycle projection. This is a
+ * bounded recovery/read path for reconciling a persisted meeting attempt; live
+ * lifecycle tracking remains webhook-driven rather than polling.
+ */
+export async function getRecallBot(botId: string): Promise<RecallBot> {
+  const res = await recallFetch(`/api/v1/bot/${encodeURIComponent(botId)}/`);
+  return parseJsonOrThrow<RecallBot>(res, "Retrieve bot");
 }
 
 export interface CreateBotParams {
