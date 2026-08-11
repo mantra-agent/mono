@@ -1,3 +1,10 @@
+<!-- 2026-08-10 attachment-only chat admission repair:
+- Assets/data: authenticated user-owned Session content and untrusted uploaded file metadata/content (A01/A03/A07; S2, potentially S3 in screenshots).
+- Flow/threat: BottomBar attachment selection -> canonical chat upload -> generated bounded attachment reference -> authenticated Session message endpoint. Requiring text before the upload boundary denied legitimate image-only turns; broadly accepting an empty turn could instead create content-free work or bypass message validation (STRIDE availability/integrity; DATA-01/AGENT-03).
+- Controls/owner: Core Session UI admits a turn only when trimmed text or at least one selected File exists. Existing authenticated upload validation, bounded file handling, generated attachment reference, principal-scoped Session mutation, synchronous turn-admission lock, and replay-safe clientTurnId remain unchanged and independently enforced. Owner: Application UI / Session Composer. Severity: medium availability. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: upload failure still follows the existing visible send-failure path; no empty request is admitted because the selected file must first become the canonical generated attachment reference. Revert the eligibility predicate and this record to restore text-required behavior; no schema, permission, credential, or durable-data migration is involved.
+-->
+
 <!-- 2026-08-10 synchronized voice-caption boundary:
 - Assets/data: transient S2 agent speech text, provider character timings, and one authenticated user-owned boolean preference (A01/A03/A07).
 - Flow/threat: ElevenLabs audio alignment callback -> browser-only caption queue -> Zero Interface projection; Account -> authenticated UI preference route -> user-keyed system setting. External timing payloads are untrusted and could be malformed or oversized; persisting or logging captions would widen sensitive transcript exposure (STRIDE tampering/information disclosure; DATA-01/OBS-01).
