@@ -103,7 +103,7 @@ export default function UserDetailsPage() {
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-auto bg-background" data-testid="account-page">
-      <div className="w-full space-y-4 px-2 py-2 md:w-1/3 md:min-w-[22rem]">
+      <div className="w-full min-w-0 space-y-4 px-2 py-2">
         <ProfileDetailSection title="Profile" defaultOpen testId="account-profile-section">
           <ProfileTreeRow
           label="Photo"
