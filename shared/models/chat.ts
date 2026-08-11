@@ -1058,6 +1058,7 @@ export interface MessageSpeakerMeta {
 /** Persona identity frozen when an assistant turn begins. */
 export interface PersonaSnapshot {
   id: number;
+  revisionId?: string;
   name: string;
   icon: string;
 }

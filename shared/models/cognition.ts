@@ -90,6 +90,9 @@ export const personas = pgTable(
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
     templatePersonaId: integer("template_persona_id"),
+    baseRevisionId: text("base_revision_id"),
+    currentRevisionId: text("current_revision_id"),
+    updateState: text("update_state").notNull().default("pinned_legacy"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),
@@ -104,6 +107,31 @@ export const personas = pgTable(
     index("idx_personas_account").on(table.accountId),
   ],
 );
+
+export const personaRevisions = pgTable(
+  "persona_revisions",
+  {
+    id: text("id").primaryKey(),
+    personaIdentityId: integer("persona_identity_id").notNull().references(() => personas.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    parentRevisionId: text("parent_revision_id"),
+    platformBaseRevisionId: text("platform_base_revision_id"),
+    payload: jsonb("payload").notNull(),
+    contentHash: text("content_hash").notNull(),
+    changeSummary: text("change_summary").notNull(),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    index("idx_persona_revisions_identity_created").on(table.personaIdentityId, table.createdAt),
+    index("idx_persona_revisions_scope_owner").on(table.scope, table.ownerUserId),
+    index("idx_persona_revisions_identity_hash").on(table.personaIdentityId, table.contentHash),
+  ],
+);
+
+export type PersonaRevision = typeof personaRevisions.$inferSelect;
 
 export const insertPersonaSchema = createInsertSchema(personas, { semanticTier: semanticTierSchema.nullable().optional() }).omit({
   id: true,

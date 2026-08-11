@@ -4,6 +4,7 @@ import { z } from "zod";
 import { semanticTierSchema } from "@shared/model-connectors";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
+import { requirePermission } from "../permissions";
 import { isUniqueViolationError } from "../postgres-errors";
 
 const log = createLogger("CognitionRoutes");
@@ -156,6 +157,56 @@ export async function registerCognitionRoutes(app: Express) {
     } catch (error: unknown) {
       sendRouteError(res, error, "PUT /api/personas/:id", PersonaReservedNameError);
     }
+  });
+
+  app.get("/api/personas/:id/history", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: "Invalid persona ID" });
+    res.json(await personaStorage.history(id));
+  });
+
+  app.get("/api/personas/revisions/compare", async (req, res) => {
+    const result = await personaStorage.compareRevisions(String(req.query.left || ""), String(req.query.right || ""));
+    if (!result) return res.status(404).json({ error: "Revision not found" });
+    res.json(result);
+  });
+
+  app.post("/api/personas/:id/restore", async (req, res) => {
+    const restored = await personaStorage.restoreRevision(Number(req.params.id), String(req.body?.revisionId || ""));
+    if (!restored) return res.status(404).json({ error: "Persona revision not found" });
+    res.json(restored);
+  });
+
+  app.post("/api/personas/:id/keep-mine", async (req, res) => {
+    const result = await personaStorage.acknowledgeUpdate(Number(req.params.id));
+    if (!result) return res.status(404).json({ error: "Persona not found" });
+    res.json(result);
+  });
+
+  app.post("/api/personas/:id/use-updated-default", async (req, res) => {
+    const result = await personaStorage.useUpdatedDefault(Number(req.params.id));
+    if (!result) return res.status(404).json({ error: "Updated default not found" });
+    res.json(result);
+  });
+
+  app.get("/api/personas/platform/defaults", requirePermission("system:write"), async (_req, res) => {
+    res.json(await personaStorage.platformTemplates());
+  });
+
+  app.post("/api/personas/platform/:id/preview", requirePermission("system:write"), async (req, res) => {
+    const parsed = updatePersonaSchema.safeParse(req.body?.changes || {});
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid changes" });
+    const preview = await personaStorage.previewPlatformPublication(Number(req.params.id), parsed.data);
+    if (!preview) return res.status(404).json({ error: "Platform Persona not found" });
+    res.json(preview);
+  });
+
+  app.post("/api/personas/platform/:id/publish", requirePermission("system:write"), async (req, res) => {
+    const parsed = updatePersonaSchema.safeParse(req.body?.changes || {});
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid changes" });
+    const result = await personaStorage.publishPlatformPersonaRevision(Number(req.params.id), parsed.data, String(req.body?.changeSummary || ""), req.body?.confirmed === true);
+    if (!result) return res.status(404).json({ error: "Platform Persona not found" });
+    res.json(result);
   });
 
   app.post("/api/personas/:id/activate", async (req, res) => {

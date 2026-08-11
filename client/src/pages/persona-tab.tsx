@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { resolvePersonaIcon, AVAILABLE_ICONS } from "@/lib/persona-icons";
 
 interface Persona {
@@ -31,6 +32,10 @@ interface Persona {
   isSystem: boolean;
   sortOrder: number;
   source: "seed" | "user";
+  templatePersonaId: number | null;
+  baseRevisionId: string | null;
+  currentRevisionId: string | null;
+  updateState: "following" | "customized" | "update_available" | "conflict" | "pinned_legacy";
   createdAt: string;
   updatedAt: string;
 }
@@ -129,9 +134,11 @@ function PersonaTreeItem({
   persona,
   onDelete,
   onUpdate,
+  onRefresh,
 }: {
   persona: Persona;
   onDelete: () => void;
+  onRefresh: () => void;
   onUpdate: (data: { description?: string; icon?: string; promptOverlay?: string; expressionTags?: string[]; semanticTier?: "max" | "high" | "balanced" | "fast"; contextSections?: Record<string, boolean>; toolBundle?: string[] }) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -155,6 +162,16 @@ function PersonaTreeItem({
     setEditToolBundle(prev => prev.includes(entry.name) ? prev.filter(n => n !== entry.name) : [...prev, entry.name]);
   };
   const overrideEntries = Object.entries(persona.cognitiveOverrides || {});
+  const { data: history = [] } = useQuery<Array<{ id: string; changeSummary: string; createdAt: string; createdByUserId: string | null }>>({
+    queryKey: ["/api/personas", persona.id, "history"],
+    enabled: open,
+  });
+  const personaAction = useMutation({
+    mutationFn: async ({ action, revisionId }: { action: "restore" | "keep-mine" | "use-updated-default"; revisionId?: string }) => {
+      await apiRequest("POST", `/api/personas/${persona.id}/${action}`, revisionId ? { revisionId } : {});
+    },
+    onSuccess: onRefresh,
+  });
   const handleSave = () => {
     const tags = editTags.split(",").map(t => t.trim()).filter(Boolean);
     onUpdate({
@@ -290,8 +307,31 @@ function PersonaTreeItem({
           ))}
         </div>
       )}
+      {persona.updateState === "update_available" && (
+        <div className="border-l border-border/40 pl-3 text-sm">
+          <p className="font-medium">Update available</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => personaAction.mutate({ action: "keep-mine" })}>Keep mine</Button>
+            <Button size="sm" onClick={() => personaAction.mutate({ action: "use-updated-default" })}>Use updated default</Button>
+          </div>
+        </div>
+      )}
+      {history.length > 0 && (
+        <div className="border-l border-border/40 pl-3">
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">History</p>
+          {history.map((revision) => (
+            <div key={revision.id} className="flex min-h-11 items-center gap-2 border-b border-border/20 text-sm">
+              <span className="min-w-0 flex-1 truncate">{revision.changeSummary}</span>
+              <span className="text-xs text-muted-foreground">{timeAgo(revision.createdAt)}</span>
+              {revision.id !== persona.currentRevisionId && revision.createdByUserId && (
+                <Button size="sm" variant="ghost" onClick={() => personaAction.mutate({ action: "restore", revisionId: revision.id })}>Restore</Button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">Updated {timeAgo(persona.updatedAt)}</p>
+        <p className="text-xs text-muted-foreground">{persona.updateState.replaceAll("_", " ")} · Updated {timeAgo(persona.updatedAt)}</p>
         {persona.isSystem ? (
           <p className="text-xs text-muted-foreground">Managed by Mantra. Read only.</p>
         ) : (
@@ -427,8 +467,45 @@ function CreatePersonaForm({ onSuccess, onClose }: { onSuccess: () => void; onCl
   );
 }
 
+function PlatformPersonaItem({ persona, onPublished }: { persona: Persona; onPublished: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [description, setDescription] = useState(persona.description);
+  const [promptOverlay, setPromptOverlay] = useState(persona.promptOverlay || "");
+  const [changeSummary, setChangeSummary] = useState("");
+  const [preview, setPreview] = useState<{ changedFields: string[]; impact: { advancing: number; updateAvailable: number } } | null>(null);
+  const previewMutation = useMutation({ mutationFn: async () => {
+    const response = await apiRequest("POST", `/api/personas/platform/${persona.id}/preview`, { changes: { description, promptOverlay } });
+    return response.json();
+  }, onSuccess: setPreview });
+  const publishMutation = useMutation({ mutationFn: async () => {
+    await apiRequest("POST", `/api/personas/platform/${persona.id}/publish`, { changes: { description, promptOverlay }, changeSummary, confirmed: true });
+  }, onSuccess: () => { setPreview(null); setOpen(false); onPublished(); } });
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")}>
+        <PersonaIconDisplay iconName={persona.icon} className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">{persona.name}</span>
+        <span className="text-xs text-muted-foreground">Platform</span>
+        <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
+      </CollapsibleTrigger>
+      <CollapsibleContent><div className="space-y-3 border-l border-border/40 py-3 pl-4">
+        <Label>Description<Input value={description} onChange={(event) => setDescription(event.target.value)} /></Label>
+        <Label>Prompt overlay<Textarea className="min-h-40 font-mono text-sm" value={promptOverlay} onChange={(event) => setPromptOverlay(event.target.value)} /></Label>
+        <Button variant="outline" onClick={() => previewMutation.mutate()}>Review impact</Button>
+        {preview && <div className="space-y-2 text-sm">
+          <p>{preview.changedFields.length ? preview.changedFields.join(", ") : "No changes"}</p>
+          <p className="text-muted-foreground">{preview.impact.advancing} advance automatically · {preview.impact.updateAvailable} receive Update available</p>
+          <Label>Change summary<Input value={changeSummary} onChange={(event) => setChangeSummary(event.target.value)} /></Label>
+          <Button disabled={!changeSummary.trim() || preview.changedFields.length === 0 || publishMutation.isPending} onClick={() => publishMutation.mutate()}>Publish revision</Button>
+        </div>}
+      </div></CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 export default function PersonaTab() {
   const queryClient = useQueryClient();
+  const { hasPermission } = useAuth();
   const { toast } = useToast();
   const [creating, setCreating] = useState(false);
 
@@ -469,9 +546,12 @@ export default function PersonaTab() {
 
   const personas = allPersonas || [];
   const sortedPersonas = [...personas].sort((a, b) => a.sortOrder - b.sortOrder);
+  const { data: platformDefaults = [] } = useQuery<Persona[]>({ queryKey: ["/api/personas/platform/defaults"], enabled: hasPermission("system:write") });
 
   return (
-    <div className="p-2 space-y-1 w-full">
+    <div className="p-2 space-y-4 w-full">
+      <section>
+        <h2 className="px-2 py-1.5 text-sm font-semibold">My Personas</h2>
       <button
         type="button"
         onClick={() => setCreating(true)}
@@ -499,10 +579,21 @@ export default function PersonaTab() {
               key={persona.id}
               persona={persona}
               onDelete={() => deleteMutation.mutate(persona.id)}
+              onRefresh={refresh}
               onUpdate={(data) => updateMutation.mutate({ id: persona.id, data })}
             />
           ))}
         </div>
+      )}
+      </section>
+      {hasPermission("system:write") && (
+        <section className="border-t border-border/30 pt-4">
+          <h2 className="px-2 py-1.5 text-sm font-semibold">Platform Defaults</h2>
+          <p className="px-2 pb-2 text-sm text-muted-foreground">Publishing creates a new baseline revision available to all users.</p>
+          <div className="space-y-0.5">
+            {platformDefaults.map((persona) => <PlatformPersonaItem key={persona.id} persona={persona} onPublished={() => { refresh(); queryClient.invalidateQueries({ queryKey: ["/api/personas/platform/defaults"] }); }} />)}
+          </div>
+        </section>
       )}
     </div>
   );

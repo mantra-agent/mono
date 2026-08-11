@@ -1,5 +1,6 @@
 import { db } from "../db";
-import { personas } from "@shared/models/cognition";
+import { personas, personaRevisions } from "@shared/models/cognition";
+import { createHash, randomUUID } from "node:crypto";
 import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { TTLCache } from "../utils/ttl-cache";
@@ -51,6 +52,9 @@ export interface PersonaEntry {
   sortOrder: number;
   source: "seed" | "user";
   templatePersonaId: number | null;
+  baseRevisionId: string | null;
+  currentRevisionId: string | null;
+  updateState: "following" | "customized" | "update_available" | "conflict" | "pinned_legacy";
   createdAt: string;
   updatedAt: string;
 }
@@ -75,6 +79,9 @@ function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
     sortOrder: row.sortOrder,
     source: (row.source || "user") as "seed" | "user",
     templatePersonaId: row.templatePersonaId ?? null,
+    baseRevisionId: row.baseRevisionId ?? null,
+    currentRevisionId: row.currentRevisionId ?? null,
+    updateState: (row.updateState || "pinned_legacy") as PersonaEntry["updateState"],
     createdAt:
       row.createdAt instanceof Date
         ? row.createdAt.toISOString()
@@ -447,11 +454,102 @@ const SEED_PERSONAS = [
   },
 ];
 
+export interface PersonaRevisionPayload {
+  name: string;
+  description: string;
+  icon: string;
+  promptOverlay: string | null;
+  expressionTags: string[];
+  cognitiveOverrides: Record<string, unknown>;
+  semanticTier: SemanticTier | null;
+  routingExamples: string[];
+  contextSections: Record<string, boolean>;
+  toolBundle: string[];
+  isDefault: boolean;
+  isSystem: boolean;
+  sortOrder: number;
+}
+
+const REVISION_FIELDS = ["name", "description", "icon", "promptOverlay", "expressionTags", "cognitiveOverrides", "semanticTier", "routingExamples", "contextSections", "toolBundle", "isDefault", "isSystem", "sortOrder"] as const;
+type RevisionField = typeof REVISION_FIELDS[number];
+
+function revisionPayload(persona: PersonaEntry): PersonaRevisionPayload {
+  return Object.fromEntries(REVISION_FIELDS.map((field) => [field, persona[field]])) as unknown as PersonaRevisionPayload;
+}
+
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, stableValue(child)]));
+  return value;
+}
+
+function payloadHash(payload: PersonaRevisionPayload): string {
+  return createHash("sha256").update(JSON.stringify(stableValue(payload))).digest("hex");
+}
+
+function changedFields(from: PersonaRevisionPayload, to: PersonaRevisionPayload): RevisionField[] {
+  return REVISION_FIELDS.filter((field) => JSON.stringify(stableValue(from[field])) !== JSON.stringify(stableValue(to[field])));
+}
+
+export function mergePersonaPayloads(base: PersonaRevisionPayload, platform: PersonaRevisionPayload, user: PersonaRevisionPayload) {
+  const merged = { ...base };
+  const conflicts: RevisionField[] = [];
+  for (const field of REVISION_FIELDS) {
+    const platformChanged = changedFields(base, platform).includes(field);
+    const userChanged = changedFields(base, user).includes(field);
+    if (platformChanged && userChanged && JSON.stringify(stableValue(platform[field])) !== JSON.stringify(stableValue(user[field]))) conflicts.push(field);
+    else if (userChanged) merged[field] = user[field] as never;
+    else if (platformChanged) merged[field] = platform[field] as never;
+  }
+  return { payload: merged, conflicts };
+}
+
 class PersonaStorageClass {
   private readonly _cache = new TTLCache<PersonaEntry[]>("Personas", Infinity);
 
   private invalidateCache(): void {
     this._cache.invalidateAll();
+  }
+
+  private async getRevision(id: string) {
+    const principal = requireCurrentUserPrincipal();
+    const [revision] = await db.select().from(personaRevisions).where(and(
+      eq(personaRevisions.id, id),
+      sql`(${personaRevisions.scope} = 'platform' OR (${personaRevisions.ownerUserId} = ${principal.userId} AND ${personaRevisions.accountId} = ${principal.accountId}))`,
+    )).limit(1);
+    return revision ?? null;
+  }
+
+  private revisionValues(persona: PersonaEntry, options: { scope: "platform" | "user"; parentRevisionId?: string | null; platformBaseRevisionId?: string | null; changeSummary: string }) {
+    const principal = requireCurrentUserPrincipal();
+    const payload = revisionPayload(persona);
+    return {
+      id: randomUUID(), personaIdentityId: persona.id, scope: options.scope,
+      ownerUserId: options.scope === "user" ? principal.userId : null,
+      accountId: options.scope === "user" ? principal.accountId : null,
+      parentRevisionId: options.parentRevisionId ?? null,
+      platformBaseRevisionId: options.platformBaseRevisionId ?? null,
+      payload, contentHash: payloadHash(payload), changeSummary: options.changeSummary,
+      createdByUserId: principal.userId,
+    };
+  }
+
+  async history(id: number) {
+    const persona = await this.get(id);
+    if (!persona) return [];
+    const principal = requireCurrentUserPrincipal();
+    return db.select().from(personaRevisions).where(and(
+      eq(personaRevisions.personaIdentityId, id),
+      sql`(${personaRevisions.scope} = 'platform' OR (${personaRevisions.ownerUserId} = ${principal.userId} AND ${personaRevisions.accountId} = ${principal.accountId}))`,
+    )).orderBy(sql`${personaRevisions.createdAt} DESC`).limit(100);
+  }
+
+  async compareRevisions(leftId: string, rightId: string) {
+    const [left, right] = await Promise.all([this.getRevision(leftId), this.getRevision(rightId)]);
+    if (!left || !right) return null;
+    const leftPayload = left.payload as PersonaRevisionPayload;
+    const rightPayload = right.payload as PersonaRevisionPayload;
+    return { left, right, changedFields: changedFields(leftPayload, rightPayload).map((field) => ({ field, before: leftPayload[field], after: rightPayload[field] })) };
   }
 
   private async fetchAll(): Promise<PersonaEntry[]> {
@@ -725,9 +823,88 @@ class PersonaStorageClass {
       )
       .returning();
     if (!updated) return null;
+    const effective = rowToEntry(updated);
+    const revision = this.revisionValues(effective, {
+      scope: "user",
+      parentRevisionId: existing.currentRevisionId,
+      platformBaseRevisionId: existing.baseRevisionId,
+      changeSummary: `Updated ${changedFields(revisionPayload(existing), revisionPayload(effective)).join(", ") || "persona"}`,
+    });
+    await db.transaction(async (tx) => {
+      await tx.insert(personaRevisions).values(revision).onConflictDoNothing();
+      await tx.update(personas).set({ currentRevisionId: revision.id, updateState: "customized" }).where(combineWithWritableScope(requireCurrentUserPrincipal(), personaScopeColumns, eq(personas.id, id)));
+    });
     this.invalidateCache();
-    log.log("update id=" + id);
-    return rowToEntry(updated);
+    log.info("Persona personal revision created", { personaId: id, revisionId: revision.id });
+    return { ...effective, currentRevisionId: revision.id, updateState: "customized" };
+  }
+
+  async restoreRevision(id: number, revisionId: string): Promise<PersonaEntry | null> {
+    const persona = await this.get(id);
+    const revision = await this.getRevision(revisionId);
+    if (!persona || !revision || revision.scope !== "user" || revision.personaIdentityId !== id) return null;
+    const payload = revision.payload as PersonaRevisionPayload;
+    return this.update(id, payload);
+  }
+
+  async useUpdatedDefault(id: number): Promise<PersonaEntry | null> {
+    const persona = await this.get(id);
+    if (!persona?.templatePersonaId) return null;
+    const template = await this.resolveTemplateForCurrentPrincipal(persona.templatePersonaId);
+    const [templateRow] = await db.select().from(personas).where(eq(personas.id, persona.templatePersonaId)).limit(1);
+    if (!templateRow?.currentRevisionId) return null;
+    const platformRevision = await this.getRevision(templateRow.currentRevisionId);
+    if (!platformRevision) return null;
+    const payload = platformRevision.payload as PersonaRevisionPayload;
+    const updated = await this.update(id, payload);
+    if (!updated || !template) return updated;
+    await db.update(personas).set({ baseRevisionId: platformRevision.id, currentRevisionId: platformRevision.id, updateState: "following" }).where(combineWithWritableScope(requireCurrentUserPrincipal(), personaScopeColumns, eq(personas.id, id)));
+    this.invalidateCache();
+    return { ...updated, baseRevisionId: platformRevision.id, currentRevisionId: platformRevision.id, updateState: "following" };
+  }
+
+  async acknowledgeUpdate(id: number): Promise<PersonaEntry | null> {
+    const persona = await this.get(id);
+    if (!persona) return null;
+    await db.update(personas).set({ updateState: "customized" }).where(combineWithWritableScope(requireCurrentUserPrincipal(), personaScopeColumns, eq(personas.id, id)));
+    this.invalidateCache();
+    return { ...persona, updateState: "customized" };
+  }
+
+  async platformTemplates(): Promise<PersonaEntry[]> {
+    const principal = requireCurrentUserPrincipal();
+    if (!principalHasPermission(principal, "system:write")) throw new Error("system:write permission required");
+    const rows = await db.select().from(personas).where(and(eq(personas.scope, "global"), eq(personas.source, "seed"), eq(personas.isSystem, false))).orderBy(personas.sortOrder);
+    return rows.map(rowToEntry);
+  }
+
+  async previewPlatformPublication(id: number, input: Partial<PersonaRevisionPayload>) {
+    const template = (await this.platformTemplates()).find((persona) => persona.id === id);
+    if (!template) return null;
+    const payload = { ...revisionPayload(template), ...input } as PersonaRevisionPayload;
+    const rows = await db.select({ updateState: personas.updateState }).from(personas).where(eq(personas.templatePersonaId, id));
+    return { template, payload, changedFields: changedFields(revisionPayload(template), payload), impact: { advancing: rows.filter((row) => row.updateState === "following").length, updateAvailable: rows.filter((row) => row.updateState !== "following").length } };
+  }
+
+  async publishPlatformPersonaRevision(id: number, input: Partial<PersonaRevisionPayload>, changeSummary: string, confirmed: boolean): Promise<PersonaEntry | null> {
+    if (!confirmed || !changeSummary.trim()) throw new Error("Publication confirmation and change summary are required");
+    const preview = await this.previewPlatformPublication(id, input);
+    if (!preview) return null;
+    const principal = requireCurrentUserPrincipal();
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(7101, ${id})`);
+      const [current] = await tx.select().from(personas).where(and(eq(personas.id, id), eq(personas.scope, "global"), eq(personas.source, "seed"), eq(personas.isSystem, false))).limit(1);
+      if (!current) return null;
+      const effective = { ...rowToEntry(current), ...preview.payload } as PersonaEntry;
+      const revision = this.revisionValues(effective, { scope: "platform", parentRevisionId: current.currentRevisionId, changeSummary: changeSummary.trim() });
+      await tx.insert(personaRevisions).values(revision);
+      await tx.update(personas).set({ ...preview.payload, currentRevisionId: revision.id, baseRevisionId: revision.id, updateState: "following", updatedAt: new Date(), updatedByUserId: principal.userId }).where(eq(personas.id, id));
+      await tx.update(personas).set({ baseRevisionId: revision.id, currentRevisionId: revision.id, updateState: "following", ...preview.payload, updatedAt: new Date() }).where(and(eq(personas.templatePersonaId, id), eq(personas.updateState, "following")));
+      await tx.update(personas).set({ updateState: "update_available" }).where(and(eq(personas.templatePersonaId, id), sql`${personas.updateState} <> 'following'`));
+      this.invalidateCache();
+      log.info("Platform Persona revision published", { personaId: id, revisionId: revision.id, actorUserId: principal.userId, parentRevisionId: current.currentRevisionId, contentHash: revision.contentHash, changeSummary: changeSummary.trim() });
+      return { ...effective, currentRevisionId: revision.id, baseRevisionId: revision.id, updateState: "following" };
+    });
   }
 
   async deactivateAll(): Promise<void> {
@@ -1113,9 +1290,45 @@ class PersonaStorageClass {
     const removedLegacyRows = await this.reconcileLegacySeedRows();
     this.invalidateCache();
     await this.updateSeedOverlays();
+    await this.initializeRevisionLineage();
     log.log(
       `seedDefaults: ensured ${SEED_PERSONAS.length} seed personas; removed ${removedLegacyRows} legacy scoped seed rows`,
     );
+  }
+
+  private async initializeRevisionLineage(): Promise<void> {
+    const systemPrincipal = createSystemPrincipal();
+    await db.transaction(async (tx) => {
+      const rows = await tx.select().from(personas);
+      for (const row of rows) {
+        if (row.currentRevisionId) continue;
+        const entry = rowToEntry(row);
+        if (row.scope === "global" && row.source === "seed") {
+          const values = {
+            id: randomUUID(), personaIdentityId: row.id, scope: "platform", ownerUserId: null, accountId: null,
+            parentRevisionId: null, platformBaseRevisionId: null, payload: revisionPayload(entry),
+            contentHash: payloadHash(revisionPayload(entry)), changeSummary: "Initial platform revision",
+            createdByUserId: null,
+          };
+          await tx.insert(personaRevisions).values(values).onConflictDoNothing();
+          await tx.update(personas).set({ baseRevisionId: values.id, currentRevisionId: values.id, updateState: "following" }).where(eq(personas.id, row.id));
+          continue;
+        }
+        if (row.scope === "user" && row.templatePersonaId) {
+          const [template] = await tx.select().from(personas).where(eq(personas.id, row.templatePersonaId)).limit(1);
+          if (template?.currentRevisionId) {
+            const [base] = await tx.select().from(personaRevisions).where(eq(personaRevisions.id, template.currentRevisionId)).limit(1);
+            if (base && payloadHash(revisionPayload(entry)) === base.contentHash) {
+              await tx.update(personas).set({ baseRevisionId: base.id, currentRevisionId: base.id, updateState: "following" }).where(eq(personas.id, row.id));
+              continue;
+            }
+          }
+        }
+        await tx.update(personas).set({ updateState: "pinned_legacy" }).where(eq(personas.id, row.id));
+      }
+    });
+    void systemPrincipal;
+    this.invalidateCache();
   }
 
   /** Remove malformed scoped seed rows after canonical global rows exist. */
