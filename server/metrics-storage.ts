@@ -155,12 +155,19 @@ function mapKpi(
   };
 }
 
-async function latestSampleFor(metricId: string): Promise<MetricSample | null> {
+async function latestSampleFor(
+  metricId: string,
+  range?: { start: Date; end: Date },
+): Promise<MetricSample | null> {
   await ensureMetricsSamplesSchema();
   const [row] = await metricsDb
     .select()
     .from(metricSamples)
-    .where(eq(metricSamples.metricId, metricId))
+    .where(and(
+      eq(metricSamples.metricId, metricId),
+      range ? sql`${metricSamples.observedAt} >= ${range.start}` : undefined,
+      range ? sql`${metricSamples.observedAt} <= ${range.end}` : undefined,
+    ))
     .orderBy(desc(metricSamples.observedAt))
     .limit(1);
   return row ? mapSample(row) : null;
@@ -292,7 +299,7 @@ export async function upsertInternalPeriodSample(input: InternalPeriodSampleInpu
 }
 
 export const metricsStorage = {
-  async list(query?: string, businessId?: string): Promise<Metric[]> {
+  async list(query?: string, businessId?: string, range?: { start: Date; end: Date }): Promise<Metric[]> {
     const principal = currentPrincipal();
     const needle = query?.trim();
     const filter = and(
@@ -311,7 +318,7 @@ export const metricsStorage = {
       .orderBy(asc(metrics.name));
 
     const out: Metric[] = [];
-    for (const { metric } of rows) out.push(mapMetric(metric, await latestSampleFor(metric.id)));
+    for (const { metric } of rows) out.push(mapMetric(metric, await latestSampleFor(metric.id, range)));
     return out;
   },
 
