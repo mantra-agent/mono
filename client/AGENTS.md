@@ -135,7 +135,7 @@ Memory UI should distinguish memory entries from session mirrors and archive/raw
 
 ## Business Plan UI
 
-`/business/advantage` is the Business Plan screen (formerly Mandate). The Plan name is the Plan selector and inline editor; its adjacent ellipsis owns Vault placement. Thematic Goal, Initiative Project, and KPI rows use `ProfileTreeRow.menuContent` plus the universal `ReferencePicker` restricted to the relevant reference type for replacement. Do not add local selectors or a parallel Plan switcher.
+`/business/advantage` is the Business Plan screen (formerly Mandate). The Plan name is the Plan selector and inline editor; its adjacent ellipsis owns Vault placement. Thematic Goal and Initiative Project rows use `ProfileTreeRow.menuContent` plus the universal `ReferencePicker` restricted to the relevant reference type for replacement. Each initiative reveals exactly one leading Metric and one lagging KPI binding through the same canonical reference primitives; legacy plan-level KPI rows remain compatibility projection only. Do not add local selectors or a parallel Plan switcher.
 
 ## Page Architecture
 

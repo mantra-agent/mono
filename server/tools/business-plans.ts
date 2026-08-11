@@ -21,6 +21,7 @@ function planResult(plan: BusinessPlan) {
     vaultId: plan.vaultId,
     thematicGoalId: plan.thematicGoalId,
     initiativeProjectIds: plan.initiativeProjectIds,
+    initiativeMeasurementBindings: plan.initiativeMeasurementBindings,
     kpiIds: plan.kpiIds,
     createdAt: plan.createdAt,
     updatedAt: plan.updatedAt,
@@ -265,6 +266,15 @@ async function handlePlanAction(action: string, args: Record<string, unknown>) {
     const plan = await businessPlanStorage.mutateInitiative(id, projectId, action === "add_initiative" ? "add" : "remove");
     return { result: safeStringify(planResult(plan), { label: `bridge.business.plans.${action}` }) };
   }
+  if (action === "set_leading_metric" || action === "set_lagging_kpi" || action === "clear_leading_metric" || action === "clear_lagging_kpi") {
+    const projectId = Number(args.projectId);
+    if (!Number.isInteger(projectId) || projectId <= 0) return { result: `business.${action} requires a positive projectId`, error: true };
+    const kind = action.includes("leading") ? "leading" : "lagging";
+    const measurementId = action.startsWith("clear_") ? null : requiredStr(args, kind === "leading" ? "metricId" : "kpiId");
+    if (!action.startsWith("clear_") && !measurementId) return { result: `business.${action} requires ${kind === "leading" ? "metricId" : "kpiId"}`, error: true };
+    const plan = await businessPlanStorage.setInitiativeMeasurement(id, projectId, kind, measurementId);
+    return { result: safeStringify(planResult(plan), { label: `bridge.business.plans.${action}` }) };
+  }
   if (action === "add_kpi" || action === "remove_kpi") {
     const kpiId = requiredStr(args, "kpiId");
     if (!kpiId) return { result: `business.${action} requires kpiId`, error: true };
@@ -435,7 +445,7 @@ const ENTITY_ACTIONS = new Set([
 ]);
 const PLAN_ACTIONS = new Set([
   "list", "get", "create", "rename", "delete", "set_thematic_goal", "clear_thematic_goal",
-  "add_initiative", "remove_initiative", "add_kpi", "remove_kpi", "assign_vault",
+  "add_initiative", "remove_initiative", "set_leading_metric", "clear_leading_metric", "set_lagging_kpi", "clear_lagging_kpi", "add_kpi", "remove_kpi", "assign_vault",
 ]);
 const KPI_ACTIONS = new Set(["list_kpis", "get_kpi", "create_kpi", "update_kpi", "delete_kpi"]);
 const METRIC_ACTIONS = new Set([
