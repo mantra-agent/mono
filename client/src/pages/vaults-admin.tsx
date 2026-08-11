@@ -4,15 +4,13 @@ import {
   Plus,
   Pencil,
   Archive,
-  Star,
   Loader2,
-  Eye,
-  EyeOff,
   ChevronRight,
   Search,
   X,
   Briefcase,
   Share2,
+  MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -28,18 +26,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useVaults, type Vault } from "@/hooks/use-vaults";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/hooks/use-auth";
 import { createLogger } from "@/lib/logger";
-import { VaultMigrationControls } from "@/components/vault-migration-controls";
-import { TeamsPanel } from "@/components/teams/teams-panel";
 import { ShareSheet } from "@/components/sharing/share-sheet";
 import {
   DEFAULT_VAULT_COLOR,
@@ -359,9 +355,8 @@ function VaultOpportunitySelector({ vault, opportunities }: { vault: Vault; oppo
 }
 
 function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: OpportunitySummary[] }) {
-  const { activeVaultId, isVisible, setActiveVault, vaults: allVaults } = useVaults();
+  const { activeVaultId, setActiveVault, vaults: allVaults } = useVaults();
   const isActive = vault.id === activeVaultId;
-  const visible = isVisible(vault.id);
   const [renameOpen, setRenameOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -373,15 +368,6 @@ function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: Oppor
   return (
     <>
       <div className="group flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent/70">
-        <button
-          type="button"
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-          onClick={() => setDetailsOpen(open => !open)}
-          aria-label={`${detailsOpen ? "Collapse" : "Expand"} ${vault.name} details`}
-          aria-expanded={detailsOpen}
-        >
-          <ChevronRight className={`h-3 w-3 transition-transform ${detailsOpen ? "rotate-90" : ""}`} />
-        </button>
         <div
           className="h-3 w-3 shrink-0 rounded-full"
           style={{ backgroundColor: vault.color || DEFAULT_VAULT_COLOR }}
@@ -390,56 +376,35 @@ function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: Oppor
         <span className="min-w-0 flex-1 truncate font-medium text-foreground">{vault.name}</span>
         {isActive && <span className="shrink-0 text-xs font-medium text-active">Active</span>}
         {vault.isDefault && <span className="shrink-0 text-xs text-muted-foreground">Default</span>}
-        <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-          {visible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3 opacity-50" />}
-          {visible ? "Visible" : "Hidden"}
-        </span>
         <div className="flex shrink-0 items-center gap-1">
-          {!isActive && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setActiveVault(vault.id)} aria-label={`Set ${vault.name} as active`}>
-                  <Star className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Set as active vault</TooltipContent>
-            </Tooltip>
-          )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShareOpen(true)} aria-label={`Share ${vault.name}`} data-testid={`button-vault-share-${vault.id}`}>
-                <Share2 className="h-3.5 w-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Share vault</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setRenameOpen(true)} aria-label={`Edit ${vault.name}`}>
-                <Pencil className="h-3.5 w-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Edit vault</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                  onClick={() => setArchiveOpen(true)}
-                  disabled={!canArchive}
-                  aria-label={`Archive ${vault.name}`}
-                >
-                  <Archive className="h-3.5 w-3.5" />
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              {isActive ? "Switch active vault first" : nonArchivedCount <= 1 ? "Cannot archive your last vault" : "Archive vault"}
-            </TooltipContent>
-          </Tooltip>
+          <button
+            type="button"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={() => setDetailsOpen(open => !open)}
+            aria-label={`${detailsOpen ? "Collapse" : "Expand"} ${vault.name} details`}
+            aria-expanded={detailsOpen}
+          >
+            <ChevronRight className={`h-3.5 w-3.5 transition-transform ${detailsOpen ? "rotate-90" : ""}`} />
+          </button>
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={`More actions for ${vault.name}`}>
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {!isActive ? <DropdownMenuItem onSelect={() => setActiveVault(vault.id)}>Set active</DropdownMenuItem> : null}
+              <DropdownMenuItem onSelect={() => setShareOpen(true)} data-testid={`button-vault-share-${vault.id}`}>
+                <Share2 className="mr-2 h-4 w-4" />Share
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setRenameOpen(true)}>
+                <Pencil className="mr-2 h-4 w-4" />Edit
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={!canArchive} className="text-destructive focus:text-destructive" onSelect={() => setArchiveOpen(true)}>
+                <Archive className="mr-2 h-4 w-4" />Archive
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       {detailsOpen ? <VaultOpportunitySelector vault={vault} opportunities={opportunities} /> : null}
@@ -455,8 +420,6 @@ function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: Oppor
 export default function VaultsAdminPage() {
   usePageHeader({ title: "Vaults" });
   const { vaults, isLoading } = useVaults();
-  const { hasPermission } = useAuth();
-  const canManageMigration = hasPermission("system:write");
   const { data: opportunities = [], isLoading: opportunitiesLoading } = useQuery<OpportunitySummary[]>({
     queryKey: ["/api/exec/opportunities"],
   });
@@ -523,11 +486,6 @@ export default function VaultsAdminPage() {
             </CollapsibleContent>
           </Collapsible>
 
-          {canManageMigration ? <VaultMigrationControls /> : null}
-
-          <div className="mt-6 border-t border-border pt-6">
-            <TeamsPanel />
-          </div>
       </div>
 
       <CreateVaultDialog open={createOpen} onOpenChange={setCreateOpen} />

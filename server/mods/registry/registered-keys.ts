@@ -66,6 +66,7 @@ export const REGISTERED_SURFACE_KEYS = [
   "campaigns",
   "user-details",
   "vaults",
+  "teams",
 ] as const;
 export type RegisteredSurfaceKey = (typeof REGISTERED_SURFACE_KEYS)[number];
 
