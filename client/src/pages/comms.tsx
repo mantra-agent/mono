@@ -1729,6 +1729,7 @@ function HistoryTab({ searchTokens }: { searchTokens: string[] }) {
 }
 
 function ArchiveTab({ searchTokens }: { searchTokens: string[] }) {
+  const { toast } = useToast();
   const archiveQuery = useQuery<{ messages: EmailMessage[] }>({
     queryKey: ["/api/email/messages", "archive"],
     queryFn: async () => {
@@ -1738,17 +1739,26 @@ function ArchiveTab({ searchTokens }: { searchTokens: string[] }) {
     },
   });
   const messages = useMemo(() => (archiveQuery.data?.messages || []).filter(message => messageMatchesSearch(message, searchTokens)), [archiveQuery.data, searchTokens]);
-  const deleteMessage = useMutation({ mutationFn: async (id: number) => apiRequest("DELETE", `/api/email/messages/${id}`), onSuccess: () => invalidateEmailQueries() });
+  const deleteMessage = useMutation({
+    mutationFn: async (id: number) => apiRequest("DELETE", `/api/email/messages/${id}`),
+    onSuccess: async () => {
+      await invalidateEmailQueries();
+      toast({ title: "Cached email deleted" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Deletion failed", description: error.message, variant: "destructive" });
+    },
+  });
   if (archiveQuery.isLoading) return <ListSkeleton />;
   if (archiveQuery.isError) return <CommsErrorState title="Archive failed to load" message="Retained email copies could not be loaded." />;
   if (messages.length === 0) return <div className="px-2 py-1.5 text-sm text-muted-foreground">{searchTokens.length ? "No archived emails match your search." : "No retained email copies."}</div>;
   return <div>{messages.map(message => (
-    <div key={message.id} className="flex min-w-0 items-center gap-2 border-b border-border/20 px-2 py-1.5">
+    <div key={message.id} className="flex min-h-11 min-w-0 items-center gap-2 border-b border-border/20 px-2 py-1.5">
       <MailOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1"><div className="truncate text-sm"><SenderName fromAddress={message.fromAddress} /></div><div className="truncate text-xs text-muted-foreground">{message.subject || "(no subject)"}</div></div>
       <AlertDialog>
-        <AlertDialogTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" aria-label="Delete retained email"><Trash2 className="h-3.5 w-3.5" /></Button></AlertDialogTrigger>
-        <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete retained email?</AlertDialogTitle><AlertDialogDescription>This permanently removes Mantra’s cached copy. It does not delete the message from Gmail.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction className="bg-destructive text-destructive-foreground" onClick={() => deleteMessage.mutate(message.id)}>Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
+        <AlertDialogTrigger asChild><Button variant="ghost" size="icon" className="h-11 w-11 text-destructive" aria-label="Delete retained email"><Trash2 className="h-3.5 w-3.5" /></Button></AlertDialogTrigger>
+        <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete retained email?</AlertDialogTitle><AlertDialogDescription>This permanently removes Mantra’s cached copy and prevents this Gmail message from being cached again. It does not delete the message from Gmail.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deleteMessage.isPending}>Cancel</AlertDialogCancel><AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={deleteMessage.isPending} onClick={(event) => { event.preventDefault(); deleteMessage.mutate(message.id); }}>{deleteMessage.isPending ? "Deleting…" : "Delete"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
       </AlertDialog>
     </div>
   ))}</div>;
@@ -1900,7 +1910,7 @@ export default function CommsPage() {
             </div>
           </CommsSection>
           <CommsSection id="archive" title="Archive" defaultOpen={searchTokens.length > 0}>
-            <div className="max-h-[420px] overflow-y-auto overflow-x-hidden border-b border-border/20" data-testid="section-panel-archive">
+            <div className="max-h-[420px] overflow-y-auto overflow-x-hidden rounded-md border border-border/20" data-testid="section-panel-archive">
               <ArchiveTab searchTokens={searchTokens} />
             </div>
           </CommsSection>
