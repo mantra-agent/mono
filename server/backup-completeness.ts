@@ -1,0 +1,81 @@
+import { createHash } from "crypto";
+import type { ClientBase } from "pg";
+
+export const BACKUP_DISPOSITION_MANIFEST_VERSION = 1;
+
+export type BackupClassification = "authoritative" | "control" | "projection" | "transient" | "retired" | "secret";
+export type BackupSensitivity = "S0" | "S1" | "S2" | "S3";
+export type BackupDisposition = {
+  relation: string;
+  action: "include" | "exclude";
+  classification: BackupClassification;
+  owner: string;
+  reason: string;
+  sensitivity: BackupSensitivity;
+  recovery: string;
+};
+
+const EXCLUSIONS: Record<string, Omit<BackupDisposition, "relation" | "action">> = {
+  app_secrets: { classification: "secret", owner: "Security", reason: "Credential material requires separately envelope-encrypted recovery and must not enter Brain artifacts.", sensitivity: "S3", recovery: "Reprovision or rotate through the secret owner; never restore from Brain." },
+  github_credentials: { classification: "secret", owner: "Security", reason: "Repository credentials must not be copied into the ordinary logical backup blast radius.", sensitivity: "S3", recovery: "Reprovision or rotate through the provider connection owner." },
+  session: { classification: "transient", owner: "Authentication", reason: "Restoring browser sessions can resurrect authentication authority.", sensitivity: "S3", recovery: "Start empty and require reauthentication." },
+  google_oauth_transactions: { classification: "transient", owner: "Integrations", reason: "Expiring PKCE/replay state is invalid and unsafe after recovery.", sensitivity: "S3", recovery: "Start empty; users restart authorization." },
+  subscription_oauth_transactions: { classification: "transient", owner: "Integrations", reason: "Expiring OAuth transaction state is invalid after recovery.", sensitivity: "S3", recovery: "Start empty; users restart authorization." },
+  voice_session_active: { classification: "transient", owner: "Voice", reason: "Active call leases are process/provider-time bound and restoring them blocks or resurrects calls.", sensitivity: "S3", recovery: "Start empty and establish fresh leases." },
+  session_search_segments: { classification: "projection", owner: "Conversations", reason: "Bounded search projection is rebuilt from canonical session state.", sensitivity: "S2", recovery: "Run the canonical projection worker after restore." },
+  reference_occurrence_sources: { classification: "projection", owner: "Life Addressing", reason: "Reference occurrence source state is replayable from canonical authored objects.", sensitivity: "S2", recovery: "Run the canonical Life Addressing replay." },
+  reference_occurrences: { classification: "projection", owner: "Life Addressing", reason: "Reference occurrences are a rebuildable projection.", sensitivity: "S2", recovery: "Run the canonical Life Addressing replay." },
+  indexed_file_sources: { classification: "projection", owner: "Files", reason: "Semantic file index rows are provider/object-derived projection state.", sensitivity: "S2", recovery: "Run the canonical file reconciliation/index pipeline." },
+  railway_provider_deployment_state: { classification: "projection", owner: "Platforms", reason: "Provider observation snapshot must be rehydrated from Railway.", sensitivity: "S1", recovery: "Start empty and refresh through the bounded observer." },
+  railway_provider_quota_governors: { classification: "transient", owner: "Platforms", reason: "Rate-limit/cooldown state is time-bound and unsafe to revive.", sensitivity: "S1", recovery: "Start empty and rebuild from provider responses." },
+  browser_performance_telemetry: { classification: "projection", owner: "Reliability", reason: "Retention-owned experience telemetry is not recovery authority.", sensitivity: "S2", recovery: "Start empty." },
+  mobile_startup_telemetry: { classification: "projection", owner: "Reliability", reason: "Retention-owned experience telemetry is not recovery authority.", sensitivity: "S2", recovery: "Start empty." },
+  application_error_deliveries: { classification: "projection", owner: "Reliability", reason: "Delivery diagnostics are replay/retention state, not canonical errors.", sensitivity: "S1", recovery: "Start empty." },
+  signal_source_scan_diagnostics: { classification: "projection", owner: "News", reason: "Scan diagnostics are non-authoritative telemetry.", sensitivity: "S1", recovery: "Start empty." },
+  recall_webhook_delivery_diagnostics: { classification: "projection", owner: "Meetings", reason: "Webhook diagnostics are retention-owned telemetry.", sensitivity: "S2", recovery: "Start empty." },
+};
+
+const SOURCE_VERIFIED_INCLUDES = new Set(`vaults invited_subjects teams team_members organizations organization_members project_vault_memberships person_vault_memberships business_vault_memberships object_acls object_grants privileged_access_audit app_migrations milestones companies company_identity_keys job_roles businesses business_plans financial_models metrics metric_samples kpis hours_used_intervals hours_used_rollups opportunity_interactions document_store_documents agenda_definitions meeting_drafts compaction_operations historical_continuity_entries meeting_turn_enrollments meeting_turns meeting_recap_distributions meeting_audio_samples meeting_audio_evaluations plan_session_links plan_step_attempts plan_step_reviews runtime_capacity_policies runtime_runs runtime_attempts runtime_run_events transactional_outbox memory_vnext_claims memory_vnext_sources memory_vnext_source_links memory_vnext_entity_links memory_vnext_claim_links memory_vnext_claim_link_evidence memory_vnext_source_queue memory_vnext_transition_paths memory_vnext_transition_members memory_vnext_transition_edges memory_vnext_prediction_runs memory_vnext_predictions memory_vnext_prediction_resolutions memory_vnext_relationship_certainty_events memory_vnext_exposures memory_vnext_strength_events memory_vnext_retrieval_controls memory_vnext_retrieval_activation_events memory_vnext_retrieval_labels memory_vnext_retrieval_evaluation_runs memory_vnext_causal_path_reviews memory_vnext_prediction_evaluation_runs memory_entries memory_sources memory_links memory_transitions memory_content_blocks memory_events memory_entity_links legacy_memory_quarantine_state document_store_cutover_state document_store_migration_runs document_store_migration_conflicts library_vault_identity_migrations library_placements library_page_pins library_page_trash address_links drive_resources file_index_policies file_index_reconciliation_runs document_artifacts media_items render_jobs export_jobs mod_entitlements mod_installations mod_installation_resources environment_context_artifacts environment_promotion_releases railway_api_call_receipts api_calls inference_payload_captures application_error_aggregates backup_jobs communication_audiences email_campaigns waitlist_applications people_import_decisions people_import_batches persona_revisions skill_persona_preferences skill_scores magic_demo_sessions magic_demo_session_events magic_demo_vision_frames intentions parked_ideas`.split(/\s+/));
+
+export type CatalogRelation = { name: string; oid: number; relkind: string; identityColumns: string[]; sequenceColumns: Array<{ column: string; sequence: string }>; foreignKeys: Array<{ parent: string; deferrable: boolean }> };
+export type BackupCoverage = { version: number; discovered: CatalogRelation[]; included: BackupDisposition[]; excluded: BackupDisposition[]; insertOrder: string[]; schemaFingerprint: string; manifestFingerprint: string };
+
+const stableHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+function includeDisposition(relation: string, registered: boolean): BackupDisposition {
+  return { relation, action: "include", classification: registered ? "authoritative" : "control", owner: registered ? "Registered domain owner" : "Core Recovery", reason: registered ? "Existing recovery-required Brain relation." : "Source audit verified this live relation is required for complete recovery.", sensitivity: "S2", recovery: "Restore rows and catalog-derived identity/sequence state." };
+}
+
+export async function inspectBackupCoverage(client: ClientBase, registeredRelations: string[]): Promise<BackupCoverage> {
+  const result = await client.query<CatalogRelation & { identity_columns: string[] | null; sequence_columns: Array<{ column: string; sequence: string }> | null; foreign_keys: Array<{ parent: string; deferrable: boolean }> | null }>(`
+    SELECT c.oid::int AS oid, c.relname AS name, c.relkind,
+      COALESCE((SELECT jsonb_agg(a.attname ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attidentity <> ''), '[]') AS identity_columns,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('column', a.attname, 'sequence', pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname)) ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname) IS NOT NULL), '[]') AS sequence_columns,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('parent', pc.relname, 'deferrable', con.condeferrable) ORDER BY con.conname) FROM pg_constraint con JOIN pg_class pc ON pc.oid=con.confrelid WHERE con.conrelid=c.oid AND con.contype='f'), '[]') AS foreign_keys
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname=current_schema() AND c.relkind IN ('r','p') AND NOT c.relispartition
+    ORDER BY c.relname`);
+  const registered = new Set(registeredRelations);
+  const discovered = result.rows.map(row => ({ name: row.name, oid: row.oid, relkind: row.relkind, identityColumns: row.identity_columns ?? [], sequenceColumns: row.sequence_columns ?? [], foreignKeys: row.foreign_keys ?? [] }));
+  const dispositions = discovered.map(rel => EXCLUSIONS[rel.name] ? ({ relation: rel.name, action: "exclude", ...EXCLUSIONS[rel.name] } as BackupDisposition) : registered.has(rel.name) || SOURCE_VERIFIED_INCLUDES.has(rel.name) ? includeDisposition(rel.name, registered.has(rel.name)) : null);
+  const unexplained = discovered.filter((_, index) => dispositions[index] === null).map(rel => rel.name);
+  if (unexplained.length) throw new Error(`Backup completeness preflight failed: ${unexplained.length} unexplained relation(s): ${unexplained.join(", ")}`);
+  const included = dispositions.filter((d): d is BackupDisposition => d?.action === "include");
+  const excluded = dispositions.filter((d): d is BackupDisposition => d?.action === "exclude");
+  const includedNames = new Set(included.map(d => d.relation));
+  const indegree = new Map([...includedNames].map(name => [name, 0]));
+  const children = new Map<string, string[]>();
+  for (const rel of discovered.filter(r => includedNames.has(r.name))) for (const fk of rel.foreignKeys) if (includedNames.has(fk.parent) && fk.parent !== rel.name) { indegree.set(rel.name, (indegree.get(rel.name) ?? 0) + 1); children.set(fk.parent, [...(children.get(fk.parent) ?? []), rel.name]); }
+  const queue = [...indegree].filter(([, n]) => n === 0).map(([name]) => name).sort();
+  const insertOrder: string[] = [];
+  while (queue.length) { const name = queue.shift()!; insertOrder.push(name); for (const child of (children.get(name) ?? []).sort()) { const next=(indegree.get(child) ?? 0)-1; indegree.set(child,next); if(next===0){queue.push(child);queue.sort();} } }
+  if (insertOrder.length !== included.length) {
+    const cycle = [...indegree].filter(([, n]) => n > 0).map(([name]) => name);
+    const unsafe = discovered.filter(r => cycle.includes(r.name)).flatMap(r => r.foreignKeys.filter(f => cycle.includes(f.parent) && !f.deferrable).map(f => `${r.name}->${f.parent}`));
+    if (unsafe.length) throw new Error(`Backup completeness preflight failed: non-deferrable FK cycle(s): ${unsafe.join(", ")}`);
+    insertOrder.push(...cycle.sort());
+  }
+  const schemaShape = discovered.map(r => ({ name:r.name, relkind:r.relkind, identityColumns:r.identityColumns, sequenceColumns:r.sequenceColumns, foreignKeys:r.foreignKeys }));
+  const manifestShape = [...included, ...excluded].sort((a,b)=>a.relation.localeCompare(b.relation));
+  return { version: BACKUP_DISPOSITION_MANIFEST_VERSION, discovered, included, excluded, insertOrder, schemaFingerprint: stableHash(schemaShape), manifestFingerprint: stableHash(manifestShape) };
+}
