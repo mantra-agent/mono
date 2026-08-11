@@ -156,6 +156,34 @@ export function getCachedVoiceId(): string {
   return cachedVoiceId || DEFAULT_VOICE_ID;
 }
 
+export async function registerTwilioCall(input: {
+  agentId: string;
+  fromNumber: string;
+  toNumber: string;
+  direction: "inbound" | "outbound";
+  sessionId: string;
+}): Promise<string> {
+  const apiKey = await getCredentials();
+  const response = await providerFetch(`${ELEVENLABS_API_BASE}/convai/twilio/register-call`, {
+    method: "POST",
+    headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      agent_id: input.agentId,
+      from_number: input.fromNumber,
+      to_number: input.toNumber,
+      direction: input.direction,
+      conversation_initiation_client_data: {
+        custom_llm_extra_body: { sessionId: input.sessionId },
+      },
+    }),
+    timeoutMs: 10_000,
+  });
+  const twiml = await readBoundedProviderBody(response, 64_000);
+  if (!response.ok) throw new Error(`ElevenLabs register-call returned ${response.status}`);
+  if (!twiml.trim().startsWith("<")) throw new Error("ElevenLabs register-call returned invalid TwiML");
+  return twiml;
+}
+
 export async function fetchAndCacheVoiceId(agentId: string): Promise<string> {
   if (cachedVoiceId) return cachedVoiceId;
   try {

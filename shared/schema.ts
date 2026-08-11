@@ -1382,6 +1382,38 @@ export const insertVoiceSessionActiveSchema = createInsertSchema(voiceSessionAct
 export type VoiceSessionActive = typeof voiceSessionActive.$inferSelect;
 export type InsertVoiceSessionActive = z.infer<typeof insertVoiceSessionActiveSchema>;
 
+export const twilioNumberBindings = pgTable("twilio_number_bindings", {
+  id: text("id").primaryKey(),
+  phoneNumber: text("phone_number").notNull().unique(),
+  ownerUserId: text("owner_user_id").notNull(),
+  accountId: text("account_id").notNull(),
+  vaultId: text("vault_id").notNull(),
+  createdByUserId: text("created_by_user_id").notNull(),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [index("idx_twilio_number_binding_owner").on(table.ownerUserId, table.accountId)]);
+
+export const phoneCallRecords = pgTable("phone_call_records", {
+  id: text("id").primaryKey(),
+  callSid: text("call_sid").notNull().unique(),
+  sessionId: text("session_id").notNull(),
+  voiceSessionId: text("voice_session_id").notNull(),
+  direction: text("direction").notNull(),
+  fromNumber: text("from_number").notNull(),
+  toNumber: text("to_number").notNull(),
+  personId: text("person_id"),
+  personName: text("person_name"),
+  ownerUserId: text("owner_user_id").notNull(),
+  accountId: text("account_id").notNull(),
+  vaultId: text("vault_id").notNull(),
+  status: text("status").notNull().default("queued"),
+  interactionLogged: boolean("interaction_logged").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
+}, (table) => [index("idx_phone_call_owner").on(table.ownerUserId, table.accountId), index("idx_phone_call_session").on(table.sessionId)]);
+
 // intentions, parkedIdeas, intentionAttempts tables removed — see autonomy skill
 
 export const emailTriageLog = pgTable("email_triage_log", {
