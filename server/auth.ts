@@ -1229,8 +1229,11 @@ export function setupAuth(app: Express) {
         const principal = getPrincipal(req);
         if (!principal?.userId)
           return res.status(401).json({ error: "User session required" });
-        const scale = await getSetting<number>(`user:${principal.userId}:ui.scale`);
-        res.json({ scale: scale ?? 110 });
+        const [scale, voiceCaptions] = await Promise.all([
+          getSetting<number>(`user:${principal.userId}:ui.scale`),
+          getSetting<boolean>(`user:${principal.userId}:voice.captions`),
+        ]);
+        res.json({ scale: scale ?? 110, voiceCaptions: voiceCaptions ?? false });
       } catch {
         res.status(500).json({ error: "Failed to read UI preferences" });
       }
@@ -1245,11 +1248,20 @@ export function setupAuth(app: Express) {
         const principal = getPrincipal(req);
         if (!principal?.userId)
           return res.status(401).json({ error: "User session required" });
-        const { scale } = req.body;
+        const { scale, voiceCaptions } = req.body;
+        const updates: Array<Promise<void>> = [];
         if (typeof scale === "number" && scale >= 90 && scale <= 120) {
-          await setSetting(`user:${principal.userId}:ui.scale`, scale);
+          updates.push(setSetting(`user:${principal.userId}:ui.scale`, scale));
         }
-        res.json({ ok: true });
+        if (typeof voiceCaptions === "boolean") {
+          updates.push(setSetting(`user:${principal.userId}:voice.captions`, voiceCaptions));
+        }
+        await Promise.all(updates);
+        const [savedScale, savedVoiceCaptions] = await Promise.all([
+          getSetting<number>(`user:${principal.userId}:ui.scale`),
+          getSetting<boolean>(`user:${principal.userId}:voice.captions`),
+        ]);
+        res.json({ scale: savedScale ?? 110, voiceCaptions: savedVoiceCaptions ?? false });
       } catch {
         res.status(500).json({ error: "Failed to update UI preferences" });
       }

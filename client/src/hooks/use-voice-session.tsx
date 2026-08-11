@@ -7,7 +7,7 @@ import { setVisibilityLayer } from "@/hooks/use-visibility-layer";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 
 import { stripExpressionTags } from "@/components/chat-shared";
-import { Conversation } from "@elevenlabs/client";
+import { Conversation, type AudioAlignmentEvent } from "@elevenlabs/client";
 import type { AgentVisualState } from "@shared/agent-visualizer";
 import {
   createVoiceInputActivityDetector,
@@ -27,6 +27,7 @@ import {
   admitVoiceTranscript,
   type VoiceEchoAdmissionEvidence,
 } from "@/lib/voice-echo-admission";
+import { createVoiceCaptionChunk } from "@/lib/voice-caption-timeline";
 import {
   createVoiceFinalizationRequest,
   isVoiceFinalizationResponse,
@@ -108,6 +109,8 @@ export interface VoiceSessionContextValue {
   /** Session identity that owns the ephemeral transcript aggregate. */
   transcriptSessionId: string | null;
   voiceThinking: boolean;
+  /** Ephemeral agent words synchronized to the provider audio queue. */
+  voiceCaption: string;
   visualState: AgentVisualState;
   /** One-shot flag: a fresh voice start is awaiting its renderer-owned entrance. */
   voiceEntrancePending: boolean;
@@ -378,6 +381,7 @@ export function VoiceSessionProvider({
   const [agentMode, setAgentMode] = useState<"listening" | "speaking">("listening");
   const [isMuted, setIsMuted] = useState(false);
   const [voiceThinking, setVoiceThinking] = useState(false);
+  const [voiceCaption, setVoiceCaption] = useState("");
   const [activeVoiceToolCount, setActiveVoiceToolCount] = useState(0);
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [nativeInputActivityAvailable, setNativeInputActivityAvailable] = useState(false);
@@ -405,6 +409,8 @@ export function VoiceSessionProvider({
   }, [isNative]);
 
   const conversationRef = useRef<Awaited<ReturnType<typeof Conversation.startSession>> | null>(null);
+  const captionTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const captionQueueEndRef = useRef(0);
   const transcriptRef = useRef<VoiceTranscriptEntry[]>([]);
   const reconnectAttemptRef = useRef(0);
   const intentionalEndRef = useRef(false);
@@ -568,7 +574,38 @@ export function VoiceSessionProvider({
 
   const maxReconnectAttempts = 3;
 
+  const clearVoiceCaption = useCallback(() => {
+    captionTimersRef.current.forEach((timer) => clearTimeout(timer));
+    captionTimersRef.current = [];
+    captionQueueEndRef.current = 0;
+    setVoiceCaption("");
+  }, []);
+
+  const queueVoiceCaption = useCallback((alignment: AudioAlignmentEvent) => {
+    const chunk = createVoiceCaptionChunk(alignment);
+    if (chunk.cues.length === 0) return;
+
+    const now = performance.now();
+    const chunkStartsAt = Math.max(captionQueueEndRef.current, now + 80);
+    captionQueueEndRef.current = chunkStartsAt + chunk.durationMs;
+
+    for (const cue of chunk.cues) {
+      const delay = Math.max(0, chunkStartsAt + cue.atMs - now);
+      captionTimersRef.current.push(setTimeout(() => setVoiceCaption(cue.text), delay));
+    }
+
+    const queuedEnd = captionQueueEndRef.current;
+    const clearDelay = Math.max(0, queuedEnd + 650 - now);
+    captionTimersRef.current.push(setTimeout(() => {
+      if (captionQueueEndRef.current !== queuedEnd) return;
+      setVoiceCaption("");
+      captionTimersRef.current = [];
+      captionQueueEndRef.current = 0;
+    }, clearDelay));
+  }, []);
+
   const resetEphemeralVoiceState = useCallback((options?: { clearTranscript?: boolean }) => {
+    clearVoiceCaption();
     agentModeRef.current = "listening";
     setAgentMode("listening");
     inputActivityDetectorRef.current.reset();
@@ -586,7 +623,7 @@ export function VoiceSessionProvider({
       transcriptRef.current = [];
       setTranscript([]);
     }
-  }, []);
+  }, [clearVoiceCaption]);
 
   const setActiveConversationId = useCallback((id: string | null) => {
     const previousId = chatConversationIdRef.current;
@@ -1491,6 +1528,7 @@ export function VoiceSessionProvider({
         });
       },
       onError: handleVoiceError,
+      onAudioAlignment: queueVoiceCaption,
       onModeChange: (mode: { mode: string }) => {
         lastActivityRef.current = Date.now();
         const newMode = mode.mode === "speaking" ? "speaking" : "listening";
@@ -1498,6 +1536,7 @@ export function VoiceSessionProvider({
         log.debug("VOICE:MODE_CHANGE", { mode: mode.mode });
         phoneDiag("mode_change", { mode: mode.mode });
         setAgentMode(newMode);
+        if (newMode === "listening") clearVoiceCaption();
         if (newMode === "speaking") {
           setVoiceThinking(false);
           activeVoiceToolIdsRef.current.clear();
@@ -1506,7 +1545,7 @@ export function VoiceSessionProvider({
       },
       },
     }));
-  }, [isNative, toast, phoneDiag, startUIRefresh, handleVoiceDisconnect, handleVoiceError, handleUserTranscript, attemptReconnect, emitVoiceDiag]);
+  }, [isNative, toast, phoneDiag, startUIRefresh, handleVoiceDisconnect, handleVoiceError, handleUserTranscript, attemptReconnect, emitVoiceDiag, queueVoiceCaption, clearVoiceCaption]);
 
   const connectSession = useCallback(async (isReconnect: boolean = false): Promise<boolean> => {
     const fetchStart = Date.now();
@@ -2198,6 +2237,7 @@ export function VoiceSessionProvider({
     userComposition,
     transcriptSessionId,
     voiceThinking,
+    voiceCaption,
     visualState,
     voiceEntrancePending,
     consumeVoiceEntrance,
@@ -2218,7 +2258,7 @@ export function VoiceSessionProvider({
     addTranscriptEntry,
     setVoiceToolHandler,
     setVoiceDiagnosticHandler,
-  }), [status, agentMode, userSpeaking, isMuted, transcript, userComposition, transcriptSessionId, voiceThinking, visualState, voiceEntrancePending, consumeVoiceEntrance, isHostForeground, readAudioLevel, startSession, endSession, toggleMute, latestMessage, setActiveConversationId, clearTranscript, activeConversationId, chatSessionKey, connectionPhases, connectionStartTime, phasePersisted, setVoiceThinking, addTranscriptEntry, setVoiceToolHandler, setVoiceDiagnosticHandler]);
+  }), [status, agentMode, userSpeaking, isMuted, transcript, userComposition, transcriptSessionId, voiceThinking, voiceCaption, visualState, voiceEntrancePending, consumeVoiceEntrance, isHostForeground, readAudioLevel, startSession, endSession, toggleMute, latestMessage, setActiveConversationId, clearTranscript, activeConversationId, chatSessionKey, connectionPhases, connectionStartTime, phasePersisted, setVoiceThinking, addTranscriptEntry, setVoiceToolHandler, setVoiceDiagnosticHandler]);
 
   return (
     <VoiceSessionContext.Provider value={value}>

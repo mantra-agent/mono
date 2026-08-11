@@ -1,17 +1,19 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Bot, Check, Clock, Image, KeyRound, Loader2, LogOut, Mail, Monitor, Save, X } from "lucide-react";
+import { Bot, Check, Clock, Image, KeyRound, Loader2, LogOut, Mail, MessageSquareText, Monitor, Save, X } from "lucide-react";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { useAuth, useLogout, type AuthPrincipal, type AuthUser } from "@/hooks/use-auth";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { useUiScale } from "@/hooks/use-ui-scale";
+import { useVoiceCaptionsPreference } from "@/hooks/use-voice-captions-preference";
 import { createLogger } from "@/lib/logger";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
@@ -216,6 +218,7 @@ export default function UserDetailsPage() {
         </ProfileTreeRow>
 
         <DisplayTreeRow />
+        <VoiceCaptionsTreeRow />
         <MeetingAgentTreeRow />
         <TimezoneTreeRow />
 
@@ -284,6 +287,31 @@ function DisplayTreeRow() {
       )}
     >
       <span className="text-foreground">{scale}%</span>
+    </ProfileTreeRow>
+  );
+}
+
+function VoiceCaptionsTreeRow() {
+  const { voiceCaptions, isLoading, isSaving, setVoiceCaptions } = useVoiceCaptionsPreference();
+
+  return (
+    <ProfileTreeRow
+      label="Voice captions"
+      icon={<MessageSquareText className="h-3.5 w-3.5" />}
+      hasValue
+      showEmpty
+      testId="account-voice-captions-row"
+      actionContent={isLoading ? <Skeleton className="h-6 w-10" /> : (
+        <Switch
+          checked={voiceCaptions}
+          disabled={isSaving}
+          onCheckedChange={setVoiceCaptions}
+          aria-label="Show synchronized voice captions"
+          data-testid="switch-voice-captions"
+        />
+      )}
+    >
+      <span className="text-foreground">{voiceCaptions ? "On" : "Off"}</span>
     </ProfileTreeRow>
   );
 }
