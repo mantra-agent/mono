@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Gauge, Loader2, MoreHorizontal, Plus } from "lucide-react";
+import { Check, ChevronDown, Gauge, Loader2, Plus } from "lucide-react";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HierarchySectionHeader,
@@ -22,17 +22,6 @@ import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/queryClient";
 import type { BusinessPlan, Goal, Kpi, Metric, ProjectRow } from "@shared/schema";
 import { createReferenceRef } from "@shared/references";
-
-interface VaultRow {
-  id: string;
-  name: string;
-}
-
-interface VaultSnapshot {
-  vaults: VaultRow[];
-  visibleVaultIds: string[];
-  activeVaultId: string | null;
-}
 
 const RECENT_BUSINESS_PLAN_KEY = "business-plan:recent-plan-id";
 
@@ -218,7 +207,6 @@ export default function BusinessAdvantagePage() {
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
 
   const plansQuery = useQuery<BusinessPlan[]>({ queryKey: ["/api/business/plans"] });
-  const vaultsQuery = useQuery<VaultSnapshot>({ queryKey: ["/api/vaults"] });
   // Shared keys must tolerate the canonical response envelopes used elsewhere.
   // `/api/business/kpis` is cached as `{ kpis }` by the KPI page; `/api/life-goals`
   // is cached as `{ goals }`. Never assume the shared cache holds a bare array.
@@ -297,7 +285,6 @@ export default function BusinessAdvantagePage() {
       // New plans stay empty. Never copy thematic goal / initiatives / KPIs from the open plan.
       const response = await apiRequest("POST", "/api/business/plans", {
         name: "New Business Plan",
-        vaultId: plan?.vaultId,
       });
       return response.json() as Promise<BusinessPlan>;
     },
@@ -310,7 +297,7 @@ export default function BusinessAdvantagePage() {
     },
   });
 
-  if (plansQuery.isLoading || vaultsQuery.isLoading || goalsQuery.isLoading || projectsQuery.isLoading || metricsQuery.isLoading || kpisQuery.isLoading) {
+  if (plansQuery.isLoading || goalsQuery.isLoading || projectsQuery.isLoading || metricsQuery.isLoading || kpisQuery.isLoading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -325,43 +312,16 @@ export default function BusinessAdvantagePage() {
   const update = (patch: Partial<BusinessPlan>) => updateMutation.mutate({ id: plan.id, patch });
   const thematicGoalId = plan.thematicGoalId ?? null;
   const thematicGoal = thematicGoalId ? goalsById.get(thematicGoalId) : undefined;
-  const visibleVaults = asArray<VaultRow>(vaultsQuery.data?.vaults).filter((vault) =>
-    asArray<string>(vaultsQuery.data?.visibleVaultIds).includes(vault.id),
-  );
-
   return (
     <div className="h-full overflow-y-auto bg-background">
       <div className="w-full max-w-xl space-y-6 px-4 py-4 sm:px-6">
-        <div className="flex items-center justify-between gap-2">
-          <PlanTitle
-            plan={plan}
-            plans={plans}
-            onSelect={setSelectedPlanId}
-            onRename={(name) => update({ name })}
-            onCreate={() => createMutation.mutate()}
-          />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="min-h-11 min-w-11 shrink-0 rounded text-muted-foreground/60 transition-opacity hover:bg-accent hover:text-foreground sm:min-h-5 sm:min-w-5"
-                aria-label="Business Plan actions"
-              >
-                <MoreHorizontal className="h-3 w-3" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64">
-              <DropdownMenuLabel>Move to Vault</DropdownMenuLabel>
-              {visibleVaults.map((vault) => (
-                <DropdownMenuItem key={vault.id} onSelect={() => update({ vaultId: vault.id })}>
-                  <Check className={`mr-2 h-3.5 w-3.5 ${vault.id === plan.vaultId ? "opacity-100" : "opacity-0"}`} />
-                  <span className="truncate">{vault.name}</span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <PlanTitle
+          plan={plan}
+          plans={plans}
+          onSelect={setSelectedPlanId}
+          onRename={(name) => update({ name })}
+          onCreate={() => createMutation.mutate()}
+        />
 
         {/* key forces a full remount when the selected plan changes so no prior tree state lingers */}
         <div key={plan.id} className="space-y-6">
