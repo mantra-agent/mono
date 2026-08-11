@@ -632,7 +632,7 @@ export function NavPage() {
     )?.label ?? null;
   }, [guidedTarget, resolvedNavSections]);
   const isSearching = searchQuery.trim().length > 0;
-  const canReportIssue = !isSearching && (productComposition?.activeMods.some((mod) => mod.key === "build") ?? false);
+  const canReportIssue = !isSearching;
   const visibleSections = useMemo(() => {
     if (!guidedTarget || !guidedSectionLabel) return filteredSections;
     const section = resolvedNavSections.find((candidate) => candidate.label === guidedSectionLabel);

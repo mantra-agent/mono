@@ -404,7 +404,7 @@ Skills are runnable workflows with run identity, sessions, scoring, and operator
 
 ## Issue filing rule
 
-Never file an Issue without explicit **repro steps** plus **platform environment** and **build** linkage. `storage.createIssue` is the sole create path and rejects title-only shells; when env/build are omitted it fills them from runtime identity. Prefer evidence-rich bugs over volume. Full boundary: `server/AGENTS.md` → **Issue create boundary**.
+Never file an Issue without a non-empty **issue description** plus **platform environment** and **build** linkage. `storage.createIssue` is the sole create path and rejects title-only shells; when env/build are omitted it fills them from runtime identity. Report creation is Core feedback infrastructure, while cross-owner triage and repair remain Build-owned. Prefer evidence-rich bugs over volume. Full boundary: `server/AGENTS.md` → **Issue create boundary**.
 
 ## Verified Structural Gaps
 
