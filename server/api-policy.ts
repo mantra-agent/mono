@@ -102,6 +102,7 @@ const PERSONAL_RULES: ApiPolicyRule[] = [
       "/api/info",
       "/api/intentions",
       "/api/connected-accounts",
+      "/api/box",
       "/api/quickbooks",
       "/api/notion",
       "/api/import-queue",
