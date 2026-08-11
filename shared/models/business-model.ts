@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { JobRole } from "./job-roles";
 
-export const MODEL_VERSION = 5;
+export const MODEL_VERSION = 6;
 export const HORIZON_MIN = 1;
 export const HORIZON_MAX = 120;
 export const LOADED_COST_MULTIPLIER_MIN = 0.5;
@@ -96,10 +96,17 @@ export interface Assumptions {
   startCalendarMonth: string;
   openingCash: number;
   startingAccounts: number;
+  startingUsers: number;
   quarterOneNewAccounts: number;
+  averageUsersPerNewAccount: number;
   accountExpansion90d: number;
   downsideAccountExpansion90d: number;
+  annualAccountChurnPct: number;
+  annualExistingAccountUserGrowthPct: number;
+  annualAccountUpgradePct: number;
+  /** @deprecated Compatibility projection derived from account churn. */
   annualGrossLogoRetentionPct: number;
+  /** @deprecated Compatibility input. NRR is now calculated from cohort revenue. */
   annualNrrPct: number;
   individualEntrySharePct: number;
   maxSubscriptionMonthly: number;
@@ -223,9 +230,14 @@ export function defaultAssumptions(): Assumptions {
     startCalendarMonth: nextCalendarMonth(),
     openingCash: 12_500,
     startingAccounts: 0,
+    startingUsers: 0,
     quarterOneNewAccounts: 10,
+    averageUsersPerNewAccount: 1,
     accountExpansion90d: 1.5,
     downsideAccountExpansion90d: 1.35,
+    annualAccountChurnPct: 10,
+    annualExistingAccountUserGrowthPct: 35,
+    annualAccountUpgradePct: 20,
     annualGrossLogoRetentionPct: 90,
     annualNrrPct: 150,
     individualEntrySharePct: 85,
@@ -296,7 +308,8 @@ const legacyStageSchema = z.object({
 
 const rawAssumptionsSchema = z.object({
   modelVersion: z.number().optional(), horizonMonths: z.number().optional(), startCalendarMonth: z.string().optional(), openingCash: z.number().optional(), startingCash: z.number().optional(),
-  startingAccounts: z.number().optional(), startingCustomers: z.number().optional(), quarterOneNewAccounts: z.number().optional(), accountExpansion90d: z.number().optional(), downsideAccountExpansion90d: z.number().optional(),
+  startingAccounts: z.number().optional(), startingCustomers: z.number().optional(), startingUsers: z.number().optional(), quarterOneNewAccounts: z.number().optional(), averageUsersPerNewAccount: z.number().optional(), accountExpansion90d: z.number().optional(), downsideAccountExpansion90d: z.number().optional(),
+  annualAccountChurnPct: z.number().optional(), annualExistingAccountUserGrowthPct: z.number().optional(), annualAccountUpgradePct: z.number().optional(),
   annualGrossLogoRetentionPct: z.number().optional(), annualNrrPct: z.number().optional(), individualEntrySharePct: z.number().optional(), maxSubscriptionMonthly: z.number().optional(), revenuePerCustomerMonthly: z.number().optional(),
   maxPlusSubscriptionMonthly: z.number().optional(), participantSeatMonthly: z.number().optional(), averageEntrySeatsPerTeamAccount: z.number().optional(),
   maxIncludedTokensMillions: z.number().optional(), maxPlusIncludedTokensMillions: z.number().optional(), blendedTokenCostPerMillion: z.number().optional(), overageMarkupPct: z.number().optional(),
@@ -502,9 +515,13 @@ export function normalizeAssumptions(input: unknown): Assumptions {
     modelVersion: MODEL_VERSION, horizonMonths,
     startCalendarMonth: raw.startCalendarMonth && MONTH_PATTERN.test(raw.startCalendarMonth) ? raw.startCalendarMonth : defaults.startCalendarMonth,
     openingCash: nonNegative(compatibility.openingCash, defaults.openingCash), startingAccounts: nonNegative(compatibility.startingAccounts, defaults.startingAccounts),
-    quarterOneNewAccounts: nonNegative(raw.quarterOneNewAccounts, defaults.quarterOneNewAccounts),
+    startingUsers: nonNegative(raw.startingUsers, Math.max(nonNegative(compatibility.startingAccounts, defaults.startingAccounts), defaults.startingUsers)),
+    quarterOneNewAccounts: nonNegative(raw.quarterOneNewAccounts, defaults.quarterOneNewAccounts), averageUsersPerNewAccount: Math.max(1, nonNegative(raw.averageUsersPerNewAccount, defaults.averageUsersPerNewAccount)),
     accountExpansion90d: nonNegative(compatibility.accountExpansion90d, defaults.accountExpansion90d), downsideAccountExpansion90d: nonNegative(raw.downsideAccountExpansion90d, defaults.downsideAccountExpansion90d),
-    annualGrossLogoRetentionPct: bounded(raw.annualGrossLogoRetentionPct, 0, 100, defaults.annualGrossLogoRetentionPct), annualNrrPct: nonNegative(compatibility.annualNrrPct, defaults.annualNrrPct),
+    annualAccountChurnPct: bounded(raw.annualAccountChurnPct, 0, 100, 100 - bounded(raw.annualGrossLogoRetentionPct, 0, 100, defaults.annualGrossLogoRetentionPct)),
+    annualExistingAccountUserGrowthPct: nonNegative(raw.annualExistingAccountUserGrowthPct, defaults.annualExistingAccountUserGrowthPct),
+    annualAccountUpgradePct: bounded(raw.annualAccountUpgradePct, 0, 100, defaults.annualAccountUpgradePct),
+    annualGrossLogoRetentionPct: 100 - bounded(raw.annualAccountChurnPct, 0, 100, 100 - bounded(raw.annualGrossLogoRetentionPct, 0, 100, defaults.annualGrossLogoRetentionPct)), annualNrrPct: nonNegative(compatibility.annualNrrPct, defaults.annualNrrPct),
     individualEntrySharePct: bounded(raw.individualEntrySharePct, 0, 100, defaults.individualEntrySharePct),
     maxSubscriptionMonthly: nonNegative(compatibility.maxSubscriptionMonthly, defaults.maxSubscriptionMonthly), maxPlusSubscriptionMonthly: nonNegative(raw.maxPlusSubscriptionMonthly, defaults.maxPlusSubscriptionMonthly),
     participantSeatMonthly: nonNegative(raw.participantSeatMonthly, defaults.participantSeatMonthly), averageEntrySeatsPerTeamAccount: nonNegative(raw.averageEntrySeatsPerTeamAccount, defaults.averageEntrySeatsPerTeamAccount),
@@ -542,12 +559,18 @@ export function mergeAssumptions(current: Assumptions, patch: AssumptionsPatch):
   });
 }
 
-interface Cohort { birthMonth: number; accounts: number; }
+interface Cohort {
+  birthMonth: number;
+  accounts: number;
+  usersPerAccount: number;
+}
 
 export interface MonthRow {
   month: number; calendarMonth: string; label: string; phaseKey: PhaseKey; phaseLabel: string;
-  newAccounts: number; newPlgAccounts: number; newTopDownAccounts: number; activeAccounts: number;
-  sameCohortRecurringRevenue: number; subscriptionRevenue: number; seatExpansionRevenue: number; tierExpansionRevenue: number; overageRevenue: number; productRevenue: number; productArr: number;
+  newAccounts: number; newPlgAccounts: number; newTopDownAccounts: number; churnedAccounts: number; activeAccounts: number;
+  newUsers: number; existingAccountUsers: number; activeUsers: number;
+  startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; tierExpansionRevenue: number; sameCohortRecurringRevenue: number; cohortNrr: number;
+  subscriptionRevenue: number; seatExpansionRevenue: number; overageRevenue: number; productRevenue: number; productArr: number;
   activeSeats: number; requiredTierUpgrades: number; overageDominant: boolean;
   consultingRevenue: number; totalCashRevenue: number; includedTokenCogs: number; seatCogs: number; overageTokenCogs: number; requiredOverageTokensMillions: number; totalTokenUsageMillions: number; overageGrossMargin: number;
   variableProductCogs: number; fixedProductCogs: number; productCogs: number; consultingCogs: number; productGrossMargin: number; consultingGrossMargin: number; blendedCompanyGrossMargin: number;
@@ -559,7 +582,8 @@ export interface MonthRow {
 export interface PeriodRow {
   key: string; label: string; startMonth: number; endMonth: number; monthCount: number;
   phaseKey: PhaseKey; phaseLabel: string; financingKey: FinancingKey;
-  activeAccounts: number; newAccounts: number;
+  activeAccounts: number; newAccounts: number; churnedAccounts: number; activeUsers: number; newUsers: number;
+  startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; tierExpansionRevenue: number; cohortNrr: number;
   totalCashRevenue: number; productRevenue: number; consultingRevenue: number; productCogs: number; consultingCogs: number; cogs: number; grossProfit: number;
   staffOpex: number; marketingOpex: number; gaOpex: number; totalOpex: number; operatingIncome: number;
   acquisitionSpend: number; netCashChange: number; financingCash: number; endingCash: number;
@@ -645,51 +669,84 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
       });
     }
   }
-  const logoRetentionMonthly = Math.pow(assumptions.annualGrossLogoRetentionPct / 100, 1 / 12);
-  const nrrMonthly = Math.pow(assumptions.annualNrrPct / 100, 1 / 12);
+  const accountSurvivalMonthly = Math.pow(1 - assumptions.annualAccountChurnPct / 100, 1 / 12);
+  const userGrowthMonthly = Math.pow(1 + assumptions.annualExistingAccountUserGrowthPct / 100, 1 / 12);
+  const upgradeMonthly = 1 - Math.pow(1 - assumptions.annualAccountUpgradePct / 100, 1 / 12);
+  const representativeStartingUsers = Math.max(1, assumptions.startingAccounts > 0 ? assumptions.startingUsers / assumptions.startingAccounts : assumptions.averageUsersPerNewAccount);
+  const representativeStartingRevenue = assumptions.maxSubscriptionMonthly + Math.max(0, representativeStartingUsers - 1) * assumptions.participantSeatMonthly;
+  const representativeRetainedRevenue = (1 - assumptions.annualAccountChurnPct / 100) * (
+    assumptions.maxSubscriptionMonthly
+    + Math.max(0, representativeStartingUsers * (1 + assumptions.annualExistingAccountUserGrowthPct / 100) - 1) * assumptions.participantSeatMonthly
+    + assumptions.annualAccountUpgradePct / 100 * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly)
+  );
+  const calculatedAnnualNrrPct = safeRatio(representativeRetainedRevenue, representativeStartingRevenue) * 100;
   const overagePriceMultiple = 1 + assumptions.overageMarkupPct / 100;
   const overageGrossMargin = overagePriceMultiple > 0 ? 1 - 1 / overagePriceMultiple : 0;
-  const individualEntryShare = assumptions.individualEntrySharePct / 100;
-  const teamEntryShare = 1 - individualEntryShare;
-  const blendedEntryArpa = individualEntryShare * assumptions.maxSubscriptionMonthly
-    + teamEntryShare * (assumptions.maxSubscriptionMonthly + assumptions.averageEntrySeatsPerTeamAccount * assumptions.participantSeatMonthly);
-  const entrySeatsPerAccount = teamEntryShare * assumptions.averageEntrySeatsPerTeamAccount;
+  const startingUsersPerAccount = assumptions.startingAccounts > 0 ? Math.max(1, assumptions.startingUsers / assumptions.startingAccounts) : assumptions.averageUsersPerNewAccount;
+  const entryRevenuePerAccount = assumptions.maxSubscriptionMonthly + Math.max(0, assumptions.averageUsersPerNewAccount - 1) * assumptions.participantSeatMonthly;
   const includedInferencePerAccount = assumptions.maxIncludedTokensMillions * assumptions.blendedTokenCostPerMillion;
   const entryVariableCogsPerAccount = includedInferencePerAccount
-    + entrySeatsPerAccount * assumptions.seatInferenceAndSupportCost
+    + assumptions.averageUsersPerNewAccount * assumptions.seatInferenceAndSupportCost
     + assumptions.infrastructurePerActiveAccount
     + assumptions.supportPerActiveAccount
-    + blendedEntryArpa * assumptions.paymentProcessingPct / 100;
-  const entryContributionGrossMargin = blendedEntryArpa > 0 ? 1 - entryVariableCogsPerAccount / blendedEntryArpa : 0;
+    + entryRevenuePerAccount * assumptions.paymentProcessingPct / 100;
+  const entryContributionGrossMargin = entryRevenuePerAccount > 0 ? 1 - entryVariableCogsPerAccount / entryRevenuePerAccount : 0;
   const blendedEntryCac = assumptions.plgSharePct / 100 * assumptions.plgCac + (1 - assumptions.plgSharePct / 100) * assumptions.topDownCac;
-  const baselineCacPaybackMonths = blendedEntryArpa * entryContributionGrossMargin > 0 ? blendedEntryCac / (blendedEntryArpa * entryContributionGrossMargin) : 0;
-  const expansionShareTotal = assumptions.nrrSeatSharePct + assumptions.nrrTierSharePct + assumptions.nrrOverageSharePct;
-  const expansionSeatShare = expansionShareTotal > 0 ? assumptions.nrrSeatSharePct / expansionShareTotal : 0;
-  const expansionTierShare = expansionShareTotal > 0 ? assumptions.nrrTierSharePct / expansionShareTotal : 0;
-  const expansionOverageShare = expansionShareTotal > 0 ? assumptions.nrrOverageSharePct / expansionShareTotal : 0;
-  const cohorts: Cohort[] = assumptions.startingAccounts > 0 ? [{ birthMonth: 0, accounts: assumptions.startingAccounts }] : [];
+  const baselineCacPaybackMonths = entryRevenuePerAccount * entryContributionGrossMargin > 0 ? blendedEntryCac / (entryRevenuePerAccount * entryContributionGrossMargin) : 0;
+  const cohorts: Cohort[] = assumptions.startingAccounts > 0 ? [{ birthMonth: 0, accounts: assumptions.startingAccounts, usersPerAccount: startingUsersPerAccount }] : [];
   const months: MonthRow[] = [];
   let endingCash = assumptions.openingCash;
 
   for (let month = 1; month <= assumptions.horizonMonths; month++) {
     const quarter = Math.floor((month - 1) / 3);
     const newAccounts = assumptions.quarterOneNewAccounts * Math.pow(assumptions.accountExpansion90d, quarter) / 3;
-    cohorts.push({ birthMonth: month, accounts: newAccounts });
+    cohorts.push({ birthMonth: month, accounts: newAccounts, usersPerAccount: assumptions.averageUsersPerNewAccount });
     let activeAccounts = 0;
-    let sameCohortRecurringRevenue = 0;
+    let activeUsers = 0;
+    let newUsers = 0;
+    let startingCohortRevenue = 0;
+    let churnedRevenue = 0;
+    let userExpansionRevenue = 0;
+    let tierExpansionRevenue = 0;
     for (const cohort of cohorts) {
       const age = month - cohort.birthMonth;
-      activeAccounts += cohort.accounts * Math.pow(logoRetentionMonthly, age);
-      sameCohortRecurringRevenue += cohort.accounts * blendedEntryArpa * Math.pow(nrrMonthly, age);
+      const startOfMonthAge = Math.max(0, age - 1);
+      const startAccounts = cohort.accounts * Math.pow(accountSurvivalMonthly, startOfMonthAge);
+      const survivingAccounts = cohort.accounts * Math.pow(accountSurvivalMonthly, age);
+      const startUsersPerAccount = cohort.usersPerAccount * Math.pow(userGrowthMonthly, startOfMonthAge);
+      const usersPerAccount = cohort.usersPerAccount * Math.pow(userGrowthMonthly, age);
+      const startUpgradeShare = 1 - Math.pow(1 - upgradeMonthly, startOfMonthAge);
+      const upgradeShare = 1 - Math.pow(1 - upgradeMonthly, age);
+      const startRevenue = startAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, startUsersPerAccount - 1) * assumptions.participantSeatMonthly + startUpgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
+      const retainedBaseRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, startUsersPerAccount - 1) * assumptions.participantSeatMonthly + startUpgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
+      const retainedUserRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, usersPerAccount - 1) * assumptions.participantSeatMonthly + startUpgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
+      const retainedRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, usersPerAccount - 1) * assumptions.participantSeatMonthly + upgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
+      activeAccounts += survivingAccounts;
+      activeUsers += survivingAccounts * usersPerAccount;
+      if (age === 0) newUsers += survivingAccounts * usersPerAccount;
+      if (age > 0) {
+        startingCohortRevenue += startRevenue;
+        churnedRevenue += Math.max(0, startRevenue - retainedBaseRevenue);
+        userExpansionRevenue += Math.max(0, retainedUserRevenue - retainedBaseRevenue);
+        tierExpansionRevenue += Math.max(0, retainedRevenue - retainedUserRevenue);
+      }
     }
-    const entryRecurringRevenue = activeAccounts * blendedEntryArpa;
-    const subscriptionRevenue = Math.min(entryRecurringRevenue, sameCohortRecurringRevenue);
-    const expansionRevenue = Math.max(0, sameCohortRecurringRevenue - subscriptionRevenue);
-    const seatExpansionRevenue = expansionRevenue * expansionSeatShare;
-    const tierExpansionRevenue = expansionRevenue * expansionTierShare;
-    const overageRevenue = expansionRevenue * expansionOverageShare;
-    const productRevenue = subscriptionRevenue + seatExpansionRevenue + tierExpansionRevenue + overageRevenue;
-    const activeSeats = activeAccounts * entrySeatsPerAccount + (assumptions.participantSeatMonthly > 0 ? seatExpansionRevenue / assumptions.participantSeatMonthly : 0);
+    const newAccountRevenue = newAccounts * entryRevenuePerAccount;
+    const sameCohortRecurringRevenue = startingCohortRevenue - churnedRevenue + userExpansionRevenue + tierExpansionRevenue;
+    const cohortNrr = safeRatio(sameCohortRecurringRevenue, startingCohortRevenue);
+    const subscriptionRevenue = Math.max(0, startingCohortRevenue - churnedRevenue) + newAccountRevenue;
+    const seatExpansionRevenue = userExpansionRevenue;
+    const overageRevenue = 0;
+    const productRevenue = subscriptionRevenue + seatExpansionRevenue + tierExpansionRevenue;
+    const activeSeats = activeUsers;
+    const existingAccountUsers = Math.max(0, activeUsers - newUsers);
+    const churnedAccounts = cohorts.reduce((sum, cohort) => {
+      const age = month - cohort.birthMonth;
+      if (age <= 0) return sum;
+      const before = cohort.accounts * Math.pow(accountSurvivalMonthly, age - 1);
+      const after = cohort.accounts * Math.pow(accountSurvivalMonthly, age);
+      return sum + Math.max(0, before - after);
+    }, 0);
     const requiredTierUpgrades = Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly) > 0
       ? tierExpansionRevenue / (assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly)
       : 0;
@@ -733,8 +790,10 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     const newPlgAccounts = newAccounts * assumptions.plgSharePct / 100;
     months.push({
       month, calendarMonth: calendarMonthAt(assumptions.startCalendarMonth, month), label: calendarMonthLabel(assumptions.startCalendarMonth, month), phaseKey: phaseForMonth(assumptions.phases, month).key, phaseLabel: PHASE_LABELS[phaseForMonth(assumptions.phases, month).key],
-      newAccounts, newPlgAccounts, newTopDownAccounts: newAccounts - newPlgAccounts, activeAccounts, sameCohortRecurringRevenue, subscriptionRevenue, seatExpansionRevenue, tierExpansionRevenue, overageRevenue, productRevenue, productArr: productRevenue * 12,
-      activeSeats, requiredTierUpgrades, overageDominant: overageRevenue > seatExpansionRevenue + tierExpansionRevenue,
+      newAccounts, newPlgAccounts, newTopDownAccounts: newAccounts - newPlgAccounts, churnedAccounts, activeAccounts,
+      newUsers, existingAccountUsers, activeUsers, startingCohortRevenue, churnedRevenue, userExpansionRevenue, tierExpansionRevenue, sameCohortRecurringRevenue, cohortNrr,
+      subscriptionRevenue, seatExpansionRevenue, overageRevenue, productRevenue, productArr: productRevenue * 12,
+      activeSeats, requiredTierUpgrades, overageDominant: false,
       consultingRevenue, totalCashRevenue, includedTokenCogs, seatCogs, overageTokenCogs, requiredOverageTokensMillions, totalTokenUsageMillions: activeAccounts * assumptions.maxIncludedTokensMillions + requiredOverageTokensMillions, overageGrossMargin,
       variableProductCogs, fixedProductCogs, productCogs, consultingCogs, productGrossMargin: safeRatio(productRevenue - productCogs, productRevenue), consultingGrossMargin: safeRatio(consultingRevenue - consultingCogs, consultingRevenue),
       blendedCompanyGrossMargin: safeRatio(totalCashRevenue - productCogs - consultingCogs, totalCashRevenue), acquisitionSpend, blendedCac: newAccounts > 0 ? acquisitionSpend / newAccounts : blendedEntryCac,
@@ -744,7 +803,7 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
 
   const gates = assumptions.phases.map((phase) => {
     if (phase.key === "phase_0") return { phaseKey: phase.key, label: PHASE_LABELS[phase.key], targetMonth: 0, status: "achieved" as GateStatus, firstAchievedMonth: 0 };
-    const achieved = months.find((row) => row.month >= phase.startMonth && row.productArr >= phase.productArrMin && (phase.productArrMax <= 0 || row.productArr <= phase.productArrMax) && assumptions.annualNrrPct >= phase.annualNrrMinPct && assumptions.annualGrossLogoRetentionPct >= phase.annualGlrMinPct && assumptions.accountExpansion90d >= phase.accountExpansion90dMin && (phase.cacPaybackMaxMonths <= 0 || row.cacPaybackMonths <= phase.cacPaybackMaxMonths) && row.productGrossMargin * 100 >= phase.productGrossMarginMinPct);
+    const achieved = months.find((row) => row.month >= phase.startMonth && row.productArr >= phase.productArrMin && (phase.productArrMax <= 0 || row.productArr <= phase.productArrMax) && calculatedAnnualNrrPct >= phase.annualNrrMinPct && 100 - assumptions.annualAccountChurnPct >= phase.annualGlrMinPct && assumptions.accountExpansion90d >= phase.accountExpansion90dMin && (phase.cacPaybackMaxMonths <= 0 || row.cacPaybackMonths <= phase.cacPaybackMaxMonths) && row.productGrossMargin * 100 >= phase.productGrossMarginMinPct);
     const status: GateStatus = achieved ? "achieved" : assumptions.horizonMonths >= phase.endMonth ? "missed" : "not_yet_observable";
     return { phaseKey: phase.key, label: PHASE_LABELS[phase.key], targetMonth: phase.endMonth, status, firstAchievedMonth: achieved?.month ?? null };
   });
@@ -790,7 +849,7 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     confirmedConsultingNetCash: throughGate.reduce((sum, row) => sum + row.consultingRevenue - row.consultingCogs, 0), reserveAtGate: assumptions.reserveAtNextGate,
   };
 
-  return { assumptions, months, gates, financing, financingNeed, impliedRetainedAccountArpaExpansionPct: assumptions.annualGrossLogoRetentionPct > 0 ? assumptions.annualNrrPct / assumptions.annualGrossLogoRetentionPct * 100 : 0, entryContributionGrossMargin, baselineCacPaybackMonths };
+  return { assumptions, months, gates, financing, financingNeed, impliedRetainedAccountArpaExpansionPct: accountSurvivalMonthly > 0 ? calculatedAnnualNrrPct / (100 - assumptions.annualAccountChurnPct) * 100 : 0, entryContributionGrossMargin, baselineCacPaybackMonths };
 }
 
 /**
@@ -866,6 +925,14 @@ export function aggregateMonths(months: MonthRow[], mode: PeriodMode): PeriodRow
       financingKey: PHASE_FINANCING[last.phaseKey],
       activeAccounts: last.activeAccounts,
       newAccounts: sum((row) => row.newAccounts),
+      churnedAccounts: sum((row) => row.churnedAccounts),
+      activeUsers: last.activeUsers,
+      newUsers: sum((row) => row.newUsers),
+      startingCohortRevenue: sum((row) => row.startingCohortRevenue),
+      churnedRevenue: sum((row) => row.churnedRevenue),
+      userExpansionRevenue: sum((row) => row.userExpansionRevenue),
+      tierExpansionRevenue: sum((row) => row.tierExpansionRevenue),
+      cohortNrr: safeRatio(sum((row) => row.sameCohortRecurringRevenue), sum((row) => row.startingCohortRevenue)),
       totalCashRevenue: sum((row) => row.totalCashRevenue),
       productRevenue: sum((row) => row.productRevenue),
       consultingRevenue: sum((row) => row.consultingRevenue),

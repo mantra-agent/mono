@@ -1,3 +1,10 @@
+<!-- 2026-08-11 Business Model forecast-contract revision:
+- Assets/data: principal/account/Vault-owned Business financial assumptions and derived forecast rows (A01/A03/A07; S2 commercial and financial planning data).
+- Flow/threat: authenticated Business Model UI -> bounded shared schema -> BusinessModelStorage -> business-owned financial_models row. New account/user/churn/upgrade inputs are untrusted numbers; an unscoped mutation could corrupt another Business, while treating new-account revenue as retained revenue would silently falsify NRR (STRIDE tampering/information disclosure; DATA-01/OBS-01).
+- Controls/owner: the existing authenticated route and BusinessModelStorage remain the sole mutation path, retaining writable Business/Vault and principal/account predicates. Shared strict parsing and normalization bound every new input; cohort NRR is deterministically derived only from starting existing-account revenue less churn plus user and tier expansion, with new-account revenue structurally excluded. Owner: Business Model. Severity: high integrity/confidentiality. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: model v6 infers missing starting users from starting accounts and converts legacy gross-logo retention to churn; historical explicit annual-NRR targets remain compatibility data but no longer drive projection revenue or gates. Revert the v6 contract, forecast UI, calculation changes, and this record together; JSON storage requires no schema rollback.
+-->
+
 <!-- 2026-08-11 user retention deletion boundary:
 - Assets/data: principal-owned S2 memory claims, source/entity/claim references, and cached email bodies/metadata (A01/A03/A07).
 - Flow/threat: authenticated Journal or Email Archive -> explicit confirmation -> canonical principal-scoped deletion. An unscoped ID mutation could destroy another user's private data; incomplete cleanup could strand semantic references or cached body copies (STRIDE tampering/information disclosure; DATA-01).
