@@ -14,8 +14,13 @@ import { EmptyVoiceStreamError, streamVoiceAudio, type VoiceAudioStream } from "
 const log = createLogger("MeetingOutputMedia");
 const TOKEN_TTL_MS = 6 * 60 * 60 * 1000;
 const AUDIO_FRAME_INTERVAL_MS = 1000 / 15;
-const audioQueues = new Map<string, VoiceAudioStream[]>();
-const waiters = new Map<string, Array<(audio: VoiceAudioStream | null) => void>>();
+interface MeetingAudioClip {
+  audio: VoiceAudioStream;
+  caption: string;
+}
+
+const audioQueues = new Map<string, MeetingAudioClip[]>();
+const waiters = new Map<string, Array<(audio: MeetingAudioClip | null) => void>>();
 const speechLocks = new Map<string, Promise<void>>();
 // Per-session barge-in state. The active speech turn registers its abort
 // controller and every synthesized stream it owns (queued or currently piping)
@@ -66,7 +71,7 @@ export function interruptMeetingSpeech(sessionId: string, reason = "user_speech"
   const interruption = new MeetingSpeechInterruptedError(`Meeting speech interrupted: ${reason}`);
   if (controller && !controller.signal.aborted) controller.abort(interruption);
   if (queued) {
-    for (const audio of queued) audio.stream.destroy(interruption);
+    for (const clip of queued) clip.audio.stream.destroy(interruption);
     audioQueues.delete(sessionId);
   }
   if (live) {
@@ -341,16 +346,17 @@ export function registerMeetingVisualizerTransport(): (
   };
 }
 
-function enqueue(sessionId: string, audio: VoiceAudioStream) {
+function enqueue(sessionId: string, audio: VoiceAudioStream, caption: string) {
+  const clip = { audio, caption };
   const waiter = waiters.get(sessionId)?.shift();
   if (waiter) {
-    waiter(audio);
+    waiter(clip);
     return;
   }
   const queue = audioQueues.get(sessionId) ?? [];
-  queue.push(audio);
+  queue.push(clip);
   if (queue.length > 3) {
-    queue.shift()?.stream.destroy(new Error("Meeting audio queue overflow"));
+    queue.shift()?.audio.stream.destroy(new Error("Meeting audio queue overflow"));
     log.warn(`dropped oldest speech stream sessionId=${sessionId} queueLimit=3`);
   }
   audioQueues.set(sessionId, queue);
@@ -359,7 +365,7 @@ function enqueue(sessionId: string, audio: VoiceAudioStream) {
 export async function nextMeetingAudio(
   sessionId: string,
   signal?: AbortSignal,
-): Promise<VoiceAudioStream | null> {
+): Promise<MeetingAudioClip | null> {
   const queue = audioQueues.get(sessionId);
   const audio = queue?.shift();
   if (audio) return audio;
@@ -367,7 +373,7 @@ export async function nextMeetingAudio(
 
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (value: VoiceAudioStream | null) => {
+    const finish = (value: MeetingAudioClip | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -393,18 +399,20 @@ export async function sendNextMeetingAudio(
   res: Response,
   signal?: AbortSignal,
 ): Promise<void> {
-  const audio = await nextMeetingAudio(sessionId, signal);
+  const clip = await nextMeetingAudio(sessionId, signal);
   res.setHeader("Cache-Control", "no-store");
-  if (!audio) {
+  if (!clip) {
     res.setHeader("X-Meeting-Audio-State", "idle");
     res.status(204).end();
     return;
   }
 
   res.status(200);
-  res.setHeader("Content-Type", audio.contentType);
+  res.setHeader("Content-Type", clip.audio.contentType);
   res.setHeader("Accept-Ranges", "none");
-  await pipeline(audio.stream, res);
+  const encodedCaption = Buffer.from(clip.caption, "utf8").toString("base64url");
+  if (encodedCaption.length <= 6_000) res.setHeader("X-Meeting-Caption", encodedCaption);
+  await pipeline(clip.audio.stream, res);
 }
 
 export async function speakMeetingResponse(sessionId: string, text: string): Promise<void> {
@@ -431,7 +439,7 @@ export async function speakMeetingResponse(sessionId: string, text: string): Pro
           throw new MeetingSpeechInterruptedError("Meeting speech interrupted before playback");
         }
         trackSpeechStream(sessionId, audio);
-        enqueue(sessionId, audio);
+        enqueue(sessionId, audio, text);
         log.info(`queued speech stream sessionId=${sessionId} provider=${audio.provider} attempt=${attempt}`);
         try {
           await finished(audio.stream);

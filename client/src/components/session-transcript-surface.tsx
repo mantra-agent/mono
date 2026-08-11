@@ -7,6 +7,8 @@ import { DesktopAudioSurface } from "@/components/desktop-audio-surface";
 import { MobileVoiceViewport } from "@/components/mobile-voice-viewport";
 import { SessionAgendaTree } from "@/components/session-agenda-tree";
 import { useNativeMeetingTranscription } from "@/hooks/use-native-meeting-transcription";
+import { useVoiceCaptionsPreference } from "@/hooks/use-voice-captions-preference";
+import { VoiceCaptionOverlay } from "@/components/voice-caption-overlay";
 import { isNativeVoiceBridge } from "@/lib/native-voice-bridge";
 import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
 import type { MeetingSessionMeta, QuestionResponseMeta, SessionAgenda } from "@shared/models/chat";
@@ -91,6 +93,7 @@ export function SessionTranscriptSurface({
 }: SessionTranscriptSurfaceProps) {
   const { layer } = useVisibilityLayer();
   const nativeTranscription = useNativeMeetingTranscription();
+  const { voiceCaptions } = useVoiceCaptionsPreference();
   const nativeCaptureActive = meeting?.transport === "native"
     && meeting.botStatus === "live"
     && nativeTranscription.activeSessionId === activeSession;
@@ -192,11 +195,14 @@ export function SessionTranscriptSurface({
 
         if (nativeCaptureActive && layer === 0) {
           return (
-            <DesktopAudioSurface
-              visualState="listening"
-              readAudioLevel={nativeTranscription.readAudioLevel}
-              testId="desktop-native-transcription-surface"
-            />
+            <div className="relative flex min-h-0 flex-1 overflow-hidden">
+              <DesktopAudioSurface
+                visualState="listening"
+                readAudioLevel={nativeTranscription.readAudioLevel}
+                testId="desktop-native-transcription-surface"
+              />
+              {voiceCaptions ? <VoiceCaptionOverlay text={nativeTranscription.voiceCaption} /> : null}
+            </div>
           );
         }
         if (!voiceActive || !voiceSession || layer > 0) return transcript;
