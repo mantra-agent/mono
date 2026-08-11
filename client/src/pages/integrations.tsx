@@ -2651,9 +2651,18 @@ function GoogleDetail() {
 function BoxDetail() {
   const { activeVaultId } = useVaults();
   return (
-    <div className="min-w-0 space-y-2" data-testid="box-detail">
-      <BoxSection vaultId={activeVaultId || undefined} />
-    </div>
+    <Card className="min-w-0 overflow-hidden" data-testid="box-detail">
+      <CardContent className="space-y-0 p-0">
+        <IntegrationTreeSection label="Credentials" initialOpen>
+          <div className="min-w-0 px-2 py-1.5">
+            <SecretsForSection section="box" />
+          </div>
+        </IntegrationTreeSection>
+        <IntegrationTreeSection label="Connection" initialOpen>
+          <BoxSection vaultId={activeVaultId || undefined} />
+        </IntegrationTreeSection>
+      </CardContent>
+    </Card>
   );
 }
 
