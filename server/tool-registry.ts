@@ -683,6 +683,21 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
+  sms: {
+    description: "Prepare or confirm one user-initiated service SMS. Always prepare first to resolve the Person and show a confirmation chip. Sending requires recorded consent and fails closed after opt-out.",
+    category: "communication",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["prepare", "confirm"], description: "prepare resolves the recipient and requests confirmation; confirm sends with the one-time token" },
+        query: { type: "string", description: "Person name or ID (required for prepare)" },
+        body: { type: "string", description: "Service or conversational message, 1-1600 characters (required for prepare)" },
+        confirmationToken: { type: "string", description: "One-time token returned by prepare (required for confirm)" },
+        reasoning: { type: "string", description: "Why the SMS is being prepared or confirmed" },
+      },
+      required: ["action"],
+    },
+  },
   people: {
     description: "Personal contacts and import queue. Prefer quickSummary for current profile, notes for untimed evidence, interactions for time-bound events. set_vault_memberships is full-set replace (confirmReplace=true). Canonical @person:id.",
     category: "communication",
