@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Building2, ChevronDown, Loader2, Plus, Shield } from "lucide-react";
+import { Building2, ChevronDown, ExternalLink, Loader2, Plus, Shield } from "lucide-react";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -200,6 +200,24 @@ function DefinitionEditor({ business }: { business: BusinessDefinition }) {
                 })}
               </PopoverContent>
             </Popover>
+          </ProfileTreeRow>
+          <ProfileTreeRow
+            label="Data Room"
+            icon={<ExternalLink className="h-3.5 w-3.5" />}
+            hasValue
+            mobileLayout="inline"
+            testId="business-row-data-room"
+          >
+            <a
+              href="https://app.box.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-cta underline-offset-4 hover:text-active hover:underline"
+              data-testid="link-business-data-room"
+            >
+              Open in Box
+              <ExternalLink className="h-3 w-3" />
+            </a>
           </ProfileTreeRow>
         </div>
       </div>
