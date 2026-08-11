@@ -1232,7 +1232,7 @@ export function setupAuth(app: Express) {
           getSetting<number>(`user:${principal.userId}:ui.scale`),
           getSetting<boolean>(`user:${principal.userId}:voice.captions`),
         ]);
-        res.json({ scale: scale ?? 110, voiceCaptions: voiceCaptions ?? false });
+        res.json({ scale: scale ?? 110, voiceCaptions: voiceCaptions ?? true });
       } catch {
         res.status(500).json({ error: "Failed to read UI preferences" });
       }
@@ -1260,7 +1260,7 @@ export function setupAuth(app: Express) {
           getSetting<number>(`user:${principal.userId}:ui.scale`),
           getSetting<boolean>(`user:${principal.userId}:voice.captions`),
         ]);
-        res.json({ scale: savedScale ?? 110, voiceCaptions: savedVoiceCaptions ?? false });
+        res.json({ scale: savedScale ?? 110, voiceCaptions: savedVoiceCaptions ?? true });
       } catch {
         res.status(500).json({ error: "Failed to update UI preferences" });
       }
