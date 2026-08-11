@@ -24,7 +24,7 @@ export function useUiScale() {
   const [scale, setScaleState] = useState(readLocal);
 
   // Fetch server-side preference on mount
-  const { data: serverScale } = useQuery<{ scale: number }>({
+  const { data: serverScale } = useQuery<{ scale: number; voiceCaptions: boolean }>({
     queryKey: ["/api/auth/ui-prefs"],
     staleTime: Infinity,
   });

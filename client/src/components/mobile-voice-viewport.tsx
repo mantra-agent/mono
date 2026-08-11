@@ -1,4 +1,6 @@
 import { VoiceEntranceOrb } from "@/components/voice-entrance-orb";
+import { VoiceCaptionOverlay } from "@/components/voice-caption-overlay";
+import { useVoiceCaptionsPreference } from "@/hooks/use-voice-captions-preference";
 import type { VoiceSessionContextValue } from "@/hooks/use-voice-session";
 import { publishCanonicalOrbReady } from "@/lib/claim-visual-handoff";
 
@@ -11,6 +13,8 @@ interface MobileVoiceViewportProps {
  * ownership of the existing top and bottom bars around this content surface.
  */
 export function MobileVoiceViewport({ voiceSession }: MobileVoiceViewportProps) {
+  const { voiceCaptions } = useVoiceCaptionsPreference();
+
   return (
     <div
       className="relative flex min-h-0 flex-1 overflow-hidden bg-black"
@@ -25,6 +29,7 @@ export function MobileVoiceViewport({ voiceSession }: MobileVoiceViewportProps) 
         onFirstFrame={publishCanonicalOrbReady}
         className="absolute left-1/2 top-1/2 h-[60%] w-[60%] -translate-x-1/2 -translate-y-1/2"
       />
+      {voiceCaptions ? <VoiceCaptionOverlay text={voiceSession.voiceCaption} className="bottom-6" /> : null}
     </div>
   );
 }

@@ -1,3 +1,10 @@
+<!-- 2026-08-10 synchronized voice-caption boundary:
+- Assets/data: transient S2 agent speech text, provider character timings, and one authenticated user-owned boolean preference (A01/A03/A07).
+- Flow/threat: ElevenLabs audio alignment callback -> browser-only caption queue -> Zero Interface projection; Account -> authenticated UI preference route -> user-keyed system setting. External timing payloads are untrusted and could be malformed or oversized; persisting or logging captions would widen sensitive transcript exposure (STRIDE tampering/information disclosure; DATA-01/OBS-01).
+- Controls/owner: Core Voice owns one bounded adapter that clamps arrays to their shared length, reveals at most 14 words, and retains text only in ephemeral React state; interruption, disconnect, session reset, and unmount clear scheduled cues. No caption text or timing is logged or persisted. The preference stays behind the existing authenticated Principal boundary and is keyed by exact user ID; omission preserves safe partial-update semantics. Owner: Core Voice + Auth UI Preferences. Severity: medium confidentiality/integrity. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: ElevenLabs timing describes queued audio-event offsets rather than direct browser speaker-clock samples, so rendering may drift slightly under unusual output buffering. Disable the user preference or revert the callback/overlay/settings extension and this record; durable transcripts and audio transport remain unchanged.
+-->
+
 <!-- 2026-08-10 Vaults and Teams Admin presentation boundary:
 - Assets/data: account-owned Vault metadata and account-scoped Team rosters/grant subjects (A01/A03/A07; S1 identity/access metadata).
 - Flow/threat: authenticated user -> Core-composed Vaults or Teams route -> existing principal-scoped Vault and Team APIs. A new navigation route must not become an authorization bypass or imply that Team membership itself grants object access (STRIDE elevation/information disclosure; IAM-01/DATA-01).
