@@ -204,6 +204,7 @@ export interface IStorage {
   batchUpdateEmailTriageState(updates: Array<{ id: number; tier: string; reason: string }>): Promise<Array<{ accountId: string; providerMessageId: string }>>;
   markEmailDone(id: number, done: boolean): Promise<EmailMessage | undefined>;
   getCachedEmailById(id: number): Promise<EmailMessage | undefined>;
+  deleteCachedEmail(id: number): Promise<boolean>;
   getCachedEmailByProviderIdAndAccount(providerMessageId: string, accountId: string): Promise<EmailMessage | undefined>;
 
   recordSyncStart(accountId: string, resyncReason?: string): Promise<EmailSyncLog>;
@@ -1585,6 +1586,18 @@ export class HybridStorage implements IStorage {
   async getCachedEmailById(id: number): Promise<EmailMessage | undefined> {
     const [row] = await db.select().from(emailMessages).where(combineWithSensitiveVisible(emailMessageScopeColumns, eq(emailMessages.id, id)));
     return row;
+  }
+
+  async deleteCachedEmail(id: number): Promise<boolean> {
+    return db.transaction(async (tx) => {
+      const writable = combineWithSensitiveWritable(emailMessageScopeColumns, eq(emailMessages.id, id));
+      const [owned] = await tx.select({ id: emailMessages.id }).from(emailMessages).where(writable).limit(1);
+      if (!owned) return false;
+      await tx.update(emailEnrichments).set({ messageId: null }).where(combineWithSensitiveWritable(emailEnrichmentScopeColumns, eq(emailEnrichments.messageId, id)));
+      await tx.update(emailDismissals).set({ messageId: null }).where(combineWithSensitiveWritable(emailDismissalScopeColumns, eq(emailDismissals.messageId, id)));
+      const deleted = await tx.delete(emailMessages).where(writable).returning({ id: emailMessages.id });
+      return deleted.length > 0;
+    });
   }
 
   async getCachedEmailByProviderIdAndAccount(providerMessageId: string, accountId: string): Promise<EmailMessage | undefined> {

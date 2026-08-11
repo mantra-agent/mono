@@ -205,6 +205,19 @@ export function registerEmailRoutes(app: Express) {
     }
   });
 
+  app.delete("/api/email/messages/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id as string, 10);
+      if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid message ID" });
+      const deleted = await storage.deleteCachedEmail(id);
+      if (!deleted) return res.status(404).json({ error: "Message not found" });
+      res.json({ deleted: true, messageId: id });
+    } catch (err: any) {
+      log.error(`DELETE /api/email/messages/:id error: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.patch("/api/email/messages/:id/done", async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id as string);

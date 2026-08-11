@@ -1124,19 +1124,20 @@ function VnextJournalTab() {
   const { startIso, endIso } = useMemo(() => getDateRange(currentDate, granularity, timezone), [currentDate, granularity, timezone]);
 
   const { data: claims = [], isLoading } = useQuery<VnextClaim[]>({
-    queryKey: ["/api/memory/vnext/claims", "journal", startIso, endIso],
+    queryKey: ["/api/memory/vnext/claims", "journal", startIso, endIso, searchQuery],
     queryFn: async () => {
       const pageSize = 100;
       const collected: VnextClaim[] = [];
       let offset = 0;
 
       while (true) {
-        const params = new URLSearchParams({
-          createdAfter: startIso,
-          createdBefore: endIso,
-          limit: String(pageSize),
-          offset: String(offset),
-        });
+        const exactId = /^#?\d+$/.test(searchQuery.trim()) ? searchQuery.trim().replace(/^#/, "") : null;
+        const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
+        if (exactId) params.set("id", exactId);
+        else {
+          params.set("createdAfter", startIso);
+          params.set("createdBefore", endIso);
+        }
         const res = await fetch(`/api/memory/vnext/claims?${params.toString()}`, { credentials: "include" });
         if (!res.ok) throw new Error("Failed to load vNext memory journal");
         const page = await res.json() as VnextClaimsResponse;
@@ -1161,6 +1162,7 @@ function VnextJournalTab() {
 
   const filteredClaims = useMemo(() => {
     if (!searchQuery.trim()) return claims;
+    if (/^#?\d+$/.test(searchQuery.trim())) return claims;
     const tokens = searchQuery.toLowerCase().trim().split(/\s+/);
     return claims.filter(claim => {
       const haystack = [
@@ -1200,6 +1202,13 @@ function VnextJournalTab() {
   };
 
   const selectedClaim = selectedClaimResponse?.claim;
+  const deleteClaim = useMutation({
+    mutationFn: async (id: number) => apiRequest("DELETE", `/api/memory/vnext/claims/${id}`),
+    onSuccess: () => {
+      setSelectedClaimId(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims"] });
+    },
+  });
 
   return (
     <div className={cn("flex flex-1 min-w-0", MEMORY_SHELL_CLASS)} data-testid="log-tab">
@@ -1372,6 +1381,16 @@ function VnextJournalTab() {
                                         </div>
 
                                         <VnextLinksSection claimId={selectedClaim.id} />
+
+                                        <AlertDialog>
+                                          <AlertDialogTrigger asChild>
+                                            <Button variant="ghost" size="sm" className="text-destructive" data-testid={`button-delete-claim-${selectedClaim.id}`}><Trash2 className="mr-1 h-3.5 w-3.5" />Delete</Button>
+                                          </AlertDialogTrigger>
+                                          <AlertDialogContent>
+                                            <AlertDialogHeader><AlertDialogTitle>Delete this memory?</AlertDialogTitle><AlertDialogDescription>This permanently removes the claim and its source, entity, and claim references.</AlertDialogDescription></AlertDialogHeader>
+                                            <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction className="bg-destructive text-destructive-foreground" onClick={() => deleteClaim.mutate(selectedClaim.id)}>Delete</AlertDialogAction></AlertDialogFooter>
+                                          </AlertDialogContent>
+                                        </AlertDialog>
 
                                         {selectedClaim.metadata && Object.keys(selectedClaim.metadata).length > 0 && (
                                           <div>

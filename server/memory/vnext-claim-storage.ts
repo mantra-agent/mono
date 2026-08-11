@@ -190,6 +190,7 @@ export interface VnextEmbeddingBackfillResult {
 }
 
 export interface VnextClaimSearchFilters {
+  id?: number;
   claimType?: string;
   hasEntityLinks?: boolean;
   entityId?: string;
@@ -1809,6 +1810,9 @@ export class MemoryVnextClaimStorage {
 
   async searchClaims(filters: VnextClaimSearchFilters): Promise<MemoryVnextClaim[]> {
     const conditions = [];
+    if (typeof filters.id === "number") {
+      conditions.push(eq(memoryVnextClaims.id, filters.id));
+    }
     if (typeof filters.claimType === "string") {
       conditions.push(eq(memoryVnextClaims.claimType, filters.claimType));
     }
@@ -1845,6 +1849,15 @@ export class MemoryVnextClaimStorage {
       .orderBy(desc(memoryVnextClaims.createdAt))
       .limit(lim)
       .offset(off);
+  }
+
+  async deleteClaim(id: number): Promise<boolean> {
+    const principal = requireCurrentUserPrincipal();
+    const deleted = await db.delete(memoryVnextClaims)
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
+      .returning({ id: memoryVnextClaims.id });
+    if (deleted.length > 0) log.info(`deleteClaim: deleted claimId=${id}`);
+    return deleted.length > 0;
   }
 }
 
