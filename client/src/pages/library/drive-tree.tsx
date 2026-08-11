@@ -16,6 +16,7 @@ import { hexToRgba } from "@/lib/vault-title-color";
 import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
+import { HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
 import { createLogger } from "@/lib/logger";
 
 /**
@@ -180,7 +181,7 @@ function ResourceTitle({
   titleStyle?: CSSProperties;
   onOpen?: (event: MouseEvent) => void;
 }) {
-  const className = "min-h-11 min-w-0 flex-1 truncate text-left text-sm leading-[44px]";
+  const className = "min-w-0 flex-1 truncate text-left text-sm leading-5";
   if (onOpen) {
     return (
       <button
@@ -735,7 +736,7 @@ function FolderChildren({
   }
 
   return (
-    <ul className="flex flex-col gap-0.5">
+    <ul className="flex flex-col">
       {children.map((c) => {
         const key = c.providerFileId;
         const isOpen = !!expanded[key];
@@ -773,13 +774,13 @@ function FolderChildren({
         return (
           <li key={key}>
             <div
-              className="group flex min-h-11 items-center gap-2 rounded px-2 py-1 hover:bg-muted/60"
+              className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}
               style={{ paddingLeft: 8 + depth * 12 }}
             >
               {isFolder ? (
                 <button
                   type="button"
-                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-muted-foreground"
+                  className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground"
                   onClick={() => setExpanded((s) => ({ ...s, [key]: !s[key] }))}
                   aria-label={isOpen ? "Collapse" : "Expand"}
                 >
@@ -861,7 +862,7 @@ export function DriveResourceTree({
   }
 
   return (
-    <ul className="flex flex-col gap-0.5">
+    <ul className="flex flex-col">
       {resources.map((r) => {
         const isOpen = !!expanded[r.id];
         const isFolder = r.resourceType === "folder";
@@ -883,13 +884,13 @@ export function DriveResourceTree({
         return (
           <li key={r.id}>
             <div
-              className="group flex min-h-11 items-center gap-2 rounded px-2 py-1 hover:bg-muted/60"
+              className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}
               style={{ paddingLeft: 8 }}
             >
               {isFolder ? (
                 <button
                   type="button"
-                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-muted-foreground"
+                  className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground"
                   onClick={() => setExpanded((s) => ({ ...s, [r.id]: !s[r.id] }))}
                   aria-label={isOpen ? "Collapse" : "Expand"}
                 >
@@ -942,12 +943,10 @@ export function RecentResourceRow({
   resource,
   vaultId,
   vaultColor,
-  status,
 }: {
   resource: DriveResource;
   vaultId: string;
   vaultColor?: string | null;
-  status?: FileIndexStatus;
 }) {
   const [, setLocation] = useLocation();
   const isPdf = isPdfResource(resource);
@@ -967,7 +966,7 @@ export function RecentResourceRow({
 
   return (
     <div>
-      <div className="group flex min-h-11 items-center gap-2 rounded px-2 py-1 hover:bg-muted/60">
+      <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}>
         <span className="w-3.5 shrink-0" />
         {resourceIcon(resource)}
         <ResourceTitle
@@ -982,12 +981,7 @@ export function RecentResourceRow({
             label={providerOpenLabel(resource.provider)}
           />
         ) : null}
-        <IndexStatusLabel status={status?.status} />
-        <IndexToggle vaultId={vaultId} driveResourceId={resource.id} status={status} />
       </div>
-      {status?.reconciliationRun ? (
-        <RowProgress vaultId={vaultId} run={status.reconciliationRun} />
-      ) : null}
     </div>
   );
 }

@@ -142,14 +142,13 @@ export default function FilesPage() {
                 No files yet
               </div>
             ) : (
-              <div className="flex flex-col gap-0.5">
-                {recent.map(({ resource, vaultId, vaultColor, status }) => (
+              <div className="flex flex-col">
+                {recent.map(({ resource, vaultId, vaultColor }) => (
                   <RecentResourceRow
                     key={resource.id}
                     resource={resource}
                     vaultId={vaultId}
                     vaultColor={vaultColor}
-                    status={status}
                   />
                 ))}
               </div>
@@ -160,7 +159,11 @@ export default function FilesPage() {
                 <SectionHeader>{vault.name}</SectionHeader>
                 <DriveResourceTree
                   vaultId={vault.id}
-                  resources={resources}
+                  resources={resources.filter((resource) => {
+                    const rootId = statusByResourceId.get(resource.id)?.indexedSource
+                      ?.rootDriveResourceId;
+                    return !rootId || rootId === resource.id;
+                  })}
                   vaultColor={vault.color ?? null}
                   statusByResourceId={statusByResourceId}
                 />
