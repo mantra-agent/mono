@@ -1472,22 +1472,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (!topicRaw) return { result: "Missing 'topic' (or 'title') for spawn_child", error: true };
       const reason: string | undefined = args.reason ? String(args.reason).trim() : undefined;
       const explicitSpawnReason: string | undefined = args.spawnReason ? String(args.spawnReason).trim() : undefined;
-      const delegation = args.delegation === "engineering" ? "engineering" : "conversation";
-      const engineeringDelegation = delegation === "engineering";
-      if (engineeringDelegation) {
-        const { authorizeToolInvocation } = await import("./agent-authority");
-        const delegationAuthority = authorizeToolInvocation(
-          "git",
-          { action: "clone" },
-          args._authorityContext || {},
-        );
-        if (!delegationAuthority.allowed) {
-          return {
-            result: `Engineering child delegation denied: ${delegationAuthority.reason}`,
-            error: true,
-          };
-        }
+      const requestedDelegation = args.delegation === "engineering" ? "engineering" : "conversation";
+      const { authorizeToolInvocation } = await import("./agent-authority");
+      const delegationAuthority = authorizeToolInvocation("git", { action: "clone" }, args._authorityContext || {});
+      if (requestedDelegation === "engineering" && !delegationAuthority.allowed) {
+        return { result: `Engineering child delegation denied: ${delegationAuthority.reason}`, error: true };
       }
+      // Children inherit the spawner's server-validated authority. The optional
+      // delegation argument selects persona mode; it is not an authority token.
+      const engineeringDelegation = delegationAuthority.allowed;
+      const delegation = engineeringDelegation ? "engineering" : "conversation";
       const shortTitle = topicRaw.split(/\s+/).slice(0, 5).join(" ");
       const spawnReason = explicitSpawnReason || `spawn_child:${topicRaw.slice(0, 60)}`;
       const spawnerTool = engineeringDelegation ? "session.spawn_child.engineering" : "session.spawn_child";
@@ -1515,7 +1509,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           { spawnReason, spawnerTool, spawnerSkillRun },
           async () => {
             let personaId: number | undefined;
-            if (engineeringDelegation) {
+            if (requestedDelegation === "engineering") {
               const { personaStorage } = await import("./file-storage/persona-storage");
               const engineerPersona = await personaStorage.getByName("Engineer");
               if (!engineerPersona) {
@@ -1541,8 +1535,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const childMessages = await chatFileStorage.getMessagesBySession(childId);
           const hasAssistantResponse = childMessages.some(m => m.role === "assistant");
           const authorityNote = engineeringDelegation
-            ? "Authority: engineering delegation granted. This child can use Git writes and must create and edit its own session-scoped clone."
-            : "Authority: conversational delegation. Spawn a new child with delegation=engineering for a coding mission.";
+            ? "Authority inherited from the spawner. Independently authorized engineering tools remain subject to their own gates and the child's session-scoped clone."
+            : "Authority inherited from the spawner; engineering tools remain unavailable because the spawner could not delegate them.";
           if (!hasAssistantResponse && childMessages.length > 0) {
             await triggerChildSessionResponse(childId, "session.spawn_child.reused");
             return { result: `Reused existing child session ${childId}${childConv?.title ? ` (${childConv.title})` : ""} for spawn reason "${spawnReason}". Started execution. ${authorityNote}` };
@@ -1621,8 +1615,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
         toolExec.log(`[session.spawn_child] parent=${sessionId} child=${childId} spawnReason=${spawnReason} briefLen=${brief.length} autoStart=true delegation=${delegation}`);
         const authorityNote = engineeringDelegation
-          ? "Authority: engineering delegation granted. This child can use Git writes and must create and edit its own session-scoped clone."
-          : "Authority: conversational delegation. Spawn a new child with delegation=engineering for a coding mission.";
+          ? "Authority inherited from the spawner. Independently authorized engineering tools remain subject to their own gates and the child's session-scoped clone."
+          : "Authority inherited from the spawner; engineering tools remain unavailable because the spawner could not delegate them.";
         return {
           result: [
             `Spawned child session ${childId}${childConv?.title ? ` (${childConv.title})` : ""}.`,
