@@ -1,15 +1,10 @@
 import * as React from "react"
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 import { Check, ChevronLeft, ChevronRight, Circle } from "lucide-react"
+import { createPortal } from "react-dom"
 
 import { cn } from "@/lib/utils"
 import { useIsMobileViewport } from "@/hooks/use-mobile"
-import {
-  Drawer,
-  DrawerContent,
-  DrawerTitle,
-  DrawerTrigger,
-} from "@/components/ui/drawer"
 
 /**
  * Modality-aware DropdownMenu.
@@ -103,11 +98,13 @@ function MobileMenuLevel({
   path,
   ctx,
   back,
+  titleId,
 }: {
   contentChildren: React.ReactNode
   path: number[]
   ctx: MobileRowContext
   back: () => void
+  titleId: string
 }) {
   const { title, nodes } = resolveMobileLevel(contentChildren, path)
   const rows: React.ReactNode[] = []
@@ -244,7 +241,7 @@ function MobileMenuLevel({
   const showBack = path.length > 0
   return (
     <>
-      <DrawerTitle className="sr-only">{title ?? "Menu"}</DrawerTitle>
+      <h2 id={titleId} className="sr-only">{title ?? "Menu"}</h2>
       {showBack ? (
         <div className="border-b border-border/40 p-1">
           <button
@@ -257,7 +254,7 @@ function MobileMenuLevel({
           </button>
         </div>
       ) : null}
-      <div className="max-h-[min(60dvh,28rem)] overflow-y-auto overscroll-contain p-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1">
         {rows}
       </div>
     </>
@@ -271,6 +268,10 @@ function MobileDropdownRoot({
 }: DropdownMenuPrimitive.DropdownMenuProps) {
   const [internalOpen, setInternalOpen] = React.useState(false)
   const [path, setPath] = React.useState<number[]>([])
+  const [position, setPosition] = React.useState<React.CSSProperties | null>(null)
+  const triggerRef = React.useRef<HTMLElement | null>(null)
+  const panelRef = React.useRef<HTMLDivElement | null>(null)
+  const titleId = React.useId()
   const open = controlledOpen ?? internalOpen
 
   const setOpen = React.useCallback(
@@ -293,29 +294,102 @@ function MobileDropdownRoot({
     [setOpen],
   )
 
-  const triggerProps = (trigger?.props ?? {}) as {
-    asChild?: boolean
-    children?: React.ReactNode
-  }
+  const triggerProps = (trigger?.props ?? {}) as { children?: React.ReactNode }
   const contentChildren = (content?.props as { children?: React.ReactNode } | undefined)?.children
 
+  const placePanel = React.useCallback(() => {
+    const element = triggerRef.current
+    if (!element) return
+    const rect = element.getBoundingClientRect()
+    const viewport = window.visualViewport
+    const viewportTop = viewport?.offsetTop ?? 0
+    const viewportBottom = viewportTop + (viewport?.height ?? window.innerHeight)
+    const inset = 16
+    const gap = 8
+    const above = rect.top - viewportTop - inset
+    const below = viewportBottom - rect.bottom - inset
+    const opensAbove = above >= below
+    const availableHeight = Math.max(144, (opensAbove ? above : below) - gap)
+
+    setPosition({
+      left: inset,
+      right: inset,
+      maxHeight: availableHeight,
+      ...(opensAbove
+        ? { bottom: window.innerHeight - rect.top + gap }
+        : { top: rect.bottom + gap }),
+    })
+  }, [])
+
+  React.useLayoutEffect(() => {
+    if (!open) return
+    placePanel()
+    const viewport = window.visualViewport
+    viewport?.addEventListener("resize", placePanel)
+    viewport?.addEventListener("scroll", placePanel)
+    window.addEventListener("resize", placePanel)
+    window.addEventListener("scroll", placePanel, true)
+    return () => {
+      viewport?.removeEventListener("resize", placePanel)
+      viewport?.removeEventListener("scroll", placePanel)
+      window.removeEventListener("resize", placePanel)
+      window.removeEventListener("scroll", placePanel, true)
+    }
+  }, [open, placePanel])
+
+  React.useEffect(() => {
+    if (!open) return
+    const dismiss = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (panelRef.current?.contains(target) || triggerRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false)
+    }
+    document.addEventListener("pointerdown", dismiss)
+    document.addEventListener("keydown", escape)
+    return () => {
+      document.removeEventListener("pointerdown", dismiss)
+      document.removeEventListener("keydown", escape)
+    }
+  }, [open, setOpen])
+
+  const triggerElement = React.isValidElement(triggerProps.children)
+    ? React.cloneElement(triggerProps.children as React.ReactElement<{ onClick?: (event: React.MouseEvent<HTMLElement>) => void }>, {
+        ref: (node: HTMLElement | null) => { triggerRef.current = node },
+        "aria-expanded": open,
+        "aria-haspopup": "menu",
+        onClick: (event: React.MouseEvent<HTMLElement>) => {
+          const original = (triggerProps.children as React.ReactElement<{ onClick?: (event: React.MouseEvent<HTMLElement>) => void }>).props.onClick
+          original?.(event)
+          if (!event.defaultPrevented) setOpen(!open)
+        },
+      } as React.HTMLAttributes<HTMLElement>)
+    : null
+
   return (
-    <Drawer open={open} onOpenChange={setOpen} shouldScaleBackground={false}>
-      <DrawerTrigger asChild={triggerProps.asChild ?? true}>
-        {triggerProps.children}
-      </DrawerTrigger>
-      <DrawerContent
-        overlayClassName="bg-transparent"
-        className="!inset-x-4 !bottom-[calc(var(--bottom-bar-height,0px)+max(0.5rem,env(safe-area-inset-bottom)))] w-auto max-h-[min(70dvh,28rem)] overflow-hidden rounded-md border border-border bg-background text-foreground shadow-none [&>div:first-child]:hidden"
-      >
-        <MobileMenuLevel
-          contentChildren={contentChildren}
-          path={path}
-          ctx={ctx}
-          back={() => setPath((cur) => cur.slice(0, -1))}
-        />
-      </DrawerContent>
-    </Drawer>
+    <>
+      {triggerElement}
+      {open && position ? createPortal(
+        <div
+          ref={panelRef}
+          role="menu"
+          aria-labelledby={titleId}
+          style={position}
+          className="fixed z-50 flex flex-col overflow-hidden rounded-md border border-border bg-background text-foreground shadow-none"
+        >
+          <MobileMenuLevel
+            contentChildren={contentChildren}
+            path={path}
+            ctx={ctx}
+            back={() => setPath((cur) => cur.slice(0, -1))}
+            titleId={titleId}
+          />
+        </div>,
+        document.body,
+      ) : null}
+    </>
   )
 }
 
