@@ -1804,7 +1804,7 @@ async function resolvePersonaSnapshot(personaId: number | null | undefined): Pro
   try {
     const { personaStorage } = await import("./file-storage/persona-storage");
     const persona = await personaStorage.get(personaId);
-    return persona ? { id: persona.id, name: persona.name, icon: persona.icon } : undefined;
+    return persona ? { id: persona.id, revisionId: persona.currentRevisionId ?? undefined, name: persona.name, icon: persona.icon } : undefined;
   } catch (err) {
     log.warn(`resolvePersonaSnapshot failed personaId=${personaId}: ${err instanceof Error ? err.message : String(err)}`);
     return undefined;
