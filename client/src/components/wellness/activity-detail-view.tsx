@@ -233,9 +233,9 @@ function DetailEditableNumber({
 
 function PropRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-start gap-3 py-1.5">
-      <span className="text-xs text-muted-foreground w-24 shrink-0 pt-0.5">{label}</span>
-      <div className="flex-1 min-w-0">{children}</div>
+    <div className="flex min-w-0 flex-col items-start gap-1 py-1.5 @sm:flex-row @sm:gap-3">
+      <span className="shrink-0 pt-0.5 text-xs text-muted-foreground @sm:w-24">{label}</span>
+      <div className="min-w-0 w-full flex-1">{children}</div>
     </div>
   );
 }
@@ -355,6 +355,7 @@ export function ActivityDetailView({
             activityId={activity.id}
             category={activity.category}
             pulseWindowSize={activity.windowSize}
+            intervalDays={activity.intervalDays}
             windowStart={activity.windowStart}
             windowEnd={activity.windowEnd}
             metricInfo={{

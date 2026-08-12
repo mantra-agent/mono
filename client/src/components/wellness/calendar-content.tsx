@@ -1225,7 +1225,7 @@ export function CalendarContent() {
           </CardContent>
         </Card>
         <Dialog open={!!detailActivity} onOpenChange={(open) => { if (!open) setDetailActivity(null); }}>
-          <DialogContent className="max-w-3xl h-[82vh] p-0 overflow-hidden">
+          <DialogContent className="h-[min(82vh,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-3xl overflow-hidden p-0">
             {detailActivity && (
               <ActivityDetailView
                 activity={detailActivity}
@@ -1288,7 +1288,7 @@ export function CalendarContent() {
         </div>
 
         <Dialog open={!!detailActivity} onOpenChange={(open) => { if (!open) setDetailActivity(null); }}>
-          <DialogContent className="max-w-3xl h-[82vh] p-0 overflow-hidden">
+          <DialogContent className="h-[min(82vh,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-3xl overflow-hidden p-0">
             {detailActivity && (
               <ActivityDetailView
                 activity={detailActivity}
