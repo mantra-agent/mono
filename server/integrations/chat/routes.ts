@@ -74,7 +74,7 @@ import { agendaDefinitionStorage } from "../../agenda-storage";
 import { instantiateAgendaDefinition } from "@shared/models/agendas";
 import { createLogger } from "../../log";
 import { requireAuth } from "../../auth";
-import { requireCurrentPrincipal } from "../../principal-context";
+import { requireCurrentPrincipal, runWithPrincipal } from "../../principal-context";
 import { resolveQuestionResponse } from "../../question-response";
 import { emailDraftStorage } from "../../email-draft-storage";
 
@@ -1390,12 +1390,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
               });
               const sessionId = typeof req.body?.sessionId === "string" ? req.body.sessionId : null;
               const { registerUploadResource } = await import("../../upload-resource-service");
-              await registerUploadResource({
+              await runWithPrincipal(principal, () => registerUploadResource({
                 objectPath: uploadedObject.objectPath,
                 name: f.originalname,
                 mimeType: f.mimetype || "application/octet-stream",
                 sessionId,
-              });
+              }));
               chatLog.info("chat upload persisted and registered", {
                 objectPath: uploadedObject.objectPath,
                 sessionId,
