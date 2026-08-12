@@ -6,7 +6,8 @@ import { getEnvironmentBuildLifecycleConfig } from "../platforms/build-lifecycle
 import { spawn, execFileSync, execSync } from "child_process";
 import * as pty from "@lydell/node-pty";
 import path from "path";
-import { getAuthenticatedGitUrl } from "../github-auth";
+import { getGitCredentialEnv } from "../github-auth";
+import { resolveGitSource } from "../git-source-resolver";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
 import { and, eq } from "drizzle-orm";
 import { environmentHostingBindings, platformProductEnvironments, platformProducts, platforms } from "@shared/models/platforms";
@@ -761,24 +762,37 @@ function ensureMobileDependencyLink(mobileDir: string): void {
 }
 
 async function prepareMainBuildWorkspace(expectedSourceRef?: string): Promise<{ mobileDir: string; sourceRef: string }> {
-  const repoUrl = process.env.GITHUB_REPO_URL;
-  if (!repoUrl) {
-    throw new Error("GITHUB_REPO_URL is required to prepare a Mobile build workspace from main.");
+  const mobileEnvironmentId = await resolveDefaultMobileEnvironmentId();
+  if (!mobileEnvironmentId) {
+    throw new Error(
+      `Mobile Platform Environment ${DEFAULT_MOBILE_PLATFORM_NAME}/${DEFAULT_MOBILE_PRODUCT_NAME}/${DEFAULT_MOBILE_ENVIRONMENT_NAME} was not found.`,
+    );
   }
-  const authenticatedUrl = await getAuthenticatedGitUrl(repoUrl);
+  const source = await resolveGitSource({ platformEnvironmentId: mobileEnvironmentId });
+  if (!source) {
+    throw new Error(`Mobile Platform Environment #${mobileEnvironmentId} has no active GitHub source binding with an available provider credential.`);
+  }
   const workspace = createMainBuildWorkspacePath();
   mkdirSync(MAIN_BUILD_WORKSPACE_ROOT, { recursive: true });
-  log.log("Preparing Mobile build workspace from GitHub main", { repoUrl, workspace });
-  execSync(`git clone --depth 1 --branch main ${JSON.stringify(authenticatedUrl)} ${JSON.stringify(workspace)}`, {
+  log.log("Preparing Mobile build workspace from Platform source binding", {
+    mobileEnvironmentId: source.environmentId,
+    sourceBindingId: source.sourceBindingId,
+    connectionId: source.connectionId,
+    owner: source.owner,
+    repo: source.repo,
+    branch: source.branch,
+    workspace,
+  });
+  execFileSync("git", ["clone", "--depth", "1", "--branch", source.branch, source.repoUrl, workspace], {
     cwd: process.cwd(),
     stdio: "ignore",
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    env: { ...process.env, ...getGitCredentialEnv(source.token) },
   });
 
   const sourceRef = execSync("git rev-parse HEAD", { cwd: workspace, encoding: "utf-8" }).trim().toLowerCase();
   if (expectedSourceRef && sourceRef !== expectedSourceRef.toLowerCase()) {
     rmSync(workspace, { recursive: true, force: true });
-    throw new Error(`GitHub main moved before Mobile build launch: expected ${expectedSourceRef}, resolved ${sourceRef}.`);
+    throw new Error(`Mobile source branch ${source.branch} moved before build launch: expected ${expectedSourceRef}, resolved ${sourceRef}.`);
   }
 
   const mobileDir = path.join(workspace, "mobile");
