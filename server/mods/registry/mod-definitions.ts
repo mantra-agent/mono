@@ -135,7 +135,7 @@ const build: ModDefinition = {
 
 const business: ModDefinition = {
   key: "business",
-  version: "1.2.0",
+  version: "1.3.0",
   name: "Business",
   description: "Business operating surfaces: business model, Business Plan, budgets, roles, KPIs, and metrics.",
   outcome: {
@@ -149,7 +149,10 @@ const business: ModDefinition = {
   recommendsMods: ["planning"],
   contributions: {
     serverRouteGroups: [serverRouteGroupRef("business.routes.api", "business.api")],
-    tools: [toolRef("business.tool.jobs", "jobs")],
+    tools: [
+      toolRef("business.tool.business", "business"),
+      toolRef("business.tool.jobs", "jobs"),
+    ],
     clientRoutes: [
       clientRoute("business.route.definition", "/business/identity", "business-identity", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.business-model", "/business/model", "business-model", { requiredPermissions: ["system:read"] }),
