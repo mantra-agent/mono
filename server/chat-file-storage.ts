@@ -1528,7 +1528,7 @@ export interface IChatFileStorage {
   updateSessionTopics(id: string, topics: string[]): Promise<void>;
   setSessionAgenda(id: string, items: SessionAgendaItemInput[]): Promise<FileSession | null>;
   clearSessionAgenda(id: string): Promise<FileSession | null>;
-  updateSessionAgendaItem(id: string, itemId: string, patch: SessionAgendaItemPatch): Promise<FileSession | null>;
+  updateSessionAgendaItem(id: string, itemId: string | null | undefined, patch: SessionAgendaItemPatch): Promise<FileSession | null>;
   updateSessionPersona(id: string, personaId: number): Promise<void>;
   setSessionPersonaIfUnset(id: string, personaId: number): Promise<{ personaId: number; applied: boolean } | null>;
   setSessionPersonaPin(id: string, personaId: number | null): Promise<boolean>;
@@ -2385,15 +2385,27 @@ export const chatFileStorage: IChatFileStorage = {
     });
   },
 
-  async updateSessionAgendaItem(id: string, itemId: string, patch: SessionAgendaItemPatch) {
+  async updateSessionAgendaItem(id: string, itemId: string | null | undefined, patch: SessionAgendaItemPatch) {
     return withConvLock(id, async () => {
       const data = await readConv(id);
       if (!data?.agenda) return null;
-      const index = data.agenda.items.findIndex((item) => item.id === itemId);
+      const requestedId = typeof itemId === "string" ? itemId.trim() : "";
+      let resolvedId = requestedId;
+      if (!resolvedId) {
+        if (patch.status !== "complete") {
+          throw new Error("Agenda item ID is required");
+        }
+        const current = data.agenda.items.find((item) => item.status === "open");
+        if (!current) {
+          throw new Error("No open agenda item to complete");
+        }
+        resolvedId = current.id;
+      }
+      const index = data.agenda.items.findIndex((item) => item.id === resolvedId);
       if (index < 0) {
         const validIds = data.agenda.items.map((item) => item.id);
         throw new Error(
-          `Agenda item "${itemId}" not found. Valid agenda item IDs: ${validIds.length > 0 ? validIds.join(", ") : "none"}`,
+          `Agenda item "${resolvedId}" not found. Valid agenda item IDs: ${validIds.length > 0 ? validIds.join(", ") : "none"}`,
         );
       }
       const current = data.agenda.items[index];
