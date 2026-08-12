@@ -26,12 +26,12 @@ export function firstOpenAgendaItem(
 export const RECAP_FTUE_AGENDA_ITEMS = [
   {
     id: "say-hello",
-    title: "Say hello",
+    title: "Say a warm hello",
     description: "Greet the user warmly and establish the conversation. Complete this item immediately through session.complete_agenda_item once you have exchanged an initial hello with the user; do not begin the introduction or any later agenda item before this completion is persisted.",
   },
   {
     id: "introduce-mantra",
-    title: "Introduce Mantra",
+    title: "Introduce what Mantra does",
     description: "Briefly explain that Mantra helps the user hold context, pursue meaningful goals, and carry commitments into action. Ask what the user already knows about Mantra, offer to explain more, and invite their questions. Answer those initial questions before proceeding. Complete this item immediately through session.complete_agenda_item only after that introduction and invitation have happened and the user's initial questions have been answered or they confirm they have none.",
   },
   {
@@ -88,10 +88,17 @@ export function composeFtueFirstMessage(params: {
   recapAware: boolean;
   userFirstName: string;
   agentName: string;
+  hasAgenda: boolean;
   openItem: SessionAgendaItem | undefined;
 }): string {
-  const { recapAware, userFirstName, agentName, openItem } = params;
+  const { recapAware, userFirstName, agentName, hasAgenda, openItem } = params;
   if (!recapAware) {
+    return `Hello ${userFirstName}. I'm ${agentName}. It's good to meet you.`;
+  }
+  // A recap FTUE whose agenda failed to attach must never claim completion.
+  // Missing agenda and agenda-all-done are different states; only the latter is
+  // "complete". Open the conversation warmly instead of asserting we are done.
+  if (!hasAgenda) {
     return `Hello ${userFirstName}. I'm ${agentName}. It's good to meet you.`;
   }
   if (!openItem) {
@@ -99,6 +106,9 @@ export function composeFtueFirstMessage(params: {
   }
   if (openItem.id === "review-meeting-notes") {
     return `Hello ${userFirstName}. Your meeting notes are ready. Let's start by walking through them together.`;
+  }
+  if (openItem.id === "say-hello") {
+    return `Hello ${userFirstName}. I'm ${agentName}. It's good to meet you.`;
   }
   return `Hello ${userFirstName}. Let's pick up with ${openItem.title.toLowerCase()}.`;
 }

@@ -878,14 +878,17 @@ export async function registerVoiceSessionRoutes(app: Express) {
             const { resolveCurrentProfileIdentity } = await import("../profile-identity");
             const { userFirstName } = await resolveCurrentProfileIdentity();
             const openItem = firstOpenAgendaItem(sessionMeta.agenda);
+            const hasAgenda = Boolean(sessionMeta.agenda?.items?.length);
             firstMessage = composeFtueFirstMessage({
               recapAware: isRecapFtueSession(sessionMeta),
               userFirstName,
               agentName: FTUE_AGENT_NAME,
+              hasAgenda,
               openItem,
             });
             voiceLog.info("FTUE first message composed", {
               recapAware: isRecapFtueSession(sessionMeta),
+              hasAgenda,
               openAgendaItemId: openItem?.id,
             });
           }
