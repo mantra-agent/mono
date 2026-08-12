@@ -1246,7 +1246,7 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
       // ── Route by file size ────────────────────────────────────────
       // Tables larger than STREAM_THRESHOLD_BYTES are stream-parsed to
       // keep memory bounded. Small tables and tables with special
-      // pre-processing (library_pages orphan heal, parentBackfill) use
+      // pre-processing (Library/Runtime reference reconciliation) use
       // the buffered path.
       const fileStat = await stat(filePath);
       const fileSizeMB = (fileStat.size / (1024 * 1024)).toFixed(1);
@@ -1357,9 +1357,9 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
       //   • library_pages.parent_id — self-FK, NULLABLE → null orphans
       //   • library_page_views.page_id — FK → library_pages, NOT NULL → drop
       //   • messages.conversation_id — FK → sessions, NOT NULL → drop
-      // These degrade gracefully: orphan parent_ids become top-level pages,
-      // orphan view rows are analytics records, and orphan messages cannot
-      // render without their parent session anyway.
+      // Library hierarchy is recovery authority and fails closed on an
+      // unexported parent. Orphan view rows are analytics records, while
+      // orphan legacy messages cannot render without their parent session.
       let workingRows = hydratedRows;
       let orphanNulled = 0;
       let orphanDropped = 0;
@@ -1380,8 +1380,7 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
         const pageIds = new Set(hydratedRows.map((r: any) => r.id));
         for (const r of hydratedRows) {
           if (r.parentId && !pageIds.has(r.parentId)) {
-            r.parentId = null;
-            orphanNulled++;
+            throw new Error(`library_pages restore rejected parent outside restored set: ${r.id}`);
           }
           if (r.parentId) {
             parentBackfill.push({ id: r.id, parentId: r.parentId });
@@ -1464,12 +1463,19 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
             const tuples = chunk.map(
               (p) => sql`(${p.id}::text, ${p.parentId}::text)`,
             );
-            await sp.execute(sql`
+            const reconciled = await sp.execute(sql`
               UPDATE library_pages AS lp
               SET parent_id = v.parent_id
               FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, parent_id)
               WHERE lp.id = v.id
+              RETURNING lp.id
             `);
+            const reconciledCount = Array.isArray(reconciled)
+              ? reconciled.length
+              : Number((reconciled as any).rowCount ?? (reconciled as any).rows?.length ?? 0);
+            if (reconciledCount !== chunk.length) {
+              throw new Error(`library_pages parent reconciliation mismatch: expected ${chunk.length}, updated ${reconciledCount}`);
+            }
           }
           log.debug(`${key}: backfilled ${parentBackfill.length} parent_id refs in second pass`);
         }
