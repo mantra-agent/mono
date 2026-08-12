@@ -201,12 +201,14 @@ function provenanceFromSessionType(
   return { triggerType: "user", triggerName: title };
 }
 
-const SESSION_AGENDA_MAX_ITEMS = 20;
-const SESSION_AGENDA_TITLE_MAX_CHARS = 80;
-const SESSION_AGENDA_DESCRIPTION_MAX_CHARS = 600;
-const SESSION_AGENDA_RESOLUTION_MAX_CHARS = 1_200;
-const SESSION_AGENDA_TITLE_MIN_WORDS = 3;
-const SESSION_AGENDA_TITLE_MAX_WORDS = 5;
+import {
+  SESSION_AGENDA_MAX_ITEMS,
+  SESSION_AGENDA_DESCRIPTION_MAX_CHARS,
+  SESSION_AGENDA_RESOLUTION_MAX_CHARS,
+  boundedAgendaText,
+  normalizeAgendaTitle,
+} from "./agenda-item-contract";
+
 const SESSION_AGENDA_STATUSES = new Set<SessionAgendaItemStatus>([
   "open",
   "complete",
@@ -227,23 +229,6 @@ export interface SessionAgendaItemPatch {
   description?: string;
   status?: SessionAgendaItemStatus;
   resolution?: string;
-}
-
-function boundedAgendaText(value: unknown, label: string, maxChars: number): string {
-  if (typeof value !== "string") throw new Error(`${label} must be a string`);
-  const normalized = value.trim().replace(/\s+/g, " ");
-  if (!normalized) throw new Error(`${label} is required`);
-  if (normalized.length > maxChars) throw new Error(`${label} must be ${maxChars} characters or fewer`);
-  return normalized;
-}
-
-function normalizeAgendaTitle(value: unknown): string {
-  const title = boundedAgendaText(value, "Agenda item title", SESSION_AGENDA_TITLE_MAX_CHARS);
-  const wordCount = title.split(/\s+/).length;
-  if (wordCount < SESSION_AGENDA_TITLE_MIN_WORDS || wordCount > SESSION_AGENDA_TITLE_MAX_WORDS) {
-    throw new Error("Agenda item titles must be 3–5 words");
-  }
-  return title;
 }
 
 function normalizeAgendaStatus(value: unknown): SessionAgendaItemStatus {

@@ -3,6 +3,7 @@ import type {
   SessionAgenda,
   SessionAgendaItem,
 } from "@shared/models/chat";
+import { assertAgendaItemContract, SESSION_AGENDA_MAX_ITEMS } from "./agenda-item-contract";
 
 export const RECAP_FTUE_TRIGGER_NAME = "recap_ftue";
 export const FTUE_FIRST_MESSAGE_ARTIFACT_KEY = "ftue:first-message:v1";
@@ -52,7 +53,7 @@ export const RECAP_FTUE_AGENDA_ITEMS = [
   {
     id: "plan-goal-as-project",
     title: "Plan goal as project",
-    description: "First propose 3–5 measurable, dependency-ordered milestones for the new goal, each with a deliberate due date, and ask the user to confirm or revise that milestone plan. Do not create a project, milestone, or task until the user explicitly confirms the proposal. After confirmation, create the canonical goal-linked project, confirmed milestones, and concrete tasks through work and tasks while the user remains on Home/Simple; every task needs a real deadline. Complete this item immediately through session.complete_agenda_item only after confirmation and successful creation are both true and the dated structure is visible on Home.",
+    description: "Propose 3–5 measurable, dependency-ordered milestones with due dates, and ask the user to confirm or revise them. Do not create a project, milestone, or task before they explicitly confirm. After confirmation, create the goal-linked project, confirmed milestones, and dated tasks through work and tasks while the user stays on Home/Simple. Complete this item only once confirmation and successful creation are both true and the dated structure is visible on Home.",
   },
   {
     id: "show-the-memory-graph",
@@ -75,6 +76,25 @@ export function createRecapFtueAgenda(): SessionAgenda {
   return {
     items: RECAP_FTUE_AGENDA_ITEMS.map((item) => ({ ...item, status: "open" as const })),
   };
+}
+
+/**
+ * Assert the code-owned FTUE agenda fixture satisfies the same Session agenda
+ * runtime contract that instantiation enforces (item count, 3–5 word titles,
+ * ≤600 char descriptions). Runtime attach fails gracefully by dropping the
+ * agenda, so a non-compliant fixture would otherwise only surface as a broken
+ * onboarding on the first real signup. The production build runs this so a
+ * contract-violating fixture fails at build time instead of on a live user.
+ */
+export function validateFtueAgendaFixture(): void {
+  if (RECAP_FTUE_AGENDA_ITEMS.length > SESSION_AGENDA_MAX_ITEMS) {
+    throw new Error(
+      `FTUE agenda fixture has ${RECAP_FTUE_AGENDA_ITEMS.length} items; the Session agenda contract allows at most ${SESSION_AGENDA_MAX_ITEMS}.`,
+    );
+  }
+  for (const item of RECAP_FTUE_AGENDA_ITEMS) {
+    assertAgendaItemContract(item);
+  }
 }
 
 /**
