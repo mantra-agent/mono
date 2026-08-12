@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, jsonb, pgTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
+import { index, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import type { SessionAgenda } from "./chat";
 
 export interface AgendaDefinitionItem {
@@ -16,8 +16,8 @@ export interface AgendaDefinitionItemInput {
 
 export const agendaDefinitions = pgTable("agenda_definitions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: varchar("name", { length: 80 }).notNull(),
-  normalizedName: varchar("normalized_name", { length: 80 }).notNull(),
+  name: text("name").notNull(),
+  normalizedName: text("normalized_name").notNull(),
   description: text("description"),
   items: jsonb("items").$type<AgendaDefinitionItem[]>().notNull().default(sql`'[]'::jsonb`),
   reservedKey: varchar("reserved_key", { length: 64 }),
