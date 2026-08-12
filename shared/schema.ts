@@ -343,6 +343,8 @@ export const insertIssueSchema = z.object({
   platformEnvironmentId: z.number().int().positive().nullable().optional(),
   /** Provider deployment/build ID. Optional on input — createIssue fills from runtime identity when omitted. */
   buildId: z.string().min(1).nullable().optional(),
+  /** Canonical Product owning the intent behind this Issue. */
+  productId: z.number().int().positive().optional(),
 });
 
 export interface Issue {
@@ -365,6 +367,8 @@ export interface Issue {
   platformEnvironmentId: number | null;
   /** Provider deployment/build ID the issue was filed against. Null only on legacy pre-gate issues. */
   buildId: string | null;
+  /** Canonical Product owning this Issue. */
+  productId: number;
   createdAt: Date;
 }
 export type InsertIssue = z.infer<typeof insertIssueSchema>;

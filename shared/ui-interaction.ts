@@ -40,6 +40,8 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.memoryGraph.open": { href: "/memory?tab=graph" },
   "navigation.memoryJournal.open": { href: "/memory?tab=maintenance" },
   "navigation.platforms.open": { href: "/platforms", permission: "build:read" },
+  "navigation.products.open": { href: "/products", permission: "build:read" },
+  "navigation.backlog.open": { href: "/backlog", permission: "build:read" },
   "navigation.design.open": { href: "/design", permission: "build:read" },
   "navigation.database.open": { href: "/database", permission: "build:read" },
   "navigation.issues.open": { href: "/build?tab=issues", permission: "build:read" },

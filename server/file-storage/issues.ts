@@ -157,6 +157,7 @@ function docToIssue(doc: { content: string; metadata: Record<string, unknown> })
     dependencies: (meta.dependencies as number[]) || null,
     platformEnvironmentId: parseOptionalPositiveInt(meta.platformEnvironmentId),
     buildId,
+    productId: parseOptionalPositiveInt(meta.productId) ?? 0,
     createdAt: meta.createdAt ? new Date(String(meta.createdAt)) : new Date(),
   };
 }
@@ -174,6 +175,7 @@ function issueMetadata(issue: Issue): Record<string, unknown> {
     dependencies: issue.dependencies,
     platformEnvironmentId: issue.platformEnvironmentId,
     buildId: issue.buildId,
+    productId: issue.productId,
     createdAt: issue.createdAt instanceof Date ? issue.createdAt.toISOString() : String(issue.createdAt),
   };
 }
@@ -436,6 +438,16 @@ export class FileIssueStorage {
       );
     }
 
+    let productId = parseOptionalPositiveInt(issue.productId);
+    if (productId == null) {
+      const { products } = await import("@shared/models/platforms");
+      const { combineWithVisibleScope } = await import("../scoped-storage");
+      const principal = requireCurrentPrincipal();
+      const [web] = await db.select({ id: products.id }).from(products).where(combineWithVisibleScope(principal, { scope: products.scope, ownerUserId: products.ownerUserId, accountId: products.accountId }, sql`lower(${products.name}) = 'web'`)).limit(1);
+      productId = web?.id ?? null;
+    }
+    if (productId == null) throw new IssueCreateValidationError("Issue productId is required and no canonical Web Product is available");
+
     const id = Date.now() + Math.floor(Math.random() * 1000);
     const now = new Date();
     const full: Issue = {
@@ -454,6 +466,7 @@ export class FileIssueStorage {
       dependencies: issue.dependencies || null,
       platformEnvironmentId,
       buildId,
+      productId,
       createdAt: now,
     };
 

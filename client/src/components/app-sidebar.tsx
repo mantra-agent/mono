@@ -305,9 +305,11 @@ const navSections: NavSection[] = [
     defaultOpen: false,
     items: [
       navItem("Platforms", "navigation.platforms.open", Boxes),
+      navItem("Products", "navigation.products.open", Boxes),
+      navItem("Backlog", "navigation.backlog.open", ClipboardList),
       navItem("Design", "navigation.design.open", Palette),
-      navItem("Database", "navigation.database.open", DatabaseZap),
       navItem("Issues", "navigation.issues.open", Hammer),
+      navItem("Database", "navigation.database.open", DatabaseZap),
     ],
   },
   {

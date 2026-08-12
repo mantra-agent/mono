@@ -20,6 +20,7 @@ const createIssueSchema = z.object({
   logs: z.string().max(50000).optional(),
   platformEnvironmentId: z.number().int().positive().nullable().optional(),
   buildId: z.string().min(1).max(200).nullable().optional(),
+  productId: z.number().int().positive().optional(),
 });
 
 function generateIssueTitleSync(description?: string, reproSteps?: string): string {
@@ -80,6 +81,7 @@ export function registerIssueRoutes(app: Express) {
         logs: data.logs || null,
         platformEnvironmentId: data.platformEnvironmentId ?? null,
         buildId: data.buildId ?? null,
+        productId: data.productId,
       });
 
       res.json(issue);

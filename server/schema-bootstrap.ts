@@ -1592,6 +1592,25 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_platform_products_platform ON platform_products(platform_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_platform_products_updated ON platform_products(updated_at)`);
 
+    await pool.query(`CREATE TABLE IF NOT EXISTS products (id SERIAL PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', scope TEXT NOT NULL DEFAULT 'user', owner_user_id TEXT, account_id TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS products_account_name_unique ON products(account_id, lower(name))`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_products_scope_owner ON products(scope, owner_user_id, account_id)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS product_backlogs (id SERIAL PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS product_backlogs_product_unique ON product_backlogs(product_id)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS product_platform_associations (id SERIAL PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT, platform_id INTEGER NOT NULL REFERENCES platforms(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS product_platform_associations_unique ON product_platform_associations(product_id, platform_id)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS feature_requests (id SERIAL PRIMARY KEY, backlog_id INTEGER NOT NULL REFERENCES product_backlogs(id) ON DELETE CASCADE, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'backlog', created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_feature_requests_backlog_status ON feature_requests(backlog_id, status)`);
+
+    // Replay-safe migration: deduplicate legacy runtime product names per account.
+    await pool.query(`INSERT INTO products (name, description, status, scope, owner_user_id, account_id)
+      SELECT DISTINCT ON (p.account_id, lower(pp.name)) pp.name, pp.description, pp.status, p.scope, p.owner_user_id, p.account_id
+      FROM platform_products pp JOIN platforms p ON p.id = pp.platform_id
+      WHERE p.account_id IS NOT NULL ORDER BY p.account_id, lower(pp.name), pp.id ON CONFLICT DO NOTHING`);
+    await pool.query(`INSERT INTO product_backlogs (product_id) SELECT id FROM products ON CONFLICT DO NOTHING`);
+    await pool.query(`INSERT INTO product_platform_associations (product_id, platform_id)
+      SELECT pr.id, pp.platform_id FROM platform_products pp JOIN platforms p ON p.id = pp.platform_id JOIN products pr ON pr.account_id = p.account_id AND lower(pr.name) = lower(pp.name) ON CONFLICT DO NOTHING`);
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS platform_product_environments (
         id SERIAL PRIMARY KEY,

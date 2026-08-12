@@ -31,6 +31,8 @@ export const REGISTERED_SURFACE_KEYS = [
   "create",
   "work",
   "platforms",
+  "products",
+  "backlog",
   "platform-environment-detail",
   "memory",
   "tags",
@@ -225,6 +227,7 @@ export type RegisteredTimerTemplateKey = (typeof REGISTERED_TIMER_TEMPLATE_KEYS)
 // the first group is added.
 export const REGISTERED_ROUTE_GROUP_KEYS = [
   "build.platforms",
+  "build.products",
   "build.issues",
   "build.db-sync",
   "build.railway",
