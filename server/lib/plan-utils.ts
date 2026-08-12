@@ -376,10 +376,13 @@ ${priorSection}
 ${workspaceSection}
 ${planContextSection ? `\n${planContextSection}\n` : ""}${retrySection ? `\n${retrySection}\n` : ""}
 ### Important
-- The parent plan executor owns this step's running, completed, failed, skipped, and retry state. Do not call plan(action: "update_step") to mark this step complete or failed. When the work is complete, you must call session(action: "end") with a concise completion summary; prose, tool activity, and ordinary session stopping are not completion evidence.
-- Use plan(action: "update_step") for this step only when reporting blocked or needs_review so execution must stop.
+- The parent plan executor owns this step's running, completed, failed, skipped, and retry state. Do not call plan(action: "update_step") to mark this step complete or failed. When the work is complete, call session(action: "end") with a concise completion summary; prose, tool activity, and ordinary session stopping are not completion evidence.
+- Treat the step instructions as the full in-scope mission. If you find missing code, defects, build failures, incomplete requirements, or an unsafe first pass that you can repair with the available tools, **keep working**. Those are unfinished work, not blockers.
+- "blocked" is reserved for an external, irreducible dependency that prevents further progress inside this mission: for example, missing human approval or product input, unavailable credentials/provider access, an authority gate the current session cannot satisfy, or a dependency on another session/provider. Before reporting "blocked", verify that the dependency is genuinely outside the stated scope and explain exactly what is unavailable and why the child cannot resolve it.
+- Use "needs_review" only when the work has reached a deliberate human decision or acceptance gate. Do not use it as a synonym for incomplete, uncertain, or not-yet-polished work.
+- Use plan(action: "update_step") for this step only when reporting a qualifying "blocked" or "needs_review" condition so execution must stop. A self-discovered implementation gap is not qualifying.
 - If you discover the plan needs additional steps, call plan(action: "add_steps") with the planId.
-- If you cannot complete this step, report blocked or needs_review and explain what is needed clearly so the plan can recover.`.trim();
+- When the mission is complete and its durable acceptance criteria are met, call session(action: "end") with the completion summary.`.trim();
 }
 
 /**

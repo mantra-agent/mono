@@ -397,6 +397,7 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
   const maxRetries = MAX_STEP_RETRIES;
   let attemptCount = step.totalAttempts ?? 0;
   let lastDuration = 0;
+  let priorAttemptOutput: string | undefined;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     // Check abort signal before each attempt (not just between steps)
@@ -426,7 +427,7 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
       const brief = buildStepBrief(
         planTitle, { id: step.id, title: step.title, status: "running" },
         stepIndex, totalSteps, stepInstructions, priorOutcomes, plan.workspaceDir ?? undefined,
-        undefined,
+        attempt > 1 ? { attempt, priorOutput: priorAttemptOutput } : undefined,
         { planId, stepId: step.id, attemptId, planPageRef },
       );
 
@@ -585,6 +586,7 @@ planId,
           log.warn(`[${planId}] Step ${stepIndex + 1} idle_timeout: ${errorMsg}`);
 
           if (attempt < maxRetries) {
+            priorAttemptOutput = errorMsg;
             log.warn(`[${planId}] Step ${stepIndex + 1} retrying after idle_timeout (attempt ${attempt}/${maxRetries})`);
             // Reset step to pending for retry, but first close the abandoned child
             // session so the retry attempt cannot leave an active duplicate.
@@ -647,6 +649,7 @@ planId,
           }
 
           if (attempt < maxRetries) {
+            priorAttemptOutput = result.message;
             log.warn(`[${planId}] Step ${stepIndex + 1} retrying after ${result.reason} (attempt ${attempt}/${maxRetries})`);
             const childClosed = await closeAbandonedChildSessionBlock(originSessionId, childSessionId, result.message, lastDuration);
             if (!childClosed) {
@@ -698,6 +701,7 @@ planId,
       });
 
       if (attempt < maxRetries) {
+        priorAttemptOutput = errorMsg;
         log.warn(`[${planId}] Step ${stepIndex + 1} retrying after crash (attempt ${attempt}/${maxRetries})`);
         // Best-effort: try to reset the step for retry
         try {
