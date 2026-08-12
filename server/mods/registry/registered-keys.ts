@@ -142,6 +142,7 @@ export const REGISTERED_CONNECTOR_KEYS = [
   "meta",
   "oura",
   "recall",
+  "slack",
 ] as const;
 export type RegisteredConnectorKey = (typeof REGISTERED_CONNECTOR_KEYS)[number];
 
@@ -236,6 +237,7 @@ export const REGISTERED_ROUTE_GROUP_KEYS = [
   "wellness.oura",
   "network.companies",
   "planning.scenarios",
+  "slack.api",
 ] as const;
 export type RegisteredRouteGroupKey = (typeof REGISTERED_ROUTE_GROUP_KEYS)[number];
 

@@ -75,6 +75,7 @@ export async function convergeBootSchema(): Promise<void> {
         const { ensurePermissionSchema } = await import("./permissions");
         const { ensureMeetingAudioRetentionSchema } = await import("./meeting/audio-retention-schema");
         const { ensurePhoneSchema } = await import("./phone/schema");
+        const { ensureSlackSchema } = await import("./slack/schema");
         await migrateOpportunitySchema();
         await ensureWorkVaultParentSchema(pool);
         await ensureMilestonesSchema(pool);
@@ -86,6 +87,7 @@ export async function convergeBootSchema(): Promise<void> {
         await ensurePermissionSchema();
         await ensureMeetingAudioRetentionSchema();
         await ensurePhoneSchema(pool);
+        await ensureSlackSchema(pool);
         await ensureWorkVaultSchema(pool);
       },
     },

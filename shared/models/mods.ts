@@ -26,6 +26,7 @@ export const MOD_KEYS = [
   "wellness",
   "network",
   "finance",
+  "slack",
 ] as const;
 export type ModKey = (typeof MOD_KEYS)[number];
 

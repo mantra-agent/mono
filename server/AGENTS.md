@@ -4,6 +4,12 @@
 
 `server/index.ts` owns the global browser Content Security Policy. `worker-src` is the modern worker boundary; `child-src` must carry the same `'self' blob:` sources because older WebKit applies that compatibility directive to AudioWorklet modules. Do not widen either directive independently or add remote worklet origins; ElevenLabs' generated modules remain limited to same-origin/blob execution.
 
+## Slack pilot boundary
+
+The installable Slack Mod owns the TIVE-only Socket Mode adapter. `server/slack/storage.ts` is the sole installation, exact User mapping, external Session binding, durable event admission/claim, and delivery-receipt boundary; `server/slack/worker.ts` owns environment-bound socket and worker lifecycle. Only ordinary human `message.im` and exact allowlisted `app_mention` events may enter. Ack follows durable event insert/duplicate resolution, every accepted turn uses `clientTurnId=slack:{event_id}`, and provider delivery coordinates always come from the admitted durable event. Every claim and outbound call independently requires active Slack Mod composition plus an enabled installation bound to the current Platform Environment.
+
+Slack IDs never grant Mantra authority. Each claim revalidates one admin-created mapping, live Account membership, and live Vault, then runs under one real User Principal narrowed to that Vault. Slack inference uses canonical Session history only, an explicit empty tool set, and fixed bounded model/output budgets; it may not load personal Context, Memory, Slack history/files, MCP, user tokens, or actions. Credentials remain an encrypted `provider_connections` JSON bundle and are never returned or logged. Disable preserves mappings, bindings, receipts, and Sessions; reinstall/re-enable is replay-safe.
+
 ## Domain provider transport boundary
 
 `server/integrations/provider-http.ts` owns the shared resource ceiling for fixed-origin domain provider adapters: it composes caller cancellation with a real request deadline and caps untrusted error-response bytes before adapters inspect or retain them. Provider adapters still own credentials, endpoint allowlists, schemas, status semantics, idempotency, retries, and degraded outcomes; the transport helper never retries mutations or turns ambiguous timeout into success. New direct provider `fetch` calls must name why this boundary cannot express their transport contract.

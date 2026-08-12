@@ -538,6 +538,9 @@ app.use((req, res, next) => {
       } catch {}
 
       startPostReadySchemaConvergence();
+      import("./slack/worker")
+        .then(({ startSlackWorker }) => startSlackWorker())
+        .catch((error) => serverLog.error("Slack worker unavailable", error instanceof Error ? error : new Error(String(error))));
 
       import("./memory/session-search-projection")
         .then(({ startSessionSearchProjectionBackfill }) => {
@@ -1000,6 +1003,8 @@ async function shutdownApplication(input: RuntimeTerminationInput): Promise<void
     })}`);
 
     timerScheduler.stop();
+    const { stopSlackWorker } = await import("./slack/worker");
+    await stopSlackWorker();
     const { stopHoursUsedRollups } = await import("./hours-used");
     stopHoursUsedRollups();
     const { stopUserMemoryRollups } = await import("./user-memory-metric");

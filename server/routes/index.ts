@@ -60,6 +60,7 @@ import { registerProductCompositionRoutes } from "./product-composition";
 import { registerModsRoutes } from "./mods";
 import mediaRoutes from "../media/media-routes";
 import renderRoutes from "../media/render-routes";
+import { registerSlackRoutes } from "../slack/routes";
 
 export async function registerDomainRoutes(
   app: Express,
@@ -129,6 +130,7 @@ export async function registerDomainRoutes(
   registerCommunicationRoutes(app);
   registerProductCompositionRoutes(app);
   registerModsRoutes(app);
+  registerSlackRoutes(app);
   registerMobileTelemetryRoutes(app);
   registerMobileDATDebugRoutes(app);
   registerVaultRoutes(app);
