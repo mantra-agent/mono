@@ -540,12 +540,15 @@ class BoxAdapter implements FilesProviderAdapter {
     opts: { maxBytes?: number | null; mimeType?: string | null },
   ): Promise<AdapterBytes> {
     const response = await this.request(ctx, `/files/${encodeURIComponent(providerFileId)}/content`);
-    const buffer = Buffer.from(await response.arrayBuffer());
+    const sourceBuffer = Buffer.from(await response.arrayBuffer());
     const maxBytes = opts.maxBytes ?? null;
+    const buffer = maxBytes === null ? sourceBuffer : sourceBuffer.subarray(0, maxBytes);
     return {
-      bytes: maxBytes === null ? buffer : buffer.subarray(0, maxBytes),
-      truncated: maxBytes !== null && buffer.length > maxBytes,
-      mimeType: opts.mimeType || response.headers.get("content-type"),
+      buffer,
+      contentType: response.headers.get("content-type") || opts.mimeType || "application/octet-stream",
+      byteLength: buffer.length,
+      truncated: maxBytes !== null && sourceBuffer.length > maxBytes,
+      sourceMimeType: opts.mimeType || null,
     };
   }
 
