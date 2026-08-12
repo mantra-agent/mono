@@ -11,6 +11,7 @@ import { getEnvironmentBuildLifecycleConfig } from "../../platforms/build-lifecy
 import { environmentSourceBindings } from "@shared/models/platforms";
 import { db } from "../../db";
 import { eq } from "drizzle-orm";
+import { resolveGitSource } from "../../git-source-resolver";
 import {
   compareRefs,
   findOpenPR,
@@ -644,14 +645,12 @@ export async function checkPrereqs(
       return result;
     }
 
-    try {
-      const { getGitHubAccessToken } = await import("../../github-auth");
-      await getGitHubAccessToken();
-      result.hasGitHub = true;
-    } catch (err) {
-      result.reason = `GitHub auth unavailable: ${err instanceof Error ? err.message : String(err)}`;
+    const gitSource = await resolveGitSource({ platformEnvironmentId: sourcePlatformEnvironmentId });
+    if (!gitSource) {
+      result.reason = `Source Platform Environment ${sourcePlatformEnvironmentId} has no active GitHub source credential.`;
       return result;
     }
+    result.hasGitHub = true;
 
     result.repo = { owner: sourceBinding.owner, repo: sourceBinding.repo };
     result.devBranch = sourceBinding.branch;

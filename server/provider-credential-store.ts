@@ -2,7 +2,7 @@
  * Provider Credential Store
  *
  * Stores and retrieves encrypted credentials directly on provider_connections rows.
- * Uses the same encryption primitives as github-credentials.ts.
+ * Uses the platform encryption primitives directly; provider connections are the credential authority.
  * Does NOT use app_secrets (which prunes rows not in SECRET_CATALOG on boot).
  */
 import { eq } from "drizzle-orm";

@@ -84,14 +84,6 @@ const _BOOTSTRAP_ENV_VARS = ["DATABASE_URL", "SESSION_SECRET", "ENCRYPTION_KEY"]
 import { loadAllSecrets } from "./secrets-store";
 await loadAllSecrets();
 
-// Migrate legacy GITHUB_TOKEN to multi-credential system
-try {
-  const { migrateGitHubToken } = await import("./github-auth");
-  await migrateGitHubToken();
-} catch (err: any) {
-  serverLog.warn(`GitHub credential migration skipped: ${err?.message || err}`);
-}
-
 // Boot-time encryption status scan (Task #1036). Logs an INFO line with
 // counts; emits an ERROR `encryption_key_mismatch` line if any app secret
 // or connected account fails to decrypt with the current ENCRYPTION_KEY.

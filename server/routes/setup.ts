@@ -139,9 +139,9 @@ export async function registerSetupRoutes(app: Express) {
       quickbooksHealthy: quickbooksStatus.connected ? quickbooksStatus.healthy : undefined,
       github: await (async () => {
         try {
-          const { credentialCount } = await import("../github-credentials");
-          return (await credentialCount()) > 0;
-        } catch { return !!getSecretSync("GITHUB_TOKEN"); }
+          const { resolveDefaultIndexedGitSource } = await import("../git-source-resolver");
+          return !!await resolveDefaultIndexedGitSource();
+        } catch { return false; }
       })(),
       openaiSubscription: openaiSubscriptionConnected,
       grokSubscription: grokSubscriptionConnected,
