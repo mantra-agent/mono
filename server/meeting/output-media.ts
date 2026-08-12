@@ -27,6 +27,19 @@ interface MeetingSpeechCorrelation extends VoiceSynthesisCorrelation {
 const audioQueues = new Map<string, MeetingAudioClip[]>();
 const waiters = new Map<string, Array<(audio: MeetingAudioClip | null) => void>>();
 const speechLocks = new Map<string, Promise<void>>();
+const visualizerCaptionTimers = new Map<string, ReturnType<typeof setTimeout>[]>();
+const CAPTION_WORDS_PER_MINUTE = 150;
+
+function splitCaptionSentences(text: string): string[] {
+  return text.trim().match(/[^.!?]+[.!?]+(?:["')\]]+)?|[^.!?]+$/g)?.map((sentence) => sentence.trim()).filter(Boolean) ?? [];
+}
+
+function clearScheduledVisualizerCaptions(sessionId: string): void {
+  const timers = visualizerCaptionTimers.get(sessionId);
+  if (!timers) return;
+  timers.forEach((timer) => clearTimeout(timer));
+  visualizerCaptionTimers.delete(sessionId);
+}
 // Per-session barge-in state. The active speech turn registers its abort
 // controller and every synthesized stream it owns (queued or currently piping)
 // so a user speaking can preempt in-flight agent audio immediately.
@@ -271,16 +284,33 @@ export function clearMeetingVisualizerState(sessionId: string, source: Visualize
  */
 export function setMeetingVisualizerCaption(sessionId: string, caption: string): void {
   const text = caption.trim();
+  clearScheduledVisualizerCaptions(sessionId);
   if (!text) {
     clearMeetingVisualizerCaption(sessionId);
     return;
   }
-  if (visualizerCaptions.get(sessionId) === text) return;
-  visualizerCaptions.set(sessionId, text);
-  broadcastVisualizerEvent(sessionId, nextVisualizerEvent({ type: "agent.caption", caption: text }));
+
+  const sentences = splitCaptionSentences(text);
+  let elapsedMs = 0;
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  sentences.forEach((sentence, index) => {
+    if (index > 0) {
+      const previousSentence = sentences[index - 1] ?? "";
+      elapsedMs += Math.max(700, (previousSentence.split(/\s+/).length / CAPTION_WORDS_PER_MINUTE) * 60_000);
+    }
+    const timer = setTimeout(() => {
+      if (index === sentences.length - 1) visualizerCaptionTimers.delete(sessionId);
+      if (visualizerCaptions.get(sessionId) === sentence) return;
+      visualizerCaptions.set(sessionId, sentence);
+      broadcastVisualizerEvent(sessionId, nextVisualizerEvent({ type: "agent.caption", caption: sentence }));
+    }, elapsedMs);
+    timers.push(timer);
+  });
+  visualizerCaptionTimers.set(sessionId, timers);
 }
 
 export function clearMeetingVisualizerCaption(sessionId: string): void {
+  clearScheduledVisualizerCaptions(sessionId);
   if (!visualizerCaptions.has(sessionId)) return;
   visualizerCaptions.delete(sessionId);
   broadcastVisualizerEvent(sessionId, nextVisualizerEvent({ type: "agent.caption", caption: "" }));
