@@ -55,6 +55,13 @@
 - Residual/rollback: source/build evidence cannot prove Live catalog or artifact contents. Normal Live promotion, one backup-only manifest-v4 validation, and the separately human-controlled isolated restore remain required. Revert the manifest strategy, reconciliation validation, server contract, and this finding together; no schema or production data mutation is involved.
 -->
 
+<!-- 2026-08-12 Product recovery classification:
+- Assets/data: principal/account-scoped Product intent, one-to-one Product backlogs, Feature Requests, and Product-to-Platform associations (A01/A03/A07; S2).
+- Flow/threat: Live PostgreSQL -> Brain logical exporter -> private object storage -> human-controlled restore. Omitting these relations creates false recoverability; restoring the runtime `platform_products` projection as Product authority could corrupt intent or reintroduce deployment ownership (STRIDE tampering/repudiation/availability; DATA-01/OBS-01).
+- Controls/owner: Core Recovery now includes `products`, `product_backlogs`, `product_platform_associations`, and `feature_requests` in manifest v5 with explicit Build Products ownership, sensitivity, recovery behavior, and exporter dependencies. `product-storage.ts` remains the sole principal-scoped CRUD/read boundary; migration seeding derives initial Products from existing `platform_products`, so operators must not manually seed them. Catalog reconciliation, FK/SCC validation, identity/sequence preservation, and fail-closed unknown-relation handling remain unchanged. Owner: Core Recovery + Build Products. Severity: high until Live validation. SLA: release-blocking.
+- Residual/rollback: source proves schema and producer contracts but not current Live row counts or catalog fingerprints. Normal Live promotion and one successful backup-only validation remain required; no backup or restore was triggered here. Revert the manifest/exporter mappings and this finding together; no schema or data mutation is involved.
+-->
+
 <!-- 2026-08-11 PostgreSQL backup completeness control:
 - Assets/data: A01/A03/A05/A07/A08 and S2/S3 PostgreSQL recovery state crossing the application database -> logical Brain exporter -> private object storage -> human-controlled restore.
 - Threat/failure: the fixed exporter registry could silently omit new durable relations while reporting a complete artifact (STRIDE tampering/repudiation/availability); indiscriminate inclusion could copy S3 credentials or resurrect authentication, OAuth, and active voice leases.
