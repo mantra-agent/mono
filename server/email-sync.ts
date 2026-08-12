@@ -7,8 +7,14 @@ import { listGmailAccounts, listMessages, getMessage, getHistoryList, normalizeG
 import type { NormalizedMessage } from './gmail';
 import { storage } from './storage';
 import { requireCurrentUserPrincipal } from './principal-context';
-import { sensitiveOwnershipValues } from './sensitive-scope';
+import { combineWithSensitiveVisible, sensitiveOwnershipValues } from './sensitive-scope';
 import type { Principal } from './principal';
+
+const emailSyncCursorScopeColumns = {
+  ownerUserId: emailSyncCursors.ownerUserId,
+  principalAccountId: emailSyncCursors.principalAccountId,
+  vaultId: emailSyncCursors.vaultId,
+};
 
 const log = createLogger("EmailSync");
 
@@ -257,7 +263,7 @@ function reducePipelineStatus(accounts: EmailPipelineAccountHealth[]): EmailPipe
 
 export async function getEmailPipelineHealth(): Promise<EmailPipelineHealth> {
   const [cursors, health] = await Promise.all([
-    db.select().from(emailSyncCursors),
+    db.select().from(emailSyncCursors).where(combineWithSensitiveVisible(emailSyncCursorScopeColumns)),
     storage.getSyncHealth(),
   ]);
   const cursorByAccount = new Map(cursors.map(cursor => [cursor.accountId, cursor]));

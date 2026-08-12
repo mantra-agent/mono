@@ -1,3 +1,10 @@
+<!-- 2026-08-12 Email pipeline health scoping:
+- Assets/data: A01 principal-owned `email_sync_cursors` and connected Google account identity; account IDs and last-sync recency are S1 operational metadata that can identify another user's mailbox.
+- Flow/threat: authenticated Email page / `/api/email/sync-status` / `/api/email/pipeline-status` / `getEmailPipelineHealth()` previously selected every `email_sync_cursors` row, then unioned those IDs with already-scoped sync-health logs. A new account with no linked Gmail therefore rendered other users' Google account IDs as "Gmail sync stale" (STRIDE information disclosure; DATA-01/IAM-01).
+- Deterministic controls/owner: `getEmailPipelineHealth()` now reads cursors only through `combineWithSensitiveVisible` on owner/account/vault columns, matching `storage.getSyncHealth()`. No linked accounts is an empty healthy set, not a stale warning. Named auth, connected-account OAuth, and existing Email routes remain independent. Owner: Core Comms / Email. Severity: high confidentiality. SLA: immediate. Status: repaired in source pending production build and merge.
+- Residual/rollback: leftover NULL-ownership cursor rows remain invisible to ordinary users (fail closed) until a separately authorized backfill assigns them. Revert the scoped cursor predicate and this finding together; no schema change is involved.
+-->
+
 <!-- 2026-08-12 Product tool mutation split:
 - Assets/data: principal/account-scoped Product intent in `products` (A01/A07; S2) and rolling `platform_products` Environment ownership (A03; S1/S2).
 - Flow/threat: model-originated `platforms` tool -> Product create/update. Keeping `create_product` on `platform_products` lets the Agent invent a second Product authority, miss owner/account scope, and leave the BUILD Products screen empty (STRIDE tampering/repudiation; DATA-01/AGENT-03).

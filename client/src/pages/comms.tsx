@@ -61,6 +61,7 @@ import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { ReminderPopover } from "@/components/library-reminder";
 import { useEmailMarkDone, useEmailSnooze } from "@/hooks/use-email-thread-actions";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
 import { getSearchTokens, matchesSearchTokens } from "@/lib/local-search";
 import type { EmailMessage, EmailEnrichment, EmailDismissal } from "@shared/schema";
 
@@ -659,23 +660,16 @@ function ListSkeleton() {
   );
 }
 
-function NoAccountsCta() {
+function LinkEmailAction() {
   return (
-    <div className="flex flex-col items-center justify-center py-12 px-4 text-center" data-testid="comms-no-accounts">
-      <Mail className="h-12 w-12 text-muted-foreground/30 mb-4" />
-      <h3 className="text-lg font-medium mb-2">No Gmail accounts connected</h3>
-      <p className="text-sm text-muted-foreground mb-4 max-w-sm">
-        Connect a Gmail account to see your inbox here. Agent can triage and draft replies for you.
-      </p>
-      <Button
-        variant="default"
-        onClick={() => window.open("/api/gmail/oauth/start", "_blank")}
-        data-testid="button-connect-gmail"
-      >
-        <Plus className="h-4 w-4 mr-2" />
-        Connect Gmail Account
-      </Button>
-    </div>
+    <a
+      href="/integrations/google?action=new-account"
+      className={HIERARCHY_PRIMARY_ACTION_CLASS}
+      data-testid="button-link-email"
+    >
+      <Plus className="h-3.5 w-3.5 shrink-0" />
+      <span>Link Email</span>
+    </a>
   );
 }
 
@@ -741,7 +735,7 @@ function InboxTab({ onHover, searchTokens }: { onHover: (ids: number[] | null) =
     if (orphanedAccounts.length > 0) {
       return <CommsErrorState title="Orphaned email cache" message="Disconnected Gmail account data is still present. Cleanup must remove the stale account-scoped cache before Inbox can be trusted." />;
     }
-    return <NoAccountsCta />;
+    return <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="comms-no-accounts">No emails yet.</div>;
   }
 
   if (messagesQuery.isError) {
@@ -1884,6 +1878,7 @@ export default function EmailPage() {
             clearTestId="button-clear-email-search"
             ariaLabel="Search email"
           />
+          <LinkEmailAction />
           <CommsSection id="review" title="Review" defaultOpen>
             <div className="max-h-[calc(100vh-13rem)] overflow-y-auto overflow-x-hidden rounded-md border border-border/20" data-testid="section-panel-review">
               <ReviewTab onHover={handleHover} onSwitchTab={() => undefined} searchTokens={searchTokens} highlightThreadKey={highlightThreadKey} />
