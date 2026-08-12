@@ -247,6 +247,11 @@ export async function emitCompletedTurnSummary(input: TurnSummaryInput): Promise
     ],
     maxTokens: TURN_MAX_OUTPUT_TOKENS,
     temperature: 0.1,
+    // Completed-turn summaries are fixed framing work. Pin them to the cheap
+    // framing tier so a session's max/high modelTier selection cannot inflate
+    // this high-frequency per-turn call. sessionId stays in metadata for audit.
+    semanticTierOverride: "fast",
+    overrideReason: "Completed-turn summary is fixed framing work; pin to fast tier regardless of session modelTier",
     metadata: { source: "historical-continuity.turn", sessionId: input.sessionId, runId: input.runId, turnId: input.turnId },
   });
   const summary = result.content.trim();
