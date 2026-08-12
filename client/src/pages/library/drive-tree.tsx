@@ -1,5 +1,5 @@
 // Use createLogger for logging ONLY
-import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
@@ -999,6 +999,30 @@ function FolderChildren({
         );
       })}
     </ul>
+  );
+}
+
+/** A local folder row for grouping already-fetched resources. */
+export function DriveResourceGroup({
+  label,
+  defaultOpen = false,
+  children,
+}: {
+  label: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
+  return (
+    <div className="mt-1">
+      <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}>
+        <RowChevron open={isOpen} onToggle={() => setIsOpen((value) => !value)} label={label} />
+        {resourceIcon({ resourceType: "folder" })}
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
+      </div>
+      {isOpen ? <div className="border-l border-border/60 pl-3">{children}</div> : null}
+    </div>
   );
 }
 
