@@ -12,11 +12,9 @@ import type { Principal } from "./principal";
 import { db, acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS } from "./db";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
-import { normalizeSessionAgenda } from "./chat-file-storage";
 import { RECAP_FTUE_AGENDA_ITEMS } from "./ftue-session";
+import { generateId } from "./file-storage/utils";
 
-const AGENDA_NAME_MAX_CHARS = 80;
-const AGENDA_DESCRIPTION_MAX_CHARS = 1_000;
 const AGENDA_SEARCH_MAX_CHARS = 120;
 export const FTUE_AGENDA_RESERVED_KEY = "ftue";
 const RECAP_ONLY_FTUE_ITEM_IDS = new Set([
@@ -41,7 +39,6 @@ function normalizeName(value: unknown): { name: string; normalizedName: string }
   if (typeof value !== "string") throw new Error("Agenda name must be a string");
   const name = value.trim().replace(/\s+/g, " ");
   if (!name) throw new Error("Agenda name is required");
-  if (name.length > AGENDA_NAME_MAX_CHARS) throw new Error(`Agenda name must be ${AGENDA_NAME_MAX_CHARS} characters or fewer`);
   return { name, normalizedName: name.toLowerCase() };
 }
 
@@ -50,9 +47,6 @@ function normalizeDescription(value: unknown): string | undefined {
   if (typeof value !== "string") throw new Error("Agenda description must be a string");
   const description = value.trim();
   if (!description) return undefined;
-  if (description.length > AGENDA_DESCRIPTION_MAX_CHARS) {
-    throw new Error(`Agenda description must be ${AGENDA_DESCRIPTION_MAX_CHARS} characters or fewer`);
-  }
   return description;
 }
 
@@ -71,12 +65,21 @@ function literalSubstringPattern(value: string): string {
 
 function normalizeDefinitionItems(value: unknown): AgendaDefinitionItem[] {
   if (!Array.isArray(value)) throw new Error("Agenda items must be an array");
-  const normalized = normalizeSessionAgenda(value.map((item) => ({
-    ...(item && typeof item === "object" ? item : {}),
-    status: "open",
-    resolution: undefined,
-  })));
-  return normalized.items.map(({ id, title, description }) => ({ id, title, description }));
+  const existingIds = new Set<string>();
+  return value.map((item) => {
+    if (!item || typeof item !== "object") throw new Error("Agenda items must be objects");
+    const candidate = item as { id?: unknown; title?: unknown; description?: unknown };
+    const id = typeof candidate.id === "string" && candidate.id.trim() ? candidate.id.trim() : generateId();
+    if (existingIds.has(id)) throw new Error(`Duplicate agenda item id: ${id}`);
+    existingIds.add(id);
+    if (typeof candidate.title !== "string" || !candidate.title.trim()) throw new Error("Agenda item title is required");
+    if (typeof candidate.description !== "string" || !candidate.description.trim()) throw new Error("Agenda item description is required");
+    return {
+      id,
+      title: candidate.title.trim().replace(/\s+/g, " "),
+      description: candidate.description.trim().replace(/\s+/g, " "),
+    };
+  });
 }
 
 /**
