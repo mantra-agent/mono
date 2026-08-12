@@ -5447,6 +5447,24 @@ export async function runSchemaBootstrap(
     );
   });
 
+  await heal("persona_preferences table", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS persona_preferences (
+        owner_user_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        default_persona_id INTEGER NOT NULL REFERENCES personas(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS persona_preferences_owner_account_key ON persona_preferences(owner_user_id, account_id)`,
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_persona_preferences_default ON persona_preferences(default_persona_id)`,
+    );
+  });
+
   await heal("internal transfers schema", async () => {
     await pool.query(`
       ALTER TABLE plaid_transactions

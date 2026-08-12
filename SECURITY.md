@@ -1,3 +1,10 @@
+<!-- 2026-08-12 Default Persona Id:
+- Assets/data: A01/A06/A07 user/account identity configuration. Default session Persona is now a single `persona_preferences.default_persona_id` rather than a boolean on every Persona row (S2 identity/config).
+- Flow/threat: Persona editor or fallback resolution -> `PersonaStorage.setDefaultPersona` / `resolveDefaultPersonaId` -> session/orientation fallback. A per-row boolean can desynchronize, leak another user's default through unscoped writes, or let a system Root become default (STRIDE tampering/elevation analogue; IAM-01).
+- Deterministic controls/owner: `persona_preferences` is uniquely keyed by owner/account; mutation requires the current user Principal and a non-system visible Persona; list/getActive/session fallbacks project that one ID. Root remains non-selectable. Owner: Core Persona/Context. Severity: medium integrity. SLA: immediate. Status: repaired in source pending production build and merge.
+- Residual/rollback: legacy `personas.is_default` remains compatibility seed/fallback evidence until a preference exists; it is no longer an authorable revision field.
+-->
+
 <!-- 2026-08-12 Product tool mutation split:
 - Assets/data: principal/account-scoped Product intent in `products` (A01/A07; S2) and rolling `platform_products` Environment ownership (A03; S1/S2).
 - Flow/threat: model-originated `platforms` tool -> Product create/update. Keeping `create_product` on `platform_products` lets the Agent invent a second Product authority, miss owner/account scope, and leave the BUILD Products screen empty (STRIDE tampering/repudiation; DATA-01/AGENT-03).
