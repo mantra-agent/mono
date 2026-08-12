@@ -57,6 +57,14 @@ export function registerMeetingSpeakerRoutes(app: Express): void {
 
         let distributionRecovery: Awaited<ReturnType<typeof recoverRecapDistributionAfterSpeakerResolution>> | undefined;
         if (result.session.meeting) {
+          for (const displaced of result.displacedParticipants) {
+            await reconcileMeetingRecapParticipants(
+              sessionId,
+              result.session.meeting,
+              displaced.participant,
+              displaced.previousPersonId,
+            );
+          }
           await reconcileMeetingRecapParticipants(
             sessionId,
             result.session.meeting,

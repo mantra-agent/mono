@@ -2687,7 +2687,7 @@ function SystemPromptBlock({
             className="mt-2 text-xs text-muted-foreground/50"
             data-testid={`text-message-time-${message.id}`}
           >
-            {formatLocalTime(message.updatedAt ?? message.createdAt)}
+            {formatLocalTime(message.createdAt)}
           </div>
         </div>
       )}
@@ -3129,7 +3129,7 @@ export const ChatTurn = memo(function ChatTurn({
                 <span>·</span>
               </>
             )}
-            {formatLocalTime(message.updatedAt ?? message.createdAt)}
+            {formatLocalTime(message.createdAt)}
             {layer > 1 && message.pageContext?.route && (
               <span
                 className="flex items-center gap-0.5"
@@ -3289,7 +3289,7 @@ export const ChatTurn = memo(function ChatTurn({
               </TooltipContent>
             </Tooltip>
           )}
-          {formatLocalTime(message.updatedAt ?? message.createdAt)}
+          {formatLocalTime(message.createdAt)}
           {layer >= 3 &&
             !isActiveStreaming &&
             effectiveApiCallCount != null &&

@@ -13,6 +13,7 @@ import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   AlertCircle,
+  ChevronRight,
   Ear,
   Hourglass,
   Loader2,
@@ -26,6 +27,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -114,6 +120,7 @@ export function MeetingHeaderBar({
   sessionTitle?: string;
 }) {
   const elapsed = useElapsed(meeting.startedAt, meeting.endedAt);
+  const [open, setOpen] = useState(true);
   const [confirmAudioDelete, setConfirmAudioDelete] = useState(false);
   const isLive = meeting.botStatus === "live";
   const isTransportActive = isLive || meeting.botStatus === "leaving";
@@ -316,11 +323,25 @@ export function MeetingHeaderBar({
 
   return (
     <div className="my-1 min-w-0 overflow-hidden rounded-md border border-border/60 bg-muted/20">
+      <Collapsible open={open} onOpenChange={setOpen}>
       {/* ── Main info row ── */}
       <div
         className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2"
         data-testid="meeting-header-bar"
       >
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            aria-label={open ? "Collapse meeting" : "Expand meeting"}
+            data-testid="button-meeting-section"
+          >
+            <ChevronRight
+              className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")}
+              aria-hidden="true"
+            />
+          </button>
+        </CollapsibleTrigger>
         <div className="hidden min-w-0 items-center md:flex" data-testid="text-meeting-title">
           {meetingReference ? (
             <ReferenceRenderer
@@ -420,6 +441,7 @@ export function MeetingHeaderBar({
         )}
       </div>
 
+      <CollapsibleContent>
       {sessionId && (
         <MeetingSpeakerAssignments
           meeting={meeting}
@@ -598,6 +620,7 @@ export function MeetingHeaderBar({
           </span>
         </div>
       )}
+      </CollapsibleContent>
       <AlertDialog open={confirmAudioDelete} onOpenChange={(open) => !deleteRetainedAudio.isPending && setConfirmAudioDelete(open)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -622,6 +645,7 @@ export function MeetingHeaderBar({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </Collapsible>
     </div>
   );
 }
