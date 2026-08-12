@@ -81,6 +81,22 @@ export function getWellnessWindowBounds(category: string): { min: number; max: n
   return config ? { min: config.minVal, max: config.maxVal } : null;
 }
 
+function localCivilEpochDay(date: Date, timezone: string): number {
+  const civil = date.toLocaleDateString("en-CA", { timeZone: timezone });
+  return Math.floor(Date.parse(`${civil}T00:00:00Z`) / 86_400_000);
+}
+
+/** True when current falls on a later local calendar day within the next cadence interval. */
+export function isConsecutiveCadenceCompletion(
+  previous: Date,
+  current: Date,
+  intervalDays: number,
+  timezone: string,
+): boolean {
+  const gap = localCivilEpochDay(current, timezone) - localCivilEpochDay(previous, timezone);
+  return gap >= 1 && gap <= Math.max(1, intervalDays);
+}
+
 export function getWellnessWindowAdherence(
   category: string,
   windowStart: number | null,
