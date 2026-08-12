@@ -91,7 +91,7 @@ import { plaidAccounts, plaidTransactions, plaidSecurities, plaidHoldings, plaid
 import { signalSources, signalItems, scanRuns } from "@shared/models/signal";
 import { execSkills, execExperience, execMetrics, execEducation, execPassions, experienceSkills } from "@shared/models/exec";
 import { opportunities, opportunitySkills, opportunityArtifacts } from "@shared/models/opportunities";
-import { platforms, platformVaultMemberships, platformProducts, platformProductEnvironments, environmentBuildLifecycleConfigs, providerConnections, environmentSourceBindings, environmentHostingBindings, environmentRuntimeVariables, environmentCapabilityBindings } from "@shared/models/platforms";
+import { platforms, platformVaultMemberships, platformProducts, platformProductEnvironments, products, productBacklogs, productPlatformAssociations, featureRequests, environmentBuildLifecycleConfigs, providerConnections, environmentSourceBindings, environmentHostingBindings, environmentRuntimeVariables, environmentCapabilityBindings } from "@shared/models/platforms";
 import { buildDeploymentHomeProjections, platformDeploymentObservations } from "@shared/models/build-deployments";
 import { promptModules, promptModuleVersions } from "@shared/models/prompt-modules";
 import { systemHooks, systemHookExecutions } from "@shared/models/events";
@@ -238,6 +238,10 @@ export const TABLE_REGISTRY: TableRegistryEntry[] = [
   { key: "platform_vault_memberships", table: platformVaultMemberships, domain: "other", hasSerial: true, dependsOn: ["platforms"] },
   { key: "platform_products", table: platformProducts, domain: "other", hasSerial: true, dependsOn: ["platforms"] },
   { key: "platform_product_environments", table: platformProductEnvironments, domain: "other", hasSerial: true, dependsOn: ["platform_products"] },
+  { key: "products", table: products, domain: "other", hasSerial: true, dependsOn: ["accounts", "users"] },
+  { key: "product_backlogs", table: productBacklogs, domain: "other", hasSerial: true, dependsOn: ["products"] },
+  { key: "product_platform_associations", table: productPlatformAssociations, domain: "other", hasSerial: true, dependsOn: ["products", "platforms"] },
+  { key: "feature_requests", table: featureRequests, domain: "other", hasSerial: true, dependsOn: ["product_backlogs"] },
   { key: "provider_connections", table: providerConnections, domain: "other", hasSerial: true, sensitiveFields: ["encryptedCredential", "credentialIv", "credentialTag"] },
   { key: "environment_source_bindings", table: environmentSourceBindings, domain: "other", hasSerial: true, dependsOn: ["platform_product_environments", "provider_connections"] },
   { key: "environment_hosting_bindings", table: environmentHostingBindings, domain: "other", hasSerial: true, dependsOn: ["platform_product_environments", "provider_connections"] },
