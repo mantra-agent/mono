@@ -75,7 +75,8 @@ import {
   thesisEvidence,
   thesisPredictions,
 } from "@shared/schema";
-import { workspaceDocuments, codeEmbeddings } from "@shared/models/memory";
+import { workspaceDocuments, codeEmbeddings, memoryVnextSourceQueue } from "@shared/models/memory";
+import { runtimeRuns, runtimeAttempts, runtimeRunEvents, runtimeCapacityPolicies } from "@shared/models/runtime";
 import { chatSessions, conversationMessages, conversationRevisions, messages } from "@shared/models/chat";
 import { strategies, strategyActors, strategyMoveDefinitions, strategyMoveInstances, strategyAssumptions, strategyEndConditions, strategyContextEntries, strategyArtifacts, strategySimulationRuns, strategyStates, strategyAssumptionLinks, strategyMoveEndConditionEffects, decisions, decisionUpdates, decisionLinks } from "@shared/models/strategy";
 import { skills, skillReferences, skillRuns, skillFailureDismissals } from "@shared/models/skills";
@@ -260,7 +261,12 @@ export const TABLE_REGISTRY: TableRegistryEntry[] = [
   { key: "skills", table: skills, domain: "skills", hasSerial: false },
 
   { key: "skill_references", table: skillReferences, domain: "skills", hasSerial: true, dependsOn: ["skills"] },
-  { key: "skill_runs", table: skillRuns, domain: "skills", hasSerial: true },
+  { key: "runtime_capacity_policies", table: runtimeCapacityPolicies, domain: "core", hasSerial: false },
+  { key: "runtime_runs", table: runtimeRuns, domain: "core", hasSerial: false },
+  { key: "runtime_attempts", table: runtimeAttempts, domain: "core", hasSerial: false, dependsOn: ["runtime_runs"] },
+  { key: "runtime_run_events", table: runtimeRunEvents, domain: "core", hasSerial: false, dependsOn: ["runtime_runs", "runtime_attempts"] },
+  { key: "memory_vnext_source_queue", table: memoryVnextSourceQueue, domain: "memory", hasSerial: true, dependsOn: ["runtime_runs", "runtime_attempts"] },
+  { key: "skill_runs", table: skillRuns, domain: "skills", hasSerial: true, dependsOn: ["runtime_runs"] },
   { key: "skill_failure_dismissals", table: skillFailureDismissals, domain: "skills", hasSerial: true },
 
   { key: "emotional_states", table: emotionalStates, domain: "cognition", hasSerial: true },
@@ -960,6 +966,7 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
       included: coverage.included,
       excluded: coverage.excluded,
       insertOrder: coverage.insertOrder,
+      restoreStrategies: coverage.restoreStrategies,
       schemaFingerprint: coverage.schemaFingerprint,
       manifestFingerprint: coverage.manifestFingerprint,
       relations: coverage.discovered,
@@ -1176,51 +1183,6 @@ async function importTableStreaming(
   return totalImported;
 }
 
-// Promote every FK constraint on the registry tables to DEFERRABLE
-// INITIALLY IMMEDIATE so per-table `SET CONSTRAINTS ALL DEFERRED` inside
-// the import transaction actually defers them. Postgres only honors
-// SET CONSTRAINTS for constraints declared DEFERRABLE; Drizzle's default
-// `.references(...)` produces NOT DEFERRABLE FKs, which is the exact
-// reason child-before-parent inserts on `library_pages.parent_id` were
-// rejected and the whole batch failed.
-//
-// Idempotent: ALTER ... DEFERRABLE on an already-deferrable constraint
-// is a no-op (the catalog query filters those out). Runs once per
-// import; the change is persistent in the target DB so subsequent
-// syncs skip it entirely.
-async function ensureFkConstraintsDeferrable(): Promise<void> {
-  const tableNames = INSERT_ORDER.map((e) => getTableName(e.table));
-  const result = await db.execute<{ table_name: string; conname: string }>(sql`
-    SELECT c.relname AS table_name, con.conname AS conname
-    FROM pg_constraint con
-    JOIN pg_class c ON con.conrelid = c.oid
-    JOIN pg_namespace n ON c.relnamespace = n.oid
-    WHERE con.contype = 'f'
-      AND NOT con.condeferrable
-      AND n.nspname = ANY (current_schemas(false))
-      AND c.relname = ANY (ARRAY[${sql.join(tableNames, sql`, `)}]::text[])
-  `);
-  const rows = (result as unknown as { rows?: Array<{ table_name: string; conname: string }> }).rows
-    ?? (result as unknown as Array<{ table_name: string; conname: string }>);
-  if (!Array.isArray(rows) || rows.length === 0) {
-    log.debug("FK deferral: all registry FKs already DEFERRABLE");
-    return;
-  }
-  log.debug(`FK deferral: promoting ${rows.length} FK constraint(s) to DEFERRABLE INITIALLY IMMEDIATE`);
-  for (const r of rows) {
-    try {
-      await db.execute(sql.raw(
-        `ALTER TABLE ${quoteIdent(r.table_name)} ALTER CONSTRAINT ${quoteIdent(r.conname)} DEFERRABLE INITIALLY IMMEDIATE`,
-      ));
-    } catch (err: any) {
-      // Non-fatal — log and continue. SET CONSTRAINTS ALL DEFERRED for this
-      // FK will silently no-op, but the post-import row-count parity check
-      // will surface any rows that get rejected.
-      log.warn(`FK deferral: failed for ${r.table_name}.${r.conname}: ${err?.message ?? err}`);
-    }
-  }
-}
-
 export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
   const imported: Record<string, number> = {};
   const expected: Record<string, number> = {};
@@ -1230,18 +1192,6 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
   log.debug("Running DB Sync schema convergence");
   await convergeDbSyncSchema(INSERT_ORDER.map((entry) => entry.table));
   log.debug("DB Sync schema convergence complete");
-
-  // Make every registry FK DEFERRABLE so the per-table SET CONSTRAINTS
-  // ALL DEFERRED below actually defers self-referencing checks
-  // (library_pages.parent_id) and cross-table FKs to commit time.
-  // Without this, Drizzle's default NOT DEFERRABLE constraints reject
-  // child-before-parent inserts immediately, which is what dropped
-  // library_pages rows in the first place.
-  try {
-    await ensureFkConstraintsDeferrable();
-  } catch (err: any) {
-    log.warn(`FK deferral pass failed (non-fatal): ${err?.message ?? err}`);
-  }
 
   // ── TRANSACTIONAL IMPORT ────────────────────────────────────────
   // Wrap the entire delete-then-insert sequence in a single Postgres
@@ -1255,8 +1205,9 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
   // delete-then-insert sequence back instead of leaving a partial restore.
   return await db.transaction(async (tx) => {
 
-  // Defer all FK constraints for the duration of this transaction so
-  // insert ordering doesn't matter.
+  // Defer only constraints that the schema deliberately declares deferrable.
+  // Ordinary non-deferrable FKs are satisfied by INSERT_ORDER; the catalog
+  // preflight rejects any SCC without an exact replay strategy.
   await tx.execute(sql.raw("SET CONSTRAINTS ALL DEFERRED"));
   await tx.execute(sql.raw("SET LOCAL statement_timeout = 0"));
 
@@ -1299,7 +1250,7 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
       // the buffered path.
       const fileStat = await stat(filePath);
       const fileSizeMB = (fileStat.size / (1024 * 1024)).toFixed(1);
-      const needsSpecialHandling = key === "library_pages" || key === "library_page_views" || key === "messages";
+      const needsSpecialHandling = key === "library_pages" || key === "library_page_views" || key === "messages" || key === "runtime_runs";
       const useStreaming = fileStat.size > STREAM_THRESHOLD_BYTES && !needsSpecialHandling;
 
       // Build ON CONFLICT clause (shared by both paths). Tables with a
@@ -1385,6 +1336,15 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
       expected[key] = rows.length;
 
       const hydratedRows = rows.map((row: any) => hydrateRow({ ...row }));
+      const runtimeParentBackfill: Array<{ id: string; parentId: string }> = [];
+      if (key === "runtime_runs") {
+        for (const row of hydratedRows) {
+          if (row.causalParentRunId) {
+            runtimeParentBackfill.push({ id: row.id, parentId: row.causalParentRunId });
+            row.causalParentRunId = null;
+          }
+        }
+      }
 
       // ── FK orphan auto-heal ─────────────────────────────────────
       // The deferred-FK + DEFERRABLE-promotion machinery handles
@@ -1484,6 +1444,16 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
           } else {
             await insert.onConflictDoNothing();
           }
+        }
+
+        if (runtimeParentBackfill.length > 0) {
+          const tuples = runtimeParentBackfill.map(parent => sql`(${parent.id}::uuid, ${parent.parentId}::uuid)`);
+          await sp.execute(sql`
+            UPDATE runtime_runs AS run
+            SET causal_parent_run_id = parent.parent_id
+            FROM (VALUES ${sql.join(tuples, sql`, `)}) AS parent(id, parent_id)
+            WHERE run.id = parent.id
+          `);
         }
 
         // Second-pass parentId backfill for library_pages.
