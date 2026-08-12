@@ -61,10 +61,25 @@ export async function registerUploadResource(input: RegisterUploadInput) {
 export async function reconcileUploadResources(): Promise<{ scanned: number; registered: number; unassigned: number }> {
   const principal = requireCurrentUserPrincipal();
   const result = await db.execute(sql`
-    SELECT document_id, vault_id, content FROM document_store_documents
-    WHERE document_type = 'chat' AND owner_user_id = ${principal.userId}
-      AND account_id = ${principal.accountId} AND vault_id IS NOT NULL
-    ORDER BY id ASC LIMIT 5000
+    WITH bounded_sessions AS (
+      SELECT document_id, vault_id, content FROM document_store_documents
+      WHERE document_type = 'chat' AND owner_user_id = ${principal.userId}
+        AND account_id = ${principal.accountId} AND vault_id IS NOT NULL
+      ORDER BY id ASC LIMIT 5000
+    ), upload_sources AS (
+      SELECT document_id, content FROM bounded_sessions
+      WHERE content LIKE '%/objects/uploads/%'
+      UNION ALL
+      SELECT session.document_id, message.payload::text AS content
+      FROM bounded_sessions session
+      JOIN conversation_messages message
+        ON message.session_id = session.document_id
+       AND message.owner_user_id = ${principal.userId}
+       AND message.account_id = ${principal.accountId}
+       AND message.vault_id = session.vault_id
+      WHERE message.payload::text LIKE '%/objects/uploads/%'
+    )
+    SELECT document_id, content FROM upload_sources LIMIT 25000
   `);
   let registered = 0;
   const seen = new Set<string>();
@@ -89,7 +104,8 @@ export async function reconcileUploadResources(): Promise<{ scanned: number; reg
           AND split_part(dr.provider_file_id, '/objects/', 2) = regexp_replace(oa.object_key, '^(vaults/[^/]+/|private/)', '')
       )
   `);
-  return { scanned: result.rows.length, registered, unassigned: Number((unassignedResult.rows[0] as { count?: number })?.count ?? 0) };
+  const scanned = new Set(result.rows.map((row) => (row as { document_id: string }).document_id)).size;
+  return { scanned, registered, unassigned: Number((unassignedResult.rows[0] as { count?: number })?.count ?? 0) };
 }
 
 export async function listUnassignedUploads() {
