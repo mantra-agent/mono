@@ -3506,14 +3506,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
     }
 
-    async function resolveLegacyGitAuth(repoUrl?: string): Promise<GitAuthCandidate> {
-      const { getGitHubTokenForUrl, getGitHubAccessToken } = await import("./github-auth");
-      const token = repoUrl
-        ? await getGitHubTokenForUrl(repoUrl)
-        : await getGitHubAccessToken();
-      return { mode: "legacy", token, context: {} };
-    }
-
     async function resolveGitHubApiToken(repoUrl: string): Promise<string> {
       const platform = await resolvePlatformGitAuth(repoUrl);
       if (platform) {
@@ -3524,9 +3516,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         return platform.token;
       }
 
-      const legacy = await resolveLegacyGitAuth(repoUrl);
-      toolExec.log("git.api.legacy_auth_selected", { repoUrl: scrubTokens(repoUrl) });
-      return legacy.token;
+      throw new Error(`No active Platform source binding with a credential exists for ${scrubTokens(repoUrl)}`);
     }
 
     async function getAuthEnv(repoUrl?: string): Promise<Record<string, string>> {
@@ -3539,9 +3529,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         return createAskpassEnv(platform.token);
       }
 
-      const legacy = await resolveLegacyGitAuth(repoUrl);
-      toolExec.log("git.auth.legacy_auth_selected", { repoUrl: repoUrl ? scrubTokens(repoUrl) : null });
-      return createAskpassEnv(legacy.token);
+      throw new Error(
+        repoUrl
+          ? `No active Platform source binding with a credential exists for ${scrubTokens(repoUrl)}`
+          : "Git authentication requires a repository URL resolved through a Platform source binding",
+      );
     }
 
     async function ensureWorkspaceDependenciesHydrated(): Promise<string> {

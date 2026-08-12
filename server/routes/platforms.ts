@@ -59,7 +59,6 @@ const runtimeVariableTemplates: RuntimeVariableTemplate[] = [
   { key: "S3_BUCKET", category: "storage", required: false, source: "railway-variable" },
   { key: "S3_ENDPOINT", category: "storage", required: false, source: "railway-variable" },
   { key: "S3_REGION", category: "storage", required: false, source: "railway-variable" },
-  { key: "GITHUB_TOKEN", category: "source", required: false, source: "legacy-secret" },
   { key: "GITHUB_WEBHOOK_SECRET", category: "source", required: false, source: "app-secret" },
 ];
 

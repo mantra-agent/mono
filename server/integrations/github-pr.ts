@@ -1,9 +1,5 @@
-import { and, eq } from "drizzle-orm";
-import { getGitHubAccessToken } from "../github-auth";
 import { createLogger } from "../log";
-import { db } from "../db";
-import { getProviderCredential } from "../provider-credential-store";
-import { environmentSourceBindings, providerConnections } from "@shared/models/platforms";
+import { resolveGitSource } from "../git-source-resolver";
 
 
 
@@ -123,36 +119,15 @@ function repoFromApiPath(path: string): RepoRef | null {
 
 async function getGitHubAccessTokenForPath(path: string): Promise<string> {
   const repo = repoFromApiPath(path);
-  if (repo) {
-    try {
-      const rows = await db
-        .select({
-          connectionId: providerConnections.id,
-          credentialRef: providerConnections.credentialRef,
-        })
-        .from(environmentSourceBindings)
-        .innerJoin(providerConnections, eq(providerConnections.id, environmentSourceBindings.connectionId))
-        .where(and(
-          eq(environmentSourceBindings.provider, "github"),
-          eq(environmentSourceBindings.owner, repo.owner),
-          eq(environmentSourceBindings.repo, repo.repo),
-          eq(providerConnections.provider, "github"),
-          eq(providerConnections.status, "active"),
-        ));
-
-      for (const row of rows) {
-        const token = row.credentialRef ? await getProviderCredential(row.credentialRef) : null;
-        if (token) {
-          log.info(`Using platform GitHub credential for ${repo.owner}/${repo.repo} via connection ${row.connectionId}`);
-          return token;
-        }
-      }
-    } catch (err) {
-      log.warn(`Platform GitHub credential lookup failed for ${repo.owner}/${repo.repo}: ${err instanceof Error ? err.message : String(err)}`);
-    }
+  if (!repo) throw new Error(`GitHub API path does not identify a repository: ${path}`);
+  const source = await resolveGitSource({
+    repoUrl: `https://github.com/${repo.owner}/${repo.repo}.git`,
+    matchBranch: false,
+  });
+  if (!source) {
+    throw new Error(`No active Platform source binding with a credential exists for ${repo.owner}/${repo.repo}`);
   }
-
-  return getGitHubAccessToken();
+  return source.token;
 }
 
 export async function gh<T>(method: string, path: string, body?: unknown): Promise<T> {

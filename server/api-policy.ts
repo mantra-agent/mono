@@ -35,7 +35,6 @@ const PUBLIC_RULES: ApiPolicyRule[] = [
   { classification: "personal", prefixes: ["/api/uploads"], reason: "authenticated user upload path" },
   { classification: "public", exact: ["/api/glasses/events"], methods: ["GET"], reason: "unauthenticated glasses SSE auto-pair bootstrap; route auto-pairs to the default user and issues a device token internally" },
   { classification: "personal", exact: ["/api/glasses/toast"], methods: ["POST"], reason: "authenticated app-to-glasses toast relay" },
-  { classification: "public", prefixes: ["/api/integrations/github/status"], methods: ["GET"], reason: "connection status only" },
 ];
 
 const ADMIN_RULES: ApiPolicyRule[] = [

@@ -4948,18 +4948,6 @@ function OuraDetail() {
 // GitHub detail — multi-credential management
 // ---------------------------------------------------------------------------
 
-interface GitHubCredential {
-  id: number;
-  label: string;
-  githubLogin: string | null;
-  last4: string;
-  urlPatterns: string[];
-  isDefault: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-
 interface ProviderConnection {
   id: number;
   provider: string;
@@ -5006,15 +4994,6 @@ interface PlatformEnvironmentDetails {
     branch?: string;
   } | null;
 }
-
-interface GitHubStatus {
-  connected: boolean;
-  status?: "connected" | "disconnected" | "error";
-  error?: string;
-  login?: string;
-  credentials?: GitHubCredential[];
-}
-
 
 
 interface HostingConnectorUsage {
@@ -5225,15 +5204,6 @@ function CloudflareDetail() {
 
 function GitHubDetail() {
   const { toast } = useToast();
-  const { data, isLoading } = useQuery<GitHubStatus>({
-    queryKey: ["/api/integrations/github/status"],
-  });
-
-  const { data: credsData, refetch: refetchCreds } = useQuery<{ ok: boolean; credentials: GitHubCredential[] }>({
-    queryKey: ["/api/integrations/github/credentials"],
-  });
-  const credentials = credsData?.credentials || data?.credentials || [];
-
   const {
     data: providerConnections = [],
     refetch: refetchProviderConnections,
@@ -5285,69 +5255,11 @@ function GitHubDetail() {
     return usage;
   }, [environmentQueries.map((query) => query.dataUpdatedAt).join(":")]);
 
-  const [showAddDialog, setShowAddDialog] = useState(false);
-  const [tokenInput, setTokenInput] = useState("");
-  const [labelInput, setLabelInput] = useState("");
-  const [patternsInput, setPatternsInput] = useState("");
-  const [isDefaultInput, setIsDefaultInput] = useState(false);
-  const [validatedLogin, setValidatedLogin] = useState<string | null>(null);
   const [showProviderDialog, setShowProviderDialog] = useState(false);
   const [editingProviderConnection, setEditingProviderConnection] = useState<ProviderConnection | null>(null);
   const [providerLabelInput, setProviderLabelInput] = useState("");
   const [providerTokenInput, setProviderTokenInput] = useState("");
   const [providerAccountTypeInput, setProviderAccountTypeInput] = useState("source");
-
-  const addCredentialMutation = useMutation({
-    mutationFn: async (params: { token: string; label: string; urlPatterns: string[]; isDefault: boolean }) => {
-      const res = await apiRequest("POST", "/api/integrations/github/credentials", params);
-      return (await res.json()) as { ok: boolean; credential: GitHubCredential };
-    },
-    onSuccess: (res) => {
-      toast({ title: "Account added", description: `Connected as @${res.credential.githubLogin || "unknown"}.` });
-      setShowAddDialog(false);
-      setTokenInput("");
-      setLabelInput("");
-      setPatternsInput("");
-      setIsDefaultInput(false);
-      setValidatedLogin(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/integrations/github/status"] });
-      refetchCreds();
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to add account", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const updateCredentialMutation = useMutation({
-    mutationFn: async (params: { id: number; label?: string; urlPatterns?: string[]; isDefault?: boolean }) => {
-      const { id, ...body } = params;
-      const res = await apiRequest("PUT", `/api/integrations/github/credentials/${id}`, body);
-      return (await res.json()) as { ok: boolean; credential: GitHubCredential };
-    },
-    onSuccess: () => {
-      toast({ title: "Credential updated" });
-      queryClient.invalidateQueries({ queryKey: ["/api/integrations/github/status"] });
-      refetchCreds();
-    },
-    onError: (err: Error) => {
-      toast({ title: "Update failed", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const deleteCredentialMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiRequest("DELETE", `/api/integrations/github/credentials/${id}`);
-      return (await res.json()) as { ok: boolean };
-    },
-    onSuccess: () => {
-      toast({ title: "Account removed" });
-      queryClient.invalidateQueries({ queryKey: ["/api/integrations/github/status"] });
-      refetchCreds();
-    },
-    onError: (err: Error) => {
-      toast({ title: "Remove failed", description: err.message, variant: "destructive" });
-    },
-  });
 
   const resetProviderForm = () => {
     setShowProviderDialog(false);
@@ -5431,21 +5343,11 @@ function GitHubDetail() {
     },
   });
 
-  if (isLoading) {
-    return (
-      <div className="space-y-4" data-testid="github-tab-loading">
-        <Skeleton className="h-32 w-full" />
-        <Skeleton className="h-24 w-full" />
-      </div>
-    );
-  }
-
-  const connected = !!data?.connected || hasPlatformGitHubConnection;
-  const hasError = !connected;
+  const hasError = !hasPlatformGitHubConnection;
 
   return (
     <div className="space-y-6" data-testid="github-tab">
-      {hasError && credentials.length === 0 && !isLoadingProviderConnections && (
+      {hasError && !isLoadingProviderConnections && (
         <Card
           className="border-error/30 dark:border-error/50 bg-error/5 dark:bg-error/20"
           data-testid="github-error-banner"
@@ -5453,10 +5355,10 @@ function GitHubDetail() {
           <CardContent className="py-4 space-y-3">
             <div className="flex items-center gap-2 text-sm font-medium text-error-foreground dark:text-error">
               <AlertTriangle className="h-4 w-4" />
-              No GitHub credentials connected
+              No GitHub Platform connection
             </div>
             <p className="text-sm text-muted-foreground">
-              Add either a Platform GitHub connection or a legacy GitHub Personal Access Token to enable git operations.
+              Add a Platform GitHub connection and attach it to each Platform Environment source binding that needs repository access.
             </p>
           </CardContent>
         </Card>
@@ -5464,75 +5366,6 @@ function GitHubDetail() {
 
       {/* Canonical Design TreeView: flat settings sections, object branches, row-local actions. */}
       <div className={HIERARCHY_TREE_STACK_CLASS} data-testid="github-detail">
-        <ProfileDetailSection title="Legacy accounts" defaultOpen testId="github-accounts">
-          <button
-            type="button"
-            className={HIERARCHY_PRIMARY_ACTION_CLASS}
-            onClick={() => setShowAddDialog(true)}
-            data-testid="button-github-add-account"
-          >
-            <Plus className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">Add legacy account</span>
-          </button>
-            {credentials.length === 0 ? (
-              <p className="px-2 py-1.5 text-sm text-muted-foreground">
-                No legacy accounts connected. Platform connections below are preferred for new git operations.
-              </p>
-            ) : credentials.map((cred, index) => (
-              <HierarchyTreeRow key={cred.id} continues={index < credentials.length - 1} connectorAnchor="first-row-center">
-              <ProfileTreeRow
-                label={cred.githubLogin ? `@${cred.githubLogin}` : cred.label}
-                icon={<CircleCheck className="h-3.5 w-3.5 text-active" />}
-                hasValue
-                showEmpty
-                mobileLayout="inline"
-                valueLayout="compact"
-                testId={`github-credential-${cred.id}`}
-                menuVisibility="hover"
-                menuContent={(
-                  <>
-                    {!cred.isDefault ? (
-                      <DropdownMenuItem
-                        onClick={() => updateCredentialMutation.mutate({ id: cred.id, isDefault: true })}
-                        data-testid={`button-github-set-default-${cred.id}`}
-                      >
-                        <CircleCheck className="mr-2 h-4 w-4" /> Set default
-                      </DropdownMenuItem>
-                    ) : null}
-                    {credentials.length > 1 ? (
-                      <DropdownMenuItem
-                        className="text-destructive focus:text-destructive"
-                        onClick={() => {
-                          if (confirm(`Remove @${cred.githubLogin || cred.label}? Git operations using this credential will stop working.`)) {
-                            deleteCredentialMutation.mutate(cred.id);
-                          }
-                        }}
-                        data-testid={`button-github-remove-${cred.id}`}
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" /> Remove
-                      </DropdownMenuItem>
-                    ) : null}
-                  </>
-                )}
-                expandedContent={(
-                  <div className="space-y-1">
-                    <p className="text-muted-foreground">{cred.label}{cred.last4 ? ` · ••••${cred.last4}` : ""}</p>
-                    {cred.urlPatterns.length > 0 ? (
-                      <p className="font-mono text-muted-foreground">{cred.urlPatterns.join(", ")}</p>
-                    ) : null}
-                  </div>
-                )}
-              >
-                {cred.isDefault ? (
-                  <Badge variant="outline" className="text-xs">default</Badge>
-                ) : (
-                  <span className="text-muted-foreground">connected</span>
-                )}
-              </ProfileTreeRow>
-              </HierarchyTreeRow>
-            ))}
-        </ProfileDetailSection>
-
         <ProfileDetailSection title="Platform connections" defaultOpen testId="github-connections">
           <button
             type="button"
@@ -5693,128 +5526,6 @@ function GitHubDetail() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Add Account Dialog */}
-      {showAddDialog && (
-        <Card className="border-primary/30" data-testid="github-add-dialog">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Add GitHub Account</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-xs font-medium">Personal Access Token</label>
-              <div className="text-xs text-muted-foreground">
-                Required scopes: <span className="font-mono">repo</span>{" "}
-                <a href="https://github.com/settings/tokens" target="_blank" rel="noreferrer" className="underline hover:text-foreground">
-                  Create a token <ExternalLink className="h-3 w-3 inline" />
-                </a>
-              </div>
-              <Input
-                type="password"
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-                placeholder="ghp_… or github_pat_…"
-                autoComplete="off"
-                spellCheck={false}
-                className="font-mono text-xs"
-                data-testid="input-github-add-token"
-              />
-            </div>
-
-            {validatedLogin && (
-              <div className="text-xs text-success-foreground flex items-center gap-1">
-                <CircleCheck className="h-3 w-3" /> Validated as @{validatedLogin}
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <label className="text-xs font-medium">Label</label>
-              <Input
-                type="text"
-                value={labelInput}
-                onChange={(e) => setLabelInput(e.target.value)}
-                placeholder={validatedLogin || "e.g., Personal Brand"}
-                autoComplete="off"
-                className="text-xs"
-                data-testid="input-github-add-label"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-medium">URL Patterns</label>
-              <div className="text-xs text-muted-foreground">
-                Comma-separated. E.g., <span className="font-mono">github.com/myorg/*</span>
-              </div>
-              <Input
-                type="text"
-                value={patternsInput}
-                onChange={(e) => setPatternsInput(e.target.value)}
-                placeholder={validatedLogin ? `github.com/${validatedLogin}/*` : "github.com/org/*"}
-                autoComplete="off"
-                className="font-mono text-xs"
-                data-testid="input-github-add-patterns"
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="github-add-default"
-                checked={isDefaultInput}
-                onChange={(e) => setIsDefaultInput(e.target.checked)}
-                className="rounded"
-              />
-              <label htmlFor="github-add-default" className="text-xs text-muted-foreground">
-                Set as default credential
-              </label>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  const v = tokenInput.trim();
-                  if (!v) {
-                    toast({ title: "Token required", variant: "destructive" });
-                    return;
-                  }
-                  const patterns = patternsInput
-                    .split(",")
-                    .map((p) => p.trim())
-                    .filter(Boolean);
-                  addCredentialMutation.mutate({
-                    token: v,
-                    label: labelInput.trim(),
-                    urlPatterns: patterns,
-                    isDefault: isDefaultInput,
-                  });
-                }}
-                disabled={addCredentialMutation.isPending}
-                data-testid="button-github-add-save"
-              >
-                {addCredentialMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
-                Add Account
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setShowAddDialog(false);
-                  setTokenInput("");
-                  setLabelInput("");
-                  setPatternsInput("");
-                  setIsDefaultInput(false);
-                  setValidatedLogin(null);
-                }}
-              >
-                Cancel
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
     </div>
   );

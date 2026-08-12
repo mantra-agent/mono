@@ -768,21 +768,20 @@ export async function scanHackerNewsSources(sources: Array<{ id: string; value: 
 const GITHUB_API_BASE = "https://api.github.com";
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
-function getGitHubHeaders(): Record<string, string> {
-  const token = getSecretSync("GITHUB_TOKEN");
-  const headers: Record<string, string> = {
+async function getGitHubHeaders(repoPath: string): Promise<Record<string, string>> {
+  const { resolveGitSource } = await import("./git-source-resolver");
+  const source = await resolveGitSource({ repoUrl: `https://github.com/${repoPath}.git`, matchBranch: false });
+  if (!source) throw new Error(`No active Platform source binding with a credential exists for ${repoPath}`);
+  return {
     "Accept": "application/vnd.github+json",
     "User-Agent": "MantraNewsScanner/1.0",
+    "Authorization": `Bearer ${source.token}`,
   };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  return headers;
 }
 
 export async function scanGitHubRepoSources(repos: Array<{ id: string; value: string }>): Promise<RawSignal[]> {
   const allSignals: RawSignal[] = [];
   const cutoff = new Date(Date.now() - SEVEN_DAYS_MS);
-  const headers = getGitHubHeaders();
-
   for (const source of repos) {
     try {
       const repoPath = source.value.trim().replace(/^https?:\/\/github\.com\//, "");
@@ -792,6 +791,7 @@ export async function scanGitHubRepoSources(repos: Array<{ id: string; value: st
       }
 
       try {
+        const headers = await getGitHubHeaders(repoPath);
         const response = await adapterFetch(
           `${GITHUB_API_BASE}/repos/${repoPath}/releases?per_page=10`,
           `scanGitHubRepoSources[${repoPath}]`,

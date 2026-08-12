@@ -80,7 +80,7 @@ export const SECRET_CATALOG: SecretSpec[] = [
   { name: "OURA_CLIENT_ID", section: "oura", label: "Oura Client ID", description: "OAuth client ID from the Oura Cloud API Application settings." },
   { name: "OURA_CLIENT_SECRET", section: "oura", label: "Oura Client Secret", description: "OAuth client secret from the Oura Cloud API Application settings." },
   { name: "OURA_WEBHOOK_VERIFY_TOKEN", section: "oura", label: "Oura Webhook Verify Token", description: "Shared verification token used by the Oura webhook callback. Generate a long random value and configure the same value in Oura Cloud." },
-  // GITHUB_TOKEN removed — migrated to github_credentials table (multi-credential system)
+  // GitHub credentials are owned by encrypted Platform provider connections.
   { name: "S3_BUCKET", section: "storage", label: "S3 Bucket Name", description: "Name of the S3-compatible bucket used for object storage (uploads, generated files, indexed content). Single bucket; the app writes under 'public/' and 'private/' key prefixes." },
   { name: "S3_REGION", section: "storage", label: "S3 Region", description: "Region of the bucket (e.g. 'us-east-1'). For Railway Buckets and most S3-compatible providers any value is accepted but it must be set." },
   { name: "S3_ENDPOINT", section: "storage", label: "S3 Endpoint URL", description: "Custom endpoint URL (e.g. https://<bucket>.railway.app or https://<account>.r2.cloudflarestorage.com). Required for Railway Buckets, R2, MinIO, Backblaze B2. Leave blank for AWS S3." },
