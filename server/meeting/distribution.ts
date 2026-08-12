@@ -37,6 +37,7 @@ import type { MeetingSessionMeta, MeetingRecapMeta } from "@shared/models/chat";
 import { normalizeEmailAddress } from "../email-normalization";
 import { peopleStorage } from "../people-storage";
 import { runWithPrincipal } from "../principal-context";
+import { createNamedSystemPrincipal } from "../principal";
 import { resolveMeetingTransportSession } from "./owner-principal";
 import { hashRecapCapabilityToken } from "./recap-capability";
 import {
@@ -97,7 +98,10 @@ async function resolveOnboardingTokenHash(
   if (!resolved || !resolved.ownerUserId || !resolved.accountId) {
     return { status: "not_found" };
   }
-  const meetingSession = await resolveMeetingTransportSession(resolved.meetingSessionId);
+  const meetingSession = await runWithPrincipal(
+    createNamedSystemPrincipal("recipient-recap-source", ["system:read"]),
+    () => resolveMeetingTransportSession(resolved.meetingSessionId),
+  );
   const meeting = meetingSession?.meeting;
   if (!meeting
     || meeting.ownerUserId !== resolved.ownerUserId
