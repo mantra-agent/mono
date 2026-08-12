@@ -4,6 +4,16 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSelectedBusiness } from "@/hooks/use-selected-business";
 import { useToast } from "@/hooks/use-toast";
@@ -13,7 +23,23 @@ import type { BusinessHiringProjection, BusinessHiringSlot } from "@shared/model
 import { currentCalendarMonth } from "@shared/models/business-hiring";
 import type { JobRole } from "@shared/models/job-roles";
 
-const FROZEN_CELL = "sticky left-0 z-10 min-w-[13rem] max-w-[13rem] border-r border-border/20 bg-background px-3 py-1.5 text-left";
+const FROZEN_CELL = "sticky left-0 z-10 min-w-[12rem] max-w-[12rem] border-r border-border/20 bg-background px-3 py-1.5 text-left";
+const MONTH_CELL = "min-w-[2.75rem] px-0 py-1 text-center";
+const YEAR_DIVIDER = "border-l-2 border-border/70";
+const MONTH_DIVIDER = "border-l border-border/10";
+
+function startMonthOf(slot: BusinessHiringSlot): string {
+  return slot.plannedStartMonth ?? slot.approvalMonth;
+}
+
+function monthShort(calendarMonth: string): string {
+  const [year, month] = calendarMonth.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, 1)));
+}
+
+function isYearStart(calendarMonth: string, index: number): boolean {
+  return index > 0 && calendarMonth.endsWith("-01");
+}
 
 function approvedSlots(data: BusinessHiringProjection): BusinessHiringSlot[] {
   return data.slots.filter((slot) => slot.status === "approved");
@@ -31,8 +57,9 @@ function RoleRow({
   businessId: string;
 }) {
   const { toast } = useToast();
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/business/hiring", businessId] });
-  const startMonth = slot.plannedStartMonth ?? slot.approvalMonth;
+  const startMonth = startMonthOf(slot);
   const update = useMutation({
     mutationFn: async (plannedStartMonth: string) => apiRequest("PATCH", `/api/business/hiring/slots/${slot.id}`, {
       businessId,
@@ -44,40 +71,60 @@ function RoleRow({
   });
   const remove = useMutation({
     mutationFn: async () => apiRequest("DELETE", `/api/business/hiring/slots/${slot.id}?businessId=${encodeURIComponent(businessId)}`),
-    onSuccess: invalidate,
+    onSuccess: () => { setConfirmOpen(false); invalidate(); },
     onError: (error: Error) => toast({ title: "Could not remove role", description: error.message, variant: "destructive" }),
   });
   const title = role?.title ?? "Unresolved role";
   return (
     <tr className="border-t border-border/10">
-      <td className={cn(FROZEN_CELL, "z-10")}>
+      <td className={FROZEN_CELL}>
         <div className="flex min-h-8 items-center justify-between gap-2">
           <div className="min-w-0">
             <div className="truncate text-sm text-foreground">{title}</div>
             {role?.team ? <div className="truncate text-xs text-muted-foreground">{role.team}</div> : null}
           </div>
-          <button type="button" className="shrink-0 text-muted-foreground hover:text-destructive" aria-label={`Remove ${title}`} onClick={() => remove.mutate()}>
+          <button type="button" className="shrink-0 text-muted-foreground hover:text-destructive" aria-label={`Remove ${title}`} onClick={() => setConfirmOpen(true)}>
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
+        <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove {title}?</AlertDialogTitle>
+              <AlertDialogDescription>This removes the approved role from the hiring plan.</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={remove.isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={remove.isPending} onClick={(event) => { event.preventDefault(); remove.mutate(); }}>
+                Remove
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </td>
-      {months.map((month) => {
+      {months.map((month, index) => {
         const isStart = startMonth === month.calendarMonth;
         const isActive = startMonth <= month.calendarMonth;
         return (
-          <td key={month.calendarMonth} className="border-l border-border/10 px-1 py-1 text-center">
+          <td key={month.calendarMonth} className={cn(MONTH_CELL, isYearStart(month.calendarMonth, index) ? YEAR_DIVIDER : MONTH_DIVIDER)}>
             <button
               type="button"
-              aria-label={`Start ${title} in ${month.label}`}
+              aria-label={`Start ${title} in ${monthShort(month.calendarMonth)}`}
               aria-pressed={isStart}
               disabled={update.isPending}
               onClick={() => update.mutate(month.calendarMonth)}
-              className={cn(
-                "flex h-8 w-full items-center justify-center rounded text-sm tabular-nums",
-                isStart ? "bg-cta text-cta-foreground" : isActive ? "text-foreground" : "text-muted-foreground hover:bg-accent/70 hover:text-foreground",
-              )}
+              className="group relative flex h-8 w-full items-center justify-center"
             >
-              {isStart ? "Start" : isActive ? "•" : "·"}
+              {isStart ? (
+                <>
+                  <span className="absolute left-1/2 right-0 h-0.5 bg-success" />
+                  <span className="relative h-2.5 w-2.5 rotate-45 rounded-[1px] bg-success" />
+                </>
+              ) : isActive ? (
+                <span className="h-0.5 w-full bg-success" />
+              ) : (
+                <span className="h-0.5 w-full bg-transparent group-hover:bg-muted-foreground/30" />
+              )}
             </button>
           </td>
         );
@@ -115,22 +162,22 @@ function AddRoleRow({
   });
   return (
     <tr className="border-t border-border/20">
-      <td className={cn(FROZEN_CELL, "z-10")}>
+      <td className={FROZEN_CELL}>
         <Select value={roleId} onValueChange={setRoleId}>
           <SelectTrigger className="h-8" aria-label="Job Role"><SelectValue placeholder="Choose a Job Role" /></SelectTrigger>
           <SelectContent>{roles.map((role) => <SelectItem key={role.id} value={role.id}>{role.title}</SelectItem>)}</SelectContent>
         </Select>
       </td>
-      {months.map((month) => (
-        <td key={month.calendarMonth} className="border-l border-border/10 px-1 py-1 text-center">
+      {months.map((month, index) => (
+        <td key={month.calendarMonth} className={cn(MONTH_CELL, isYearStart(month.calendarMonth, index) ? YEAR_DIVIDER : MONTH_DIVIDER)}>
           <button
             type="button"
             disabled={!roleId || create.isPending}
-            aria-label={`Start selected role in ${month.label}`}
+            aria-label={`Start selected role in ${monthShort(month.calendarMonth)}`}
             onClick={() => create.mutate(month.calendarMonth)}
-            className="flex h-8 w-full items-center justify-center rounded text-sm text-muted-foreground hover:bg-accent/70 hover:text-foreground disabled:opacity-50"
+            className="group flex h-8 w-full items-center justify-center disabled:opacity-50"
           >
-            ·
+            <span className="h-0.5 w-full bg-transparent group-hover:bg-success/50" />
           </button>
         </td>
       ))}
@@ -152,11 +199,17 @@ export default function BusinessHiringPage() {
   const rows = useMemo(() => {
     if (!data) return [];
     const term = query.trim().toLowerCase();
-    return approvedSlots(data).filter((slot) => {
-      if (!term) return true;
-      const role = roleById.get(slot.roleId);
-      return `${role?.title ?? ""} ${role?.team ?? ""}`.toLowerCase().includes(term);
-    });
+    return approvedSlots(data)
+      .filter((slot) => {
+        if (!term) return true;
+        const role = roleById.get(slot.roleId);
+        return `${role?.title ?? ""} ${role?.team ?? ""}`.toLowerCase().includes(term);
+      })
+      .sort((a, b) => {
+        const byStart = startMonthOf(a).localeCompare(startMonthOf(b));
+        if (byStart !== 0) return byStart;
+        return (roleById.get(a.roleId)?.title ?? "").localeCompare(roleById.get(b.roleId)?.title ?? "");
+      });
   }, [data, query, roleById]);
   if (businessesLoading || isLoading) return <div className="flex h-full items-center justify-center text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" /></div>;
   const months = data?.months ?? [];
@@ -175,9 +228,20 @@ export default function BusinessHiringPage() {
               <thead>
                 <tr>
                   <th className={cn(FROZEN_CELL, "z-20 border-b py-2 font-medium text-muted-foreground")}>Role</th>
-                  {months.map((month) => (
-                    <th key={month.calendarMonth} className={cn("min-w-[4.75rem] border-b border-l border-border/10 px-2 py-2 text-center font-medium text-muted-foreground", month.calendarMonth === currentCalendarMonth() && "text-foreground")}>
-                      {month.label}
+                  {months.map((month, index) => (
+                    <th
+                      key={month.calendarMonth}
+                      className={cn(
+                        MONTH_CELL,
+                        "border-b px-1 py-2 font-medium text-muted-foreground",
+                        isYearStart(month.calendarMonth, index) ? YEAR_DIVIDER : MONTH_DIVIDER,
+                        month.calendarMonth === currentCalendarMonth() && "text-foreground",
+                      )}
+                    >
+                      <div>{monthShort(month.calendarMonth)}</div>
+                      {index === 0 || isYearStart(month.calendarMonth, index) ? (
+                        <div className="text-2xs text-muted-foreground/70">{month.calendarMonth.slice(0, 4)}</div>
+                      ) : null}
                     </th>
                   ))}
                 </tr>
