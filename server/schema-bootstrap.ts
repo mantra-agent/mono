@@ -6532,6 +6532,25 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_job_roles_account_title ON job_roles(account_id, normalized_title) WHERE account_id IS NOT NULL`);
   });
 
+  await heal("business hiring slots domain", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS business_hiring_slots (
+        id TEXT PRIMARY KEY, business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE RESTRICT,
+        role_id TEXT NOT NULL REFERENCES job_roles(id) ON DELETE RESTRICT, approval_month TEXT NOT NULL,
+        planned_start_month TEXT, status TEXT NOT NULL DEFAULT 'approved', source TEXT NOT NULL DEFAULT 'manual',
+        legacy_source_key TEXT, idempotency_key TEXT, scope TEXT NOT NULL DEFAULT 'user', owner_user_id TEXT,
+        account_id TEXT, created_by_user_id TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT business_hiring_slots_months CHECK (planned_start_month IS NULL OR planned_start_month >= approval_month),
+        CONSTRAINT business_hiring_slots_status CHECK (status IN ('approved','canceled'))
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_business_hiring_slots_business ON business_hiring_slots(business_id, status)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_business_hiring_slots_scope_owner ON business_hiring_slots(scope, owner_user_id)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_business_hiring_slots_legacy ON business_hiring_slots(business_id, legacy_source_key) WHERE legacy_source_key IS NOT NULL`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_business_hiring_slots_idempotency ON business_hiring_slots(business_id, idempotency_key) WHERE idempotency_key IS NOT NULL`);
+  });
+
   // Backfill media items from S3 — idempotent, safe to run on every startup
   try {
     const { backfillMediaFromStorage } = await import("./media/media-storage");

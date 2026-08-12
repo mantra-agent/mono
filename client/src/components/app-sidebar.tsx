@@ -265,6 +265,7 @@ const navSections: NavSection[] = [
       navItem("Model", "navigation.businessModel.open", LineChart),
       navItem("Budgets", "navigation.budgets.open", DollarSign),
       navItem("Roles", "navigation.roles.open", Briefcase),
+      navItem("Hiring", "navigation.hiring.open", Briefcase),
       navItem("KPIs", "navigation.kpis.open", Gauge),
       navItem("Metrics", "navigation.metrics.open", Activity),
     ],
