@@ -323,6 +323,10 @@ export type MeetingSpeakerAssignment =
       outcome: "assigned" | "cleared" | "unchanged";
       participant: MeetingParticipant;
       previousPersonId?: string;
+      displacedParticipants: Array<{
+        participant: MeetingParticipant;
+        previousPersonId: string;
+      }>;
       session: FileSession;
     }
   | { outcome: "not_found" | "not_owned" };
@@ -3537,7 +3541,13 @@ export const chatFileStorage: IChatFileStorage = {
       if (!current) return { outcome: "not_found" };
 
       const nextPersonId = person?.id;
+      const duplicatePersonIndexes = person
+        ? data.meeting.participants.flatMap((participant, index) =>
+            index !== participantIndex && participant.personId === person.id ? [index] : [],
+          )
+        : [];
       if (
+        duplicatePersonIndexes.length === 0 &&
         current.personId === nextPersonId &&
         (!person || (current.identitySource === "manual" && current.label === person.name))
       ) {
@@ -3545,6 +3555,7 @@ export const chatFileStorage: IChatFileStorage = {
           outcome: "unchanged",
           participant: current,
           previousPersonId: current.personId,
+          displacedParticipants: [],
           session: convToMeta(data),
         };
       }
@@ -3568,18 +3579,36 @@ export const chatFileStorage: IChatFileStorage = {
       }
 
       const participants = [...data.meeting.participants];
+      const displacedParticipants = duplicatePersonIndexes.map((index) => {
+        const duplicate = participants[index];
+        const cleared: MeetingParticipant = {
+          ...duplicate,
+          label: duplicate.providerLabel || duplicate.label,
+          identitySource: duplicate.calendarEmail ? "calendar" : "transport",
+        };
+        delete cleared.personId;
+        participants[index] = cleared;
+        return { participant: cleared, previousPersonId: person!.id };
+      });
       participants[participantIndex] = participant;
       data.meeting = { ...data.meeting, participants };
 
       const now = new Date().toISOString();
+      const changedParticipantsByKey = new Map(
+        [participant, ...displacedParticipants.map((entry) => entry.participant)]
+          .flatMap((changed) => changed.key ? [[changed.key, changed] as const] : []),
+      );
       for (const message of data.messages) {
-        if (message.speaker?.key !== speakerKey) continue;
+        const changedParticipant = message.speaker?.key
+          ? changedParticipantsByKey.get(message.speaker.key)
+          : undefined;
+        if (!changedParticipant) continue;
         message.speaker = {
           ...message.speaker,
-          label: participant.label,
-          ...(person ? { personId: person.id } : {}),
+          label: changedParticipant.label,
+          ...(changedParticipant.personId ? { personId: changedParticipant.personId } : {}),
         };
-        if (!person) delete message.speaker.personId;
+        if (!changedParticipant.personId) delete message.speaker.personId;
         message.updatedAt = now;
       }
       data.updatedAt = now;
@@ -3590,6 +3619,7 @@ export const chatFileStorage: IChatFileStorage = {
         outcome: person ? "assigned" : "cleared",
         participant,
         previousPersonId,
+        displacedParticipants,
         session,
       };
     });
