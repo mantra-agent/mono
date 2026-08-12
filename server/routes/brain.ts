@@ -74,6 +74,9 @@ import {
   theses,
   thesisEvidence,
   thesisPredictions,
+  businesses,
+  jobRoles,
+  businessHiringSlots,
 } from "@shared/schema";
 import { workspaceDocuments, codeEmbeddings, memoryVnextSourceQueue } from "@shared/models/memory";
 import { runtimeRuns, runtimeAttempts, runtimeRunEvents, runtimeCapacityPolicies } from "@shared/models/runtime";
@@ -242,6 +245,9 @@ export const TABLE_REGISTRY: TableRegistryEntry[] = [
   { key: "product_backlogs", table: productBacklogs, domain: "other", hasSerial: true, dependsOn: ["products"] },
   { key: "product_platform_associations", table: productPlatformAssociations, domain: "other", hasSerial: true, dependsOn: ["products", "platforms"] },
   { key: "feature_requests", table: featureRequests, domain: "other", hasSerial: true, dependsOn: ["product_backlogs"] },
+  { key: "businesses", table: businesses, domain: "other", hasSerial: false, dependsOn: ["accounts", "users"] },
+  { key: "job_roles", table: jobRoles, domain: "other", hasSerial: false, dependsOn: ["accounts", "users"] },
+  { key: "business_hiring_slots", table: businessHiringSlots, domain: "other", hasSerial: false, dependsOn: ["businesses", "job_roles"] },
   { key: "provider_connections", table: providerConnections, domain: "other", hasSerial: true, sensitiveFields: ["encryptedCredential", "credentialIv", "credentialTag"] },
   { key: "environment_source_bindings", table: environmentSourceBindings, domain: "other", hasSerial: true, dependsOn: ["platform_product_environments", "provider_connections"] },
   { key: "environment_hosting_bindings", table: environmentHostingBindings, domain: "other", hasSerial: true, dependsOn: ["platform_product_environments", "provider_connections"] },
