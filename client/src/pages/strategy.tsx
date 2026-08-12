@@ -1,7 +1,7 @@
 import { usePageHeader } from "@/hooks/use-page-header";
 import StrategyListTab from "./strategy-list-tab";
 
-export default function StrategyPage() {
+export default function ScenariosPage() {
   usePageHeader({ title: "Scenarios" });
 
   return (

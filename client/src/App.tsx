@@ -52,16 +52,16 @@ const BrainPage = lazyWithRetry(() => import("@/pages/brain"));
 const IntegrationsPage = lazyWithRetry(() => import("@/pages/integrations"));
 const ModsPage = lazyWithRetry(() => import("@/pages/mods"));
 const Goals = lazyWithRetry(() => import("@/pages/goals"));
-const VisionPage = lazyWithRetry(() => import("@/pages/goals-future"));
-const HomePage = lazyWithRetry(() => import("@/pages/simple"));
+const VisionPage = lazyWithRetry(() => import("@/pages/vision"));
+const HomePage = lazyWithRetry(() => import("@/pages/home"));
 const DashboardPage = lazyWithRetry(() => import("@/pages/dashboard"));
 const SessionPage = lazyWithRetry(() => import("@/pages/session"));
 const GoalDetailRedirect = lazyWithRetry(() => import("@/pages/goal-detail"));
-const ProjectsPage = lazyWithRetry(() => import("@/pages/work"));
+const ProjectsPage = lazyWithRetry(() => import("@/pages/projects"));
 const IssueDetailPage = lazyWithRetry(() => import("@/pages/issue-detail"));
 const IssueCaptureDialog = lazyWithRetry(() => import("@/components/issue-capture").then(m => ({ default: m.IssueCaptureDialog })));
 const LogsPage = lazyWithRetry(() => import("@/pages/logs"));
-const UserDetailsPage = lazyWithRetry(() => import("@/pages/user-details"));
+const AccountPage = lazyWithRetry(() => import("@/pages/account"));
 const VaultsPage = lazyWithRetry(() => import("@/pages/vaults-admin"));
 const TeamsPage = lazyWithRetry(() => import("@/pages/teams"));
 const LoginPage = lazyWithRetry(() => import("@/pages/login"));
@@ -74,28 +74,28 @@ const DesignPage = lazyWithRetry(() => import("@/pages/design"));
 const PeoplePage = lazyWithRetry(() => import("@/pages/people"));
 const MeetingsPage = lazyWithRetry(() => import("@/pages/meetings"));
 const CompaniesPage = lazyWithRetry(() => import("@/pages/companies"));
-const BusinessDefinitionPage = lazyWithRetry(() => import("@/pages/business-definition"));
+const BusinessIdentityPage = lazyWithRetry(() => import("@/pages/business-identity"));
 const BusinessModelPage = lazyWithRetry(() => import("@/pages/business-model"));
 const BusinessBudgetsPage = lazyWithRetry(() => import("@/pages/business-budgets"));
-const BusinessAdvantagePage = lazyWithRetry(() => import("@/pages/business-advantage"));
+const BusinessPlanPage = lazyWithRetry(() => import("@/pages/business-plan"));
 const BusinessKpisPage = lazyWithRetry(() => import("@/pages/business-kpis"));
 const BusinessMetricsPage = lazyWithRetry(() => import("@/pages/business-metrics"));
 const JobRolesPage = lazyWithRetry(() => import("@/pages/job-roles"));
-const CommsPage = lazyWithRetry(() => import("@/pages/comms"));
+const EmailPage = lazyWithRetry(() => import("@/pages/email"));
 const CalendarPage = lazyWithRetry(() => import("@/pages/calendar"));
 const TimersPage = lazyWithRetry(() => import("@/pages/timers"));
 const MemoryPageFull = lazyWithRetry(() => import("@/pages/memory-page"));
-const StrategyPage = lazyWithRetry(() => import("@/pages/strategy"));
+const ScenariosPage = lazyWithRetry(() => import("@/pages/scenarios"));
 const TagsPage = lazyWithRetry(() => import("@/pages/tags"));
 const DecisionsPage = lazyWithRetry(() => import("@/pages/decisions"));
-const StrategyDetailPage = lazyWithRetry(() => import("@/pages/strategy-detail"));
+const ScenarioDetailPage = lazyWithRetry(() => import("@/pages/scenario-detail"));
 
 const OrientationPage = lazyWithRetry(() => import("@/pages/orientation"));
 const NewsPage = lazyWithRetry(() => import("@/pages/news"));
 const PlatformsPage = lazyWithRetry(() => import("@/pages/platforms"));
 const PlatformEnvironmentDetailPage = lazyWithRetry(() => import("@/pages/platform-environment-detail"));
 const WellnessPage = lazyWithRetry(() => import("@/pages/wellness"));
-const InfoPage = lazyWithRetry(() => import("@/pages/library/index"));
+const LibraryPage = lazyWithRetry(() => import("@/pages/library/index"));
 const FilesPage = lazyWithRetry(() => import("@/pages/files"));
 const DocumentViewerPage = lazyWithRetry(() => import("@/pages/document-viewer"));
 const FinancePage = lazyWithRetry(() => import("@/pages/finance"));
@@ -300,8 +300,8 @@ function Router() {
         <Route path="/sessions">{() => <Redirect to={sessionRedirectFromQuery()} />}</Route>
         <Route path="/goals" component={Goals} />
         <Route path="/vision" component={VisionPage} />
-        <Route path="/scenarios/:id" component={StrategyDetailPage} />
-        <Route path="/scenarios" component={StrategyPage} />
+        <Route path="/scenarios/:id" component={ScenarioDetailPage} />
+        <Route path="/scenarios" component={ScenariosPage} />
         <Route path="/tags/:slug" component={TagsPage} />
         <Route path="/tags" component={TagsPage} />
         <Route path="/decisions" component={DecisionsPage} />
@@ -331,14 +331,16 @@ function Router() {
         </Route>
         <Route path="/companies/:id" component={CompaniesPage} />
         <Route path="/companies" component={CompaniesPage} />
-        <Route path="/business/definition">{() => <RequirePermission permission="system:read"><BusinessDefinitionPage /></RequirePermission>}</Route>
+        <Route path="/business/identity">{() => <RequirePermission permission="system:read"><BusinessIdentityPage /></RequirePermission>}</Route>
+        <Route path="/business/definition">{() => <Redirect to="/business/identity" />}</Route>
         <Route path="/business/model">{() => <RequirePermission permission="system:read"><BusinessModelPage /></RequirePermission>}</Route>
         <Route path="/business/budgets">{() => <RequirePermission permission="system:read"><BusinessBudgetsPage /></RequirePermission>}</Route>
-        <Route path="/business/advantage" component={BusinessAdvantagePage} />
+        <Route path="/business/plan" component={BusinessPlanPage} />
+        <Route path="/business/advantage">{() => <Redirect to="/business/plan" />}</Route>
         <Route path="/business/roles">{() => <RequirePermission permission="system:read"><JobRolesPage /></RequirePermission>}</Route>
         <Route path="/business/kpis">{() => <RequirePermission permission="system:read"><BusinessKpisPage /></RequirePermission>}</Route>
         <Route path="/business/metrics">{() => <RequirePermission permission="system:read"><BusinessMetricsPage /></RequirePermission>}</Route>
-        <Route path="/email" component={CommsPage} />
+        <Route path="/email" component={EmailPage} />
         <Route path="/comms">{() => <Redirect to="/email" />}</Route>
         <Route path="/orientation" component={OrientationPage} />
         <Route path="/world">{() => <Redirect to={`/orientation${window.location.search}`} />}</Route>
@@ -364,13 +366,13 @@ function Router() {
         <Route path="/interface-preview" component={InterfacePreviewPage} />
         <Route path="/dev/orb">{() => <RequirePermission permission="system:read"><DevOrbPage /></RequirePermission>}</Route>
         <Route path="/library2">{() => <Redirect to="/library" />}</Route>
-        <Route path="/library" component={InfoPage} />
-        <Route path="/info" component={InfoPage} />
+        <Route path="/library" component={LibraryPage} />
+        <Route path="/info">{() => <Redirect to="/library" />}</Route>
         <Route path="/files" component={FilesPage} />
         <Route path="/documents/:id" component={DocumentViewerPage} />
         <Route path="/audiences">{() => <RequirePermission permission="system:read"><AudiencesPage /></RequirePermission>}</Route>
         <Route path="/campaigns">{() => <RequirePermission permission="system:read"><CampaignsPage /></RequirePermission>}</Route>
-        <Route path="/account" component={UserDetailsPage} />
+        <Route path="/account" component={AccountPage} />
         <Route path="/vaults" component={VaultsPage} />
         <Route path="/teams" component={TeamsPage} />
         <Route component={NotFound} />
@@ -564,7 +566,7 @@ function prefetchRoutes() {
   quiet(import("@/pages/integrations"));
   // Removed: chat page prefetch (focus widget is sole chat surface now)
   quiet(import("@/pages/goals"));
-  quiet(import("@/pages/work"));
+  quiet(import("@/pages/projects"));
   quiet(import("@/pages/issue-detail"));
   quiet(import("@/components/issue-capture").then(m => m.IssueCaptureDialog));
 }

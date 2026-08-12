@@ -1141,7 +1141,7 @@ function FutureGoalsCanvas({ inFullscreenModal = false }: { inFullscreenModal?: 
             <DialogHeader className="sr-only">
               <DialogTitle>Lifetime Goals full screen</DialogTitle>
             </DialogHeader>
-            <FutureGoalsView inFullscreenModal />
+            <VisionPage inFullscreenModal />
           </DialogContent>
         </Dialog>
       )}
@@ -1149,7 +1149,7 @@ function FutureGoalsCanvas({ inFullscreenModal = false }: { inFullscreenModal?: 
   );
 }
 
-export default function FutureGoalsView({ inFullscreenModal = false }: { inFullscreenModal?: boolean } = {}) {
+export default function VisionPage({ inFullscreenModal = false }: { inFullscreenModal?: boolean } = {}) {
   usePageHeader({ title: "Vision", skip: inFullscreenModal });
   return (
     <ReactFlowProvider>

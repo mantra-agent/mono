@@ -194,7 +194,7 @@ function VersionHistory({
   );
 }
 
-export default function InternalPromptsTab() {
+export default function PromptsPage() {
   const { toast } = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");

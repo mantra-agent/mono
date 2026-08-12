@@ -151,10 +151,10 @@ const business: ModDefinition = {
     serverRouteGroups: [serverRouteGroupRef("business.routes.api", "business.api")],
     tools: [toolRef("business.tool.jobs", "jobs")],
     clientRoutes: [
-      clientRoute("business.route.definition", "/business/definition", "business-definition", { requiredPermissions: ["system:read"] }),
+      clientRoute("business.route.definition", "/business/identity", "business-identity", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.business-model", "/business/model", "business-model", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.budgets", "/business/budgets", "business-budgets", { requiredPermissions: ["system:read"] }),
-      clientRoute("business.route.advantage", "/business/advantage", "business-advantage"),
+      clientRoute("business.route.advantage", "/business/plan", "business-plan"),
       clientRoute("business.route.job-roles", "/business/roles", "job-roles", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.kpis", "/business/kpis", "business-kpis", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.metrics", "/business/metrics", "business-metrics", { requiredPermissions: ["system:read"] }),

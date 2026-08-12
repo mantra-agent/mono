@@ -353,7 +353,7 @@ function NewBusinessAction({ onCreated }: { onCreated: (business: BusinessDefini
   );
 }
 
-export default function BusinessDefinitionPage() {
+export default function BusinessIdentityPage() {
   const { businesses, selectedId, setSelectedId, selected, isLoading } = useSelectedBusiness();
 
   return (

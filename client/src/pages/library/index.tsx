@@ -83,7 +83,7 @@ function LibraryTopbarBreadcrumbs({ trail, onSelectLibrary }: {
   );
 }
 
-export default function InfoPage() {
+export default function LibraryPage() {
   const [tab, setTab, specSlug, pageSlug] = useHashTab();
   const { data: unreadIds } = useLibraryUnread();
   const { data: pages = [] } = useQuery<LibraryPage[]>({ queryKey: ["/api/info/library"] });

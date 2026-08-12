@@ -124,7 +124,7 @@ const FIXTURE_ROUTE_PATHS: string[] = [
   "/companies",
   "/companies/:param",
   "/business/model",
-  "/business/advantage",
+  "/business/plan",
   "/business/roles",
   "/pipelines",
   "/wellness",

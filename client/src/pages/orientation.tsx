@@ -323,7 +323,7 @@ function OrientationSection({
   );
 }
 
-export default function WorldPage() {
+export default function OrientationPage() {
   usePageHeader({ title: "Orientation" });
   const [searchQuery, setSearchQuery] = useState("");
   const queries = SECTION_CONFIGS.map((section) => useSectionData(section));

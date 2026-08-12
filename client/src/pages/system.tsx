@@ -7,11 +7,11 @@ import { useAuth } from "@/hooks/use-auth";
 import { useLogErrors } from "@/hooks/use-log-errors";
 import { lazyWithRetry } from "@/lib/lazy-with-retry";
 
-const PerformanceContent = lazyWithRetry(() => import("@/pages/performance"));
+const CostContent = lazyWithRetry(() => import("@/pages/cost"));
 const ToolsContent = lazyWithRetry(() => import("@/pages/tools"));
-const PromptsContent = lazyWithRetry(() => import("@/pages/internal-prompts"));
+const PromptsContent = lazyWithRetry(() => import("@/pages/prompts"));
 const LogsContent = lazyWithRetry(() => import("@/pages/logs"));
-const ResourcesContent = lazyWithRetry(() => import("@/pages/resources"));
+const PerformanceContent = lazyWithRetry(() => import("@/pages/performance-screen"));
 const UsersContent = lazyWithRetry(() => import("@/pages/users-admin"));
 const SecretsContent = lazyWithRetry(() => import("@/pages/secrets-admin"));
 
@@ -121,10 +121,10 @@ export default function SystemPage() {
           </div>
         )}
         {activeTab === "inference" && <InferenceContent embedded={true} />}
-        {activeTab === "cost" && <PerformanceContent embedded={true} />}
+        {activeTab === "cost" && <CostContent embedded={true} />}
         {activeTab === "events" && <EventsContent embedded={true} />}
         {activeTab === "hooks" && <HooksContent embedded={true} />}
-        {activeTab === "resources" && <ResourcesContent />}
+        {activeTab === "resources" && <PerformanceContent />}
         {activeTab === "process" && (
           <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin p-6">
             <div className="">

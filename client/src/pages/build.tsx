@@ -5432,7 +5432,7 @@ export function DatabasePage() {
   );
 }
 
-export default function DevPage() {
+export default function BuildPage() {
   const initial = useMemo(parseInitialTab, []);
   const [activeTab, setActiveTab] = useState<DevTab>(initial);
 
@@ -5503,7 +5503,7 @@ export default function DevPage() {
   // First-load skeleton (no data yet, still fetching).
   if (isLoading && !status) {
     return (
-      <div className="flex flex-col h-full" data-testid="dev-loading">
+      <div className="flex flex-col h-full" data-testid="build-loading">
         <div className="flex-1 flex items-center justify-center">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
@@ -5514,7 +5514,7 @@ export default function DevPage() {
   // Runtime identity and hosting credentials resolve through the canonical Platform Environment binding.
   if (!status) {
     return (
-      <div className="flex h-full flex-col" data-testid="dev-error">
+      <div className="flex h-full flex-col" data-testid="build-error">
         <div className="flex items-center gap-2 border-b border-warning/20 bg-warning/10 px-4 py-2 text-sm text-warning">
           <span className="flex-1">
             Couldn't resolve this runtime's Platform Environment: {" "}

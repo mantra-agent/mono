@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useHasActivePlans } from "@/pages/plans-view";
+import { useHasActivePlans } from "@/pages/plans";
 
 export function useWorkActivity(): boolean {
   return useHasActivePlans();

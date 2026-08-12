@@ -195,7 +195,7 @@ function PlanTitle({
   );
 }
 
-export default function BusinessAdvantagePage() {
+export default function BusinessPlanPage() {
   const queryClient = useQueryClient();
   const routePlanId = useMemo(() => new URLSearchParams(window.location.search).get("plan"), []);
   const recentPlanId = useMemo(() => {

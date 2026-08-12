@@ -142,7 +142,7 @@ const registry: Record<string, RegistryEntry> = {
   business_plan: {
     Icon: FileJson2,
     fallbackLabel: ref => metadataString(ref, "label") || `Business Plan ${ref.id}`,
-    href: ref => metadataString(ref, "href") || `/business/advantage?plan=${encodeURIComponent(ref.id)}`,
+    href: ref => metadataString(ref, "href") || `/business/plan?plan=${encodeURIComponent(ref.id)}`,
   },
   kpi: {
     Icon: Gauge,

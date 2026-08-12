@@ -279,7 +279,7 @@ const adapters: AddressResolverAdapter[] = [
     const byId = new Map(rows.map(row => [row.id, row]));
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, {
       label: byId.get(ref.id)!.name,
-      href: `/business/advantage?plan=${encodeURIComponent(ref.id)}`,
+      href: `/business/plan?plan=${encodeURIComponent(ref.id)}`,
       updatedAt: byId.get(ref.id)!.updatedAt,
     })]] : []));
   }),
