@@ -8785,7 +8785,27 @@ ${refs}` : ""),
             }
           }
           log.debug(`[Images] analyze complete: ${description.length} chars`);
-          return { result: description };
+          let result = description;
+          const objectPath = typeof a.path === "string" ? a.path.split("?")[0] : "";
+          if (objectPath.startsWith("/objects/uploads/")) {
+            try {
+              const {
+                deriveUploadDisplayName,
+                renameUploadResourceDisplayName,
+              } = await import("./upload-resource-service");
+              const currentName = objectPath.split("/").pop() || objectPath;
+              const renamed = await renameUploadResourceDisplayName({
+                objectPath,
+                name: deriveUploadDisplayName(description, currentName),
+              });
+              if (renamed && renamed.previousName !== renamed.name) {
+                result = `${description}\n\nRenamed in Files to ${renamed.name}.`;
+              }
+            } catch (renameErr: any) {
+              log.warn(`[Images] upload rename skipped: ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`);
+            }
+          }
+          return { result };
         } catch (err: any) {
           log.error(`[Images] analyze error: ${err.message}`);
           return { result: `Image analysis failed: ${err.message}`, error: true };

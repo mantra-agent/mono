@@ -1,18 +1,52 @@
+import { extname } from "path";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { createLogger } from "./log";
 import { requireCurrentUserPrincipal } from "./principal-context";
-import { driveResources, uploadResourceSources } from "@shared/schema";
+import { driveResources, indexedFileSources, uploadResourceSources } from "@shared/schema";
 import { vaults } from "@shared/models/vaults";
 
 const log = createLogger("UploadResourceService");
 const UPLOAD_PATH = /\/objects\/uploads\/[A-Za-z0-9._-]+/g;
+const UUID_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const GENERIC_UPLOAD_NAME =
+  /^(img|dsc|pxl|mov|vid|photo|image|picture|untitled|download|screenshot|screen[ _-]?shot)([-_ .]?\d+)*$/i;
+const NAME_FILLER =
+  /^(this|that|the|an|a|image|photo|picture|screenshot|shows?|depicts?|contains?|features?|appears?|showing|of|with|and|to|be|is|are|it)$/i;
 
 export interface RegisterUploadInput {
   objectPath: string;
   name: string;
   mimeType?: string | null;
   sessionId?: string | null;
+}
+
+function basenameWithoutExt(name: string): string {
+  return name.replace(/\.[^.]+$/, "").trim();
+}
+
+export function isGenericUploadName(name: string): boolean {
+  const base = basenameWithoutExt(name.split("/").pop() ?? name);
+  if (!base) return true;
+  if (UUID_NAME.test(base)) return true;
+  if (GENERIC_UPLOAD_NAME.test(base)) return true;
+  return false;
+}
+
+export function deriveUploadDisplayName(description: string, currentName: string): string {
+  const rawExt = extname(currentName) || extname(currentName.split("/").pop() ?? "") || ".png";
+  const ext = rawExt.toLowerCase();
+  const words = description
+    .replace(/[`*_#>\[\]()]/g, " ")
+    .split(/\s+/)
+    .map((word) => word.replace(/[^A-Za-z0-9-]/g, ""))
+    .filter((word) => word.length > 1 && !NAME_FILLER.test(word))
+    .slice(0, 6);
+  const chosen = words.length >= 2 ? words : ["Analyzed", "Image"];
+  const title = chosen
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+  return `${title}${ext}`;
 }
 
 async function resolveUploadVault(sessionId?: string | null): Promise<string> {
@@ -40,15 +74,27 @@ export async function registerUploadResource(input: RegisterUploadInput) {
   const objectPath = input.objectPath.trim();
   if (!objectPath.startsWith("/objects/uploads/")) throw Object.assign(new Error("Invalid upload object path"), { status: 400 });
   const vaultId = await resolveUploadVault(input.sessionId);
+  const incomingName = input.name.trim() || objectPath.split("/").pop()!;
   return db.transaction(async (tx) => {
+    const [existing] = await tx.select({
+      id: driveResources.id,
+      name: driveResources.name,
+    }).from(driveResources).where(and(
+      eq(driveResources.vaultId, vaultId),
+      eq(driveResources.provider, "mantra"),
+      eq(driveResources.providerFileId, objectPath),
+    )).limit(1);
+    const nextName = existing && !isGenericUploadName(existing.name) && isGenericUploadName(incomingName)
+      ? existing.name
+      : incomingName;
     const [resource] = await tx.insert(driveResources).values({
       accountId: principal.accountId!, vaultId, connectedAccountId: null, provider: "mantra",
-      providerFileId: objectPath, name: input.name.trim() || objectPath.split("/").pop()!,
+      providerFileId: objectPath, name: nextName,
       mimeType: input.mimeType ?? null, resourceType: "file", origin: "upload",
       sourceSessionId: input.sessionId ?? null, addedByUserId: principal.userId,
     }).onConflictDoUpdate({
       target: [driveResources.vaultId, driveResources.provider, driveResources.providerFileId],
-      set: { name: input.name.trim() || objectPath.split("/").pop()!, mimeType: input.mimeType ?? null },
+      set: { name: nextName, mimeType: input.mimeType ?? null },
     }).returning();
     if (input.sessionId) {
       await tx.insert(uploadResourceSources).values({ driveResourceId: resource.id, sessionId: input.sessionId, sourceKind: "conversation" }).onConflictDoNothing();
@@ -56,6 +102,49 @@ export async function registerUploadResource(input: RegisterUploadInput) {
     log.info("upload registered as file resource", { driveResourceId: resource.id, vaultId, hasSessionSource: !!input.sessionId });
     return resource;
   });
+}
+
+/** Rename only the Files display name. Object-storage keys stay immutable. */
+export async function renameUploadResourceDisplayName(input: {
+  objectPath: string;
+  name: string;
+}): Promise<{ id: string; previousName: string; name: string } | null> {
+  const principal = requireCurrentUserPrincipal();
+  const objectPath = input.objectPath.trim().split("?")[0];
+  const nextName = input.name.trim();
+  if (!objectPath.startsWith("/objects/uploads/") || !nextName) return null;
+
+  const [resource] = await db.select({
+    id: driveResources.id,
+    name: driveResources.name,
+    origin: driveResources.origin,
+  }).from(driveResources).where(and(
+    eq(driveResources.accountId, principal.accountId!),
+    eq(driveResources.provider, "mantra"),
+    eq(driveResources.providerFileId, objectPath),
+    eq(driveResources.origin, "upload"),
+  )).limit(1);
+  if (!resource) return null;
+  if (!isGenericUploadName(resource.name) || resource.name === nextName) {
+    return { id: resource.id, previousName: resource.name, name: resource.name };
+  }
+
+  const [updated] = await db.update(driveResources)
+    .set({ name: nextName })
+    .where(eq(driveResources.id, resource.id))
+    .returning({ id: driveResources.id, name: driveResources.name });
+  if (!updated) return null;
+
+  await db.update(indexedFileSources)
+    .set({ name: nextName, updatedAt: new Date() })
+    .where(eq(indexedFileSources.driveResourceId, resource.id));
+
+  log.info("upload display name renamed", {
+    driveResourceId: resource.id,
+    previousName: resource.name,
+    name: updated.name,
+  });
+  return { id: updated.id, previousName: resource.name, name: updated.name };
 }
 
 export async function reconcileUploadResources(): Promise<{ scanned: number; registered: number; unassigned: number }> {

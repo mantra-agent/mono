@@ -7,7 +7,9 @@ import { ObjectPermission } from "./objectAcl";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
 import { getPrincipal } from "../principal";
+import { runWithPrincipal } from "../principal-context";
 import { canReadProjectAttachment } from "../file-storage/project-file-access";
+import { registerUploadResource } from "../upload-resource-service";
 
 const log = createLogger("ObjectStorage");
 
@@ -25,14 +27,15 @@ export function registerObjectStorageRoutes(app: Express): void {
       if (err) return res.status(400).json({ error: err.message });
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-      const tmpPath = req.file.path;
+      const uploadedFile = req.file;
+      const tmpPath = uploadedFile.path;
       try {
         const principal = getPrincipal(req);
         if (!principal?.userId || !principal.accountId) return res.status(403).json({ error: "User principal required" });
         const fileBuffer = await readFile(tmpPath);
         const uploaded = await objectStorageService.uploadObjectEntity(fileBuffer, {
-          extension: extname(req.file.originalname) || undefined,
-          contentType: req.file.mimetype || "application/octet-stream",
+          extension: extname(uploadedFile.originalname) || undefined,
+          contentType: uploadedFile.mimetype || "application/octet-stream",
           category: "uploads",
           principal,
           acl: {
@@ -48,10 +51,19 @@ export function registerObjectStorageRoutes(app: Express): void {
         try {
           await unlink(tmpPath);
         } catch (cleanupError) {
-          log.warn(`[Upload] proxy temp cleanup failed: name="${req.file.originalname}" error=${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+          log.warn(`[Upload] proxy temp cleanup failed: name="${uploadedFile.originalname}" error=${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
         }
 
-        log.log(`[Upload] proxy OK: name="${req.file.originalname}" objectPath=${uploaded.objectPath}`);
+        log.log(`[Upload] proxy OK: name="${uploadedFile.originalname}" objectPath=${uploaded.objectPath}`);
+        try {
+          await runWithPrincipal(principal, () => registerUploadResource({
+            objectPath: uploaded.objectPath,
+            name: uploadedFile.originalname,
+            mimeType: uploadedFile.mimetype || "application/octet-stream",
+          }));
+        } catch (registerError) {
+          log.warn(`[Upload] files registration failed: name="${uploadedFile.originalname}" error=${registerError instanceof Error ? registerError.message : String(registerError)}`);
+        }
         res.json({ objectPath: uploaded.objectPath });
       } catch (error) {
         try { await unlink(tmpPath); } catch {}

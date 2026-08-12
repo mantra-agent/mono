@@ -13,6 +13,8 @@
  * reconciliation run so recursive coverage can be recomputed.
  *
  * Semantic extraction state remains exclusively in memory_vnext_source_queue.
+ * Folder UI status follows the latest reconciliation run. Folders never own an
+ * indexed_file_source row, so a missing source is not Stale.
  */
 import { and, desc, eq, inArray, ne, or } from "drizzle-orm";
 import {
@@ -116,13 +118,18 @@ function statusFromParts(input: {
     return "error";
   }
 
-  // Explicit policy on but source not yet materialized / extraction lagging.
-  if ((input.mode === "self" || input.mode === "recursive") && !input.source) {
+  // File policies materialize a source row. Missing source after enable means
+  // the index never landed. Folder policies are selection rules and never get
+  // their own source — a finished run is Indexed, not Stale.
+  if (input.mode === "self" && !input.source) {
     return "stale";
+  }
+  if (input.mode === "recursive") {
+    if (!input.run || input.run.phase === "canceled") return "stale";
+    return "recursive";
   }
 
   if (input.mode === "self") return "self";
-  if (input.mode === "recursive") return "recursive";
 
   // Covered by another active policy (typically recursive ancestor) without a local toggle.
   if (input.source?.discoveryState === "active" && input.mode === "off") {
