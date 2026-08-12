@@ -40,10 +40,11 @@ import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { markEnvironmentBuildSeen } from "@/lib/environment-build-seen";
-import { BuildStatusPanel, detailedStatusLabel, familyClasses, relativeTime, statusFamily, type DevDeploymentSummary } from "@/components/build-status-panel";
+import { detailedStatusLabel, familyClasses, relativeTime, statusFamily, type DevDeploymentSummary } from "@/components/build-status-panel";
 import { DevPublishTab } from "@/components/dev-publish-tab";
 import { MobileBuildCard } from "@/components/mobile-build-card";
 import { SimpleTextFrame } from "@/components/home/simple-text-frame";
+import type { StageLifecycleStatus } from "@shared/models/platform-environment-lifecycle";
 
 // --- Types ---
 
@@ -239,6 +240,7 @@ interface DevStatusOk {
   environmentId: string;
   serviceId: string;
   deployment: DevDeploymentSummary | null;
+  lifecycle: StageLifecycleStatus;
   statusError: string | null;
   fetchedAt: string;
 }
@@ -313,17 +315,26 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
 
   return (
     <EnvironmentSection label="Build" storageKey={`platform-environment:${platformEnvironmentId}:section:build`}>
-      <BuildStatusPanel
-        deployment={status.deployment}
-        appearance="tree"
-        buildLogsUrl={`/api/railway/environments/${platformEnvironmentId}/build-logs`}
-        retryUrl={`/api/railway/environments/${platformEnvironmentId}/redeploy`}
-        environmentLabel="stage"
-        invalidateOnRetry={[
-          ["/api/railway/environments", String(platformEnvironmentId), "status"],
-          ["/api/railway/environments", String(platformEnvironmentId), "deployments"],
-        ]}
-      />
+      <ProfileTreeRow label="Lifecycle" icon={<Rocket className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" actionContent={(
+        <Button variant="ghost" size="icon" className="h-6 min-h-6 w-6 min-w-6" onClick={() => refetch()} disabled={isFetching} aria-label="Refresh Stage lifecycle">
+          {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+        </Button>
+      )}>
+        <span className={cn(
+          status.lifecycle.state === "failed" && "text-destructive",
+          status.lifecycle.state === "degraded" && "text-warning",
+          ["syncing", "restarting", "rebuilding"].includes(status.lifecycle.state) && "text-active",
+        )}>{humanize(status.lifecycle.state)}</span>
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Active commit" icon={<GitBranch className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
+        <span className="font-mono">{shortSha(status.lifecycle.activeCommitSha) || "—"}</span>
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Target commit" icon={<GitMerge className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
+        <span className="font-mono">{shortSha(status.lifecycle.targetCommitSha) || "—"}</span>
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Provider" icon={<Server className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" defaultOpen={Boolean(status.lifecycle.reason)} expandedContent={status.lifecycle.reason ? <p className="border-l border-border/30 pl-3 text-sm text-muted-foreground">{status.lifecycle.reason}</p> : undefined}>
+        <span>{status.lifecycle.providerStatus ? humanize(status.lifecycle.providerStatus) : "Unavailable"}</span>
+      </ProfileTreeRow>
     </EnvironmentSection>
   );
 }
