@@ -530,8 +530,8 @@ function HierarchyBreakdown({ data }: { data?: HierarchyResponse }) {
   );
 }
 
-export default function Performance({ embedded }: { embedded?: boolean }) {
-  usePageHeader({ title: "Performance", skip: !!embedded });
+export default function CostPage({ embedded }: { embedded?: boolean }) {
+  usePageHeader({ title: "Cost", skip: !!embedded });
   const { timezone } = useTimezone();
   const queryClient = useQueryClient();
   const [period, setPeriod] = useState("today");

@@ -457,7 +457,7 @@ function ContextDialog({ thoughtId, open, onOpenChange }: {
 }
 
 export default function ObservationsPage({ embedded }: { embedded?: boolean } = {}) {
-  usePageHeader({ title: "Thoughts", skip: !!embedded });
+  usePageHeader({ title: "Observations", skip: !!embedded });
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [contextThoughtId, setContextThoughtId] = useState<string | null>(null);

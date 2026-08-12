@@ -188,7 +188,7 @@ function statusIcon(status: string) {
   }
 }
 
-export default function StrategyDetailPage() {
+export default function ScenarioDetailPage() {
   const [, params] = useRoute("/scenarios/:id");
   const [, setLocation] = useLocation();
   const goalId = params?.id || "";

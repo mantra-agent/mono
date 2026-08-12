@@ -39,7 +39,7 @@ function timeAgo(value: string | null): string {
   return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
 }
 
-export default function ModelTab() {
+export default function ModelsPage() {
   const { toast } = useToast();
   const { data, isLoading } = useQuery<ConnectorsResponse>({ queryKey: ["/api/models/connectors"] });
   const { data: evidence } = useQuery<CallsResponse>({ queryKey: ["/api/inference/calls?limit=20"] });

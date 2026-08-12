@@ -521,7 +521,7 @@ function PlatformPersonaItem({ persona, onPublished }: { persona: Persona; onPub
   );
 }
 
-export default function PersonaTab() {
+export default function PersonasPage() {
   const queryClient = useQueryClient();
   const { hasPermission } = useAuth();
   const { toast } = useToast();

@@ -1764,7 +1764,7 @@ function ArchiveTab({ searchTokens }: { searchTokens: string[] }) {
   ))}</div>;
 }
 
-export default function CommsPage() {
+export default function EmailPage() {
   const hoveredIdsRef = useRef<number[] | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const touchStartYRef = useRef<number | null>(null);
@@ -1859,7 +1859,7 @@ export default function CommsPage() {
     <div
       ref={rootRef}
       className="h-full flex flex-col min-w-0 overflow-x-hidden touch-pan-y overscroll-y-contain"
-      data-testid="comms-page"
+      data-testid="email-page"
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}

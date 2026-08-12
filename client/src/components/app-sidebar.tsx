@@ -286,7 +286,7 @@ const navSections: NavSection[] = [
     defaultOpen: false,
     items: [
       navItem("Orientation", "navigation.orientation.open", Globe),
-      navItem("Persona", "navigation.persona.open", User),
+      navItem("Personas", "navigation.persona.open", User),
       navItem("Emotion", "navigation.emotion.open", Heart),
     ],
   },
@@ -320,7 +320,7 @@ const navSections: NavSection[] = [
       navItem("Tools", "navigation.tools.open", Wrench),
       navItem("Prompts", "navigation.prompts.open", FileText),
       navItem("Context", "navigation.context.open", BrainCircuit),
-      navItem("Router", "navigation.router.open", Brain),
+      navItem("Inference", "navigation.router.open", Brain),
       navItem("Models", "navigation.models.open", SlidersHorizontal),
       navItem("Cost", "navigation.cost.open", DollarSign),
     ],

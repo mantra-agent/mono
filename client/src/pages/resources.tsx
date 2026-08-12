@@ -562,7 +562,7 @@ function BuildDeploymentDetail({
   );
 }
 
-export default function ResourcesPage() {
+export default function PerformancePage() {
   usePageHeader({ title: "Performance" });
   const [reliabilityHours, setReliabilityHours] = useState(24);
   const { data, isLoading, isError, error, dataUpdatedAt } = useQuery<ResourcesResponse>({

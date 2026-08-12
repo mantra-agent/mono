@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 
 const log = createLogger("Account");
 
-export default function UserDetailsPage() {
+export default function AccountPage() {
   usePageHeader({ title: "Account" });
   const { user } = useAuth();
   const logout = useLogout();

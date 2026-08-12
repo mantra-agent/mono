@@ -1,5 +1,5 @@
 /**
- * PlansView — management page for browsing all plans, grouped by status.
+ * PlansPage — management page for browsing all plans, grouped by status.
  */
 import { useCallback, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -88,7 +88,7 @@ function PlanGroup({
 
 // ─── Main Export ─────────────────────────────────────────────────────
 
-export function PlansView() {
+export function PlansPage() {
   const [activeOpen, setActiveOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [archivedOpen, setArchivedOpen] = useState(false);
