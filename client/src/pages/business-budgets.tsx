@@ -66,7 +66,7 @@ function MonthlyAmountInput({ item, onSet }: { item: BudgetLineItem; onSet: (amo
   return (
     <Input
       key={`${item.id}-${item.monthlyAmountCents}`}
-      className="h-8 w-28 text-right tabular-nums"
+      className="!w-28 text-right tabular-nums"
       inputMode="decimal"
       aria-label={`${item.name} monthly budget`}
       defaultValue={(item.monthlyAmountCents / 100).toFixed(2)}
@@ -112,7 +112,6 @@ function LineItemRow({ department, category, item, continues, mutate, openNameDi
         icon={<ReceiptText className="h-3.5 w-3.5" />}
         hasValue
         showEmpty
-        mobileLayout="inline"
         valueLayout="compact"
         menuContent={<MutationMenu
           rename={() => openNameDialog({ title: "Rename Line Item", initialValue: item.name, submitLabel: "Save", onSubmit: (name) => mutate({ action: "rename_line_item", ...identity, name }) })}
@@ -240,23 +239,25 @@ export default function BusinessBudgetsPage() {
   return (
     <div className="p-4">
       <BusinessPageHeader page="Budgets" businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} />
-      <div className="flex items-center gap-2 pb-2">
-        <div className="min-w-0 flex-1"><HierarchySearchInput value={query} onChange={setQuery} placeholder="Search budgets" /></div>
-        <span className="shrink-0 text-sm font-medium tabular-nums">{formatMoney(monthlyTotal)} / month</span>
+      <div className="w-full @md:w-1/3 @md:min-w-[24rem]">
+        <div className="flex items-center gap-2 pb-2">
+          <div className="min-w-0 flex-1"><HierarchySearchInput value={query} onChange={setQuery} placeholder="Search budgets" /></div>
+          <span className="shrink-0 text-sm font-medium tabular-nums">{formatMoney(monthlyTotal)} / month</span>
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center py-16 text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Loading budget…</div>
+        ) : selected && budgetQuery.data ? (
+          <>
+            <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => setNameDialog({ title: "New Department", initialValue: "", submitLabel: "Add Department", onSubmit: (name) => mutation.mutate({ action: "add_department", name }) })}>
+              <Plus className="h-3.5 w-3.5" />New Department
+            </button>
+            {departments.map((department) => <DepartmentSection key={department.id} department={department} mutate={(body) => mutation.mutate(body)} openNameDialog={setNameDialog} />)}
+            {departments.length === 0 && <div className="px-2 py-1.5 text-sm text-muted-foreground">{query ? "No matching budget items." : "No departments yet."}</div>}
+          </>
+        ) : (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">No Business selected.</div>
+        )}
       </div>
-      {loading ? (
-        <div className="flex items-center justify-center py-16 text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Loading budget…</div>
-      ) : selected && budgetQuery.data ? (
-        <>
-          <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => setNameDialog({ title: "New Department", initialValue: "", submitLabel: "Add Department", onSubmit: (name) => mutation.mutate({ action: "add_department", name }) })}>
-            <Plus className="h-3.5 w-3.5" />New Department
-          </button>
-          {departments.map((department) => <DepartmentSection key={department.id} department={department} mutate={(body) => mutation.mutate(body)} openNameDialog={setNameDialog} />)}
-          {departments.length === 0 && <div className="px-2 py-1.5 text-sm text-muted-foreground">{query ? "No matching budget items." : "No departments yet."}</div>}
-        </>
-      ) : (
-        <div className="px-2 py-1.5 text-sm text-muted-foreground">No Business selected.</div>
-      )}
       <NameDialog key={`${nameDialog?.title ?? "closed"}-${nameDialog?.initialValue ?? ""}`} state={nameDialog} onClose={() => setNameDialog(null)} />
     </div>
   );
