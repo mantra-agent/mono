@@ -119,3 +119,30 @@ export function createVoiceCaptionChunk(alignment: AudioAlignmentEvent): VoiceCa
     durationMs,
   };
 }
+
+/**
+ * Decode the real caption cues delivered with a meeting audio clip
+ * (the `X-Meeting-Caption-Cues` header: base64url JSON of `{ atMs, text }[]`,
+ * where `atMs` is the true onset of each sentence from ElevenLabs character
+ * alignment). Returns null when the header is absent or malformed so callers
+ * can fall back to untimed text.
+ */
+export function decodeMeetingCaptionCues(encoded: string | null): VoiceCaptionCue[] | null {
+  if (!encoded) return null;
+  try {
+    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(base64);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (!Array.isArray(parsed)) return null;
+    const cues = parsed
+      .filter(
+        (cue): cue is VoiceCaptionCue =>
+          Boolean(cue) && typeof (cue as VoiceCaptionCue).text === "string" && typeof (cue as VoiceCaptionCue).atMs === "number",
+      )
+      .map((cue) => ({ text: cue.text, atMs: Math.max(0, cue.atMs) }));
+    return cues.length > 0 ? cues : null;
+  } catch {
+    return null;
+  }
+}

@@ -9,14 +9,22 @@ import type { MeetingBotStatus } from "@shared/models/chat";
 import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
 import { resolveMeetingTransportSession } from "./owner-principal";
-import { EmptyVoiceStreamError, streamVoiceAudio, type VoiceAudioStream, type VoiceSynthesisCorrelation } from "../voice/synthesis";
+import { Readable } from "node:stream";
+import { EmptyVoiceStreamError, synthesizeVoiceWithAlignment, type VoiceAlignment, type VoiceAudioStream, type VoiceSynthesisCorrelation } from "../voice/synthesis";
 
 const log = createLogger("MeetingOutputMedia");
 const TOKEN_TTL_MS = 6 * 60 * 60 * 1000;
 const AUDIO_FRAME_INTERVAL_MS = 1000 / 15;
+interface CaptionCue {
+  /** Onset time of this caption in milliseconds from clip playback start. */
+  atMs: number;
+  text: string;
+}
+
 interface MeetingAudioClip {
   audio: VoiceAudioStream;
   caption: string;
+  cues: CaptionCue[];
   correlation?: MeetingSpeechCorrelation;
 }
 
@@ -27,23 +35,38 @@ interface MeetingSpeechCorrelation extends VoiceSynthesisCorrelation {
 const audioQueues = new Map<string, MeetingAudioClip[]>();
 const waiters = new Map<string, Array<(audio: MeetingAudioClip | null) => void>>();
 const speechLocks = new Map<string, Promise<void>>();
-const visualizerCaptionTimers = new Map<string, ReturnType<typeof setTimeout>[]>();
-// Spoken-word pacing for advancing sentence captions. Kept slower than a raw
-// reading rate and floored per sentence so each phrase lingers long enough to
-// read and does not race ahead of the actual synthesized speech.
-const CAPTION_WORDS_PER_MINUTE = 115;
-const CAPTION_MIN_SENTENCE_HOLD_MS = 1_800;
-const CAPTION_SENTENCE_READ_PADDING_MS = 400;
+/**
+ * Build sentence captions from real ElevenLabs character alignment. Each cue's
+ * time is the actual onset (ms from clip start) of that sentence's first spoken
+ * character, so the client can pin captions to the true audio clock instead of
+ * estimating from a word count.
+ */
+function buildCaptionCues(alignment: VoiceAlignment): CaptionCue[] {
+  const { characters, startTimesMs } = alignment;
+  const count = Math.min(characters.length, startTimesMs.length);
+  if (count === 0) return [];
 
-function splitCaptionSentences(text: string): string[] {
-  return text.trim().match(/[^.!?]+[.!?]+(?:["')\]]+)?|[^.!?]+$/g)?.map((sentence) => sentence.trim()).filter(Boolean) ?? [];
-}
+  const cues: CaptionCue[] = [];
+  let buffer = "";
+  let startIndex = -1;
+  const flush = () => {
+    const text = buffer.trim();
+    if (text && startIndex >= 0) cues.push({ atMs: startTimesMs[startIndex] ?? 0, text });
+    buffer = "";
+    startIndex = -1;
+  };
 
-function clearScheduledVisualizerCaptions(sessionId: string): void {
-  const timers = visualizerCaptionTimers.get(sessionId);
-  if (!timers) return;
-  timers.forEach((timer) => clearTimeout(timer));
-  visualizerCaptionTimers.delete(sessionId);
+  for (let index = 0; index < count; index += 1) {
+    const character = characters[index] ?? "";
+    if (startIndex < 0 && character.trim()) startIndex = index;
+    buffer += character;
+    if (/[.!?]/.test(character)) {
+      const next = characters[index + 1] ?? "";
+      if (index + 1 >= count || /\s/.test(next)) flush();
+    }
+  }
+  flush();
+  return cues;
 }
 // Per-session barge-in state. The active speech turn registers its abort
 // controller and every synthesized stream it owns (queued or currently piping)
@@ -282,41 +305,12 @@ export function clearMeetingVisualizerState(sessionId: string, source: Visualize
 }
 
 /**
- * Project the currently audible agent phrase onto the outbound bot tile. The
- * caption rides the same visualizer socket as orb state so the tile every
- * meeting participant sees is captioned, without touching the audio path or
- * depending on any per-user preference (the tile has no authenticated user).
+ * Clear any residual bot-tile caption. Spoken captions are now scheduled
+ * client-side against the real audio clock from cues delivered with each clip
+ * (see sendNextMeetingAudio), so the server only needs to reset the hydrate
+ * value and tell late-joining tiles to blank on interrupt.
  */
-export function setMeetingVisualizerCaption(sessionId: string, caption: string): void {
-  const text = caption.trim();
-  clearScheduledVisualizerCaptions(sessionId);
-  if (!text) {
-    clearMeetingVisualizerCaption(sessionId);
-    return;
-  }
-
-  const sentences = splitCaptionSentences(text);
-  let elapsedMs = 0;
-  const timers: ReturnType<typeof setTimeout>[] = [];
-  sentences.forEach((sentence, index) => {
-    if (index > 0) {
-      const previousSentence = sentences[index - 1] ?? "";
-      const spokenMs = (previousSentence.split(/\s+/).length / CAPTION_WORDS_PER_MINUTE) * 60_000;
-      elapsedMs += Math.max(CAPTION_MIN_SENTENCE_HOLD_MS, spokenMs) + CAPTION_SENTENCE_READ_PADDING_MS;
-    }
-    const timer = setTimeout(() => {
-      if (index === sentences.length - 1) visualizerCaptionTimers.delete(sessionId);
-      if (visualizerCaptions.get(sessionId) === sentence) return;
-      visualizerCaptions.set(sessionId, sentence);
-      broadcastVisualizerEvent(sessionId, nextVisualizerEvent({ type: "agent.caption", caption: sentence }));
-    }, elapsedMs);
-    timers.push(timer);
-  });
-  visualizerCaptionTimers.set(sessionId, timers);
-}
-
 export function clearMeetingVisualizerCaption(sessionId: string): void {
-  clearScheduledVisualizerCaptions(sessionId);
   if (!visualizerCaptions.has(sessionId)) return;
   visualizerCaptions.delete(sessionId);
   broadcastVisualizerEvent(sessionId, nextVisualizerEvent({ type: "agent.caption", caption: "" }));
@@ -418,9 +412,10 @@ function enqueue(
   sessionId: string,
   audio: VoiceAudioStream,
   caption: string,
+  cues: CaptionCue[],
   correlation?: MeetingSpeechCorrelation,
 ) {
-  const clip = { audio, caption, correlation };
+  const clip = { audio, caption, cues, correlation };
   const waiter = waiters.get(sessionId)?.shift();
   if (waiter) {
     waiter(clip);
@@ -485,6 +480,10 @@ export async function sendNextMeetingAudio(
   res.setHeader("Accept-Ranges", "none");
   const encodedCaption = Buffer.from(clip.caption, "utf8").toString("base64url");
   if (encodedCaption.length <= 6_000) res.setHeader("X-Meeting-Caption", encodedCaption);
+  if (clip.cues.length > 0) {
+    const encodedCues = Buffer.from(JSON.stringify(clip.cues), "utf8").toString("base64url");
+    if (encodedCues.length <= 7_000) res.setHeader("X-Meeting-Caption-Cues", encodedCues);
+  }
   clip.audio.stream.once("data", () => {
     log.info(
       `first meeting transport byte sessionId=${sessionId} runId=${clip.correlation?.runId || "none"} turnId=${clip.correlation?.turnId || "none"} assistantMessageId=${clip.correlation?.assistantMessageId || "none"} speechRequestLatencyMs=${clip.correlation ? Date.now() - clip.correlation.requestedAt : "unknown"}`,
@@ -509,21 +508,25 @@ export async function speakMeetingResponse(
     speechAbortControllers.set(sessionId, abort);
     let outcome: "spoken" | "interrupted" | "failed" = "failed";
     setMeetingVisualizerState(sessionId, "speech", "speaking");
-    setMeetingVisualizerCaption(sessionId, text);
     await chatStorage.updateMeetingMeta(sessionId, { speechStatus: "speaking" });
     try {
       const maxAttempts = 2;
       let spokenVia = "";
       for (let attempt = 1; ; attempt++) {
         if (abort.signal.aborted) throw new MeetingSpeechInterruptedError("Meeting speech interrupted before synthesis");
-        const audio = await streamVoiceAudio(text, correlation);
+        const synth = await synthesizeVoiceWithAlignment(text, correlation);
         if (abort.signal.aborted) {
-          audio.stream.destroy();
           throw new MeetingSpeechInterruptedError("Meeting speech interrupted before playback");
         }
+        const cues = buildCaptionCues(synth.alignment);
+        const audio: VoiceAudioStream = {
+          provider: synth.provider,
+          contentType: synth.contentType,
+          stream: Readable.from(synth.bytes),
+        };
         trackSpeechStream(sessionId, audio);
-        enqueue(sessionId, audio, text, correlation);
-        log.info(`queued speech stream sessionId=${sessionId} provider=${audio.provider} attempt=${attempt} runId=${correlation?.runId || "none"} turnId=${correlation?.turnId || "none"} assistantMessageId=${correlation?.assistantMessageId || "none"} speechRequestLatencyMs=${correlation ? Date.now() - correlation.requestedAt : "unknown"}`);
+        enqueue(sessionId, audio, text, cues, correlation);
+        log.info(`queued speech stream sessionId=${sessionId} provider=${audio.provider} attempt=${attempt} cues=${cues.length} runId=${correlation?.runId || "none"} turnId=${correlation?.turnId || "none"} assistantMessageId=${correlation?.assistantMessageId || "none"} speechRequestLatencyMs=${correlation ? Date.now() - correlation.requestedAt : "unknown"}`);
         try {
           await finished(audio.stream);
           spokenVia = audio.provider;
