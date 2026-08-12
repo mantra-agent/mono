@@ -65,9 +65,16 @@ function trimNum(value: number): string {
 function fmtCurrency(value: number): string {
   const sign = value < 0 ? "-" : "";
   const absolute = Math.abs(value);
-  if (absolute >= 1_000_000) return `${sign}$${trimNum(absolute / 1_000_000)}M`;
-  if (absolute >= 1_000) return `${sign}$${trimNum(absolute / 1_000)}k`;
-  return `${sign}$${Math.round(absolute).toLocaleString()}`;
+  if (absolute >= 1_000_000) return `${sign}${trimNum(absolute / 1_000_000)}M`;
+  if (absolute >= 1_000) return `${sign}${trimNum(absolute / 1_000)}k`;
+  return `${sign}${Math.round(absolute).toLocaleString()}`;
+}
+
+function formatTokens(value: number): string {
+  if (value >= 1_000_000_000) return `${trimNum(value / 1_000_000_000)}B`;
+  if (value >= 1_000_000) return `${trimNum(value / 1_000_000)}M`;
+  if (value >= 1_000) return `${trimNum(value / 1_000)}k`;
+  return Math.round(value).toLocaleString();
 }
 
 function fmtPercent(value: number): string {
@@ -138,6 +145,7 @@ export default function BusinessModelPage() {
   const [accountsOpen, setAccountsOpen] = useState(true);
   const [usersOpen, setUsersOpen] = useState(true);
   const [revenueOpen, setRevenueOpen] = useState(true);
+  const [cogsOpen, setCogsOpen] = useState(true);
   const [opexOpen, setOpexOpen] = useState(false);
   const loadedIdRef = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -235,6 +243,9 @@ export default function BusinessModelPage() {
             <Driver label="Base plan"><NumericInput ariaLabel="Base plan monthly price" value={draft.maxSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} /></Driver>
             <Driver label="Upgraded plan"><NumericInput ariaLabel="Upgraded plan monthly price" value={draft.maxPlusSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxPlusSubscriptionMonthly) => updateGlobal({ maxPlusSubscriptionMonthly })} /></Driver>
             <Driver label="Additional user"><NumericInput ariaLabel="Additional user monthly price" value={draft.participantSeatMonthly} min={0} step={25} prefix="$" suffix="/ mo" onChange={(participantSeatMonthly) => updateGlobal({ participantSeatMonthly })} /></Driver>
+            <Driver label="Hours per user"><NumericInput ariaLabel="Hours used per active user per month" value={draft.hoursUsedPerActiveUser} min={0} step={1} suffix="/ mo" onChange={(hoursUsedPerActiveUser) => updateGlobal({ hoursUsedPerActiveUser })} /></Driver>
+            <Driver label="Tokens per hour"><NumericInput ariaLabel="Tokens used per hour" value={draft.tokensUsedPerHour} min={0} step={10000} onChange={(tokensUsedPerHour) => updateGlobal({ tokensUsedPerHour })} /></Driver>
+            <Driver label="Token cost"><NumericInput ariaLabel="Blended token cost per million" value={draft.blendedTokenCostPerMillion} min={0} step={0.25} prefix="$" suffix="/ 1M" onChange={(blendedTokenCostPerMillion) => updateGlobal({ blendedTokenCostPerMillion })} /></Driver>
           </div>
         </ProfileDetailSection>
       </section>
@@ -276,7 +287,10 @@ export default function BusinessModelPage() {
               {revenueOpen && <DataRow label="Added Users" indent periods={periods} render={(row) => row.userExpansionRevenue > 0 ? `+${fmtCurrency(row.userExpansionRevenue)}` : "—"} />}
               {revenueOpen && <DataRow label="Lost Users" indent periods={periods} render={(row) => row.userContractionRevenue > 0 ? fmtCurrency(-row.userContractionRevenue) : "—"} tone={() => "text-muted-foreground"} />}
               {revenueOpen && <DataRow label="Upgrades" indent periods={periods} render={(row) => row.tierExpansionRevenue > 0 ? `+${fmtCurrency(row.tierExpansionRevenue)}` : "—"} />}
-              <DataRow label="COGS" periods={periods} render={(row) => fmtCurrency(-row.cogs)} tone={() => "text-muted-foreground"} />
+              <DataRow label="COGS" periods={periods} render={(row) => fmtCurrency(-row.cogs)} onToggle={() => setCogsOpen((open) => !open)} open={cogsOpen} tone={() => "text-muted-foreground"} />
+              {cogsOpen && <DataRow label="Hours Used" indent periods={periods} render={(row) => row.hoursUsed >= 0.05 ? trimNum(row.hoursUsed) : "—"} />}
+              {cogsOpen && <DataRow label="Tokens Used" indent periods={periods} render={(row) => row.tokensUsed >= 0.5 ? formatTokens(row.tokensUsed) : "—"} />}
+              {cogsOpen && <DataRow label="Token Cost" indent periods={periods} render={(row) => row.tokenCost >= 0.5 ? fmtCurrency(-row.tokenCost) : "—"} tone={() => "text-muted-foreground"} />}
               <DataRow label="Gross Profit" periods={periods} render={(row) => fmtCurrency(row.grossProfit)} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />
               <DataRow label="OpEx" periods={periods} render={(row) => fmtCurrency(-row.totalOpex)} onToggle={() => setOpexOpen((open) => !open)} open={opexOpen} />
               {opexOpen && <DataRow label="Staff" indent periods={periods} render={(row) => fmtCurrency(-row.staffOpex)} tone={() => "text-muted-foreground"} />}
