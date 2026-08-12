@@ -28,6 +28,7 @@ import { resolveSessionModelTierOverride } from "./session-model-tier-override";
 import { safeStringify } from "./utils/safe-stringify";
 import { captureInferencePayload } from "./inference-payload-capture";
 import { beginProviderAttempt, createProviderAttemptTracker, settleRetryingProviderAttempt, type ProviderAttemptTracker } from "./provider-attempt";
+import { buildContinuationMessages, normalizeContinuationDelta } from "./provider-continuation";
 import { redactSensitiveText } from "./sensitive-data-redaction";
 
 let _openaiClient: OpenAI | null = null;
@@ -1430,8 +1431,9 @@ export class ModelProviderError extends Error {
   readonly bodySnippet?: string;
   readonly clientRequestId?: string;
   readonly providerRequestId?: string;
+  readonly partialContent?: string;
 
-  constructor(providerFailure: ModelProviderFailure, bodySnippet?: string) {
+  constructor(providerFailure: ModelProviderFailure, bodySnippet?: string, partialContent?: string) {
     super(providerFailure.userMessage);
     this.name = "ModelProviderError";
     this.code = stableProviderFailureCode(providerFailure);
@@ -1444,6 +1446,7 @@ export class ModelProviderError extends Error {
     this.bodySnippet = sanitizeProviderDiagnostic(bodySnippet);
     this.clientRequestId = providerFailure.clientRequestId;
     this.providerRequestId = providerFailure.providerRequestId;
+    this.partialContent = partialContent?.trim() ? partialContent : undefined;
   }
 }
 
@@ -2438,22 +2441,46 @@ export async function* chatCompletionStream(options: ChatCompletionStreamOptions
       }));
   let failures = candidates[0]?.attempts ?? [];
   let lastError: unknown;
+  let continuationText: string | undefined;
+  let continuationVisibleText = "";
   for (let index = 0; index < candidates.length; index++) {
     const routing = { ...candidates[index], attempts: failures.length ? failures : candidates[index].attempts };
     let emittedContent = false;
+    let emittedTool = false;
     try {
-      for await (const event of executeChatCompletionStream({ ...options, routingDecision: routing }, routing)) {
-        if (event.type === "text_delta" || event.type === "thinking_delta" || event.type === "tool_use" || event.type === "tool_use_start") emittedContent = true;
+      const attemptOptions = continuationText
+        ? { ...options, routingDecision: routing, messages: buildContinuationMessages(options.messages, continuationText) }
+        : { ...options, routingDecision: routing };
+      for await (const event of executeChatCompletionStream(attemptOptions, routing)) {
+        if (event.type === "text_delta" || event.type === "thinking_delta") emittedContent = true;
+        if (event.type === "text_delta" && continuationText) {
+          const normalized = normalizeContinuationDelta(continuationVisibleText || continuationText, event.content);
+          continuationVisibleText += normalized;
+          if (!normalized) continue;
+          yield { ...event, content: normalized };
+          continue;
+        }
+        if (event.type === "tool_use" || event.type === "tool_use_start" || event.type === "tool_call_resolved") {
+          emittedContent = true;
+          emittedTool = true;
+        }
         yield event;
       }
       return;
     } catch (error) {
       lastError = error;
-      if (isAbortError(error, options.signal) || emittedContent || isModelContextOverflow(error)) throw error;
+      const next = candidates[index + 1];
+      const partialText = error instanceof ModelProviderError ? error.partialContent : undefined;
+      const canContinue = !!next && !emittedTool && !!partialText && error instanceof ModelProviderError && error.retryable;
+      if (isAbortError(error, options.signal) || isModelContextOverflow(error) || (emittedContent && !canContinue) || (!emittedContent && !next)) throw error;
       recordConnectorQuotaExhaustion(routing, error);
       failures = appendFailedAttempt(routing, error);
-      const next = candidates[index + 1];
-      if (next) log.warn(`model stream connector fallback connector=${routing.connectorId} tier=${routing.tier} model=${routing.model} nextConnector=${next.connectorId} nextModel=${next.model} failure=${error instanceof Error ? error.message : String(error)}`);
+      continuationText = canContinue ? partialText : undefined;
+      continuationVisibleText = continuationText || "";
+      if (next) {
+        if (continuationText) yield { type: "attempt_reset" };
+        log.warn(`model stream connector fallback connector=${routing.connectorId} tier=${routing.tier} model=${routing.model} nextConnector=${next.connectorId} nextModel=${next.model} continuation=${!!continuationText} failure=${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   }
   throw lastError;
@@ -2586,7 +2613,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
         };
       }
       throw event.providerFailure
-        ? new ModelProviderError(event.providerFailure)
+        ? new ModelProviderError(event.providerFailure, undefined, responseContent)
         : new Error(event.error);
     } else if (event.type === "thinking_delta") {
       if (firstThinkingAt === null) firstThinkingAt = Date.now();
@@ -2647,6 +2674,9 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
     const status: InferenceStatus = isAbortError(err, options.signal) ? "aborted" : (responseContent ? "partial" : "error");
     routing.attempts = appendFailedAttempt(routing, err);
     const modelError = enrichModelError(err, routing, options.metadata);
+    const continuationError = modelError instanceof ModelProviderError && responseContent
+      ? new ModelProviderError(modelError.providerFailure, modelError.bodySnippet, responseContent)
+      : modelError;
     const streamFailureMessage =
       `chatCompletionStream ${status.toUpperCase()} provider=${provider} model=${model} ` +
       `activity=${routing.activity} tier=${routing.tier} configHash=${routing.configHash}: ${modelError.message}`;
@@ -2679,7 +2709,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       signal: options.signal,
       apiCallId: providerAttemptTracker.current?.apiCallId,
     });
-    throw modelError;
+    throw continuationError;
   }
 }
 
