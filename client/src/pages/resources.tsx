@@ -807,36 +807,6 @@ function ResourcesView({
       <div className="min-h-0 flex-1 overflow-y-auto p-4 scrollbar-thin @sm:p-6">
         <div className="mx-auto max-w-5xl space-y-1">
           <PerformanceSection
-            label="Build & Deploy Times"
-            status={buildDeploymentTimingsError ? "red" : buildDeploymentTimingsLoading || !buildDeploymentTimings?.environments.length ? "unknown" : "ok"}
-            testId="section-build-deploy-times"
-            defaultOpen
-          >
-            {buildDeploymentTimingsError ? (
-              <MetricRow
-                label="Deployment timings"
-                value="Unavailable"
-                status="red"
-                testId="build-deploy-times-error"
-              />
-            ) : buildDeploymentTimingsLoading ? (
-              <MetricRow label="Deployment timings" value="Loading" />
-            ) : !buildDeploymentTimings?.environments.length ? (
-              <MetricRow label="Deployment timings" value="Awaiting first observation" />
-            ) : (
-              buildDeploymentTimings.environments.map(environment => (
-                <MetricRow
-                  key={environment.platformEnvironmentId}
-                  label={`${environment.platformName} / ${environment.productName} / ${environment.environmentName}`}
-                  value={formatDeploymentDuration(environment.latestDurationMs)}
-                  detail={<BuildDeploymentDetail environment={environment} />}
-                  testId={`build-deploy-time-${environment.platformEnvironmentId}`}
-                />
-              ))
-            )}
-          </PerformanceSection>
-
-          <PerformanceSection
             label="Service"
             status={serviceStatus}
             testId="section-service"
@@ -1429,6 +1399,36 @@ function ResourcesView({
                   />
                 );
               })
+            )}
+          </PerformanceSection>
+
+          <PerformanceSection
+            label="BUILD"
+            status={buildDeploymentTimingsError ? "red" : buildDeploymentTimingsLoading || !buildDeploymentTimings?.environments.length ? "unknown" : "ok"}
+            testId="section-build-deploy-times"
+            defaultOpen
+          >
+            {buildDeploymentTimingsError ? (
+              <MetricRow
+                label="Deployment timings"
+                value="Unavailable"
+                status="red"
+                testId="build-deploy-times-error"
+              />
+            ) : buildDeploymentTimingsLoading ? (
+              <MetricRow label="Deployment timings" value="Loading" />
+            ) : !buildDeploymentTimings?.environments.length ? (
+              <MetricRow label="Deployment timings" value="Awaiting first observation" />
+            ) : (
+              buildDeploymentTimings.environments.map(environment => (
+                <MetricRow
+                  key={environment.platformEnvironmentId}
+                  label={`${environment.platformName} / ${environment.productName} / ${environment.environmentName}`}
+                  value={formatDeploymentDuration(environment.latestDurationMs)}
+                  detail={<BuildDeploymentDetail environment={environment} />}
+                  testId={`build-deploy-time-${environment.platformEnvironmentId}`}
+                />
+              ))
             )}
           </PerformanceSection>
         </div>
