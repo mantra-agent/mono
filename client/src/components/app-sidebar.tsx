@@ -232,8 +232,6 @@ const navSections: NavSection[] = [
       navItem("Email", "navigation.email.open", Mail, "muted"),
       navItem("Library", "navigation.library.open", FolderOpen),
       navItem("Files", "navigation.files.open", HardDrive),
-      navItem("Schedule", "navigation.schedule.open", Calendar),
-      navItem("Projects", "navigation.projects.open", Briefcase),
       navItem("Wellness", "navigation.wellness.open", Activity, "muted"),
     ],
   },
@@ -251,6 +249,8 @@ const navSections: NavSection[] = [
     label: "Planning",
     defaultOpen: false,
     items: [
+      navItem("Projects", "navigation.projects.open", Briefcase),
+      navItem("Schedule", "navigation.schedule.open", Calendar),
       navItem("Goals", "navigation.goals.open", Target, "muted"),
       navItem("Decisions", "navigation.decisions.open", Scale),
       navItem("Scenarios", "navigation.scenarios.open", Swords),
