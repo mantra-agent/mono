@@ -2205,6 +2205,26 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
     setShowAddForm(true);
   };
 
+  // Auto-open the New Account dialog when arriving from the Email + Link Email
+  // action (`/integrations/google?action=new-account`). Consume the param once
+  // so a refresh does not reopen it.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!oauthConfigured || autoOpenedRef.current || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("action") !== "new-account") return;
+    autoOpenedRef.current = true;
+    openAddForm();
+    params.delete("action");
+    const nextSearch = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [oauthConfigured]);
+
   const { data: accountsData, isLoading } = useQuery<{
     accounts: Array<{
       id: string;
