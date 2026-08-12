@@ -90,6 +90,11 @@ async function findVisible(businessId: string) {
 }
 
 export const businessBudgetStorage = {
+  async get(businessId: string): Promise<BusinessBudget | null> {
+    const existing = await findVisible(businessId);
+    return existing ? mapBudget(existing) : null;
+  },
+
   async getOrCreate(businessId: string): Promise<BusinessBudget> {
     const principal = requireCurrentUserPrincipal();
     const existing = await findVisible(businessId);

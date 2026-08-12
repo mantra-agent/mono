@@ -5,13 +5,19 @@ import { businessCreateSchema, businessPatchSchema } from "@shared/schema";
 import { kpiStorage, metricsStorage } from "../metrics-storage";
 import type { BusinessPlan } from "@shared/schema";
 import type { Kpi, Metric, MetricSample } from "@shared/models/metrics";
+import {
+  budgetMonthlyTotal,
+  categoryMonthlyTotal,
+  departmentMonthlyTotal,
+  type BusinessBudget,
+  type BusinessBudgetMutation,
+} from "@shared/models/business-budgets";
 import type { ToolHandler } from "./contracts";
 import { internalFailure } from "../tool-failure";
 
-// The `business` tool owns three separate action groups behind one bounded
-// context: Business Plans, KPIs, and Metrics. Plans compose goals + initiatives
-// + KPI references; KPIs score a metric with bands; Metrics are the raw series.
-// KPI/Metric persistence is delegated to the canonical vault-scoped storages.
+// The Business Mod's `business` tool composes Business identity, Budgets,
+// Plans, KPIs, and Metrics behind one bounded action surface. Every action
+// delegates to its domain's canonical principal/Vault-scoped storage.
 
 function planResult(plan: BusinessPlan) {
   return {
@@ -143,6 +149,68 @@ function businessResult(business: Business) {
     createdAt: business.createdAt,
     updatedAt: business.updatedAt,
   };
+}
+
+function budgetResult(budget: BusinessBudget) {
+  return {
+    id: budget.id,
+    businessId: budget.businessId,
+    currency: budget.currency,
+    monthlyTotalCents: budgetMonthlyTotal(budget.departments),
+    departments: budget.departments.map((department) => ({
+      ...department,
+      monthlyTotalCents: departmentMonthlyTotal(department),
+      categories: department.categories.map((category) => ({
+        ...category,
+        monthlyTotalCents: categoryMonthlyTotal(category),
+      })),
+    })),
+    createdAt: budget.createdAt,
+    updatedAt: budget.updatedAt,
+  };
+}
+
+const BUDGET_MUTATION_ACTIONS = {
+  add_budget_department: "add_department",
+  rename_budget_department: "rename_department",
+  delete_budget_department: "delete_department",
+  add_budget_category: "add_category",
+  rename_budget_category: "rename_category",
+  delete_budget_category: "delete_category",
+  add_budget_line_item: "add_line_item",
+  rename_budget_line_item: "rename_line_item",
+  delete_budget_line_item: "delete_line_item",
+  set_budget_monthly_amount: "set_monthly_amount",
+} as const;
+
+async function handleBudgetAction(action: string, args: Record<string, unknown>) {
+  const businessId = requiredStr(args, "businessId");
+  if (!businessId) return { result: `business.${action} requires businessId`, error: true };
+  const { businessBudgetStorage } = await import("../business-budget-storage");
+  if (action === "get_budget") {
+    const budget = await businessBudgetStorage.get(businessId);
+    return { result: safeStringify(budget
+      ? { configured: true, ...budgetResult(budget) }
+      : { configured: false, businessId, currency: "USD", monthlyTotalCents: 0, departments: [] },
+    { label: "bridge.business.budgets.get" }) };
+  }
+
+  const mutationAction = BUDGET_MUTATION_ACTIONS[action as keyof typeof BUDGET_MUTATION_ACTIONS];
+  if (!mutationAction) return { result: `Unknown business Budget action: ${action}`, error: true };
+  const candidate: Record<string, unknown> = { action: mutationAction };
+  for (const field of ["name", "departmentId", "categoryId", "lineItemId"] as const) {
+    const value = requiredStr(args, field);
+    if (value) candidate[field] = value;
+  }
+  if (mutationAction === "set_monthly_amount") candidate.amountCents = args.monthlyAmountCents;
+
+  const { businessBudgetMutationSchema } = await import("@shared/models/business-budgets");
+  const parsed = businessBudgetMutationSchema.safeParse(candidate);
+  if (!parsed.success) {
+    return { result: `business.${action} invalid: ${parsed.error.issues[0]?.message ?? "bad input"}`, error: true };
+  }
+  const budget = await businessBudgetStorage.mutate(businessId, parsed.data as BusinessBudgetMutation);
+  return { result: safeStringify(budgetResult(budget), { label: `bridge.business.budgets.${action}` }) };
 }
 
 async function handleEntityAction(action: string, args: Record<string, unknown>) {
@@ -443,6 +511,7 @@ const ENTITY_ACTIONS = new Set([
   "list_businesses", "get_business", "create_business", "update_business", "archive_business",
   "list_business_vaults", "add_business_vault", "remove_business_vault", "set_business_vaults",
 ]);
+const BUDGET_ACTIONS = new Set(["get_budget", ...Object.keys(BUDGET_MUTATION_ACTIONS)]);
 const PLAN_ACTIONS = new Set([
   "list", "get", "create", "rename", "delete", "set_thematic_goal", "clear_thematic_goal",
   "add_initiative", "remove_initiative", "set_leading_metric", "clear_leading_metric", "set_lagging_kpi", "clear_lagging_kpi", "add_kpi", "remove_kpi", "assign_vault",
@@ -457,6 +526,7 @@ export const handleBusiness: ToolHandler = async (args) => {
   const action = String(args.action || "list");
   try {
     if (ENTITY_ACTIONS.has(action)) return await handleEntityAction(action, args);
+    if (BUDGET_ACTIONS.has(action)) return await handleBudgetAction(action, args);
     if (KPI_ACTIONS.has(action)) return await handleKpiAction(action, args);
     if (METRIC_ACTIONS.has(action)) return await handleMetricAction(action, args);
     if (PLAN_ACTIONS.has(action)) return await handlePlanAction(action, args);
@@ -466,7 +536,7 @@ export const handleBusiness: ToolHandler = async (args) => {
     return {
       result: message,
       error: true,
-      failure: internalFailure("business_plan_internal", `${action}:${message}`),
+      failure: internalFailure("business_internal", `${action}:${message}`),
     };
   }
 };

@@ -57,7 +57,7 @@ Root `AGENTS.md` is mandatory and authoritative for Engineering Principles, arch
 
 ## Business Budget boundary
 
-`business_budgets` is the Business-owned source of truth for a hypothetical monthly non-headcount, non-COGS operating budget. `business-budget-storage.ts` is the sole ordinary mutation boundary and serializes Department → Category → Line item edits under the Business lock; every line item owns one monthly amount and all totals derive from those entries. Every read and mutation requires explicit Business identity and canonical Business Vault visibility/writability.
+`business_budgets` is the Business-owned source of truth for a hypothetical monthly non-headcount, non-COGS operating budget. `business-budget-storage.ts` is the sole ordinary mutation boundary and serializes Department → Category → Line item edits under the Business lock; every line item owns one monthly amount and all totals derive from those entries. The Business Mod-owned `business` Agent tool exposes explicit Budget inspection and hierarchy actions but delegates every operation to this same storage boundary; `get_budget` is a pure read and the first mutation owns replay-safe aggregate creation. Every read and mutation requires explicit Business identity and canonical Business Vault visibility/writability; tool reads independently require `system:read` and writes require `system:write`.
 
 ## Business Plan boundary
 

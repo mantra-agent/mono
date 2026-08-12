@@ -199,6 +199,7 @@ export const REGISTERED_MOD_TOOL_KEYS = [
   "regression",
   "issues",
   "health",
+  "business",
   "jobs",
   "companies",
   "scenarios",
