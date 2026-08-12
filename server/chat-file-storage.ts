@@ -54,6 +54,7 @@ import type {
 import type { QuestionPrompt } from "@shared/question-prompt";
 import type { ContextPressureSnapshot } from "@shared/streaming-types";
 import { decisionsStorage } from "./decisions-storage";
+import { filePrincipleStorage } from "./file-storage/principles";
 import {
   deleteConversations,
   hasCanonicalConversation,
@@ -2904,6 +2905,25 @@ export const chatFileStorage: IChatFileStorage = {
       };
       let decisionId: string | undefined;
       if (questionResponse && questionPrompt) {
+        const currentPrinciples = await filePrincipleStorage.getPrinciples();
+        const currentRevisionByPrincipleId = new Map(
+          currentPrinciples.map((principle) => [principle.id, principle.currentRevisionId]),
+        );
+        const promptPrincipleByRevisionId = new Map(
+          questionPrompt.principles.map((principle) => [principle.revisionId, principle.principleId]),
+        );
+        const currentPrincipleRevisionIds = [...new Set(
+          (questionResponse.selectedPrincipleRevisionIds ?? [])
+            .map((revisionId) => promptPrincipleByRevisionId.get(revisionId))
+            .map((principleId) => principleId ? currentRevisionByPrincipleId.get(principleId) : undefined)
+            .filter((revisionId): revisionId is string => Boolean(revisionId)),
+        )];
+        const normalizedQuestionResponse = {
+          ...questionResponse,
+          ...(currentPrincipleRevisionIds.length > 0
+            ? { selectedPrincipleRevisionIds: currentPrincipleRevisionIds }
+            : { selectedPrincipleRevisionIds: undefined }),
+        };
         const selectedLabels = questionResponse.selectedOptionIds
           .map((id) => questionPrompt.options.find((option) => option.id === id)?.label)
           .filter((label): label is string => Boolean(label));
@@ -2914,20 +2934,20 @@ export const chatFileStorage: IChatFileStorage = {
             selectedOptionIds: questionResponse.selectedOptionIds,
             selectedLabels,
             ...(questionResponse.otherText ? { otherText: questionResponse.otherText } : {}),
-            principleRevisionIds: questionResponse.selectedPrincipleRevisionIds ?? [],
+            principleRevisionIds: currentPrincipleRevisionIds,
           },
           reasoning: questionResponse.reasoning,
           sourceSessionId: sessionId,
           sourceToolCallId: questionResponse.questionToolCallId,
           ownerPersonRole: "partner",
-          principleRevisionIds: questionResponse.selectedPrincipleRevisionIds,
+          principleRevisionIds: currentPrincipleRevisionIds,
           triggeredByAddress: `@question:${sessionId}~${questionResponse.questionToolCallId}`,
           status: "closed",
           resolvedAt: new Date(now),
         });
         decisionId = judgment.decision.id;
         message.questionResponse = {
-          ...questionResponse,
+          ...normalizedQuestionResponse,
           decisionId,
         };
       }
