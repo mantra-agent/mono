@@ -20,6 +20,7 @@ import {
   type PeriodMode,
   type PeriodRow,
 } from "@shared/models/business-model";
+import type { BusinessHiringProjection } from "@shared/models/business-hiring";
 import type { JobRole } from "@shared/models/job-roles";
 
 type SaveState = "idle" | "pending" | "saving" | "saved" | "error";
@@ -133,7 +134,13 @@ export default function BusinessModelPage() {
     queryFn: async () => (await apiRequest("GET", budgetUrl)).json(),
   });
   const { data: rolesData } = useQuery<{ roles: JobRole[] }>({ queryKey: ["/api/business/roles"] });
-  usePageLoadActivity("page:business-model", isLoading || isFetching || budgetLoading || budgetFetching);
+  const hiringUrl = selectedId ? `/api/business/hiring?businessId=${encodeURIComponent(selectedId)}` : "/api/business/hiring";
+  const { data: hiring, isLoading: hiringLoading, isFetching: hiringFetching } = useQuery<BusinessHiringProjection>({
+    queryKey: ["/api/business/hiring", selectedId],
+    enabled: Boolean(selectedId),
+    queryFn: async () => (await apiRequest("GET", hiringUrl)).json(),
+  });
+  usePageLoadActivity("page:business-model", isLoading || isFetching || budgetLoading || budgetFetching || hiringLoading || hiringFetching);
   const assumptionsPreferenceKey = useMemo(() => {
     if (!user?.id || !principal?.accountId || !selectedId) return null;
     return `${principal.accountId}:${user.id}:${selectedId}`;
@@ -208,7 +215,7 @@ export default function BusinessModelPage() {
     });
   }, [scheduleSave]);
 
-  const projection = useMemo(() => draft && budget ? computeProjection(draft, rolesData?.roles ?? [], budget.departments) : null, [budget, draft, rolesData]);
+  const projection = useMemo(() => draft && budget && hiring ? computeProjection(draft, rolesData?.roles ?? hiring.roles, budget.departments, hiring.slots) : null, [budget, draft, rolesData, hiring]);
   const periods = useMemo(() => projection ? aggregateMonths(projection.months, period) : [], [projection, period]);
 
   if (error || budgetError) {
@@ -223,7 +230,7 @@ export default function BusinessModelPage() {
     );
   }
 
-  if (isLoading || budgetLoading || !draft || !budget || !projection) return null;
+  if (isLoading || budgetLoading || hiringLoading || !draft || !budget || !hiring || !projection) return null;
 
   return (
     <div className="w-full space-y-6 p-4" data-testid="business-model-page">
@@ -246,6 +253,7 @@ export default function BusinessModelPage() {
             <Driver label="Hours per user"><NumericInput ariaLabel="Hours used per active user per month" value={draft.hoursUsedPerActiveUser} min={0} step={1} suffix="/ mo" onChange={(hoursUsedPerActiveUser) => updateGlobal({ hoursUsedPerActiveUser })} /></Driver>
             <Driver label="Tokens per hour"><NumericInput ariaLabel="Tokens used per hour" value={draft.tokensUsedPerHour} min={0} step={10000} onChange={(tokensUsedPerHour) => updateGlobal({ tokensUsedPerHour })} /></Driver>
             <Driver label="Token cost"><NumericInput ariaLabel="Blended token cost per million" value={draft.blendedTokenCostPerMillion} min={0} step={0.25} prefix="$" suffix="/ 1M" onChange={(blendedTokenCostPerMillion) => updateGlobal({ blendedTokenCostPerMillion })} /></Driver>
+            <Driver label="Loaded comp multiplier"><NumericInput ariaLabel="Fully loaded staff comp multiplier on base salary plus bonus" value={draft.loadedCostMultiplier} min={0.5} step={0.05} suffix="×" onChange={(loadedCostMultiplier) => updateGlobal({ loadedCostMultiplier })} /></Driver>
           </div>
         </ProfileDetailSection>
       </section>
