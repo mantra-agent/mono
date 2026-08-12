@@ -463,6 +463,10 @@ Best-effort observability samples share one write path. Domain storage validates
 - **Mobile startup:** `mobile_startup_telemetry` rows enqueue via `mobile-telemetry-storage.ts` → the same log-sink. `POST /api/mobile/telemetry/startup` returns `202`.
 - **Ordered audit (not the sink):** `api_calls` and similar awaited writers use `createSerialQueue` from `server/utils/serial-async-delivery.ts`. Durable correctness tables (ACLs, settings) stay on the request path.
 
+## Build Product boundary
+
+`products` is the principal/account-scoped authority for Product intent. `product_backlogs` structurally gives each Product exactly one Backlog, and `feature_requests` belongs only to that Backlog; Feature Requests never create Tasks. `product_platform_associations` is the lightweight many-to-many bridge to runtime-owned Platforms and does not imply Product-to-Environment deployment ownership. `product-storage.ts` is the sole ordinary mutation boundary. Product routes require active Build composition plus `build:read` or `build:write`; archive and delete require explicit confirmation, and deletion fails closed while dependencies remain. The retained `platform_products` table is rolling runtime compatibility for Environment ownership and must not become the Product intent authority.
+
 ## Issue create boundary
 
 `storage.createIssue` is the sole Issue create path. Every create — HTTP `POST /api/issues`, the `issues` tool, or any internal caller — must cross it. Required at create:

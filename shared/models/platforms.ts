@@ -57,6 +57,33 @@ export const platformVaultMemberships = pgTable(
 
 export type PlatformVaultMembership = typeof platformVaultMemberships.$inferSelect;
 
+/** Product intent is independent from runtime Platforms. */
+export const products = pgTable("products", {
+  id: serial("id").primaryKey(), name: text("name").notNull(), description: text("description").notNull().default(""),
+  status: text("status").notNull().default("active"), scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id"), accountId: text("account_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [uniqueIndex("products_account_name_unique").on(table.accountId, sql`lower(${table.name})`), index("idx_products_scope_owner").on(table.scope, table.ownerUserId, table.accountId)]);
+
+export const productBacklogs = pgTable("product_backlogs", {
+  id: serial("id").primaryKey(), productId: integer("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [uniqueIndex("product_backlogs_product_unique").on(table.productId)]);
+
+export const productPlatformAssociations = pgTable("product_platform_associations", {
+  id: serial("id").primaryKey(), productId: integer("product_id").notNull().references(() => products.id, { onDelete: "restrict" }),
+  platformId: integer("platform_id").notNull().references(() => platforms.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [uniqueIndex("product_platform_associations_unique").on(table.productId, table.platformId)]);
+
+export const featureRequests = pgTable("feature_requests", {
+  id: serial("id").primaryKey(), backlogId: integer("backlog_id").notNull().references(() => productBacklogs.id, { onDelete: "cascade" }),
+  title: text("title").notNull(), description: text("description").notNull().default(""), status: text("status").notNull().default("backlog"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [index("idx_feature_requests_backlog_status").on(table.backlogId, table.status)]);
+
 export const platformProducts = pgTable(
   "platform_products",
   {
@@ -263,6 +290,14 @@ export const insertPlatformProductSchema = createInsertSchema(platformProducts)
     status: platformStatusEnum.optional().default("active"),
   });
 
+export const insertProductSchema = createInsertSchema(products)
+  .omit({ id: true, scope: true, ownerUserId: true, accountId: true, createdAt: true, updatedAt: true })
+  .extend({ name: z.string().trim().min(1).max(120), description: z.string().trim().max(500).optional().default(""), status: platformStatusEnum.optional().default("active"), platformIds: z.array(z.number().int().positive()).optional().default([]) });
+
+export const insertFeatureRequestSchema = createInsertSchema(featureRequests)
+  .omit({ id: true, backlogId: true, createdAt: true, updatedAt: true })
+  .extend({ title: z.string().trim().min(1).max(300), description: z.string().trim().max(5000).optional().default(""), status: z.enum(["backlog", "planned", "completed"]).optional().default("backlog") });
+
 export const insertPlatformProductEnvironmentSchema = createInsertSchema(platformProductEnvironments)
   .omit({ id: true, productId: true, createdAt: true, updatedAt: true })
   .extend({
@@ -273,6 +308,10 @@ export type Platform = typeof platforms.$inferSelect;
 export type InsertPlatform = z.infer<typeof insertPlatformSchema>;
 export type PlatformProduct = typeof platformProducts.$inferSelect;
 export type InsertPlatformProduct = z.infer<typeof insertPlatformProductSchema>;
+export type Product = typeof products.$inferSelect;
+export type InsertProduct = z.infer<typeof insertProductSchema>;
+export type ProductBacklog = typeof productBacklogs.$inferSelect;
+export type FeatureRequest = typeof featureRequests.$inferSelect;
 export type PlatformProductEnvironment = typeof platformProductEnvironments.$inferSelect;
 export type InsertPlatformProductEnvironment = z.infer<typeof insertPlatformProductEnvironmentSchema>;
 

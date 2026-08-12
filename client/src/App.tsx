@@ -93,6 +93,8 @@ const ScenarioDetailPage = lazyWithRetry(() => import("@/pages/scenario-detail")
 const OrientationPage = lazyWithRetry(() => import("@/pages/orientation"));
 const NewsPage = lazyWithRetry(() => import("@/pages/news"));
 const PlatformsPage = lazyWithRetry(() => import("@/pages/platforms"));
+const ProductsPage = lazyWithRetry(() => import("@/pages/products"));
+const BacklogPage = lazyWithRetry(() => import("@/pages/backlog"));
 const PlatformEnvironmentDetailPage = lazyWithRetry(() => import("@/pages/platform-environment-detail"));
 const WellnessPage = lazyWithRetry(() => import("@/pages/wellness"));
 const LibraryPage = lazyWithRetry(() => import("@/pages/library/index"));
@@ -315,6 +317,8 @@ function Router() {
         <Route path="/work">{() => <Redirect to="/projects" />}</Route>
         <Route path="/platforms/environments/:id">{() => <RequireBuild routeId="build.route.platform-environment-detail"><PlatformEnvironmentDetailPage /></RequireBuild>}</Route>
         <Route path="/platforms">{() => <RequireBuild routeId="build.route.platforms"><PlatformsPage /></RequireBuild>}</Route>
+        <Route path="/products">{() => <RequireBuild routeId="build.route.products"><ProductsPage /></RequireBuild>}</Route>
+        <Route path="/backlog">{() => <RequireBuild routeId="build.route.backlog"><BacklogPage /></RequireBuild>}</Route>
         <Route path="/memory" component={MemoryPageFull} />
         <Route path="/journal">{() => <Redirect to="/memory?tab=maintenance" />}</Route>
         <Route path="/build">{() => <RequireBuild routeId="build.route.build"><BuildPage /></RequireBuild>}</Route>
