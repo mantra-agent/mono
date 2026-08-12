@@ -26,10 +26,13 @@ interface ActivityMetricInfo {
 interface ActivityDetailPanelProps {
   activityId: number;
   category: string;
+  pulseWindowSize: number;
   windowStart: number | null;
   windowEnd: number | null;
   metricInfo?: ActivityMetricInfo;
 }
+
+const MIN_HISTORY_INTERVALS = 5;
 
 function formatMetricValue(value: number, metricType?: string | null): string {
   const num = value >= 1000 ? value.toLocaleString() : `${Math.round(value * 10) / 10}`;
@@ -38,10 +41,11 @@ function formatMetricValue(value: number, metricType?: string | null): string {
   return num;
 }
 
-function HeartbeatHistory({ logs, category, windowStart, windowEnd }: Omit<ActivityDetailPanelProps, "activityId" | "metricInfo"> & { logs: WellnessLogEntry[] }) {
+function HeartbeatHistory({ logs, category, pulseWindowSize, windowStart, windowEnd }: Omit<ActivityDetailPanelProps, "activityId" | "metricInfo"> & { logs: WellnessLogEntry[] }) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const events = useMemo(() => {
-    const entries = logs.slice(0, 30).reverse();
+    const historyIntervalCount = Math.max(MIN_HISTORY_INTERVALS, pulseWindowSize);
+    const entries = logs.slice(0, historyIntervalCount).reverse();
     const timestamps = entries.map((entry) => new Date(entry.completedAt).getTime());
     const firstTimestamp = timestamps[0] ?? 0;
     const lastTimestamp = timestamps[timestamps.length - 1] ?? firstTimestamp;
@@ -52,7 +56,7 @@ function HeartbeatHistory({ logs, category, windowStart, windowEnd }: Omit<Activ
       x: entries.length === 1 ? 500 : 24 + ((timestamps[index] - firstTimestamp) / elapsed) * 952,
       adherence: getWellnessWindowAdherence(category, windowStart, windowEnd, new Date(entry.completedAt), timezone),
     }));
-  }, [logs, category, windowStart, windowEnd, timezone]);
+  }, [logs, category, pulseWindowSize, windowStart, windowEnd, timezone]);
 
   if (events.length === 0) {
     return <p className="px-2 py-1.5 text-sm text-muted-foreground">No completions yet.</p>;
@@ -103,7 +107,7 @@ function LogHistoryItem({ entry, onDelete, linkedMetricType }: { entry: Wellness
   );
 }
 
-export function ActivityDetailPanel({ activityId, category, windowStart, windowEnd, metricInfo }: ActivityDetailPanelProps) {
+export function ActivityDetailPanel({ activityId, category, pulseWindowSize, windowStart, windowEnd, metricInfo }: ActivityDetailPanelProps) {
   const { toast } = useToast();
   const [showAll, setShowAll] = useState(false);
   const { data: trends, isLoading: trendsLoading } = useQuery<ActivityTrends>({ queryKey: ["/api/wellness/activities", activityId, "trends"] });
@@ -125,7 +129,7 @@ export function ActivityDetailPanel({ activityId, category, windowStart, windowE
 
   return (
     <div className="space-y-4" data-testid={`detail-panel-${activityId}`}>
-      <HeartbeatHistory logs={displayLogs} category={category} windowStart={windowStart} windowEnd={windowEnd} />
+      <HeartbeatHistory logs={displayLogs} category={category} pulseWindowSize={pulseWindowSize} windowStart={windowStart} windowEnd={windowEnd} />
       {trends && trends.totalCompletions > 0 && <div className="flex gap-6 text-xs text-muted-foreground"><span>Current streak · {trends.currentStreak}</span><span>30d · {trends.rate30d ?? "—"}%</span><span>90d · {trends.rate90d ?? "—"}%</span></div>}
       {metricInfo?.linkedMetricType && <div className="text-xs text-muted-foreground">Linked to {metricInfo.linkedMetricType}</div>}
       <div className="divide-y divide-border/20">
