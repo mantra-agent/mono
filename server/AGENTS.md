@@ -51,7 +51,7 @@ Root `AGENTS.md` is mandatory and authoritative for Engineering Principles, arch
 
 ## Jobs and headcount planning boundary
 
-`job_roles` is the account-owned source of truth for reusable role and compensation definitions. `JobRoleStorage` is the only ordinary mutation boundary for UI, REST, and the `jobs` tool; hiring plans must reference stable role IDs rather than copy role compensation into the financial model. The Team vocabulary is the shared seeded `JOB_TEAMS` list. Reads require `system:read`, writes require `system:write`, and every query retains principal account scope.
+`job_roles` is the account-owned source of truth for reusable role and compensation definitions. `JobRoleStorage` is the only ordinary mutation boundary for UI, REST, and the `jobs` tool; hiring plans must reference stable role IDs rather than copy role compensation into the financial model. `business_hiring_slots` is the Business-owned source of truth for approved and canceled hiring-plan slots; `BusinessHiringStorage` is the only ordinary mutation boundary, and Forecast/Hiring UI projects from those rows. The Team vocabulary is the shared seeded `JOB_TEAMS` list. Reads require `system:read`, writes require `system:write`, and every query retains principal account scope.
 
 ## Metrics integrity boundary
 
