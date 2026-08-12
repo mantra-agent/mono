@@ -4,6 +4,7 @@ import { requireCurrentPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { featureRequests, insertFeatureRequestSchema, insertProductSchema, platforms, productBacklogs, productPlatformAssociations, products } from "@shared/models/platforms";
 import { visiblePlatform, writablePlatform } from "./platforms/platform-access";
+import { storage } from "./storage";
 
 const scopeColumns = { scope: products.scope, ownerUserId: products.ownerUserId, accountId: products.accountId };
 
@@ -21,7 +22,8 @@ export const productStorage = {
       db.select().from(productBacklogs).where(inArray(productBacklogs.productId, ids)),
       db.select({ productId: productPlatformAssociations.productId, platformId: platforms.id, platformName: platforms.name }).from(productPlatformAssociations).innerJoin(platforms, eq(productPlatformAssociations.platformId, platforms.id)).where(and(inArray(productPlatformAssociations.productId, ids), visiblePlatform())),
     ]);
-    return rows.map((product) => ({ ...product, backlogId: backlogs.find((row) => row.productId === product.id)?.id, platforms: associations.filter((row) => row.productId === product.id) }));
+    const requestCounts = await db.select({ productId: productBacklogs.productId, count: sql<number>`count(${featureRequests.id})::int` }).from(productBacklogs).leftJoin(featureRequests, eq(featureRequests.backlogId, productBacklogs.id)).where(inArray(productBacklogs.productId, ids)).groupBy(productBacklogs.productId);
+    return rows.map((product) => ({ ...product, backlogId: backlogs.find((row) => row.productId === product.id)?.id, featureRequestCount: requestCounts.find((row) => row.productId === product.id)?.count ?? 0, platforms: associations.filter((row) => row.productId === product.id) }));
   },
 
   async create(input: unknown) {
@@ -79,5 +81,26 @@ export const productStorage = {
     if (!backlog) throw new Error("Product backlog is missing");
     const [created] = await db.insert(featureRequests).values({ ...parsed, backlogId: backlog.id }).returning();
     return created;
+  },
+
+  async updateFeature(productId: number, requestId: number, input: unknown) {
+    requireCurrentPrincipal();
+    const parsed = insertFeatureRequestSchema.partial().parse(input);
+    const [updated] = await db.update(featureRequests).set({ ...parsed, updatedAt: sql`CURRENT_TIMESTAMP` }).where(and(eq(featureRequests.id, requestId), eq(featureRequests.backlogId, sql`(select id from product_backlogs where product_id = ${productId})`))).returning();
+    return updated;
+  },
+
+  async removeFeature(productId: number, requestId: number) {
+    requireCurrentPrincipal();
+    const [deleted] = await db.delete(featureRequests).where(and(eq(featureRequests.id, requestId), eq(featureRequests.backlogId, sql`(select id from product_backlogs where product_id = ${productId})`))).returning({ id: featureRequests.id });
+    return !!deleted;
+  },
+
+  async bridgeFeatureToIssue(productId: number, requestId: number) {
+    requireCurrentPrincipal();
+    const backlog = await this.backlog(productId);
+    const request = backlog?.requests.find((item) => item.id === requestId);
+    if (!request) return undefined;
+    return storage.createIssue({ title: request.title, description: request.description, reproSteps: `Feature Request ${request.id}: ${request.title}`, productId, status: "open", kind: "tracked" });
   },
 };
