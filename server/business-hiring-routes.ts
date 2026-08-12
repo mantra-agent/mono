@@ -15,7 +15,7 @@ function handle(res: Response, operation: string, error: unknown): void {
 }
 export function registerBusinessHiringRoutes(app: Express): void {
   app.get("/api/business/hiring", requirePermission("system:read"), async (req, res) => {
-    try { const businessId = String(req.query.businessId ?? "").trim(); if (!businessId) return res.status(400).json({ error: "businessId is required" }); res.json(await businessHiringStorage.projection(businessId)); } catch (error) { handle(res, "read hiring plan", error); }
+    try { const businessId = String(req.query.businessId ?? "").trim(); if (!businessId) return res.status(400).json({ error: "businessId is required" }); res.json(await businessHiringStorage.plan(businessId)); } catch (error) { handle(res, "read hiring plan", error); }
   });
   app.post("/api/business/hiring/adopt", requirePermission("system:write"), async (req, res) => {
     try { const businessId = String(req.body?.businessId ?? "").trim(); if (!businessId) return res.status(400).json({ error: "businessId is required" }); await businessHiringStorage.adoptLegacy(businessId); res.json(await businessHiringStorage.projection(businessId)); } catch (error) { handle(res, "adopt legacy hiring plan", error); }
