@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "async_hooks";
 import { pool } from "../db";
 import type { ApiCall, InsertApiCall } from "@shared/schema";
 import { getCurrentPrincipal } from "../principal-context";
@@ -200,6 +201,19 @@ function rowToApiCallLight(row: ApiCallRow): Omit<ApiCall, 'requestContent' | 'r
   };
 }
 
+type ApiCallReportingScope = "owner" | "all-accounts";
+
+const reportingScopeALS = new AsyncLocalStorage<ApiCallReportingScope>();
+
+/** Widen Cost/inference *read* predicates to every account. Writes never enter this scope. */
+export function runWithApiCallReportingScope<T>(scope: ApiCallReportingScope, fn: () => T): T {
+  return reportingScopeALS.run(scope, fn);
+}
+
+function currentReportingScope(): ApiCallReportingScope {
+  return reportingScopeALS.getStore() ?? "owner";
+}
+
 function currentOwnership(): { scope: "user" | "system"; ownerUserId: string | null; accountId: string | null } {
   const principal = getCurrentPrincipal();
   if (principal?.actorType === "user" && principal.userId && principal.accountId) {
@@ -215,29 +229,37 @@ function ownershipClause(alias = "api_calls", startIndex = 1): { clause: string;
   const ownership = currentOwnership();
   if (ownership.scope === "system") return { clause: `${alias}.scope = 'system'`, params: [] };
   return {
-    clause: `${alias}.scope = 'user' AND ${alias}.owner_user_id = $${startIndex} AND ${alias}.account_id = $${startIndex + 1}`,
+    clause: `${alias}.scope = 'user' AND ${alias}.owner_user_id = ${startIndex} AND ${alias}.account_id = ${startIndex + 1}`,
     params: [ownership.ownerUserId!, ownership.accountId!],
   };
 }
 
+/** Read visibility. Owner-scoped unless an authorized reporting scope is active. */
+function visibilityClause(alias = "api_calls", startIndex = 1): { clause: string; params: string[] } {
+  if (currentReportingScope() === "all-accounts") {
+    return { clause: "TRUE", params: [] };
+  }
+  return ownershipClause(alias, startIndex);
+}
+
 function buildSinceQuery(baseQuery: string, since: Date | undefined): { query: string; params: Array<Date | number | string> } {
-  const ownership = ownershipClause("api_calls");
-  const params: Array<Date | number | string> = [...ownership.params];
-  let query = `${baseQuery} WHERE ${ownership.clause}`;
+  const visibility = visibilityClause("api_calls");
+  const params: Array<Date | number | string> = [...visibility.params];
+  let query = `${baseQuery} WHERE ${visibility.clause}`;
   if (since) {
     params.push(since);
-    query += ` AND timestamp >= $${params.length}`;
+    query += ` AND timestamp >= ${params.length}`;
   }
   return { query, params };
 }
 
 function buildWhereParams(since: Date | undefined, params: Array<Date | string | number>): string {
-  const ownership = ownershipClause("api_calls", params.length + 1);
-  params.push(...ownership.params);
-  let where = `WHERE ${ownership.clause}`;
+  const visibility = visibilityClause("api_calls", params.length + 1);
+  params.push(...visibility.params);
+  let where = `WHERE ${visibility.clause}`;
   if (since) {
     params.push(since);
-    where += ` AND timestamp >= $${params.length}`;
+    where += ` AND timestamp >= ${params.length}`;
   }
   return where;
 }
@@ -327,9 +349,9 @@ export class FileApiCallStorage {
     since?: Date,
     filters: ApiCallListFilters = {},
   ): Promise<ApiCall[]> {
-    const ownership = ownershipClause("api_calls");
-    const params: Array<Date | number | string> = [...ownership.params];
-    const conditions = [ownership.clause];
+    const visibility = visibilityClause("api_calls");
+    const params: Array<Date | number | string> = [...visibility.params];
+    const conditions = [visibility.clause];
     const addCondition = (condition: string, value: Date | number | string) => {
       params.push(value);
       conditions.push(condition.replace("$VALUE", "$" + params.length));
@@ -584,8 +606,8 @@ export class FileApiCallStorage {
   }
 
   async getTotalApiCallCount(): Promise<number> {
-    const ownership = ownershipClause("api_calls");
-    const result = await pool.query<CountRow>(`SELECT COUNT(*)::int AS cnt FROM api_calls WHERE ${ownership.clause}`, ownership.params);
+    const visibility = visibilityClause("api_calls");
+    const result = await pool.query<CountRow>(`SELECT COUNT(*)::int AS cnt FROM api_calls WHERE ${visibility.clause}`, visibility.params);
     return result.rows[0]?.cnt ?? 0;
   }
 

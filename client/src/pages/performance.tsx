@@ -52,6 +52,7 @@ import {
 import { useTimezone } from "@/hooks/use-timezone";
 import { getApiCallErrorText, shouldShowApiCallResponse } from "@/lib/api-call-diagnostics";
 import { usePageHeader } from "@/hooks/use-page-header";
+import { useAuth } from "@/hooks/use-auth";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
 
@@ -533,6 +534,8 @@ function HierarchyBreakdown({ data }: { data?: HierarchyResponse }) {
 export default function CostPage({ embedded }: { embedded?: boolean }) {
   usePageHeader({ title: "Cost", skip: !!embedded });
   const { timezone } = useTimezone();
+  const { hasPermission } = useAuth();
+  const reportsAllAccounts = hasPermission("system:read");
   const queryClient = useQueryClient();
   const [period, setPeriod] = useState("today");
   const [groupBy, setGroupBy] = useState<GroupBy>("hierarchy");
@@ -720,6 +723,9 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
             <div className="text-2xl font-bold" data-testid="text-total-cost">
               {summaryLoading ? "..." : formatCost(summary?.totalCost || 0)}
             </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {reportsAllAccounts ? "All accounts" : "This account"}
+            </p>
           </CardContent>
         </Card>
 
