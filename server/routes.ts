@@ -271,20 +271,6 @@ export async function registerRoutes(
     res.status(204).end();
   });
 
-  function buildRepoUrlDisplay(): { repoUrlSet: boolean; repoUrlDisplay?: string } {
-    const repoUrl = process.env.GITHUB_REPO_URL;
-    let repoUrlDisplay: string | undefined;
-    if (repoUrl) {
-      try {
-        const parsed = new URL(repoUrl);
-        repoUrlDisplay = `${parsed.host}${parsed.pathname.replace(/\.git$/, "")}`;
-      } catch {
-        repoUrlDisplay = "(unparseable)";
-      }
-    }
-    return { repoUrlSet: !!repoUrl, repoUrlDisplay };
-  }
-
   async function validateGitHubToken(token: string): Promise<{ ok: true; login?: string } | { ok: false; status: number | null; error: string }> {
     try {
       const userRes = await fetch("https://api.github.com/user", {
@@ -319,7 +305,6 @@ export async function registerRoutes(
 
   // GitHub status — aggregates from github_credentials
   app.get("/api/integrations/github/status", async (_req: Request, res: Response) => {
-    const { repoUrlSet, repoUrlDisplay } = buildRepoUrlDisplay();
     try {
       const { listCredentials } = await import("./github-credentials");
       const creds = await listCredentials();
@@ -328,8 +313,6 @@ export async function registerRoutes(
           connected: false,
           status: "disconnected",
           error: "No GitHub credentials configured",
-          repoUrlSet,
-          repoUrlDisplay,
           credentials: [],
         });
       }
@@ -344,8 +327,6 @@ export async function registerRoutes(
           connected: false,
           status: "error",
           error: result.error,
-          repoUrlSet,
-          repoUrlDisplay,
           credentials: creds,
         });
       }
@@ -353,8 +334,6 @@ export async function registerRoutes(
         connected: true,
         status: "connected",
         login: result.login,
-        repoUrlSet,
-        repoUrlDisplay,
         credentials: creds,
       });
     } catch (err: any) {
@@ -362,8 +341,6 @@ export async function registerRoutes(
         connected: false,
         status: "disconnected",
         error: "No GitHub credentials configured",
-        repoUrlSet,
-        repoUrlDisplay,
         credentials: [],
       });
     }
@@ -443,29 +420,6 @@ export async function registerRoutes(
         return res.status(400).json({ ok: false, error: err.message });
       }
       res.status(500).json({ ok: false, error: err?.message || "Failed to remove credential" });
-    }
-  });
-
-  app.post("/api/integrations/github/repo-url", requireAuth, requireAdmin, async (req: Request, res: Response) => {
-    const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
-    if (url && !url.startsWith("https://")) {
-      return res.status(400).json({ error: "URL must start with https://" });
-    }
-    try {
-      const { setSetting } = await import("./system-settings");
-      if (url) {
-        await setSetting("system.github_repo_url", url);
-        process.env.GITHUB_REPO_URL = url;
-      } else {
-        await setSetting("system.github_repo_url", null);
-        delete process.env.GITHUB_REPO_URL;
-      }
-      const userId = req.session.userId || null;
-      routesLog.log(`POST /api/integrations/github/repo-url saved by user=${userId} url=${url ? "(set)" : "(cleared)"}`);
-      res.json({ ok: true, repoUrlSet: !!url });
-    } catch (err: any) {
-      routesLog.error(`POST /api/integrations/github/repo-url: ${err?.message || err}`);
-      res.status(500).json({ ok: false, error: err?.message || "Failed to save repo URL" });
     }
   });
 

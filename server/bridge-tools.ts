@@ -9072,7 +9072,6 @@ function createIsolatedShellEnvironment(): NodeJS.ProcessEnv {
     GIT_CONFIG_VALUE_1: "/dev/null",
     NPM_CONFIG_USERCONFIG: "/dev/null",
     npm_config_userconfig: "/dev/null",
-    BUILD_PUSH_TO_GITHUB: "false",
     ENABLE_DB_CLEANUP: "false",
   };
 }

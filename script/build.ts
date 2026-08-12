@@ -16,36 +16,6 @@ import { validateClientMobileStandardsDisposition } from "./client-mobile-standa
 // runtime resolves gitnexus + claude CLI from node_modules instead.
 const DEV_MODE = process.env.BUILD_DEV_MODE === "true";
 
-async function pushToGitHub() {
-  if (process.env.BUILD_PUSH_TO_GITHUB !== "true") {
-    console.log("Skipping GitHub push during build. Set BUILD_PUSH_TO_GITHUB=true to enable.");
-    return;
-  }
-
-  const repoUrl = process.env.GITHUB_REPO_URL?.trim();
-  if (!repoUrl) {
-    console.warn("GITHUB_REPO_URL not set — skipping GitHub push");
-    return;
-  }
-
-  console.log("pushing to GitHub...");
-  try {
-    const { getAuthenticatedGitUrl } = await import("../server/github-auth");
-    const authedUrl = await getAuthenticatedGitUrl(repoUrl);
-    execFileSync("git", ["push", authedUrl, "HEAD:refs/heads/main"], {
-      stdio: "pipe",
-      timeout: 60_000,
-    });
-    console.log("pushed to GitHub successfully");
-  } catch (err: unknown) {
-    const code =
-      err instanceof Error && "status" in err
-        ? (err as { status: number }).status
-        : "unknown";
-    console.warn(`git push to GitHub failed (non-blocking): exit code ${code}`);
-  }
-}
-
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
 // NOTE: @modelcontextprotocol/sdk (transitive dep of claude-agent-sdk) is not listed
@@ -672,10 +642,9 @@ async function buildAll() {
   );
 
   if (DEV_MODE) {
-    console.log("BUILD_DEV_MODE=true — skipping GitHub push, DB cleanup, gitnexus runtime bundle, and claude CLI bundle.");
+    console.log("BUILD_DEV_MODE=true — skipping DB cleanup, gitnexus runtime bundle, and claude CLI bundle.");
   }
   if (!DEV_MODE) {
-    await pushToGitHub();
     await runDbCleanup();
   }
   await rm("dist", { recursive: true, force: true });
