@@ -811,17 +811,7 @@ class PersonaStorageClass {
 
   async update(
     id: number,
-    input: {
-      name?: string;
-      description?: string;
-      icon?: string;
-      promptOverlay?: string;
-      expressionTags?: string[];
-      cognitiveOverrides?: Record<string, unknown>;
-      semanticTier?: SemanticTier | null;
-      contextSections?: Record<string, boolean>;
-      toolBundle?: string[];
-    },
+    input: Partial<PersonaRevisionPayload>,
   ): Promise<PersonaEntry | null> {
     const existing = await this.get(id);
     if (!existing) return null;
@@ -842,6 +832,12 @@ class PersonaStorageClass {
       updates.contextSections = input.contextSections;
     if (input.toolBundle !== undefined)
       updates.toolBundle = input.toolBundle;
+    if (input.routingExamples !== undefined)
+      updates.routingExamples = input.routingExamples;
+    if (input.isDefault !== undefined)
+      updates.isDefault = input.isDefault;
+    if (input.sortOrder !== undefined)
+      updates.sortOrder = input.sortOrder;
     const [updated] = await db
       .update(personas)
       .set({
