@@ -1,3 +1,10 @@
+<!-- 2026-08-12 Email pipeline health scoping:
+- Assets/data: A01 principal-owned `email_sync_cursors` and connected Google account identity; account IDs and last-sync recency are S1 operational metadata that can identify another user's mailbox.
+- Flow/threat: authenticated Email page / `/api/email/sync-status` / `/api/email/pipeline-status` / `getEmailPipelineHealth()` previously selected every `email_sync_cursors` row, then unioned those IDs with already-scoped sync-health logs. A new account with no linked Gmail therefore rendered other users' Google account IDs as "Gmail sync stale" (STRIDE information disclosure; DATA-01/IAM-01).
+- Deterministic controls/owner: `getEmailPipelineHealth()` now reads cursors only through `combineWithSensitiveVisible` on owner/account/vault columns, matching `storage.getSyncHealth()`. No linked accounts is an empty healthy set, not a stale warning. Named auth, connected-account OAuth, and existing Email routes remain independent. Owner: Core Comms / Email. Severity: high confidentiality. SLA: immediate. Status: repaired in source pending production build and merge.
+- Residual/rollback: leftover NULL-ownership cursor rows remain invisible to ordinary users (fail closed) until a separately authorized backfill assigns them. Revert the scoped cursor predicate and this finding together; no schema change is involved.
+-->
+
 <!-- 2026-08-12 cascade sharing derived access:
 - Assets/data: A01/A06/A07 `object_grants`, projects/milestones/tasks, and `library_pages` hierarchy (S2 work and knowledge).
 - Flow/threat: Share sheet writes one grant on a project or page; recipients previously saw the parent object (or nothing) while children stayed owner-scoped, and Library list/tree ignored grants then dropped orphans whose parent was invisible (STRIDE information disclosure / elevation analogue; DATA-01/IAM-01). Fan-out grant rows or reparenting into the recipient vault would confuse access with custody.
