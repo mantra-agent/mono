@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AgentOrb } from "@/components/agent-orb";
 import type { OrbState } from "@/components/agent-orb";
+import { VoiceCaptionOverlay } from "@/components/voice-caption-overlay";
 import { createLogger } from "@/lib/logger";
 import type { AgentVisualizerEvent } from "@shared/agent-visualizer";
 
@@ -96,10 +97,12 @@ function useRecallMeetingLevel(enabled: boolean): number | undefined {
 function useMeetingVisualizerFeed(token: string): {
   state: OrbState;
   remoteAudioLevel: number;
+  caption: string;
   connected: boolean;
 } {
   const [state, setState] = useState<OrbState>(token ? "idle" : "degraded");
   const [remoteAudioLevel, setRemoteAudioLevel] = useState(0);
+  const [caption, setCaption] = useState("");
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
@@ -121,6 +124,7 @@ function useMeetingVisualizerFeed(token: string): {
           const event = JSON.parse(String(message.data)) as AgentVisualizerEvent;
           if (event.type === "agent.state") setState(event.state);
           if (event.type === "audio.level") setRemoteAudioLevel(event.level);
+          if (event.type === "agent.caption") setCaption(event.caption);
         } catch (error) {
           log.warn("Invalid visualizer state event", error);
         }
@@ -147,7 +151,7 @@ function useMeetingVisualizerFeed(token: string): {
     };
   }, [token]);
 
-  return { state: connected ? state : "degraded", remoteAudioLevel, connected };
+  return { state: connected ? state : "degraded", remoteAudioLevel, caption: connected ? caption : "", connected };
 }
 
 function useMeetingSpeech(token: string, enabled: boolean): void {
@@ -208,6 +212,7 @@ function RecallMeetingVisualizer({ token, search }: { token: string; search: URL
         sustainFrameProduction={Boolean(token)}
         className="absolute inset-0"
       />
+      {token ? <VoiceCaptionOverlay text={feed.caption} /> : null}
     </main>
   );
 }

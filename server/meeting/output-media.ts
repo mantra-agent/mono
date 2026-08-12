@@ -78,6 +78,7 @@ export function interruptMeetingSpeech(sessionId: string, reason = "user_speech"
     for (const audio of live) audio.stream.destroy(interruption);
   }
   clearMeetingVisualizerState(sessionId, "speech");
+  clearMeetingVisualizerCaption(sessionId);
   log.info(`meeting speech interrupted sessionId=${sessionId} reason=${reason}`);
   return true;
 }
@@ -145,6 +146,7 @@ export function resetMeetingSpeechDetection(sessionId: string): void {
 const visualizerClients = new Map<string, Set<WebSocket>>();
 const visualizerSignals = new Map<string, Map<VisualizerStateSource, AgentVisualState>>();
 const visualizerStates = new Map<string, AgentVisualState>();
+const visualizerCaptions = new Map<string, string>();
 const lastAudioFrameAt = new Map<string, number>();
 let visualizerSequence = 0;
 
@@ -256,6 +258,29 @@ export function clearMeetingVisualizerState(sessionId: string, source: Visualize
   publishResolvedVisualizerState(sessionId);
 }
 
+/**
+ * Project the currently audible agent phrase onto the outbound bot tile. The
+ * caption rides the same visualizer socket as orb state so the tile every
+ * meeting participant sees is captioned, without touching the audio path or
+ * depending on any per-user preference (the tile has no authenticated user).
+ */
+export function setMeetingVisualizerCaption(sessionId: string, caption: string): void {
+  const text = caption.trim();
+  if (!text) {
+    clearMeetingVisualizerCaption(sessionId);
+    return;
+  }
+  if (visualizerCaptions.get(sessionId) === text) return;
+  visualizerCaptions.set(sessionId, text);
+  broadcastVisualizerEvent(sessionId, nextVisualizerEvent({ type: "agent.caption", caption: text }));
+}
+
+export function clearMeetingVisualizerCaption(sessionId: string): void {
+  if (!visualizerCaptions.has(sessionId)) return;
+  visualizerCaptions.delete(sessionId);
+  broadcastVisualizerEvent(sessionId, nextVisualizerEvent({ type: "agent.caption", caption: "" }));
+}
+
 export function syncMeetingVisualizerBotStatus(sessionId: string, status: MeetingBotStatus): void {
   if (status === "live") {
     setMeetingVisualizerState(sessionId, "lifecycle", "listening");
@@ -308,6 +333,8 @@ export function registerMeetingVisualizerTransport(): (
     }
     const state = visualizerStates.get(sessionId) ?? resolvedVisualizerState(sessionId);
     client.send(JSON.stringify(nextVisualizerEvent({ type: "agent.state", state })));
+    const caption = visualizerCaptions.get(sessionId);
+    if (caption) client.send(JSON.stringify(nextVisualizerEvent({ type: "agent.caption", caption })));
     let awaitingPong = false;
     const heartbeat = setInterval(() => {
       if (client.readyState !== WebSocket.OPEN) return;
@@ -427,6 +454,7 @@ export async function speakMeetingResponse(sessionId: string, text: string): Pro
     speechAbortControllers.set(sessionId, abort);
     let outcome: "spoken" | "interrupted" | "failed" = "failed";
     setMeetingVisualizerState(sessionId, "speech", "speaking");
+    setMeetingVisualizerCaption(sessionId, text);
     await chatStorage.updateMeetingMeta(sessionId, { speechStatus: "speaking" });
     try {
       const maxAttempts = 2;
@@ -482,6 +510,7 @@ export async function speakMeetingResponse(sessionId: string, text: string): Pro
     } finally {
       if (speechAbortControllers.get(sessionId) === abort) speechAbortControllers.delete(sessionId);
       if (outcome !== "failed") clearMeetingVisualizerState(sessionId, "speech");
+      clearMeetingVisualizerCaption(sessionId);
     }
   });
   speechLocks.set(sessionId, current);
