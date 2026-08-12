@@ -6,7 +6,7 @@ import { createLogger } from "./log";
 import { markSourceChanged } from "./memory/vnext-source-queue";
 import type { Principal } from "./principal";
 import { requireCurrentUserPrincipal } from "./principal-context";
-import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
+import { combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import { indexLibraryPageReferences } from "./library-reference-index";
 import { syncLibraryPageTags } from "./library-tag-sync";
@@ -230,7 +230,7 @@ async function resolveStandardLibraryPlacement(
       })
       .from(libraryPages)
       .where(
-        combineWithVisibleScope(
+        combineWithWritableScope(
           principal,
           libraryScopeColumns,
           and(
@@ -241,7 +241,7 @@ async function resolveStandardLibraryPlacement(
       )
       .limit(1);
     if (!parent?.vaultId) {
-      throw Object.assign(new Error("Explicit Library parent is not visible"), {
+      throw Object.assign(new Error("Explicit Library parent is not writable"), {
         status: 404,
       });
     }

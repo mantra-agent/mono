@@ -40,6 +40,7 @@ import {
   combineWithWritableScope,
   ownedInsertValues,
 } from "../scoped-storage";
+import { combineWithAuthorizedScope } from "../authorize";
 import { WORKSPACE_DIR } from "../paths";
 import { eventBus } from "../event-bus";
 import { markSourceChanged, registerSourceIfAbsent } from "../memory/vnext-source-queue";
@@ -63,6 +64,7 @@ const libraryScopeColumns = {
   ownerUserId: libraryPages.ownerUserId,
   accountId: libraryPages.accountId,
   vaultId: libraryPages.vaultId,
+  objectId: libraryPages.id,
 };
 
 function principalOrThrow(req: any) {
@@ -91,11 +93,17 @@ function visibleLibrary(req: any, predicate?: SQL): SQL {
   // Trashed pages (those with a library_page_trash row) are excluded from every read that
   // flows through this boundary — list, tree, single get, index, unread, and
   // search. Trash (a later step) reads with its own predicate.
-  const notTrashed = libraryPageIsLive();
-  return combineWithVisibleScope(
-    principalOrThrow(req),
+  // Access is ownership OR a live library_page/vault grant, including descendants
+  // of a granted page. Placement stays the owner's.
+  const principal = principalOrThrow(req);
+  const ownedLive = combineWithVisibleScope(principal, libraryScopeColumns, libraryPageIsLive());
+  return combineWithAuthorizedScope(
+    principal,
+    ownedLive,
+    "library_page",
     libraryScopeColumns,
-    predicate ? and(predicate, notTrashed) : notTrashed,
+    "read",
+    predicate,
   );
 }
 
@@ -103,6 +111,18 @@ function writableLibrary(req: any, predicate?: SQL): SQL {
   return combineWithWritableScope(
     principalOrThrow(req),
     libraryScopeColumns,
+    predicate,
+  );
+}
+
+function authorizedLibraryWrite(req: any, predicate?: SQL): SQL {
+  const principal = principalOrThrow(req);
+  return combineWithAuthorizedScope(
+    principal,
+    combineWithWritableScope(principal, libraryScopeColumns),
+    "library_page",
+    libraryScopeColumns,
+    "write",
     predicate,
   );
 }
@@ -170,6 +190,7 @@ export async function registerLibraryRoutes(app: Express) {
         vaultId: libraryPages.vaultId,
         structuralRole: libraryPages.structuralRole,
         scope: libraryPages.scope,
+        ownerUserId: libraryPages.ownerUserId,
         createdAt: libraryPages.createdAt,
         updatedAt: libraryPages.updatedAt,
       };
@@ -219,6 +240,7 @@ export async function registerLibraryRoutes(app: Express) {
           vaultId: libraryPages.vaultId,
           structuralRole: libraryPages.structuralRole,
           scope: libraryPages.scope,
+          ownerUserId: libraryPages.ownerUserId,
           updatedAt: libraryPages.updatedAt,
         })
         .from(libraryPages)
@@ -229,13 +251,18 @@ export async function registerLibraryRoutes(app: Express) {
       type PageWithChildren = (typeof pages)[number] & {
         children: PageWithChildren[];
       };
-      const buildTree = (parentId: string | null): PageWithChildren[] => {
-        return pages
-          .filter((p) => p.parentId === parentId)
-          .map((p) => ({ ...p, children: buildTree(p.id) }));
-      };
+      const byId = new Map(pages.map((page) => [page.id, page]));
+      const attachChildren = (node: (typeof pages)[number]): PageWithChildren => ({
+        ...node,
+        children: pages
+          .filter((page) => page.parentId === node.id)
+          .map(attachChildren),
+      });
+      const roots = pages
+        .filter((page) => !page.parentId || !byId.has(page.parentId))
+        .map(attachChildren);
 
-      res.json(buildTree(null));
+      res.json(roots);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -567,10 +594,30 @@ export async function registerLibraryRoutes(app: Express) {
       const [existingPage] = await db
         .select({ tags: libraryPages.tags })
         .from(libraryPages)
-        .where(writableLibrary(req, eq(libraryPages.id, req.params.id)))
+        .where(authorizedLibraryWrite(req, eq(libraryPages.id, req.params.id)))
         .limit(1);
       if (!existingPage) return res.status(404).json({ error: "Library page not found" });
       const systemManaged = existingPage.tags.includes("system-folder");
+      const structureRequested =
+        updates.parentId !== undefined
+        || updates.destinationVaultId !== undefined
+        || updates.tags !== undefined
+        || updates.structuralRole !== undefined
+        || updates.isPinned !== undefined
+        || updates.surface !== undefined
+        || updates.surfaceDurationHours !== undefined
+        || updates.surfaceReason !== undefined
+        || updates.surfaceSection !== undefined;
+      if (structureRequested) {
+        const [ownedPage] = await db
+          .select({ id: libraryPages.id })
+          .from(libraryPages)
+          .where(writableLibrary(req, eq(libraryPages.id, req.params.id)))
+          .limit(1);
+        if (!ownedPage) {
+          return res.status(403).json({ error: "Write access does not include moving, tagging, pinning, or surfacing this page." });
+        }
+      }
       if (systemManaged && (
         updates.title !== undefined
         || updates.parentId !== undefined
@@ -653,7 +700,7 @@ export async function registerLibraryRoutes(app: Express) {
               ...setData,
               updatedByUserId: principalOrThrow(req).userId ?? undefined,
             })
-            .where(writableLibrary(req, eq(libraryPages.id, req.params.id)))
+            .where(authorizedLibraryWrite(req, eq(libraryPages.id, req.params.id)))
             .returning();
           if (row && (updates.content !== undefined || updates.plainTextContent !== undefined)) {
             await indexLibraryPageReferences(principalOrThrow(req), row);
@@ -664,7 +711,7 @@ export async function registerLibraryRoutes(app: Express) {
         [updated] = await db
           .select()
           .from(libraryPages)
-          .where(writableLibrary(req, eq(libraryPages.id, req.params.id)))
+          .where(authorizedLibraryWrite(req, eq(libraryPages.id, req.params.id)))
           .limit(1);
       }
       if (!updated)
@@ -752,7 +799,7 @@ export async function registerLibraryRoutes(app: Express) {
       const [page] = await db
         .select({ id: libraryPages.id, tags: libraryPages.tags, title: libraryPages.title })
         .from(libraryPages)
-        .where(visibleLibrary(req, eq(libraryPages.id, req.params.id)));
+        .where(writableLibrary(req, eq(libraryPages.id, req.params.id)));
       if (!page)
         return res.status(404).json({ error: "Library page not found" });
       if (page.tags?.includes("system-folder"))
@@ -969,8 +1016,9 @@ export async function registerLibraryRoutes(app: Express) {
         childCountMap[pid] = (childCountMap[pid] || 0) + 1;
       }
 
+      const visibleIds = new Set(allPages.map((page) => page.id));
       const filtered = allPages.filter((p) =>
-        isRoot ? !p.parentId : p.parentId === parentId,
+        isRoot ? !p.parentId || !visibleIds.has(p.parentId) : p.parentId === parentId,
       );
 
       const result = filtered.map((p) => ({

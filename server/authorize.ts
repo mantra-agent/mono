@@ -1,6 +1,7 @@
 import { and, inArray, or, sql, type SQL } from "drizzle-orm";
 import type { AnyColumn } from "drizzle-orm";
 import { objectGrants } from "@shared/schema";
+import { libraryPages } from "@shared/models/info";
 import type { Principal } from "./principal";
 import type { ScopeColumns } from "./scoped-storage";
 import { visibleScopePredicate, writableScopePredicate } from "./scoped-storage";
@@ -11,12 +12,14 @@ import { visibleScopePredicate, writableScopePredicate } from "./scoped-storage"
  * Spec: Sharing Architecture — authorize spine "vault gate -> ownership -> direct/team grant".
  * `object_grants` is the sole ACL primitive. Every read/write path that must honor cross-user
  * sharing routes through exactly one of:
- *   - authorizedScopePredicate(...) — the list/query form (owned-scope OR direct grant), or
+ *   - authorizedScopePredicate(...) — the list/query form (owned-scope OR direct/tree/vault grant), or
  *   - liveObjectGrantPredicate(...) — the single-object existence form.
  *
  * The caller supplies the vault-gated ownership predicate (the "vault gate -> ownership" half);
- * this module ORs in the "direct/team grant" half. Ownership predicates already encode the vault
+ * this module ORs in the grant half. Ownership predicates already encode the vault
  * gate, so a grant is the only way a non-owner reaches an object outside their own scope.
+ * A live `library_page` grant covers that page and its live descendants. It does not
+ * pull invisible ancestors or siblings. Placement (`parent_id`) stays the owner's.
  *
  * Team/organization subjects slot in later at `subjectMatchPredicate` (the membership-expansion
  * seam) without changing a single call site.
@@ -129,6 +132,46 @@ export function liveVaultGatePredicate(principal: Principal, vaultIdColumn: AnyC
   )`;
 }
 
+/**
+ * A live library_page grant covers that page and every live descendant.
+ * The walk follows parent_id only; it never invents ancestors or siblings.
+ * Trashed pages drop out of the walk so a grant cannot resurrect Trash.
+ */
+export function liveLibraryPageTreeGrantPredicate(
+  principal: Principal,
+  pageIdColumn: AnyColumn,
+  required: ObjectRole,
+): SQL {
+  if (principal.actorType === "system") return sql`TRUE`;
+  if (principal.actorType !== "user" || !principal.userId) return sql`FALSE`;
+  return sql`EXISTS (
+    WITH RECURSIVE page_tree AS (
+      SELECT ${libraryPages.id} AS id, ${libraryPages.parentId} AS parent_id
+      FROM ${libraryPages}
+      WHERE ${libraryPages.id} = ${pageIdColumn}
+        AND NOT EXISTS (
+          SELECT 1 FROM library_page_trash trash
+          WHERE trash.page_id = ${libraryPages.id}
+        )
+      UNION ALL
+      SELECT parent.id, parent.parent_id
+      FROM ${libraryPages} parent
+      INNER JOIN page_tree child ON child.parent_id = parent.id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM library_page_trash trash
+        WHERE trash.page_id = parent.id
+      )
+    )
+    SELECT 1
+    FROM page_tree
+    INNER JOIN ${objectGrants} ON ${objectGrants.objectType} = 'library_page'
+      AND ${objectGrants.objectId} = page_tree.id::text
+    WHERE ${subjectMatchPredicate(principal)}
+      AND ${objectGrants.revokedAt} IS NULL
+      AND ${inArray(objectGrants.capability, acceptedRoles(required))}
+  )`;
+}
+
 /** Default owned-scope predicate for objects whose vault gate is the scope columns themselves. */
 export function ownedScopePredicate(principal: Principal, columns: OwnedObjectColumns, required: ObjectRole): SQL {
   return required === "read"
@@ -153,6 +196,9 @@ export function authorizedScopePredicate(
   const grant = liveObjectGrantPredicate(principal, objectGrantIdentity(objectType, columns), required);
   // Vault gate: when the object carries a vault_id, a live grant on that vault also authorizes it.
   const parts = [ownedPredicate, grant];
+  if (objectType === "library_page") {
+    parts.push(liveLibraryPageTreeGrantPredicate(principal, columns.objectId, required));
+  }
   if (columns.vaultId) parts.push(liveVaultGatePredicate(principal, columns.vaultId, required));
   return or(...parts)!;
 }
