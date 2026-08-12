@@ -516,6 +516,61 @@ export async function getDisplayRun(): Promise<PublishRun | null> {
   return currentRun ?? lastRun;
 }
 
+export interface PublishManifestChange {
+  shortSha: string;
+  title: string;
+}
+
+/**
+ * Compact, self-truing projection of what the current live build contains,
+ * for ambient runtime context. Derived entirely from the last persisted
+ * publish run — no separate store to drift.
+ *
+ * Returns null unless the most recent finished publish SUCCEEDED *and* its
+ * promoted commit matches the commit this process is actually serving. That
+ * commit-match guard is the whole point: a stale, unrelated, or in-flight run
+ * can never misrepresent what is live, so a consumer that trusts a non-null
+ * manifest is trusting ground truth (the served commit), not intent.
+ */
+export interface LivePublishManifest {
+  publishedAt: string | null;
+  version: string | null;
+  promotedCommitSha: string;
+  changes: PublishManifestChange[];
+  totalChanges: number;
+}
+
+export async function getLivePublishManifest(): Promise<LivePublishManifest | null> {
+  await ensurePublishRunLoaded();
+  const run = lastRun ?? currentRun;
+  if (!run || run.status !== "succeeded" || !run.newProdCommitSha) return null;
+
+  const { getRuntimeIdentity } = await import("../../runtime-identity");
+  const servedCommit = (await getRuntimeIdentity()).gitCommit;
+  if (!servedCommit || !commitShasMatch(run.newProdCommitSha, servedCommit)) return null;
+
+  const changes: PublishManifestChange[] = (run.summary.commits ?? []).map((commit) => ({
+    shortSha: commit.shortSha,
+    title: commit.message.split("\n")[0].trim(),
+  }));
+  return {
+    publishedAt: run.finishedAt,
+    version: run.release?.version ?? null,
+    promotedCommitSha: run.newProdCommitSha,
+    changes,
+    totalChanges: changes.length,
+  };
+}
+
+/** Prefix-tolerant SHA equality: Railway commit meta and RAILWAY_GIT_COMMIT_SHA
+ *  are both full SHAs, but compare on the shared prefix to survive any short-SHA
+ *  provenance without ever matching on fewer than 7 characters. */
+function commitShasMatch(a: string, b: string): boolean {
+  const shared = Math.min(a.length, b.length, 40);
+  if (shared < 7) return false;
+  return a.slice(0, shared) === b.slice(0, shared);
+}
+
 // ─── Setup-required check ──────────────────────────────────────────────────────
 
 export interface PublishPrereqs {
