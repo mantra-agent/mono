@@ -315,7 +315,7 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
 
   return (
     <EnvironmentSection label="Build" storageKey={`platform-environment:${platformEnvironmentId}:section:build`}>
-      <ProfileTreeRow label="Lifecycle" icon={<Rocket className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" actionContent={(
+      <ProfileTreeRow label="Lifecycle" icon={status.lifecycle.state === "rebuilding" ? <Loader2 className="h-3.5 w-3.5 animate-spin text-active" /> : <Rocket className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" actionContent={(
         <Button variant="ghost" size="icon" className="h-6 min-h-6 w-6 min-w-6" onClick={() => refetch()} disabled={isFetching} aria-label="Refresh Stage lifecycle">
           {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
         </Button>
@@ -333,7 +333,7 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
         <span className="font-mono">{shortSha(status.lifecycle.targetCommitSha) || "—"}</span>
       </ProfileTreeRow>
       <ProfileTreeRow label="Provider" icon={<Server className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" defaultOpen={Boolean(status.lifecycle.reason)} expandedContent={status.lifecycle.reason ? <p className="border-l border-border/30 pl-3 text-sm text-muted-foreground">{status.lifecycle.reason}</p> : undefined}>
-        <span>{status.lifecycle.providerStatus ? humanize(status.lifecycle.providerStatus) : "Unavailable"}</span>
+        <span>{status.lifecycle.state === "rebuilding" ? "Railway is building the next deployment" : status.lifecycle.providerStatus ? humanize(status.lifecycle.providerStatus) : "Unavailable"}</span>
       </ProfileTreeRow>
     </EnvironmentSection>
   );
@@ -2073,19 +2073,6 @@ function EnvironmentDetailsConfigureCard({ details, environmentId }: { details: 
       </EnvironmentSection>
       <EnvironmentSection label="Hosting" defaultOpen={false} storageKey={`platform-environment:${environmentId}:section:hosting`}>
         <HostingBindingCard binding={details.hosting} environmentId={environmentId} />
-      </EnvironmentSection>
-      <EnvironmentSection label="Promotion" defaultOpen={false} storageKey={`platform-environment:${environmentId}:section:promotion`}>
-        <div>
-          <ProfileTreeRow label="Source branch" icon={<GitBranch className="h-3.5 w-3.5" />} hasValue showEmpty>
-            <FieldValue value={details.promotion.sourceBranch} mono />
-          </ProfileTreeRow>
-          <ProfileTreeRow label="Target branch" icon={<GitMerge className="h-3.5 w-3.5" />} hasValue showEmpty>
-            <FieldValue value={details.promotion.targetBranch || "—"} mono />
-          </ProfileTreeRow>
-          <ProfileTreeRow label="Mode" icon={<Waypoints className="h-3.5 w-3.5" />} hasValue showEmpty>
-            <FieldValue value={humanize(details.promotion.mode)} />
-          </ProfileTreeRow>
-        </div>
       </EnvironmentSection>
       <EnvironmentSection label="Context">
         <ContextArtifactsCard artifacts={details.contextArtifacts || []} environmentId={environmentId} />
