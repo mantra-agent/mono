@@ -76,8 +76,13 @@ export async function runWithMeetingOwnerIdentity<T>(
     if (identity.vaultId && !current.visibleVaultIds.includes(identity.vaultId)) {
       throw new Error("Meeting Vault is not visible to the current principal");
     }
+    // Pin write placement to the meeting Vault via activeVaultId, but preserve the
+    // owner's full visible Vault set for reads. People/Library resolution during
+    // ingest and recap must see attendees who live in the owner's other Vaults;
+    // collapsing visibleVaultIds to the meeting Vault hides them and breaks
+    // speaker auto-assignment and recap Person resolution.
     return identity.vaultId
-      ? runWithPrincipal({ ...current, activeVaultId: identity.vaultId, visibleVaultIds: [identity.vaultId] }, operation)
+      ? runWithPrincipal({ ...current, activeVaultId: identity.vaultId }, operation)
       : operation();
   }
 
@@ -87,9 +92,11 @@ export async function runWithMeetingOwnerIdentity<T>(
   if (identity.vaultId && !ownerPrincipal.visibleVaultIds.includes(identity.vaultId)) {
     throw new Error("Meeting Vault is not visible to its owner");
   }
+  // Pin write placement to the meeting Vault via activeVaultId; keep the owner's
+  // full visible Vault set for reads so cross-Vault attendees resolve.
   return runWithPrincipal(
     identity.vaultId
-      ? { ...ownerPrincipal, activeVaultId: identity.vaultId, visibleVaultIds: [identity.vaultId] }
+      ? { ...ownerPrincipal, activeVaultId: identity.vaultId }
       : ownerPrincipal,
     operation,
   );
