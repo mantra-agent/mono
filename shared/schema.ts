@@ -1163,12 +1163,13 @@ export const financialModels = pgTable("financial_models", {
 export type FinancialModelRow = typeof financialModels.$inferSelect;
 
 // ── Business Budgets (non-headcount operating expenses) ─────────
-// One aggregate per Business and calendar year. The nested document preserves
-// Department → Category → Line item ordering; monthly and annual totals derive
-// from line-item month amounts rather than becoming competing stored truth.
+// One hypothetical monthly aggregate per Business. The nested document preserves
+// Department → Category → Line item ordering; totals derive from each line item's
+// single monthly amount rather than becoming competing stored truth.
 export const businessBudgets = pgTable("business_budgets", {
   id: text("id").primaryKey(),
   businessId: text("business_id").notNull().references(() => businesses.id, { onDelete: "restrict" }),
+  // Rolling compatibility key; product/API identity is Business alone.
   year: integer("year").notNull(),
   currency: text("currency").notNull().default("USD"),
   departments: jsonb("departments").notNull().default([]),

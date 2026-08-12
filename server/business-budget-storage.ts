@@ -1,10 +1,9 @@
 import { randomBytes } from "crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { businessBudgets, businesses } from "@shared/schema";
 import {
   businessBudgetSchema,
   budgetDepartmentSchema,
-  emptyMonthlyAmounts,
   type BusinessBudget,
   type BusinessBudgetMutation,
   type BudgetDepartment,
@@ -13,6 +12,9 @@ import { db, runWithDatabaseTransaction } from "./db";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { visibleBusinessPredicate, writableBusinessPredicate } from "./business-vault-access";
+
+// Rolling compatibility only. Product/API identity is one hypothetical month per Business.
+const SINGLE_MONTH_BUDGET_KEY = 2000;
 
 const budgetScope = {
   scope: businessBudgets.scope,
@@ -32,7 +34,6 @@ function mapBudget(row: typeof businessBudgets.$inferSelect): BusinessBudget {
   return businessBudgetSchema.parse({
     id: row.id,
     businessId: row.businessId,
-    year: row.year,
     currency: row.currency,
     departments: row.departments,
     createdAt: row.createdAt.toISOString(),
@@ -60,7 +61,7 @@ function mutateDepartments(departments: BudgetDepartment[], mutation: BusinessBu
     return next;
   }
   if (mutation.action === "add_line_item") {
-    category.lineItems.push({ id: newId("item"), name: mutation.name ?? "New Line Item", monthlyAmountsCents: emptyMonthlyAmounts() });
+    category.lineItems.push({ id: newId("item"), name: mutation.name ?? "New Line Item", monthlyAmountCents: 0 });
   }
   if (!("lineItemId" in mutation)) return next;
   const lineItem = category.lineItems.find((item) => item.id === mutation.lineItemId) ?? notFound("Line item");
@@ -68,13 +69,11 @@ function mutateDepartments(departments: BudgetDepartment[], mutation: BusinessBu
   if (mutation.action === "delete_line_item") {
     category.lineItems = category.lineItems.filter((item) => item.id !== mutation.lineItemId);
   }
-  if (mutation.action === "set_month_amount") {
-    lineItem.monthlyAmountsCents[mutation.monthIndex] = mutation.amountCents;
-  }
+  if (mutation.action === "set_monthly_amount") lineItem.monthlyAmountCents = mutation.amountCents;
   return next.map((item) => budgetDepartmentSchema.parse(item));
 }
 
-async function findVisible(businessId: string, year: number) {
+async function findVisible(businessId: string) {
   const principal = requireCurrentUserPrincipal();
   const [row] = await db
     .select({ budget: businessBudgets })
@@ -84,16 +83,16 @@ async function findVisible(businessId: string, year: number) {
       visibleBusinessPredicate(principal, eq(businesses.id, businessId)),
       combineWithVisibleScope(principal, budgetScope),
       eq(businessBudgets.businessId, businessId),
-      eq(businessBudgets.year, year),
     ))
+    .orderBy(desc(businessBudgets.updatedAt))
     .limit(1);
   return row?.budget ?? null;
 }
 
 export const businessBudgetStorage = {
-  async getOrCreate(businessId: string, year: number): Promise<BusinessBudget> {
+  async getOrCreate(businessId: string): Promise<BusinessBudget> {
     const principal = requireCurrentUserPrincipal();
-    const existing = await findVisible(businessId, year);
+    const existing = await findVisible(businessId);
     if (existing) return mapBudget(existing);
 
     const [business] = await db.select({ id: businesses.id }).from(businesses)
@@ -103,7 +102,7 @@ export const businessBudgetStorage = {
     await db.insert(businessBudgets).values({
       id: newId("budget"),
       businessId,
-      year,
+      year: SINGLE_MONTH_BUDGET_KEY,
       currency: "USD",
       departments: [],
       ...ownedInsertValues(principal, budgetScope),
@@ -112,27 +111,26 @@ export const businessBudgetStorage = {
       updatedAt: new Date(),
     }).onConflictDoNothing();
 
-    const settled = await findVisible(businessId, year);
+    const settled = await findVisible(businessId);
     if (!settled) throw new Error("Failed to create Business budget");
     return mapBudget(settled);
   },
 
-  async mutate(businessId: string, year: number, mutation: BusinessBudgetMutation): Promise<BusinessBudget> {
+  async mutate(businessId: string, mutation: BusinessBudgetMutation): Promise<BusinessBudget> {
     const principal = requireCurrentUserPrincipal();
     return db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
       const [business] = await tx.select({ id: businesses.id }).from(businesses)
         .where(writableBusinessPredicate(principal, eq(businesses.id, businessId))).limit(1);
       if (!business) throw Object.assign(new Error("Business not found or not writable"), { status: 403 });
 
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`business-budget:${businessId}:${year}`}))`);
-      const current = await this.getOrCreate(businessId, year);
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`business-budget:${businessId}`}))`);
+      const current = await this.getOrCreate(businessId);
       const departments = mutateDepartments(current.departments, mutation);
       const [updated] = await tx.update(businessBudgets)
         .set({ departments, updatedAt: new Date() })
         .where(combineWithWritableScope(principal, budgetScope, and(
           eq(businessBudgets.id, current.id),
           eq(businessBudgets.businessId, businessId),
-          eq(businessBudgets.year, year),
         )))
         .returning();
       if (!updated) notFound("Business budget");

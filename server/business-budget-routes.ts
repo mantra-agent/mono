@@ -6,14 +6,10 @@ import { requirePermission } from "./permissions";
 
 const log = createLogger("BusinessBudgetRoutes");
 
-function parseIdentity(query: Record<string, unknown>): { businessId: string; year: number } {
+function parseBusinessId(query: Record<string, unknown>): string {
   const businessId = typeof query.businessId === "string" ? query.businessId.trim() : "";
-  const year = Number(query.year);
   if (!businessId) throw Object.assign(new Error("businessId is required"), { status: 400 });
-  if (!Number.isInteger(year) || year < 2000 || year > 2200) {
-    throw Object.assign(new Error("year must be between 2000 and 2200"), { status: 400 });
-  }
-  return { businessId, year };
+  return businessId;
 }
 
 function sendFailure(res: Response, error: unknown): void {
@@ -25,8 +21,7 @@ function sendFailure(res: Response, error: unknown): void {
 export function registerBusinessBudgetRoutes(app: Express): void {
   app.get("/api/business/budgets", requirePermission("system:read"), async (req, res) => {
     try {
-      const { businessId, year } = parseIdentity(req.query);
-      res.json(await businessBudgetStorage.getOrCreate(businessId, year));
+      res.json(await businessBudgetStorage.getOrCreate(parseBusinessId(req.query)));
     } catch (error) {
       sendFailure(res, error);
     }
@@ -34,9 +29,8 @@ export function registerBusinessBudgetRoutes(app: Express): void {
 
   app.patch("/api/business/budgets", requirePermission("system:write"), async (req, res) => {
     try {
-      const { businessId, year } = parseIdentity(req.query);
       const mutation = businessBudgetMutationSchema.parse(req.body ?? {});
-      res.json(await businessBudgetStorage.mutate(businessId, year, mutation));
+      res.json(await businessBudgetStorage.mutate(parseBusinessId(req.query), mutation));
     } catch (error) {
       sendFailure(res, error);
     }

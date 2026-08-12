@@ -1,24 +1,20 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Building2, Folder, Loader2, Plus, ReceiptText, Trash2, Pencil } from "lucide-react";
+import { Building2, Folder, Loader2, Pencil, Plus, ReceiptText, Trash2 } from "lucide-react";
 import type { BusinessBudget, BusinessBudgetMutation, BudgetCategory, BudgetDepartment, BudgetLineItem } from "@shared/models/business-budgets";
-import { BUDGET_MONTH_LABELS, budgetMonthlyTotals, categoryAnnualTotal, departmentAnnualTotal, lineItemAnnualTotal } from "@shared/models/business-budgets";
+import { budgetMonthlyTotal, categoryMonthlyTotal, departmentMonthlyTotal } from "@shared/models/business-budgets";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
-import { HIERARCHY_PRIMARY_ACTION_CLASS, HIERARCHY_TREE_STACK_CLASS, HierarchySectionHeader } from "@/components/hierarchy-section-header";
+import { HIERARCHY_PRIMARY_ACTION_CLASS, HIERARCHY_TREE_STACK_CLASS } from "@/components/hierarchy-section-header";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSelectedBusiness } from "@/hooks/use-selected-business";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-
-const currentYear = new Date().getFullYear();
-const YEARS = Array.from({ length: 7 }, (_, index) => currentYear - 2 + index);
 
 function formatMoney(cents: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(cents / 100);
@@ -66,35 +62,30 @@ function MutationMenu({ rename, remove }: { rename: () => void; remove: () => vo
   );
 }
 
-function MonthEditor({ item, onSet }: { item: BudgetLineItem; onSet: (monthIndex: number, amountCents: number) => void }) {
+function MonthlyAmountInput({ item, onSet }: { item: BudgetLineItem; onSet: (amountCents: number) => void }) {
   return (
-    <div className="py-1">
-      {BUDGET_MONTH_LABELS.map((month, monthIndex) => (
-        <ProfileTreeRow key={month} label={month} hasValue showEmpty mobileLayout="inline">
-          <Input
-            key={`${item.id}-${monthIndex}-${item.monthlyAmountsCents[monthIndex]}`}
-            inputMode="decimal"
-            aria-label={`${item.name} ${month} amount`}
-            defaultValue={(item.monthlyAmountsCents[monthIndex] / 100).toFixed(2)}
-            onBlur={(event) => {
-              const next = parseMoney(event.target.value);
-              if (next === null) {
-                event.target.value = (item.monthlyAmountsCents[monthIndex] / 100).toFixed(2);
-                return;
-              }
-              if (next !== item.monthlyAmountsCents[monthIndex]) onSet(monthIndex, next);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-              if (event.key === "Escape") {
-                event.currentTarget.value = (item.monthlyAmountsCents[monthIndex] / 100).toFixed(2);
-                event.currentTarget.blur();
-              }
-            }}
-          />
-        </ProfileTreeRow>
-      ))}
-    </div>
+    <Input
+      key={`${item.id}-${item.monthlyAmountCents}`}
+      className="h-8 w-28 text-right tabular-nums"
+      inputMode="decimal"
+      aria-label={`${item.name} monthly budget`}
+      defaultValue={(item.monthlyAmountCents / 100).toFixed(2)}
+      onBlur={(event) => {
+        const next = parseMoney(event.target.value);
+        if (next === null) {
+          event.target.value = (item.monthlyAmountCents / 100).toFixed(2);
+          return;
+        }
+        if (next !== item.monthlyAmountCents) onSet(next);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") {
+          event.currentTarget.value = (item.monthlyAmountCents / 100).toFixed(2);
+          event.currentTarget.blur();
+        }
+      }}
+    />
   );
 }
 
@@ -123,14 +114,13 @@ function LineItemRow({ department, category, item, continues, mutate, openNameDi
         showEmpty
         mobileLayout="inline"
         valueLayout="compact"
-        expandedContent={<MonthEditor item={item} onSet={(monthIndex, amountCents) => mutate({ action: "set_month_amount", ...identity, monthIndex, amountCents })} />}
         menuContent={<MutationMenu
           rename={() => openNameDialog({ title: "Rename Line Item", initialValue: item.name, submitLabel: "Save", onSubmit: (name) => mutate({ action: "rename_line_item", ...identity, name }) })}
           remove={() => mutate({ action: "delete_line_item", ...identity })}
         />}
         menuVisibility="hover"
       >
-        <span className="tabular-nums">{formatMoney(lineItemAnnualTotal(item))}</span>
+        <MonthlyAmountInput item={item} onSet={(amountCents) => mutate({ action: "set_monthly_amount", ...identity, amountCents })} />
       </ProfileTreeRow>
     </HierarchyTreeRow>
   );
@@ -143,19 +133,6 @@ function CategoryRow({ department, category, continues, mutate, openNameDialog }
   mutate: BudgetTreeProps["mutate"];
   openNameDialog: BudgetTreeProps["openNameDialog"];
 }) {
-  const children = (
-    <div>
-      {category.lineItems.map((item, index) => (
-        <LineItemRow key={item.id} department={department} category={category} item={item} continues={index < category.lineItems.length - 1} mutate={mutate} openNameDialog={openNameDialog} />
-      ))}
-      <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
-        <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => openNameDialog({
-          title: "New Line Item", initialValue: "", submitLabel: "Add Line Item",
-          onSubmit: (name) => mutate({ action: "add_line_item", departmentId: department.id, categoryId: category.id, name }),
-        })}><Plus className="h-3.5 w-3.5" />New Line Item</button>
-      </HierarchyTreeRow>
-    </div>
-  );
   return (
     <HierarchyTreeRow continues={continues} connectorAnchor="first-row-center">
       <ProfileTreeRow
@@ -166,7 +143,19 @@ function CategoryRow({ department, category, continues, mutate, openNameDialog }
         mobileLayout="inline"
         valueLayout="compact"
         defaultOpen
-        expandedContent={children}
+        expandedContent={
+          <div>
+            {category.lineItems.map((item, index) => (
+              <LineItemRow key={item.id} department={department} category={category} item={item} continues={index < category.lineItems.length - 1} mutate={mutate} openNameDialog={openNameDialog} />
+            ))}
+            <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
+              <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => openNameDialog({
+                title: "New Line Item", initialValue: "", submitLabel: "Add Line Item",
+                onSubmit: (name) => mutate({ action: "add_line_item", departmentId: department.id, categoryId: category.id, name }),
+              })}><Plus className="h-3.5 w-3.5" />New Line Item</button>
+            </HierarchyTreeRow>
+          </div>
+        }
         expandedContentClassName="px-0 pb-0 pl-0"
         menuContent={<MutationMenu
           rename={() => openNameDialog({ title: "Rename Category", initialValue: category.name, submitLabel: "Save", onSubmit: (name) => mutate({ action: "rename_category", departmentId: department.id, categoryId: category.id, name }) })}
@@ -174,7 +163,7 @@ function CategoryRow({ department, category, continues, mutate, openNameDialog }
         />}
         menuVisibility="hover"
       >
-        <span className="tabular-nums">{formatMoney(categoryAnnualTotal(category))}</span>
+        <span className="tabular-nums">{formatMoney(categoryMonthlyTotal(category))}</span>
       </ProfileTreeRow>
     </HierarchyTreeRow>
   );
@@ -215,7 +204,7 @@ function DepartmentSection({ department, mutate, openNameDialog }: {
         />}
         menuVisibility="hover"
       >
-        <span className="tabular-nums">{formatMoney(departmentAnnualTotal(department))}</span>
+        <span className="tabular-nums">{formatMoney(departmentMonthlyTotal(department))}</span>
       </ProfileTreeRow>
     </div>
   );
@@ -223,18 +212,17 @@ function DepartmentSection({ department, mutate, openNameDialog }: {
 
 export default function BusinessBudgetsPage() {
   const { businesses, selectedId, setSelectedId, selected, isLoading: businessesLoading } = useSelectedBusiness();
-  const [year, setYear] = useState(currentYear);
   const [query, setQuery] = useState("");
   const [nameDialog, setNameDialog] = useState<NameDialogState | null>(null);
   const { toast } = useToast();
-  const key = ["/api/business/budgets", selectedId, year] as const;
+  const key = ["/api/business/budgets", selectedId] as const;
   const budgetQuery = useQuery<BusinessBudget>({
     queryKey: key,
     enabled: Boolean(selectedId),
-    queryFn: async () => (await apiRequest("GET", `/api/business/budgets?businessId=${encodeURIComponent(selectedId ?? "")}&year=${year}`)).json(),
+    queryFn: async () => (await apiRequest("GET", `/api/business/budgets?businessId=${encodeURIComponent(selectedId ?? "")}`)).json(),
   });
   const mutation = useMutation({
-    mutationFn: async (body: BusinessBudgetMutation) => (await apiRequest("PATCH", `/api/business/budgets?businessId=${encodeURIComponent(selectedId ?? "")}&year=${year}`, body)).json(),
+    mutationFn: async (body: BusinessBudgetMutation) => (await apiRequest("PATCH", `/api/business/budgets?businessId=${encodeURIComponent(selectedId ?? "")}`, body)).json(),
     onSuccess: (budget: BusinessBudget) => queryClient.setQueryData(key, budget),
     onError: (error: unknown) => toast({ title: "Budget change failed", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" }),
   });
@@ -246,20 +234,15 @@ export default function BusinessBudgetsPage() {
       || department.categories.some((category) => category.name.toLowerCase().includes(term)
         || category.lineItems.some((item) => item.name.toLowerCase().includes(term))));
   }, [budgetQuery.data?.departments, query]);
-  const totals = budgetMonthlyTotals(budgetQuery.data?.departments ?? []);
-  const annualTotal = totals.reduce((sum, total) => sum + total, 0);
+  const monthlyTotal = budgetMonthlyTotal(budgetQuery.data?.departments ?? []);
   const loading = businessesLoading || budgetQuery.isLoading;
 
   return (
     <div className="p-4">
       <BusinessPageHeader page="Budgets" businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} />
       <div className="flex items-center gap-2 pb-2">
-        <Select value={String(year)} onValueChange={(value) => setYear(Number(value))}>
-          <SelectTrigger className="h-8 w-28" aria-label="Budget year"><SelectValue /></SelectTrigger>
-          <SelectContent>{YEARS.map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}</SelectContent>
-        </Select>
         <div className="min-w-0 flex-1"><HierarchySearchInput value={query} onChange={setQuery} placeholder="Search budgets" /></div>
-        <span className="shrink-0 text-sm font-medium tabular-nums">{formatMoney(annualTotal)}</span>
+        <span className="shrink-0 text-sm font-medium tabular-nums">{formatMoney(monthlyTotal)} / month</span>
       </div>
       {loading ? (
         <div className="flex items-center justify-center py-16 text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Loading budget…</div>
@@ -270,10 +253,6 @@ export default function BusinessBudgetsPage() {
           </button>
           {departments.map((department) => <DepartmentSection key={department.id} department={department} mutate={(body) => mutation.mutate(body)} openNameDialog={setNameDialog} />)}
           {departments.length === 0 && <div className="px-2 py-1.5 text-sm text-muted-foreground">{query ? "No matching budget items." : "No departments yet."}</div>}
-          <div className={HIERARCHY_TREE_STACK_CLASS}>
-            <HierarchySectionHeader>Monthly Totals</HierarchySectionHeader>
-            <div>{BUDGET_MONTH_LABELS.map((month, index) => <ProfileTreeRow key={month} label={month} hasValue showEmpty mobileLayout="inline"><span className="tabular-nums">{formatMoney(totals[index])}</span></ProfileTreeRow>)}</div>
-          </div>
         </>
       ) : (
         <div className="px-2 py-1.5 text-sm text-muted-foreground">No Business selected.</div>
