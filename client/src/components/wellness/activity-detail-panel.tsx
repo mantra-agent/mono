@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { getWellnessWindowAdherence } from "@shared/wellness-window";
+import { getWellnessWindowAdherence, isConsecutiveCadenceCompletion } from "@shared/wellness-window";
 import { Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -67,10 +67,9 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windo
         const adherence = getWellnessWindowAdherence(category, windowStart, windowEnd, completedAt, timezone);
         const previousEntry = orderedLogs[index - 1];
         const previousCompletedAt = previousEntry ? new Date(previousEntry.completedAt) : null;
-        const isStreakDay = adherence === 100 && previousEntry
+        const isStreakDay = adherence === 100 && previousCompletedAt
           && getWellnessWindowAdherence(category, windowStart, windowEnd, previousCompletedAt, timezone) === 100
-          && previousCompletedAt
-          && completedAt.getTime() - previousCompletedAt.getTime() <= Math.max(1, intervalDays) * 86_400_000;
+          && isConsecutiveCadenceCompletion(previousCompletedAt, completedAt, intervalDays, timezone);
         return { entry, x: toX(completedAt.getTime()), adherence, isStreakDay };
       });
 
@@ -98,7 +97,7 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windo
         {timeline.events.map(({ entry, x, adherence, isStreakDay }) => (
           <path
             key={entry.id}
-            d={`M ${Math.max(16, x - 20)} 128 L ${x - 11} 128 L ${x - 7} 110 L ${x - 3} 150 L ${x + 2} 62 L ${x + 6} 142 L ${x + 11} 118 L ${Math.min(984, x + 20)} 128`}
+            d={`M ${Math.max(16, x - 40)} 128 L ${x - 22} 128 L ${x - 14} 92 L ${x - 6} 172 L ${x + 4} 4 L ${x + 12} 156 L ${x + 22} 108 L ${Math.min(984, x + 40)} 128`}
             fill="none"
             className={isStreakDay ? "stroke-success" : "stroke-foreground"}
             strokeWidth="0.75"
