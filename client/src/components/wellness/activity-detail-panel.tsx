@@ -79,11 +79,20 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windo
     <div className="min-w-0 space-y-2 overflow-hidden">
       <svg viewBox="0 0 1000 240" preserveAspectRatio="none" className="h-56 w-full" role="img" aria-label="Activity timeline with ideal cadence ticks, completion heartbeats, and today at the right edge">
         <line x1="16" y1="128" x2="984" y2="128" className="stroke-border" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-        {timeline.ticks.map(({ timestamp, x }) => (
-          <line key={timestamp} x1={x} y1="118" x2={x} y2="138" className="stroke-muted-foreground" strokeWidth="0.75" vectorEffect="non-scaling-stroke">
-            <title>{`Ideal completion · ${new Date(timestamp).toLocaleDateString()}`}</title>
-          </line>
-        ))}
+        {timeline.ticks.map(({ timestamp, x }) => {
+          const date = new Date(timestamp);
+          const label = `${date.getMonth() + 1}/${date.getDate()}`;
+          const isEnd = timestamp === timeline.domainEnd;
+          return (
+            <g key={timestamp}>
+              <line x1={x} y1="128" x2={x} y2="194" className="stroke-muted-foreground/60" strokeWidth="0.75" vectorEffect="non-scaling-stroke" />
+              <text x={x} y="214" textAnchor={isEnd ? "end" : "middle"} className="fill-muted-foreground text-[12px]">
+                {label}
+              </text>
+              <title>{`Ideal completion · ${date.toLocaleDateString()}`}</title>
+            </g>
+          );
+        })}
         {timeline.events.map(({ entry, x, adherence }) => (
           <path
             key={entry.id}
@@ -100,10 +109,8 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windo
           </path>
         ))}
       </svg>
-      <div className="grid min-w-0 grid-cols-[1fr_auto_1fr] items-center gap-2 text-xs text-muted-foreground">
-        <span className="truncate">{new Date(timeline.domainStart).toLocaleDateString()}</span>
-        <span className="hidden @sm:inline">Ticks show ideal cadence</span>
-        <span className="justify-self-end whitespace-nowrap">Today · {new Date(timeline.domainEnd).toLocaleDateString()}</span>
+      <div className="flex justify-end text-xs text-muted-foreground">
+        <span className="whitespace-nowrap">Today · {new Date(timeline.domainEnd).toLocaleDateString()}</span>
       </div>
     </div>
   );
