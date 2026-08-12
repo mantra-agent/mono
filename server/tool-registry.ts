@@ -1715,7 +1715,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   images: {
-    description: "Generate, edit, or analyze images. For uploads, use the exact /objects/uploads/<id>.<ext> object path from attachment metadata without rewriting it. Render generated or uploaded images inline as ![descriptive alt](/objects/uploads/<id>.<ext>), not signed/download URLs. Actions: generate (text-to-image), edit (combine/modify images), analyze (describe/extract from an image).",
+    description: "Generate, edit, or analyze images. For uploads, use the exact /objects/uploads/<id>.<ext> object path from attachment metadata without rewriting it. Render generated or uploaded images inline as ![descriptive alt](/objects/uploads/<id>.<ext>), not signed/download URLs. Analyze may rename a UUID or camera-dump Files display name to a short useful title; the object path stays unchanged. Actions: generate (text-to-image), edit (combine/modify images), analyze (describe/extract from an image).",
     category: "media",
 
     parameters: {
