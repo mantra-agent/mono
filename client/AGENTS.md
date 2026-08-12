@@ -204,6 +204,8 @@ Tiered badge system for status indicators across the app:
 
 Badges consolidate in the nav: highest-priority status wins per section.
 
+`mergeResolvedNavigation` keeps one placement per interaction target across all sidebar sections. A Mod contribution whose `section` no longer matches the static `navSections` must not reinsert that target.
+
 ## Session UI Ownership
 
 Session Menu is a projection of server-owned single-Vault Session placement. It filters ordinary and autonomous rows through the top-bar `visibleVaultIds`, colors titles through the same `vault-title-color.ts` resolver used by People and Work, and moves ordinary Sessions only through the shared ellipsis action. Meeting Sessions do not expose that move because their calendar/Library/session aggregate has a separate canonical transfer boundary. Event-carried Session updates must respect the current visible-Vault set so a move to a hidden Vault removes the row instead of reviving it from stale cache state. Normal navigation may load bounded sections lazily, but search must call the canonical authenticated server Session search and render its principal/Vault-scoped title, agenda, message, and tool matches as a flat result set; never recreate search by merging client buckets or filtering only title/topics.
