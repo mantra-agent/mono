@@ -36,7 +36,6 @@ import {
   TrendingUp,
   ChevronDown,
   Database,
-  Rocket,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -55,7 +54,6 @@ import { getApiCallErrorText, shouldShowApiCallResponse } from "@/lib/api-call-d
 import { usePageHeader } from "@/hooks/use-page-header";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
-import type { BuildDeploymentTimingSummary } from "@shared/models/build-deployments";
 
 interface SummaryData {
   totalCalls: number;
@@ -587,17 +585,6 @@ export default function Performance({ embedded }: { embedded?: boolean }) {
       refetchInterval: 30000,
     });
 
-  const { data: buildDeploymentTimings, isLoading: buildDeploymentTimingsLoading } =
-    useQuery<BuildDeploymentTimingSummary>({
-      queryKey: ["/api/performance/build-deployments"],
-      queryFn: async () => {
-        const res = await fetch("/api/performance/build-deployments");
-        if (!res.ok) throw new Error("Failed to fetch build deployment timings");
-        return res.json();
-      },
-      staleTime: 5 * 60_000,
-    });
-
   const { data: callsData, isLoading: callsLoading } =
     useQuery<CallsResponse>({
       queryKey: ["/api/performance/calls", page],
@@ -772,64 +759,6 @@ export default function Performance({ embedded }: { embedded?: boolean }) {
           </CardContent>
         </Card>
       </div>
-
-      <Card className="min-w-0 overflow-hidden" data-testid="card-build-deploy-times">
-        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-          <CardTitle className="text-base font-semibold">Build & Deploy Times</CardTitle>
-          <Rocket className="h-4 w-4 text-muted-foreground" />
-        </CardHeader>
-        <CardContent>
-          {buildDeploymentTimingsLoading ? (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading deployment timings…</div>
-          ) : !buildDeploymentTimings?.environments.length ? (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-              Timing begins with the next observed successful deployment.
-            </div>
-          ) : (
-            <div className="divide-y divide-border/20">
-              {buildDeploymentTimings.environments.map((environment) => {
-                const recentSamples = environment.samples.slice(0, 10).reverse();
-                const maxDuration = Math.max(...recentSamples.map((sample) => sample.durationMs), 1);
-                return (
-                  <div
-                    key={environment.platformEnvironmentId}
-                    className="grid gap-3 py-3 first:pt-0 last:pb-0 @md:grid-cols-[minmax(10rem,1fr)_auto_minmax(12rem,2fr)] @md:items-center"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">
-                        {environment.platformName} / {environment.productName} / {environment.environmentName}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {environment.sampleCount} deployment{environment.sampleCount === 1 ? "" : "s"} · 30 days
-                      </div>
-                    </div>
-                    <div className="flex gap-6 @md:justify-end">
-                      <div>
-                        <div className="text-xs text-muted-foreground">Latest</div>
-                        <div className="text-sm font-semibold tabular-nums">{formatDuration(environment.latestDurationMs)}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-muted-foreground">Median</div>
-                        <div className="text-sm tabular-nums">{formatDuration(environment.medianDurationMs)}</div>
-                      </div>
-                    </div>
-                    <div className="flex h-11 items-end gap-1" aria-label={`Recent deployment durations for ${environment.environmentName}`}>
-                      {recentSamples.map((sample) => (
-                        <div
-                          key={sample.observationId}
-                          className="min-w-1 flex-1 rounded-sm bg-muted-foreground/40"
-                          style={{ height: `${Math.max(10, Math.round((sample.durationMs / maxDuration) * 100))}%` }}
-                          title={`${formatDuration(sample.durationMs)} · ${formatTimestamp(sample.deployedAt, timezone)}`}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       <Card data-testid="card-cost-chart">
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
