@@ -2,7 +2,7 @@ import { randomBytes } from "crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { businessHiringSlots, businesses, jobRoles } from "@shared/schema";
 import { normalizeAssumptions } from "@shared/models/business-model";
-import { hiringSlotCreateSchema, hiringSlotUpdateSchema, calendarMonthAt, monthOffset, monthToQuarter, projectHiringSlots, type BusinessHiringPlan, type BusinessHiringProjection, type BusinessHiringSlot, type HiringSlotCreate, type HiringSlotUpdate } from "@shared/models/business-hiring";
+import { hiringSlotCreateSchema, hiringSlotUpdateSchema, calendarMonthAt, currentCalendarMonth, projectHiringSlots, type BusinessHiringProjection, type BusinessHiringSlot, type HiringSlotCreate, type HiringSlotUpdate } from "@shared/models/business-hiring";
 import { db } from "./db";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
@@ -54,37 +54,20 @@ export class BusinessHiringStorage {
       }
     });
   }
-  async plan(businessId: string): Promise<BusinessHiringPlan> {
-    const projection = await this.projection(businessId);
-    const roleById = new Map(projection.roles.map((role) => [role.id, role]));
-    const quarters = new Map<string, BusinessHiringPlan["quarters"][number]["roles"]>();
-    for (const slot of projection.slots) {
-      if (slot.status !== "approved") continue;
-      const role = roleById.get(slot.roleId);
-      if (!role) continue;
-      const quarter = monthToQuarter(slot.approvalMonth);
-      const roles = quarters.get(quarter) ?? [];
-      if (!roles.some((entry) => entry.id === role.id)) roles.push({ ...role, slotId: slot.id });
-      quarters.set(quarter, roles);
-    }
-    return { businessId, roles: projection.roles, quarters: [...quarters.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([quarter, roles]) => ({ quarter, roles })) };
-  }
-
   async projection(businessId: string): Promise<BusinessHiringProjection> {
     await this.assertBusiness(businessId, false);
     const [model, slots, roles] = await Promise.all([businessModelStorage.getOrCreate(businessId), this.listRows(businessId), jobRoleStorage.list({ limit: 200 })]);
     const assumptions = normalizeAssumptions(model.assumptions);
     const roleIds = new Set(roles.map((role) => role.id));
     const unresolvedLegacyRoleIds = [...new Set(assumptions.phases.flatMap((phase) => phase.keyHires.map((hire) => hire.roleId)).filter((id) => !roleIds.has(id)))];
-    return { businessId, roles, slots, months: projectHiringSlots(assumptions.startCalendarMonth, Math.min(18, assumptions.horizonMonths), slots, roles, assumptions.loadedCostMultiplier), unresolvedLegacyRoleIds };
+    return { businessId, roles, slots, months: projectHiringSlots(currentCalendarMonth(), 18, slots, roles, assumptions.loadedCostMultiplier), unresolvedLegacyRoleIds };
   }
   async create(input: HiringSlotCreate): Promise<BusinessHiringProjection> {
     const parsed = hiringSlotCreateSchema.parse(input); await this.assertBusiness(parsed.businessId, true); await jobRoleStorage.get(parsed.roleId);
     const principal = requireCurrentUserPrincipal();
     await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`business-hiring:${parsed.businessId}`}))`);
-      const [existing] = await tx.select({ id: businessHiringSlots.id }).from(businessHiringSlots).where(combineWithWritableScope(principal, slotScope, and(eq(businessHiringSlots.businessId, parsed.businessId), eq(businessHiringSlots.roleId, parsed.roleId), eq(businessHiringSlots.approvalMonth, parsed.approvalMonth), eq(businessHiringSlots.status, "approved")))).limit(1);
-      if (!existing) await tx.insert(businessHiringSlots).values({ id: randomBytes(8).toString("hex"), businessId: parsed.businessId, roleId: parsed.roleId, approvalMonth: parsed.approvalMonth, plannedStartMonth: parsed.plannedStartMonth ?? null, status: "approved", source: "manual", idempotencyKey: parsed.idempotencyKey, ...ownedInsertValues(principal, slotScope), createdByUserId: principal.userId }).onConflictDoNothing();
+      await tx.insert(businessHiringSlots).values({ id: randomBytes(8).toString("hex"), businessId: parsed.businessId, roleId: parsed.roleId, approvalMonth: parsed.approvalMonth, plannedStartMonth: parsed.plannedStartMonth ?? parsed.approvalMonth, status: "approved", source: "manual", idempotencyKey: parsed.idempotencyKey, ...ownedInsertValues(principal, slotScope), createdByUserId: principal.userId }).onConflictDoNothing();
     });
     log.info("hiring slot created", { businessId: parsed.businessId, roleId: parsed.roleId }); return this.projection(parsed.businessId);
   }
@@ -95,8 +78,8 @@ export class BusinessHiringStorage {
       const [slot] = await tx.select().from(businessHiringSlots).where(combineWithWritableScope(principal, slotScope, and(eq(businessHiringSlots.id, id), eq(businessHiringSlots.businessId, parsed.businessId)))).limit(1);
       if (!slot || slot.status === "canceled") status("Hiring slot not found or no longer editable", 404);
       const plannedStartMonth = parsed.clearFields?.includes("plannedStartMonth") ? null : parsed.plannedStartMonth!;
-      if (plannedStartMonth && plannedStartMonth < slot.approvalMonth) status("Planned start month cannot precede approval month", 400);
-      await tx.update(businessHiringSlots).set({ plannedStartMonth, idempotencyKey: parsed.idempotencyKey, updatedAt: new Date() }).where(combineWithWritableScope(principal, slotScope, eq(businessHiringSlots.id, id)));
+      const approvalMonth = plannedStartMonth && plannedStartMonth < slot.approvalMonth ? plannedStartMonth : slot.approvalMonth;
+      await tx.update(businessHiringSlots).set({ approvalMonth, plannedStartMonth, idempotencyKey: parsed.idempotencyKey, updatedAt: new Date() }).where(combineWithWritableScope(principal, slotScope, eq(businessHiringSlots.id, id)));
     });
     log.info("hiring slot updated", { businessId: parsed.businessId, slotId: id }); return this.projection(parsed.businessId);
   }

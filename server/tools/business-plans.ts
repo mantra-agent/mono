@@ -517,7 +517,7 @@ async function handleHiringAction(action: string, args: Record<string, unknown>)
   const businessId = requiredStr(args, "businessId");
   if (!businessId) return { result: `business.${action} requires businessId`, error: true };
   const { businessHiringStorage } = await import("../business-hiring-storage");
-  if (action === "list_hiring_slots" || action === "get_hiring_plan") return { result: safeStringify(await businessHiringStorage.plan(businessId), { label: "bridge.business.hiring.list" }) };
+  if (action === "list_hiring_slots" || action === "get_hiring_plan") return { result: safeStringify(await businessHiringStorage.projection(businessId), { label: "bridge.business.hiring.list" }) };
   const slotId = requiredStr(args, "hiringSlotId");
   if (action === "remove_hiring_role" && !slotId) return { result: "business.remove_hiring_role requires hiringSlotId", error: true };
   if (action === "cancel_hiring_slot") {
@@ -529,7 +529,9 @@ async function handleHiringAction(action: string, args: Record<string, unknown>)
   if (action === "remove_hiring_role") action = "cancel_hiring_slot";
   if (action === "approve_hiring_role") action = "create_hiring_slot";
   if (action === "create_hiring_slot") {
-    const roleId = requiredStr(args, "roleId"); const quarter = requiredStr(args, "quarter"); const approvalMonth = quarter ? quarterToMonth(quarter) : requiredStr(args, "approvalMonth");
+    const roleId = requiredStr(args, "roleId");
+    const quarter = optionalStr(args, "quarter");
+    const approvalMonth = requiredStr(args, "approvalMonth") ?? (quarter ? quarterToMonth(quarter) : null);
     if (!roleId || !approvalMonth) return { result: "business.create_hiring_slot requires roleId and approvalMonth", error: true };
     return { result: safeStringify(await businessHiringStorage.create({ businessId, roleId, approvalMonth, plannedStartMonth: optionalStr(args, "plannedStartMonth"), idempotencyKey }), { label: "bridge.business.hiring.create" }) };
   }

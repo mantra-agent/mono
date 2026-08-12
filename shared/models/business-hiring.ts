@@ -14,6 +14,10 @@ export function monthToQuarter(month: string): string {
   const [year, monthNumber] = calendarMonthSchema.parse(month).split("-");
   return `${year} Q${Math.floor((Number(monthNumber) - 1) / 3) + 1}`;
 }
+
+export function currentCalendarMonth(now = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
 export const hiringSlotCreateSchema = z.object({
   businessId: z.string().min(1), roleId: z.string().min(1), approvalMonth: calendarMonthSchema,
   plannedStartMonth: calendarMonthSchema.nullable().optional(), idempotencyKey: z.string().trim().min(8).max(200),
