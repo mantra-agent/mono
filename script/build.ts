@@ -784,6 +784,28 @@ async function buildAll() {
   await rmIfExists(modRegistryValidateOut);
   console.log("Mod registry valid");
 
+  // The code-owned FTUE onboarding agenda fixture must satisfy the same Session
+  // agenda runtime contract that instantiation enforces. Runtime attach fails
+  // gracefully by dropping the agenda, so a non-compliant fixture would only
+  // surface as broken onboarding on the first real signup. Bundle and execute
+  // the pure fixture guard here so a contract violation fails the build instead.
+  console.log("validating FTUE agenda fixture...");
+  const ftueAgendaValidateOut = "dist/ftue-agenda-validate.mjs";
+  await esbuild({
+    entryPoints: ["server/ftue-agenda-validate-entry.ts"],
+    platform: "node",
+    bundle: true,
+    format: "esm",
+    outfile: ftueAgendaValidateOut,
+    banner: esmBanner,
+    external: externals,
+    logLevel: "warning",
+    plugins: [safeEsmHelperPlugin()],
+  });
+  execFileSync("node", [ftueAgendaValidateOut], { stdio: "inherit" });
+  await rmIfExists(ftueAgendaValidateOut);
+  console.log("FTUE agenda fixture valid");
+
   if (!DEV_MODE) {
     await bundleGitnexusRuntime();
     await bundleClaudeCliRuntime();
