@@ -488,7 +488,7 @@ function classifyGitError(err: Error): string {
     return "Git authentication failed — check the GitHub PAT in Build → GitHub";
   }
   if (msg.includes("repository not found") || msg.includes("404")) {
-    return "Git repository not found — check GITHUB_REPO_URL";
+    return "Git repository not found — check the Platform Environment source binding";
   }
   if (msg.includes("could not resolve host") || msg.includes("network") || msg.includes("connection refused")) {
     return "Git network error — check connectivity";
