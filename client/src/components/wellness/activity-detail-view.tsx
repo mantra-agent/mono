@@ -354,6 +354,7 @@ export function ActivityDetailView({
           <ActivityDetailPanel
             activityId={activity.id}
             category={activity.category}
+            pulseWindowSize={activity.windowSize}
             windowStart={activity.windowStart}
             windowEnd={activity.windowEnd}
             metricInfo={{
