@@ -197,7 +197,8 @@ function mergeResolvedNavigation(
       section = { label: contribution.section, defaultOpen: false, items: [] };
       sections.push(section);
     }
-    if (section.items.some((item) => item.target === target)) continue;
+    // One target, one placement. A stale Mod section must not reinsert an existing item.
+    if (sections.some((candidate) => candidate.items.some((item) => item.target === target))) continue;
 
     // Fail closed on unknown targets — empty href used to throw inside this useMemo.
     const url = getUiInteractionTargetHref(target);

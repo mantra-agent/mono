@@ -1,9 +1,8 @@
 // ─── First-party Mod definitions (spec §1.2, §3.3, §4) ─────────────────────
 // Six code-owned ModDefinitions whose contributions reproduce today's product
 // exactly. Ownership follows the spec §1.2 product boundaries; the navigation
-// `section` field preserves each item's CURRENT sidebar placement so an
-// all-Mods-active account resolves to the same sidebar/router as today. Nothing
-// renders from these yet (Phase 1 shadow).
+// `section` field must match the static sidebar or mergeResolvedNavigation
+// reinserts the same target into the stale section.
 
 import type { ModDefinition } from "@shared/models/mod-registry";
 import {
@@ -49,10 +48,10 @@ const planning: ModDefinition = {
       clientRoute("planning.route.scenario-detail", "/scenarios/:id", "strategy-detail"),
     ],
     navigation: [
-      nav("planning.nav.schedule", "Tools", "Schedule", "Calendar", "navigation.schedule.open", "planning.route.schedule", 6),
-      nav("planning.nav.projects", "Tools", "Projects", "Briefcase", "navigation.projects.open", "planning.route.projects", 7),
-      nav("planning.nav.goals", "Planning", "Goals", "Target", "navigation.goals.open", "planning.route.goals", 1),
-      nav("planning.nav.scenarios", "Planning", "Scenarios", "Swords", "navigation.scenarios.open", "planning.route.scenarios", 2),
+      nav("planning.nav.projects", "Planning", "Projects", "Briefcase", "navigation.projects.open", "planning.route.projects", 1),
+      nav("planning.nav.schedule", "Planning", "Schedule", "Calendar", "navigation.schedule.open", "planning.route.schedule", 2),
+      nav("planning.nav.goals", "Planning", "Goals", "Target", "navigation.goals.open", "planning.route.goals", 3),
+      nav("planning.nav.scenarios", "Planning", "Scenarios", "Swords", "navigation.scenarios.open", "planning.route.scenarios", 4),
     ],
     widgets: [
       widget("planning.widget.priority-task", "home.primary", "priority_task", "tasks", 2),
