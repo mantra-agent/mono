@@ -87,13 +87,13 @@ export function composeStageLifecycleStatus(input: ComposeStageLifecycleStatusIn
       };
     }
     return {
-      state: latestCommitSha === targetCommitSha ? "ready" : "degraded",
+      state: latestCommitSha === targetCommitSha ? "ready" : "syncing",
       activeCommitSha: latestCommitSha,
       targetCommitSha,
       providerDeploymentId,
       providerStatus: latestStatus,
       observedAt,
-      reason: latestCommitSha === targetCommitSha ? null : "The active deployment does not match the bound source branch head.",
+      reason: latestCommitSha === targetCommitSha ? null : "The bound source branch is ahead of the active deployment.",
     };
   }
 
