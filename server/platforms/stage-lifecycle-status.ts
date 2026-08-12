@@ -1,6 +1,22 @@
 import type { RailwayDeployment } from "../integrations/railway/client";
 import { extractDeploymentMeta } from "../integrations/railway/client";
-import type { StageLifecycleStatus } from "@shared/models/platform-environment-lifecycle";
+import type { StageLifecycleCapabilities, StageLifecycleStatus } from "@shared/models/platform-environment-lifecycle";
+
+export function deriveStageLifecycleCapabilities(policy: Record<string, unknown> = {}, providerKind = "railway"): StageLifecycleCapabilities {
+  const runtimeMode = policy.runtimeMode === "warm_workspace" ? "warm_workspace" : "immutable_artifact";
+  const fullRebuildProvider = policy.fullRebuildProvider === "eas" || policy.fullRebuildProvider === "cloudflare_pages" || policy.fullRebuildProvider === "manual"
+    ? policy.fullRebuildProvider
+    : providerKind === "railway" ? "railway" : "manual";
+  return {
+    runtimeMode,
+    syncOnPush: runtimeMode === "warm_workspace" && policy.syncOnPush === true,
+    dependencyPolicy: "rebuild_on_lockfile_change",
+    fullRebuildProvider,
+    actions: runtimeMode === "warm_workspace"
+      ? ["sync_latest", "restart_stage", "full_rebuild"]
+      : ["full_rebuild"],
+  };
+}
 
 const IN_FLIGHT_STATUSES = new Set(["INITIALIZING", "WAITING", "QUEUED", "BUILDING", "DEPLOYING"]);
 const ACTIVE_STATUSES = new Set(["SUCCESS", "ACTIVE", "COMPLETED"]);
@@ -11,6 +27,7 @@ interface ComposeStageLifecycleStatusInput {
   targetCommitSha: string | null;
   providerError?: string | null;
   observedAt?: Date;
+  capabilities: StageLifecycleStatus["capabilities"];
 }
 
 /** Build-owned projection of provider and source truth. The client must never derive commit identity. */
@@ -32,6 +49,7 @@ export function composeStageLifecycleStatus(input: ComposeStageLifecycleStatusIn
       providerStatus: latestStatus,
       observedAt,
       reason: input.providerError,
+      capabilities: input.capabilities,
     };
   }
 
@@ -44,6 +62,7 @@ export function composeStageLifecycleStatus(input: ComposeStageLifecycleStatusIn
       providerStatus: latestStatus,
       observedAt,
       reason: "No provider deployment truth is available.",
+      capabilities: input.capabilities,
     };
   }
 
@@ -56,6 +75,7 @@ export function composeStageLifecycleStatus(input: ComposeStageLifecycleStatusIn
       providerStatus: latestStatus,
       observedAt,
       reason: activeCommitSha ? null : "The provider has not reported an active deployment commit.",
+      capabilities: input.capabilities,
     };
   }
 
@@ -68,6 +88,7 @@ export function composeStageLifecycleStatus(input: ComposeStageLifecycleStatusIn
       providerStatus: latestStatus,
       observedAt,
       reason: `Railway deployment ${latestStatus.toLowerCase()}.`,
+      capabilities: input.capabilities,
     };
   }
 
@@ -84,6 +105,7 @@ export function composeStageLifecycleStatus(input: ComposeStageLifecycleStatusIn
         reason: !latestCommitSha
           ? "The active provider deployment has no commit identity."
           : "The bound source branch head could not be resolved.",
+        capabilities: input.capabilities,
       };
     }
     return {
@@ -94,6 +116,7 @@ export function composeStageLifecycleStatus(input: ComposeStageLifecycleStatusIn
       providerStatus: latestStatus,
       observedAt,
       reason: latestCommitSha === targetCommitSha ? null : "The bound source branch is ahead of the active deployment.",
+      capabilities: input.capabilities,
     };
   }
 
@@ -105,5 +128,6 @@ export function composeStageLifecycleStatus(input: ComposeStageLifecycleStatusIn
     providerStatus: latestStatus,
     observedAt,
     reason: `Unsupported Railway deployment status ${latestStatus}.`,
+    capabilities: input.capabilities,
   };
 }

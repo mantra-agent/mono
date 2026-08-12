@@ -5,7 +5,8 @@ import { environmentSourceBindings } from "@shared/models/platforms";
 import { requireAuth, requireAdmin } from "../../auth";
 import { db } from "../../db";
 import { requirePermission } from "../../permissions";
-import { composeStageLifecycleStatus } from "../../platforms/stage-lifecycle-status";
+import { composeStageLifecycleStatus, deriveStageLifecycleCapabilities } from "../../platforms/stage-lifecycle-status";
+import { getEnvironmentBuildLifecycleConfig } from "../../platforms/build-lifecycle-service";
 import { createLogger } from "../../log";
 import { RailwayApiError } from "./client";
 import {
@@ -201,7 +202,8 @@ export function registerRailwayRoutes(app: Express) {
       }).from(environmentSourceBindings)
         .where(eq(environmentSourceBindings.environmentId, control.environment.platformEnvironmentId))
         .limit(1);
-      const [deploymentsResult, targetResult] = await Promise.allSettled([
+      const [lifecycleResult, deploymentsResult, targetResult] = await Promise.allSettled([
+        getEnvironmentBuildLifecycleConfig(control.environment.platformEnvironmentId, { includeDisabled: true }),
         fetchEnvironmentDeployments(control, 20),
         source?.owner && source.repo && source.branch
           ? getBranchHead({ owner: source.owner, repo: source.repo }, source.branch)
@@ -209,9 +211,14 @@ export function registerRailwayRoutes(app: Express) {
       ]);
       const deployments = deploymentsResult.status === "fulfilled" ? deploymentsResult.value : [];
       const targetCommitSha = targetResult.status === "fulfilled" ? targetResult.value?.sha ?? null : null;
+      const lifecycleConfig = lifecycleResult.status === "fulfilled" ? lifecycleResult.value?.config : null;
+      const deployPolicy = lifecycleConfig?.deployPolicy && typeof lifecycleConfig.deployPolicy === "object" && !Array.isArray(lifecycleConfig.deployPolicy)
+        ? lifecycleConfig.deployPolicy as Record<string, unknown>
+        : {};
       const lifecycle = composeStageLifecycleStatus({
         deployments,
         targetCommitSha,
+        capabilities: deriveStageLifecycleCapabilities(deployPolicy, lifecycleConfig?.providerKind || "railway"),
         providerError: deploymentsResult.status === "rejected"
           ? (deploymentsResult.reason instanceof Error ? deploymentsResult.reason.message : "Railway deployment truth is unavailable.")
           : targetResult.status === "rejected"

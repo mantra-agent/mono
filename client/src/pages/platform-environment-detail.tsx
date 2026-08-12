@@ -326,6 +326,12 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
           ["syncing", "restarting", "rebuilding"].includes(status.lifecycle.state) && "text-active",
         )}>{humanize(status.lifecycle.state)}</span>
       </ProfileTreeRow>
+      <ProfileTreeRow label="Runtime" icon={<Server className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
+        <span>{humanize(status.lifecycle.capabilities.runtimeMode)}</span>
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Actions" icon={<Waypoints className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
+        <span>{status.lifecycle.capabilities.actions.map((action) => humanize(action)).join(" · ")}</span>
+      </ProfileTreeRow>
       <ProfileTreeRow label="Active commit" icon={<GitBranch className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
         <span className="font-mono">{shortSha(status.lifecycle.activeCommitSha) || "—"}</span>
       </ProfileTreeRow>
