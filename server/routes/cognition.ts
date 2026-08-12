@@ -131,8 +131,11 @@ export async function registerCognitionRoutes(app: Express) {
     expressionTags: z.array(z.string()).max(20).optional(),
     cognitiveOverrides: z.record(z.unknown()).optional(),
     semanticTier: semanticTierSchema.nullable().optional(),
+    routingExamples: z.array(z.string().max(500)).max(50).optional(),
     contextSections: z.record(z.boolean()).optional(),
     toolBundle: z.array(z.string()).optional(),
+    isDefault: z.boolean().optional(),
+    sortOrder: z.number().int().min(-1000).max(1000).optional(),
   });
 
   app.put("/api/personas/:id", async (req, res) => {
