@@ -134,8 +134,6 @@ export async function registerCognitionRoutes(app: Express) {
     routingExamples: z.array(z.string().max(500)).max(50).optional(),
     contextSections: z.record(z.boolean()).optional(),
     toolBundle: z.array(z.string()).optional(),
-    isDefault: z.boolean().optional(),
-    sortOrder: z.number().int().min(-1000).max(1000).optional(),
   });
 
   app.put("/api/personas/:id", async (req, res) => {
@@ -189,6 +187,14 @@ export async function registerCognitionRoutes(app: Express) {
   app.post("/api/personas/:id/use-updated-default", async (req, res) => {
     const result = await personaStorage.useUpdatedDefault(Number(req.params.id));
     if (!result) return res.status(404).json({ error: "Updated default not found" });
+    res.json(result);
+  });
+
+  app.post("/api/personas/:id/set-default", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: "Invalid persona ID" });
+    const result = await personaStorage.setDefaultPersona(id);
+    if (!result) return res.status(404).json({ error: "Persona not found" });
     res.json(result);
   });
 

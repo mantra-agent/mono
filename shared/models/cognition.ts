@@ -9,6 +9,7 @@ import {
   boolean,
   integer,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -132,6 +133,27 @@ export const personaRevisions = pgTable(
 );
 
 export type PersonaRevision = typeof personaRevisions.$inferSelect;
+
+export const personaPreferences = pgTable(
+  "persona_preferences",
+  {
+    ownerUserId: text("owner_user_id").notNull(),
+    accountId: text("account_id").notNull(),
+    defaultPersonaId: integer("default_persona_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("persona_preferences_owner_account_key").on(table.ownerUserId, table.accountId),
+    index("idx_persona_preferences_default").on(table.defaultPersonaId),
+  ],
+);
+
+export type PersonaPreference = typeof personaPreferences.$inferSelect;
 
 export const insertPersonaSchema = createInsertSchema(personas, { semanticTier: semanticTierSchema.nullable().optional() }).omit({
   id: true,

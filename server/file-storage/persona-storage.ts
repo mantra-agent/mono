@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { personas, personaRevisions } from "@shared/models/cognition";
+import { personas, personaPreferences, personaRevisions } from "@shared/models/cognition";
 import { createHash, randomUUID } from "node:crypto";
 import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
 import { eq, and, inArray, or, sql } from "drizzle-orm";
@@ -502,12 +502,9 @@ export interface PersonaRevisionPayload {
   routingExamples: string[];
   contextSections: Record<string, boolean>;
   toolBundle: string[];
-  isDefault: boolean;
-  isSystem: boolean;
-  sortOrder: number;
 }
 
-const REVISION_FIELDS = ["name", "description", "icon", "promptOverlay", "expressionTags", "cognitiveOverrides", "semanticTier", "routingExamples", "contextSections", "toolBundle", "isDefault", "isSystem", "sortOrder"] as const;
+const REVISION_FIELDS = ["name", "description", "icon", "promptOverlay", "expressionTags", "cognitiveOverrides", "semanticTier", "routingExamples", "contextSections", "toolBundle"] as const;
 type RevisionField = typeof REVISION_FIELDS[number];
 
 function revisionPayload(persona: PersonaEntry): PersonaRevisionPayload {
@@ -601,6 +598,10 @@ class PersonaStorageClass {
       )
       .orderBy(personas.sortOrder);
     const entries = rows.map(rowToEntry);
+    const defaultPersonaId = await this.resolveDefaultPersonaId(entries);
+    if (defaultPersonaId) {
+      for (const entry of entries) entry.isDefault = entry.id === defaultPersonaId;
+    }
     const platformById = new Map(entries.filter((entry) => entry.source === "seed").map((entry) => [entry.id, entry]));
     const withBaseline = (entry: PersonaEntry): PersonaEntry => {
       const baseline = entry.source === "seed" ? entry : entry.templatePersonaId ? platformById.get(entry.templatePersonaId) : undefined;
@@ -673,6 +674,56 @@ class PersonaStorageClass {
     return this._cache.getOrFetch(cacheKey, () => this.fetchAll());
   }
 
+  private async resolveDefaultPersonaId(entries: PersonaEntry[]): Promise<number | null> {
+    const principal = requireCurrentUserPrincipal();
+    if (!principal.userId || !principal.accountId) {
+      return entries.find((entry) => !entry.isSystem && entry.name === "Default")?.id
+        ?? entries.find((entry) => !entry.isSystem)?.id
+        ?? null;
+    }
+    const [preference] = await db.select().from(personaPreferences).where(and(
+      eq(personaPreferences.ownerUserId, principal.userId),
+      eq(personaPreferences.accountId, principal.accountId),
+    )).limit(1);
+    if (preference && entries.some((entry) => entry.id === preference.defaultPersonaId && !entry.isSystem)) {
+      return preference.defaultPersonaId;
+    }
+    const fallback = entries.find((entry) => !entry.isSystem && (entry.isDefault || entry.name === "Default"))
+      ?? entries.find((entry) => !entry.isSystem)
+      ?? null;
+    return fallback?.id ?? null;
+  }
+
+  async setDefaultPersona(id: number): Promise<PersonaEntry | null> {
+    const persona = await this.get(id);
+    if (!persona || persona.isSystem) return null;
+    const principal = requireCurrentUserPrincipal();
+    if (!principal.userId || !principal.accountId) {
+      throw new Error("Default Persona Id requires an authenticated user principal");
+    }
+    const now = new Date();
+    const [existing] = await db.select().from(personaPreferences).where(and(
+      eq(personaPreferences.ownerUserId, principal.userId),
+      eq(personaPreferences.accountId, principal.accountId),
+    )).limit(1);
+    if (existing) {
+      await db.update(personaPreferences).set({ defaultPersonaId: persona.id, updatedAt: now }).where(and(
+        eq(personaPreferences.ownerUserId, principal.userId),
+        eq(personaPreferences.accountId, principal.accountId),
+      ));
+    } else {
+      await db.insert(personaPreferences).values({
+        ownerUserId: principal.userId,
+        accountId: principal.accountId,
+        defaultPersonaId: persona.id,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    this.invalidateCache();
+    return { ...persona, isDefault: true };
+  }
+
   async get(id: number): Promise<PersonaEntry | null> {
     const all = await this.list();
     return all.find((p) => p.id === id) || null;
@@ -724,10 +775,8 @@ class PersonaStorageClass {
     const all = await this.list();
     const active = all.find((p) => p.isActive);
     if (active) return active;
-    // Fallback to default
     const defaultPersona = all.find((p) => p.isDefault);
     if (defaultPersona) return defaultPersona;
-    // Fallback to first
     if (all.length > 0) return all[0];
     throw new Error("No personas found — seed may not have run");
   }
@@ -848,10 +897,6 @@ class PersonaStorageClass {
       updates.toolBundle = input.toolBundle;
     if (input.routingExamples !== undefined)
       updates.routingExamples = input.routingExamples;
-    if (input.isDefault !== undefined)
-      updates.isDefault = input.isDefault;
-    if (input.sortOrder !== undefined)
-      updates.sortOrder = input.sortOrder;
     const [updated] = await db
       .update(personas)
       .set({
@@ -1306,7 +1351,7 @@ class PersonaStorageClass {
     if (existing.source === "seed")
       return { success: false, error: "Cannot delete seed personas" };
     if (existing.isDefault)
-      return { success: false, error: "Cannot delete the default persona" };
+      return { success: false, error: "Cannot delete the default Persona" };
     await db
       .delete(personas)
       .where(
