@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Building2, Folder, Loader2, Pencil, Plus, ReceiptText, Trash2 } from "lucide-react";
 import type { BusinessBudget, BusinessBudgetMutation, BudgetCategory, BudgetDepartment, BudgetLineItem } from "@shared/models/business-budgets";
@@ -62,30 +62,70 @@ function MutationMenu({ rename, remove }: { rename: () => void; remove: () => vo
   );
 }
 
-function MonthlyAmountInput({ item, onSet }: { item: BudgetLineItem; onSet: (amountCents: number) => void }) {
+function BudgetTreeRow({ continues, children }: { continues: boolean; children: ReactNode }) {
   return (
-    <Input
-      key={`${item.id}-${item.monthlyAmountCents}`}
-      className="h-8 w-28 text-right tabular-nums"
-      inputMode="decimal"
-      aria-label={`${item.name} monthly budget`}
-      defaultValue={(item.monthlyAmountCents / 100).toFixed(2)}
-      onBlur={(event) => {
-        const next = parseMoney(event.target.value);
-        if (next === null) {
-          event.target.value = (item.monthlyAmountCents / 100).toFixed(2);
-          return;
-        }
-        if (next !== item.monthlyAmountCents) onSet(next);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") event.currentTarget.blur();
-        if (event.key === "Escape") {
-          event.currentTarget.value = (item.monthlyAmountCents / 100).toFixed(2);
-          event.currentTarget.blur();
-        }
-      }}
-    />
+    <HierarchyTreeRow continues={continues} connectorAnchor="first-row-center" indent="icon">
+      {children}
+    </HierarchyTreeRow>
+  );
+}
+
+function MonthlyAmountInput({ item, onSet }: { item: BudgetLineItem; onSet: (amountCents: number) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState((item.monthlyAmountCents / 100).toFixed(2));
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setDraft((item.monthlyAmountCents / 100).toFixed(2));
+  }, [item.monthlyAmountCents]);
+
+  useEffect(() => {
+    if (!editing) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [editing]);
+
+  const commit = () => {
+    const next = parseMoney(draft);
+    if (next === null) {
+      setDraft((item.monthlyAmountCents / 100).toFixed(2));
+      setEditing(false);
+      return;
+    }
+    if (next !== item.monthlyAmountCents) onSet(next);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <Input
+        ref={inputRef}
+        className="!h-5 !w-16 text-right tabular-nums"
+        inputMode="decimal"
+        aria-label={`${item.name} monthly budget`}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") {
+            setDraft((item.monthlyAmountCents / 100).toFixed(2));
+            setEditing(false);
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="tabular-nums"
+      aria-label={`Edit ${item.name} monthly budget`}
+      onClick={() => setEditing(true)}
+    >
+      {formatMoney(item.monthlyAmountCents)}
+    </button>
   );
 }
 
@@ -106,7 +146,7 @@ function LineItemRow({ department, category, item, continues, mutate, openNameDi
 }) {
   const identity = { departmentId: department.id, categoryId: category.id, lineItemId: item.id };
   return (
-    <HierarchyTreeRow continues={continues} connectorAnchor="first-row-center">
+    <BudgetTreeRow continues={continues}>
       <ProfileTreeRow
         label={item.name}
         icon={<ReceiptText className="h-3.5 w-3.5" />}
@@ -122,7 +162,7 @@ function LineItemRow({ department, category, item, continues, mutate, openNameDi
       >
         <MonthlyAmountInput item={item} onSet={(amountCents) => mutate({ action: "set_monthly_amount", ...identity, amountCents })} />
       </ProfileTreeRow>
-    </HierarchyTreeRow>
+    </BudgetTreeRow>
   );
 }
 
@@ -134,7 +174,7 @@ function CategoryRow({ department, category, continues, mutate, openNameDialog }
   openNameDialog: BudgetTreeProps["openNameDialog"];
 }) {
   return (
-    <HierarchyTreeRow continues={continues} connectorAnchor="first-row-center">
+    <BudgetTreeRow continues={continues}>
       <ProfileTreeRow
         label={category.name}
         icon={<Folder className="h-3.5 w-3.5" />}
@@ -148,12 +188,12 @@ function CategoryRow({ department, category, continues, mutate, openNameDialog }
             {category.lineItems.map((item, index) => (
               <LineItemRow key={item.id} department={department} category={category} item={item} continues={index < category.lineItems.length - 1} mutate={mutate} openNameDialog={openNameDialog} />
             ))}
-            <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
+            <BudgetTreeRow continues={false}>
               <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => openNameDialog({
                 title: "New Line Item", initialValue: "", submitLabel: "Add Line Item",
                 onSubmit: (name) => mutate({ action: "add_line_item", departmentId: department.id, categoryId: category.id, name }),
               })}><Plus className="h-3.5 w-3.5" />New Line Item</button>
-            </HierarchyTreeRow>
+            </BudgetTreeRow>
           </div>
         }
         expandedContentClassName="px-0 pb-0 pl-0"
@@ -165,7 +205,7 @@ function CategoryRow({ department, category, continues, mutate, openNameDialog }
       >
         <span className="tabular-nums">{formatMoney(categoryMonthlyTotal(category))}</span>
       </ProfileTreeRow>
-    </HierarchyTreeRow>
+    </BudgetTreeRow>
   );
 }
 
@@ -189,12 +229,12 @@ function DepartmentSection({ department, mutate, openNameDialog }: {
             {department.categories.map((category, index) => (
               <CategoryRow key={category.id} department={department} category={category} continues={index < department.categories.length - 1} mutate={mutate} openNameDialog={openNameDialog} />
             ))}
-            <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
+            <BudgetTreeRow continues={false}>
               <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => openNameDialog({
                 title: "New Budget Category", initialValue: "", submitLabel: "Add Category",
                 onSubmit: (name) => mutate({ action: "add_category", departmentId: department.id, name }),
               })}><Plus className="h-3.5 w-3.5" />New Category</button>
-            </HierarchyTreeRow>
+            </BudgetTreeRow>
           </div>
         }
         expandedContentClassName="px-0 pb-0 pl-0"

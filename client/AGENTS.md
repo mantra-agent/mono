@@ -282,6 +282,8 @@ Dashboard heatmap **visibility and order** come from `useProductComposition().da
 
 Use `ProfileTreeRow` for compact label/value rows with optional progressive disclosure. Pass `defaultOpen` only when readiness or missing required configuration must be visible on first render; ordinary detail rows stay collapsed.
 
+`HierarchyTreeRow indent="icon"` is the compact child indent for trees whose parent uses a `ProfileTreeRow` icon (`px-2` + `h-3.5`). It places the L spine on that icon center and must not change the default Project-task indent. Budgets uses it for department/category/line-item children; keep line-item cash as formatted accounting text until click-to-edit.
+
 ### Meeting Tree Rows
 
 Network Meetings reuses `SimpleWidgetRenderer` and `SimpleTreeRow` for completed meeting sessions. Meeting rows render as canonical CTA-blue references, omit completion controls because completion is implied by the index, and expand the recap summary directly when present. Participants stay in the canonical meeting record/tool response but are not duplicated as UI children because the summary already names them; non-recap Library artifacts may remain as reference children. Do not create a second meeting card or a split-view detail surface. Its search/action/section stack must consume `HIERARCHY_TREE_STACK_CLASS`, `HIERARCHY_PRIMARY_ACTION_CLASS`, and `HIERARCHY_SECTION_HEADER_CLASS`, which are shared with the Session Menu rather than copied locally. Historical meeting sections enable their React Query request only after disclosure; This Week alone defaults open.
