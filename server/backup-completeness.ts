@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import type { ClientBase } from "pg";
 
-export const BACKUP_DISPOSITION_MANIFEST_VERSION = 1;
+export const BACKUP_DISPOSITION_MANIFEST_VERSION = 2;
 
 export type BackupClassification = "authoritative" | "control" | "projection" | "transient" | "retired" | "secret";
 export type BackupSensitivity = "S0" | "S1" | "S2" | "S3";
@@ -33,6 +33,21 @@ const EXCLUSIONS: Record<string, Omit<BackupDisposition, "relation" | "action">>
   application_error_deliveries: { classification: "projection", owner: "Reliability", reason: "Delivery diagnostics are replay/retention state, not canonical errors.", sensitivity: "S1", recovery: "Start empty." },
   signal_source_scan_diagnostics: { classification: "projection", owner: "News", reason: "Scan diagnostics are non-authoritative telemetry.", sensitivity: "S1", recovery: "Start empty." },
   recall_webhook_delivery_diagnostics: { classification: "projection", owner: "Meetings", reason: "Webhook diagnostics are retention-owned telemetry.", sensitivity: "S2", recovery: "Start empty." },
+  calendar_event_tasks: { classification: "retired", owner: "Calendar", reason: "Legacy Calendar-to-Task join retained only in migration history; current Calendar metadata and Task storage no longer read or write it.", sensitivity: "S2", recovery: "Start empty; canonical Calendar metadata and Tasks restore independently." },
+  capability_cache: { classification: "retired", owner: "Core Capabilities", reason: "Legacy capability cache has no current schema producer or runtime consumer; capability state derives from current tools, Skills, code graph, and reports.", sensitivity: "S1", recovery: "Start empty and derive current capability state from canonical producers." },
+  glasses_device_tokens: { classification: "secret", owner: "Glasses", reason: "Bearer device tokens authenticate a user and must not be copied into or revived from an ordinary Brain artifact.", sensitivity: "S3", recovery: "Start empty and pair devices again to mint fresh tokens." },
+  historical_continuity_rollup_leases: { classification: "transient", owner: "Historical Continuity", reason: "Legacy rollup claim leases are worker-time-bound and the current Timer to Runtime to Skill flow no longer uses this relation.", sensitivity: "S2", recovery: "Start empty; Runtime establishes fresh fenced attempts from durable continuity entries." },
+  library_corpus_migration_items: { classification: "retired", owner: "Library", reason: "Library2 corpus migration is retired and has no runtime reader or writer; restoring item proposals could imply obsolete placement authority.", sensitivity: "S2", recovery: "Start empty; canonical Library pages and Vault hierarchy remain authoritative." },
+  library_corpus_migration_runs: { classification: "retired", owner: "Library", reason: "Library2 corpus migration is retired and has no runtime reader or writer; run receipts are not required by current Library recovery.", sensitivity: "S2", recovery: "Start empty; do not reactivate retired corpus migration after restore." },
+  system_events: { classification: "retired", owner: "Core EventBus", reason: "EventBus is process-local; PostgreSQL rows are legacy telemetry read only by bounded retention cleanup.", sensitivity: "S2", recovery: "Start empty; live events and replay buffers begin with the new process boot." },
+  workspace_backup_files: { classification: "retired", owner: "Core Recovery", reason: "Legacy PostgreSQL backup payload copies were retired in favor of object storage plus backup_jobs and should not re-enter recursive Brain artifacts.", sensitivity: "S3", recovery: "Recover backup artifacts from object storage and provenance from backup_jobs." },
+};
+
+const INCLUSIONS: Record<string, Omit<BackupDisposition, "relation" | "action">> = {
+  phone_call_records: { classification: "control", owner: "Phone / Voice", reason: "Canonical call SID to Session and VoiceSession correlation plus terminal People-interaction receipt.", sensitivity: "S3", recovery: "Restore after its owner identity and Session dependencies; terminal rows preserve replay and interaction deduplication." },
+  twilio_number_bindings: { classification: "authoritative", owner: "Phone / Voice", reason: "Canonical inbound phone number to user, account, and Vault authority binding.", sensitivity: "S3", recovery: "Restore the binding before accepting signed inbound provider callbacks." },
+  upload_resource_sources: { classification: "control", owner: "Files", reason: "Durable provenance linking canonical uploaded drive resources to their source Session and message.", sensitivity: "S2", recovery: "Restore after drive_resources; the catalog FK supplies dependency order." },
+  vault_r2_migration_states: { classification: "control", owner: "Object Storage / Vaults", reason: "Durable fingerprint, progress, and completion receipt for the replay-safe legacy-private to Vault object migration.", sensitivity: "S2", recovery: "Restore with Vault authority; any resumed migration must revalidate the live object inventory fingerprint before copying." },
 };
 
 const SOURCE_VERIFIED_INCLUDES = new Set(`vaults invited_subjects teams team_members organizations organization_members project_vault_memberships person_vault_memberships business_vault_memberships object_acls object_grants privileged_access_audit app_migrations milestones companies company_identity_keys job_roles businesses business_plans business_budgets financial_models metrics metric_samples kpis hours_used_intervals hours_used_rollups opportunity_interactions document_store_documents agenda_definitions meeting_drafts compaction_operations historical_continuity_entries meeting_turn_enrollments meeting_turns meeting_recap_distributions meeting_audio_samples meeting_audio_evaluations plan_session_links plan_step_attempts plan_step_reviews runtime_capacity_policies runtime_runs runtime_attempts runtime_run_events transactional_outbox memory_vnext_claims memory_vnext_sources memory_vnext_source_links memory_vnext_entity_links memory_vnext_claim_links memory_vnext_claim_link_evidence memory_vnext_source_queue memory_vnext_transition_paths memory_vnext_transition_members memory_vnext_transition_edges memory_vnext_prediction_runs memory_vnext_predictions memory_vnext_prediction_resolutions memory_vnext_relationship_certainty_events memory_vnext_exposures memory_vnext_strength_events memory_vnext_retrieval_controls memory_vnext_retrieval_activation_events memory_vnext_retrieval_labels memory_vnext_retrieval_evaluation_runs memory_vnext_causal_path_reviews memory_vnext_prediction_evaluation_runs memory_entries memory_sources memory_links memory_transitions memory_content_blocks memory_events memory_entity_links legacy_memory_quarantine_state document_store_cutover_state document_store_migration_runs document_store_migration_conflicts library_vault_identity_migrations library_placements library_page_pins library_page_trash address_links drive_resources file_index_policies file_index_reconciliation_runs document_artifacts media_items render_jobs export_jobs mod_entitlements mod_installations mod_installation_resources environment_context_artifacts environment_promotion_releases railway_api_call_receipts api_calls inference_payload_captures application_error_aggregates backup_jobs communication_audiences email_campaigns waitlist_applications people_import_decisions people_import_batches persona_revisions skill_persona_preferences skill_scores magic_demo_sessions magic_demo_session_events magic_demo_vision_frames intentions parked_ideas`.split(/\s+/));
@@ -57,7 +72,13 @@ export async function inspectBackupCoverage(client: ClientBase, registeredRelati
     ORDER BY c.relname`);
   const registered = new Set(registeredRelations);
   const discovered = result.rows.map(row => ({ name: row.name, oid: row.oid, relkind: row.relkind, identityColumns: row.identity_columns ?? [], sequenceColumns: row.sequence_columns ?? [], foreignKeys: row.foreign_keys ?? [] }));
-  const dispositions = discovered.map(rel => EXCLUSIONS[rel.name] ? ({ relation: rel.name, action: "exclude", ...EXCLUSIONS[rel.name] } as BackupDisposition) : registered.has(rel.name) || SOURCE_VERIFIED_INCLUDES.has(rel.name) ? includeDisposition(rel.name, registered.has(rel.name)) : null);
+  const dispositions = discovered.map(rel => EXCLUSIONS[rel.name]
+    ? ({ relation: rel.name, action: "exclude", ...EXCLUSIONS[rel.name] } as BackupDisposition)
+    : INCLUSIONS[rel.name]
+      ? ({ relation: rel.name, action: "include", ...INCLUSIONS[rel.name] } as BackupDisposition)
+      : registered.has(rel.name) || SOURCE_VERIFIED_INCLUDES.has(rel.name)
+        ? includeDisposition(rel.name, registered.has(rel.name))
+        : null);
   const unexplained = discovered.filter((_, index) => dispositions[index] === null).map(rel => rel.name);
   if (unexplained.length) throw new Error(`Backup completeness preflight failed: ${unexplained.length} unexplained relation(s): ${unexplained.join(", ")}`);
   const included = dispositions.filter((d): d is BackupDisposition => d?.action === "include");
