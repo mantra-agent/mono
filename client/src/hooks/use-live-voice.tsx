@@ -16,6 +16,8 @@ import type { AgentVisualState } from "@shared/agent-visualizer";
  */
 export interface LiveVoiceView {
   visualState: AgentVisualState;
+  /** Current synchronized phrase for the provisional voice entrance. */
+  voiceCaption: string;
   /** Reads the live transport's current audio amplitude 0-1 without re-rendering. */
   readAudioLevel: () => number;
 }
@@ -26,6 +28,7 @@ export interface LiveVoiceView {
  */
 export interface LiveVoicePublisher {
   publishVisualState: (state: AgentVisualState) => void;
+  publishVoiceCaption: (caption: string) => void;
   setAudioReader: (reader: (() => number) | null) => void;
 }
 
@@ -40,10 +43,15 @@ const LiveVoicePublisherContext = createContext<LiveVoicePublisher | null>(null)
  */
 export function LiveVoiceProvider({ children }: { children: ReactNode }) {
   const [visualState, setVisualState] = useState<AgentVisualState>("idle");
+  const [voiceCaption, setVoiceCaption] = useState("");
   const audioReaderRef = useRef<(() => number) | null>(null);
 
   const publishVisualState = useCallback((state: AgentVisualState) => {
     setVisualState((current) => (current === state ? current : state));
+  }, []);
+
+  const publishVoiceCaption = useCallback((caption: string) => {
+    setVoiceCaption((current) => (current === caption ? current : caption));
   }, []);
 
   const setAudioReader = useCallback((reader: (() => number) | null) => {
@@ -53,12 +61,12 @@ export function LiveVoiceProvider({ children }: { children: ReactNode }) {
   const readAudioLevel = useCallback(() => audioReaderRef.current?.() ?? 0, []);
 
   const view = useMemo<LiveVoiceView>(
-    () => ({ visualState, readAudioLevel }),
-    [visualState, readAudioLevel],
+    () => ({ visualState, voiceCaption, readAudioLevel }),
+    [visualState, voiceCaption, readAudioLevel],
   );
   const publisher = useMemo<LiveVoicePublisher>(
-    () => ({ publishVisualState, setAudioReader }),
-    [publishVisualState, setAudioReader],
+    () => ({ publishVisualState, publishVoiceCaption, setAudioReader }),
+    [publishVisualState, publishVoiceCaption, setAudioReader],
   );
 
   return (
