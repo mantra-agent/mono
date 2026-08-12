@@ -25,6 +25,7 @@ import {
   type OpenAITierModelConfig,
   type OpenAITierMappings,
 } from "@shared/model-connectors";
+import { getConnectorTierModelString } from "@shared/model-connectors";
 import { getModel, supportsGrokReasoningEffort, type ModelInfo } from "./model-registry";
 
 const log = createLogger("ModelConnectors");
@@ -155,6 +156,7 @@ function validateGrokTierConfig(config: GrokSubscriptionTierModelConfig): GrokSu
   const normalized: GrokSubscriptionTierModelConfig = { model: model.id };
   if (config.reasoningEffort !== undefined) {
     if (!supportsGrokReasoningEffort(model.id)) throw new Error(`Model '${config.model}' does not support reasoning effort`);
+    if (config.reasoningEffort === "xhigh" && model.id !== "grok-4.6") throw new Error(`Model '${config.model}' does not support xhigh reasoning effort`);
     normalized.reasoningEffort = config.reasoningEffort;
   }
   return normalized;
@@ -425,20 +427,40 @@ export async function migrateLegacyModelProfiles(): Promise<void> {
 export async function ensureGrokSubscriptionConnector(): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('model-connectors:grok-seed'))`);
-    const existing = await tx.select({ id: providerConnections.id }).from(providerConnections)
+    const existing = await tx.select({ id: providerConnections.id, connectorConfig: providerConnections.connectorConfig }).from(providerConnections)
       .where(and(
         eq(providerConnections.connectorKind, "model"),
         eq(providerConnections.provider, "grok-subscription"),
       )).limit(1);
-    if (existing.length > 0) return;
+    if (existing.length > 0) {
+      const current = existing[0].connectorConfig as GrokSubscriptionConnectorConfig | null;
+      const mappings = current?.kind === "grok-models" ? current.tierMappings : undefined;
+      const isUnchangedSeed = mappings
+        && getConnectorTierModelString(current, "max") === "grok-4.5"
+        && getConnectorTierModelString(current, "high") === "grok-4.5"
+        && getConnectorTierModelString(current, "balanced") === "grok-4.3"
+        && getConnectorTierModelString(current, "fast") === "grok-4.3";
+      if (isUnchangedSeed) {
+        await tx.update(providerConnections).set({ connectorConfig: {
+          ...current,
+          tierMappings: {
+            ...current.tierMappings,
+            max: "grok-subscription/grok-4.6",
+            high: "grok-subscription/grok-4.6",
+          },
+        } satisfies GrokSubscriptionConnectorConfig }).where(eq(providerConnections.id, existing[0].id));
+        log.info("migrated unchanged grok-subscription seed tiers to grok-4.6");
+      }
+      return;
+    }
     const modelRows = await tx.select({ id: providerConnections.id }).from(providerConnections)
       .where(eq(providerConnections.connectorKind, "model"));
     const connectorConfig: GrokSubscriptionConnectorConfig = {
       kind: "grok-models",
       version: 1,
       tierMappings: {
-        max: "grok-subscription/grok-4.5",
-        high: "grok-subscription/grok-4.5",
+        max: "grok-subscription/grok-4.6",
+        high: "grok-subscription/grok-4.6",
         balanced: "grok-subscription/grok-4.3",
         fast: "grok-subscription/grok-4.3",
       },

@@ -79,10 +79,10 @@ export const claudeCliTierMappingsSchema = z.object({
 }).strict();
 export type ClaudeCliTierMappings = z.infer<typeof claudeCliTierMappingsSchema>;
 
-// Grok subscription reasoning effort. Only grok-4.5 accepts reasoning_effort on
-// the chat.completions surface; values map directly to xAI's low/medium/high
-// (default high, reasoning cannot be disabled).
-export const grokReasoningEffortSchema = z.enum(["low", "medium", "high"]);
+// Grok subscription reasoning effort. Grok 4.5 and 4.6 accept
+// reasoning_effort on the chat.completions surface. Grok 4.6 also supports
+// xhigh; values map directly to xAI's documented controls.
+export const grokReasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh"]);
 export type GrokReasoningEffort = z.infer<typeof grokReasoningEffortSchema>;
 
 export const grokSubscriptionTierModelConfigSchema = z.preprocess(
@@ -129,7 +129,7 @@ export const claudeCliConnectorConfigSchema = z.object({
 export type ClaudeCliConnectorConfig = z.infer<typeof claudeCliConnectorConfigSchema>;
 
 // Grok subscription connector. Grok models are OpenAI-compatible chat models
-// addressed by plain name. grok-4.5 additionally accepts a reasoning_effort
+// addressed by plain name. Grok 4.5 and 4.6 accept a reasoning_effort
 // param, so tier mappings carry an optional per-tier reasoningEffort. Legacy
 // plain-string mappings are still accepted and normalized to { model }.
 export const grokSubscriptionConnectorConfigSchema = z.object({

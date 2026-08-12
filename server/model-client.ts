@@ -939,7 +939,7 @@ function resolvedGrokConfig(options: Pick<ChatCompletionOptions, "routingDecisio
 
 // Grok stays on the chat.completions surface (transport override), so its tier
 // config never flows through applyOpenAIConnectorConfig. Inject reasoning_effort
-// directly, gated to grok-4.5 which is the only model that accepts the param.
+// directly, gated to Grok models that accept the parameter.
 function applyGrokConnectorConfig(params: Record<string, any>, model: string, options: ChatCompletionOptions): void {
   const config = resolvedGrokConfig(options);
   if (config?.reasoningEffort && supportsGrokReasoningEffort(model)) {
@@ -949,7 +949,7 @@ function applyGrokConnectorConfig(params: Record<string, any>, model: string, op
 
 // The exact reasoning_effort actually injected for a Grok call, so the reasoning
 // audit can label it instead of falling back to the `disabled` short-circuit.
-// Mirrors the gate in applyGrokConnectorConfig (grok-4.5 only).
+// Mirrors the capability gate in applyGrokConnectorConfig.
 function grokImputedReasoningEffort(routing: ModelRoutingDecision, model: string): string | undefined {
   if (routing.provider !== "grok-subscription") return undefined;
   if (!supportsGrokReasoningEffort(model)) return undefined;

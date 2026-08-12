@@ -456,7 +456,18 @@ const REGISTRY: Record<string, ModelInfo> = {
     codexModelId: "gpt-5.3-codex-spark",
   },
   // grok-subscription rides api.x.ai with SuperGrok billing. Current windows:
-  // grok-4.5 = 500k (not the 2M Fast-family figure); grok-4.3 = 1M.
+  // Grok 4.5/4.6 = 500k; Grok 4.3 = 1M.
+  "grok-4.6": {
+    id: "grok-4.6",
+    name: "Grok 4.6 (Subscription)",
+    provider: "grok-subscription",
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 500000,
+    maxOutputTokens: 128000,
+    reasoning: true,
+    thinking: { level: "basic", description: "xAI Grok 4.6 frontier model via SuperGrok subscription" },
+    requiresSubscription: true,
+  },
   "grok-4.5": {
     id: "grok-4.5",
     name: "Grok 4.5 (Subscription)",
@@ -655,11 +666,11 @@ export function supportsSelectableEffort(modelId: string): boolean {
 
 /**
  * Whether a Grok subscription model accepts the reasoning_effort parameter.
- * Only grok-4.5 supports it (low/medium/high, default high); other Grok models
- * reject the param, so the connector must gate injection on this capability.
+ * Grok 4.5 and 4.6 support low/medium/high; Grok 4.6 additionally supports
+ * xhigh. The connector gates injection on this model capability.
  */
 export function supportsGrokReasoningEffort(modelId: string): boolean {
-  return bareId(modelId) === "grok-4.5";
+  return bareId(modelId) === "grok-4.5" || bareId(modelId) === "grok-4.6";
 }
 
 export function getModelName(modelId: string): string {
