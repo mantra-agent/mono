@@ -601,6 +601,38 @@ async function resolveRuntimeIdentitySection(): Promise<string> {
       id.gitCommit ? `Commit: ${id.gitCommit.slice(0, 12)}` : null,
       id.dbHost ? `Database host: ${id.dbHost}` : null,
     ].filter(Boolean) as string[];
+
+    // Ambient "what is this live build?" — the last successful promotion whose
+    // commit matches what this process is actually serving. Best-effort: it
+    // never breaks runtime identity, and it is silent (rather than wrong) when
+    // the served commit has no matching publish record.
+    try {
+      const { getLivePublishManifest } = await import("./integrations/railway/publish");
+      const manifest = await getLivePublishManifest();
+      if (manifest) {
+        const when = manifest.publishedAt
+          ? formatInTimezone(new Date(manifest.publishedAt), {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            })
+          : "unknown time";
+        const version = manifest.version ? `${manifest.version} · ` : "";
+        const changeWord = manifest.totalChanges === 1 ? "change" : "changes";
+        lines.push(`Last publish (main → live): ${version}${when} · ${manifest.totalChanges} ${changeWord}`);
+        if (manifest.totalChanges > 0) {
+          const MAX_LISTED = 12;
+          const listed = manifest.changes.slice(0, MAX_LISTED).map((change) => `- ${change.title}`);
+          const remaining = manifest.totalChanges - Math.min(manifest.totalChanges, MAX_LISTED);
+          if (remaining > 0) listed.push(`- …and ${remaining} more`);
+          lines.push(`Included in the current live build:\n${listed.join("\n")}`);
+        }
+      }
+    } catch {
+      // Publish manifest is optional ambient context; identity must still render.
+    }
+
     return lines.join("\n");
   } catch {
     return "Runtime identity unavailable.";
