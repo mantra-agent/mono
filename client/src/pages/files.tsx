@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Folder } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { apiRequest } from "@/lib/queryClient";
 import { HierarchySectionHeader } from "@/components/hierarchy-section-header";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { useVisibleVaults } from "@/pages/library/use-vault-sections";
 import {
+  DriveResourceGroup,
   DriveResourceTree,
   FilesIndexProgressBanner,
   RecentResourceRow,
@@ -230,20 +231,18 @@ export default function FilesPage() {
                     statusByResourceId={statusByResourceId}
                   />
                   {visibleUploads.length > 0 ? (
-                    <div className="mt-1">
-                      <div className="flex items-center gap-2 px-2 py-1.5 text-sm font-medium">
-                        <Folder className="h-4 w-4 text-muted-foreground" />
-                        <span>Uploads</span>
-                      </div>
-                      <div className="border-l border-border/60 pl-3">
-                        <DriveResourceTree
-                          vaultId={vault.id}
-                          resources={visibleUploads}
-                          vaultColor={vault.color ?? null}
-                          statusByResourceId={statusByResourceId}
-                        />
-                      </div>
-                    </div>
+                    <DriveResourceGroup
+                      key={`${vault.id}:${isSearching ? "search" : "browse"}`}
+                      label="Uploads"
+                      defaultOpen={isSearching}
+                    >
+                      <DriveResourceTree
+                        vaultId={vault.id}
+                        resources={visibleUploads}
+                        vaultColor={vault.color ?? null}
+                        statusByResourceId={statusByResourceId}
+                      />
+                    </DriveResourceGroup>
                   ) : null}
                 </div>
               );
