@@ -1,11 +1,14 @@
 import type { Express, Request, Response } from "express";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { environmentSourceBindings } from "@shared/models/platforms";
+import { privilegedAccessAudit } from "@shared/schema";
+import { ADVISORY_LOCK_NS, acquireAdvisoryTransactionLock } from "../../db";
 import { requireAuth, requireAdmin } from "../../auth";
 import { db } from "../../db";
 import { requirePermission } from "../../permissions";
-import { composeStageLifecycleStatus } from "../../platforms/stage-lifecycle-status";
+import { composeStageLifecycleStatus, deriveStageLifecycleCapabilities } from "../../platforms/stage-lifecycle-status";
+import { getEnvironmentBuildLifecycleConfig } from "../../platforms/build-lifecycle-service";
 import { createLogger } from "../../log";
 import { RailwayApiError } from "./client";
 import {
@@ -104,6 +107,11 @@ export function registerRailwayRoutes(app: Express) {
     limit: z.coerce.number().int().min(1).max(500).optional(),
   });
   const deploymentBodySchema = z.object({ deploymentId: z.string().min(1).optional() });
+  const fullRebuildBodySchema = z.object({
+    deploymentId: z.string().min(1).optional(),
+    confirmation: z.literal("FULL_REBUILD"),
+    idempotencyKey: z.string().trim().min(8).max(200),
+  });
   const publishContextSchema = z.object({
     sourcePlatformEnvironmentId: z.coerce.number().int().positive(),
     targetPlatformEnvironmentId: z.coerce.number().int().positive(),
@@ -201,7 +209,8 @@ export function registerRailwayRoutes(app: Express) {
       }).from(environmentSourceBindings)
         .where(eq(environmentSourceBindings.environmentId, control.environment.platformEnvironmentId))
         .limit(1);
-      const [deploymentsResult, targetResult] = await Promise.allSettled([
+      const [lifecycleResult, deploymentsResult, targetResult] = await Promise.allSettled([
+        getEnvironmentBuildLifecycleConfig(control.environment.platformEnvironmentId, { includeDisabled: true }),
         fetchEnvironmentDeployments(control, 20),
         source?.owner && source.repo && source.branch
           ? getBranchHead({ owner: source.owner, repo: source.repo }, source.branch)
@@ -209,9 +218,14 @@ export function registerRailwayRoutes(app: Express) {
       ]);
       const deployments = deploymentsResult.status === "fulfilled" ? deploymentsResult.value : [];
       const targetCommitSha = targetResult.status === "fulfilled" ? targetResult.value?.sha ?? null : null;
+      const lifecycleConfig = lifecycleResult.status === "fulfilled" ? lifecycleResult.value?.config : null;
+      const deployPolicy = lifecycleConfig?.deployPolicy && typeof lifecycleConfig.deployPolicy === "object" && !Array.isArray(lifecycleConfig.deployPolicy)
+        ? lifecycleConfig.deployPolicy as Record<string, unknown>
+        : {};
       const lifecycle = composeStageLifecycleStatus({
         deployments,
         targetCommitSha,
+        capabilities: deriveStageLifecycleCapabilities(deployPolicy, lifecycleConfig?.providerKind || "railway"),
         providerError: deploymentsResult.status === "rejected"
           ? (deploymentsResult.reason instanceof Error ? deploymentsResult.reason.message : "Railway deployment truth is unavailable.")
           : targetResult.status === "rejected"
@@ -297,6 +311,69 @@ export function registerRailwayRoutes(app: Express) {
       res.json({ platformEnvironmentId: control.environment.platformEnvironmentId, names });
     } catch (error) {
       handleError(res, error, "environment variables failed");
+    }
+  });
+
+  app.post("/api/railway/environments/:platformEnvironmentId/actions/restart", requirePermission("build:write"), async (req, res) => {
+    const control = await parseEnvironment(req, res);
+    if (!control) return;
+    const lifecycle = await getEnvironmentBuildLifecycleConfig(control.environment.platformEnvironmentId, { includeDisabled: true });
+    const policy = lifecycle?.config?.deployPolicy && typeof lifecycle.config.deployPolicy === "object" && !Array.isArray(lifecycle.config.deployPolicy) ? lifecycle.config.deployPolicy as Record<string, unknown> : {};
+    const capabilities = deriveStageLifecycleCapabilities(policy, lifecycle?.config?.providerKind || "railway");
+    if (!capabilities.actions.includes("restart_stage")) return res.status(409).json({ error: "Restart Stage is not enabled by this environment lifecycle contract" });
+    const parsed = deploymentBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: "Invalid Stage restart request" });
+    try {
+      res.json({ ok: true, action: "restart_stage", ...(await restartEnvironment(control, parsed.data.deploymentId)) });
+    } catch (error) {
+      handleError(res, error, "Stage restart failed");
+    }
+  });
+
+  app.post("/api/railway/environments/:platformEnvironmentId/actions/full-rebuild", requirePermission("build:write"), async (req, res) => {
+    const control = await parseEnvironment(req, res);
+    if (!control) return;
+    const lifecycle = await getEnvironmentBuildLifecycleConfig(control.environment.platformEnvironmentId, { includeDisabled: true });
+    const policy = lifecycle?.config?.deployPolicy && typeof lifecycle.config.deployPolicy === "object" && !Array.isArray(lifecycle.config.deployPolicy) ? lifecycle.config.deployPolicy as Record<string, unknown> : {};
+    const capabilities = deriveStageLifecycleCapabilities(policy, lifecycle?.config?.providerKind || "railway");
+    if (capabilities.fullRebuildProvider !== "railway") return res.status(409).json({ error: "Full Rebuild is not backed by the Railway provider for this environment" });
+    const parsed = fullRebuildBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: "Full Rebuild requires confirmation and an idempotencyKey" });
+    const principal = req.principal;
+    if (!principal) return res.status(401).json({ error: "Authentication required" });
+    const action = "platform_environment.full_rebuild";
+    const idempotencyKey = parsed.data.idempotencyKey;
+    let auditId: number;
+    const existing = await db.transaction(async (tx) => {
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.MOD_LIFECYCLE, `full-rebuild:${control.environment.platformEnvironmentId}:${idempotencyKey}`);
+      const [row] = await tx.select({ id: privilegedAccessAudit.id, metadata: privilegedAccessAudit.metadata })
+        .from(privilegedAccessAudit)
+        .where(and(eq(privilegedAccessAudit.action, action), sql`${privilegedAccessAudit.metadata}->>'idempotencyKey' = ${idempotencyKey}`))
+        .limit(1);
+      if (row) return { ...row, replayed: true };
+      const [created] = await tx.insert(privilegedAccessAudit).values({
+        actorType: principal.actorType,
+        actorUserId: principal.userId,
+        actorAccountId: principal.accountId,
+        action,
+        reason: "Human-confirmed Stage Full Rebuild recovery action",
+        scopes: ["build:write", `platform_environment:${control.environment.platformEnvironmentId}`],
+        metadata: { idempotencyKey, environmentId: control.environment.platformEnvironmentId, status: "started" },
+      }).returning({ id: privilegedAccessAudit.id });
+      return { id: created.id, metadata: { status: "started" }, replayed: false };
+    });
+    auditId = existing.id;
+    const existingMetadata = existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata) ? existing.metadata as Record<string, unknown> : {};
+    if (existing.replayed && existingMetadata.status === "completed") return res.json({ ok: true, action: "full_rebuild", replayed: true, ...(existingMetadata.result as Record<string, unknown>) });
+    if (existing.replayed && existingMetadata.status === "started") return res.status(409).json({ error: "This Full Rebuild request is already in progress or was interrupted; use a new idempotencyKey after checking Stage state." });
+    try {
+      const deployment = await redeployEnvironment(control, parsed.data.deploymentId);
+      const result = { deploymentId: deployment.id, status: deployment.status };
+      await db.update(privilegedAccessAudit).set({ metadata: { idempotencyKey, environmentId: control.environment.platformEnvironmentId, status: "completed", result } }).where(eq(privilegedAccessAudit.id, auditId));
+      res.json({ ok: true, action: "full_rebuild", replayed: false, ...result });
+    } catch (error) {
+      await db.update(privilegedAccessAudit).set({ metadata: { idempotencyKey, environmentId: control.environment.platformEnvironmentId, status: "failed" } }).where(eq(privilegedAccessAudit.id, auditId));
+      handleError(res, error, "Stage Full Rebuild failed");
     }
   });
 

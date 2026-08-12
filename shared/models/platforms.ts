@@ -317,11 +317,19 @@ export type InsertPlatformProductEnvironment = z.infer<typeof insertPlatformProd
 
 export const lifecycleProviderKindSchema = z.enum(["railway", "eas", "cloudflare", "cloudflare_pages", "manual"]);
 export const lifecycleAuthModeSchema = z.enum(["none", "provider_connection", "platform_binding", "custom"]);
+export const lifecycleRuntimeModeSchema = z.enum(["immutable_artifact", "warm_workspace"]);
+export const lifecycleDependencyPolicySchema = z.enum(["rebuild_on_lockfile_change"]);
 export const lifecycleDeployPolicySchema = z.object({
   mode: z.enum(["automatic", "manual", "disabled", "unknown", "auto_on_push", "manual_promote"]).default("manual"),
   sourceBranch: z.string().trim().optional(),
   targetBranch: z.string().trim().optional().nullable(),
   requireApproval: z.boolean().optional(),
+  runtimeMode: lifecycleRuntimeModeSchema.optional(),
+  syncOnPush: z.boolean().optional(),
+  dependencyPolicy: lifecycleDependencyPolicySchema.optional(),
+  fullRebuildProvider: lifecycleProviderKindSchema.optional(),
+  requireProductionBuild: z.boolean().optional(),
+  requireHumanPromotion: z.boolean().optional(),
 }).passthrough();
 export const lifecycleAcceptanceTargetSchema = z.object({
   url: z.string().trim().optional().nullable(),
