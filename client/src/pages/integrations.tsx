@@ -5895,6 +5895,14 @@ function sanitizeOpenAITierConfig(provider: ModelConnectorDetail["provider"], co
   return sanitized;
 }
 
+function sanitizeGrokTierConfig(config: Exclude<TierModelConfig, string>): Exclude<TierModelConfig, string> {
+  const sanitized: Exclude<TierModelConfig, string> = { model: config.model };
+  if ((config.model === "grok-4.5" || config.model === "grok-4.6") && config.reasoningEffort !== undefined) {
+    sanitized.reasoningEffort = config.reasoningEffort;
+  }
+  return sanitized;
+}
+
 function TierSettingSelect<T extends string>({
   label, value, options, description, disabled, onChange,
 }: {
@@ -5924,6 +5932,7 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
   });
   const mappings = Object.fromEntries(MODEL_TIERS.map((tier) => {
     const config = normalizeTierConfig(connector.provider, connector.config.tierMappings[tier]);
+    if (isGrok) return [tier, sanitizeGrokTierConfig(config)];
     if (!isOpenAI) return [tier, config];
     const model = models.find((item) => item.id === config.model || `${connector.provider}/${item.id}` === config.model);
     return [tier, sanitizeOpenAITierConfig(connector.provider, config, model)];
@@ -5933,8 +5942,10 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
     if (isOpenAI) {
       const nextModel = models.find((item) => item.id === nextConfig.model || `${connector.provider}/${item.id}` === nextConfig.model);
       mutation.mutate({ ...mappings, [tier]: sanitizeOpenAITierConfig(connector.provider, nextConfig, nextModel) });
+    } else if (isGrok) {
+      mutation.mutate({ ...mappings, [tier]: sanitizeGrokTierConfig(nextConfig) });
     } else {
-      // Grok/Claude: model + optional maxTokens only. Do not round-trip OpenAI Responses settings.
+      // Claude: model plus Claude-owned knobs. Do not round-trip OpenAI Responses settings.
       mutation.mutate({ ...mappings, [tier]: nextConfig });
     }
   };
@@ -5944,7 +5955,7 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
   const settingsDescription = isClaude
     ? "Claude subscription tiers. Configure the model, adaptive reasoning effort, thinking mode, maximum agent turns, and max output tokens. Mantra continues to own prompts, tools, permissions, and sessions."
     : isGrok
-      ? "Grok subscription tiers. Map each semantic tier to a Grok model, set optional max output tokens, and choose reasoning effort on supported models. xAI does not expose OpenAI Responses verbosity/service-tier controls here."
+      ? "Grok subscription tiers. Map each semantic tier to a Grok model and choose reasoning effort on supported models. Output limits follow the selected model; xAI does not expose OpenAI Responses verbosity/service-tier controls here."
       : isSubscription
       ? "Subscription connector tiers. Effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, and max output tokens is capped by the selected model."
       : "API connector tiers. Settings follow OpenAI Responses API docs: effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, service tier controls latency class, and max output tokens is capped by the selected model.";
@@ -5992,14 +6003,9 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
                     const nextSupportsThinking = nextModel?.thinkingLevel !== "none";
                     updateTier(tier, { model: modelId, effort: nextSupportsThinking ? config.effort : undefined, thinkingMode: nextSupportsThinking ? config.thinkingMode : "disabled" });
                   } else if (isGrok) {
-                    const nextModel = models.find((item) => item.id === modelId);
                     updateTier(tier, {
                       model: modelId,
                       reasoningEffort: modelId === "grok-4.5" || modelId === "grok-4.6" ? config.reasoningEffort : undefined,
-                      maxOutputTokens: Math.min(
-                        config.maxOutputTokens ?? nextModel?.maxTokens ?? 4096,
-                        nextModel?.maxTokens ?? Number.MAX_SAFE_INTEGER,
-                      ),
                     });
                   } else {
                     const nextModel = models.find((item) => item.id === modelId);
@@ -6121,14 +6127,14 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
               {supported?.reasoningSummary && <TierSettingSelect label="Reasoning summary" value={config.reasoningSummary ?? "auto"} options={REASONING_SUMMARIES} description="Default: auto. Controls whether OpenAI returns summarized reasoning." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningSummary: value })} />}
               {supported?.verbosity && <TierSettingSelect label="Verbosity" value={config.verbosity ?? "medium"} options={VERBOSITIES} description="Default: medium. Controls output detail for GPT-5-class text generation." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { verbosity: value })} />}
               {supported?.serviceTier && <TierSettingSelect label="Service tier" value={config.serviceTier ?? "auto"} options={supported.serviceTierOptions} description="Default: auto. Controls API latency/cost class when the account supports it." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { serviceTier: value })} />}
-              {(supported?.maxOutputTokens || isGrok) && <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+              {supported?.maxOutputTokens && <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
                 <div className="min-w-0">
                   <Label className="text-xs text-muted-foreground">Max output</Label>
                   <p className="text-xs text-muted-foreground/80">Positive integer. Must not exceed {formatTokenCount(model?.maxTokens)} for this model.</p>
                 </div>
                 <Input type="number" min={1} max={model?.maxTokens} value={config.maxOutputTokens ?? ""} disabled={mutation.isPending} onChange={(event) => { const value = Number.parseInt(event.target.value, 10); if (Number.isFinite(value) && value > 0) updateTier(tier, { maxOutputTokens: model?.maxTokens ? Math.min(value, model.maxTokens) : value }); }} className="h-8 font-mono text-xs" />
               </div>}
-              {isGrok ? <p className="text-xs text-muted-foreground">Grok subscription exposes model selection, optional max output, and reasoning effort on supported models. OpenAI Responses verbosity/service-tier controls do not apply.</p> : null}
+              {isGrok ? <p className="text-xs text-muted-foreground">Grok subscription exposes model selection and reasoning effort on supported models. Output limits follow the selected model; OpenAI Responses verbosity/service-tier controls do not apply.</p> : null}
               {isOpenAI && !supported?.reasoningEffort && !supported?.verbosity && !supported?.serviceTier ? <p className="text-xs text-muted-foreground">This model exposes only model selection and max output in the current connector contract.</p> : null}
             </div>}
           >

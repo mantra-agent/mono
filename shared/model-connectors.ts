@@ -85,8 +85,15 @@ export type ClaudeCliTierMappings = z.infer<typeof claudeCliTierMappingsSchema>;
 export const grokReasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh"]);
 export type GrokReasoningEffort = z.infer<typeof grokReasoningEffortSchema>;
 
+function normalizeGrokTierConfig(value: unknown): unknown {
+  if (typeof value === "string") return { model: value };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const { model, reasoningEffort } = value as Record<string, unknown>;
+  return reasoningEffort === undefined ? { model } : { model, reasoningEffort };
+}
+
 export const grokSubscriptionTierModelConfigSchema = z.preprocess(
-  (value) => (typeof value === "string" ? { model: value } : value),
+  normalizeGrokTierConfig,
   z.object({
     model: z.string().trim().min(1),
     reasoningEffort: grokReasoningEffortSchema.optional(),
@@ -132,6 +139,8 @@ export type ClaudeCliConnectorConfig = z.infer<typeof claudeCliConnectorConfigSc
 // addressed by plain name. Grok 4.5 and 4.6 accept a reasoning_effort
 // param, so tier mappings carry an optional per-tier reasoningEffort. Legacy
 // plain-string mappings are still accepted and normalized to { model }.
+// Decorative keys such as maxOutputTokens are stripped at parse time because
+// Grok never persisted or applied them.
 export const grokSubscriptionConnectorConfigSchema = z.object({
   kind: z.literal("grok-models"),
   version: z.literal(1),
