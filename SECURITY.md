@@ -34,6 +34,13 @@
 - Residual/rollback: confirmation tokens remain bounded process-local pre-call capabilities, while accepted call state is durable; a crash after lease claim but before call registration relies on existing lease expiry recovery. Twilio must point inbound Voice to the canonical signed webhook and the ElevenLabs agent must use μ-law 8000 Hz input/output. Revert the additive tables, register-call adapter/routes, UI projection, and this record together; additive rows may remain inert during rollback.
 -->
 
+<!-- 2026-08-11 Library hierarchy recovery integrity:
+- Assets/data: A01/A03/A07/A08 and S2/S3 Library page content, Vault ownership, and hierarchy inside the private Brain recovery boundary.
+- Flow/threat: catalog-attested Brain artifact -> human-controlled transactional restore -> `library_pages`. The non-deferrable `parent_id -> id` self-reference could either block recovery or be weakened by silently rooting orphaned children, losing exact organization and obscuring tampered/incomplete evidence (STRIDE tampering/repudiation/availability; DATA-01/OBS-01).
+- Controls/owner: non-installable Core Recovery manifest v4 accepts only the exact single non-deferrable `library_pages` self-FK and emits `library-parent-reconciliation-v1`. Restore preserves every row and Vault field, rejects every non-null parent absent from the restored page ID set, inserts with only `parent_id` neutralized, then reconciles every exact parent in bounded batches inside the same transaction and verifies the updated-row count. Unknown relations/exporters/SCCs and all existing ownership, exclusion, fingerprint, row-parity, and rollback gates remain fail closed. Owner: Core Recovery / Library. Severity: high recovery integrity. SLA: release-blocking. Status: repaired in source pending build and merge.
+- Residual/rollback: source/build evidence cannot prove Live catalog or artifact contents. Normal Live promotion, one backup-only manifest-v4 validation, and the separately human-controlled isolated restore remain required. Revert the manifest strategy, reconciliation validation, server contract, and this finding together; no schema or production data mutation is involved.
+-->
+
 <!-- 2026-08-11 PostgreSQL backup completeness control:
 - Assets/data: A01/A03/A05/A07/A08 and S2/S3 PostgreSQL recovery state crossing the application database -> logical Brain exporter -> private object storage -> human-controlled restore.
 - Threat/failure: the fixed exporter registry could silently omit new durable relations while reporting a complete artifact (STRIDE tampering/repudiation/availability); indiscriminate inclusion could copy S3 credentials or resurrect authentication, OAuth, and active voice leases.
