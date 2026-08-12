@@ -57,6 +57,9 @@ export interface PersonaEntry {
   updateState: "following" | "customized" | "update_available" | "conflict" | "pinned_legacy";
   createdAt: string;
   updatedAt: string;
+  platformBaseline?: PersonaRevisionPayload | null;
+  changedFields?: RevisionField[];
+  updateAvailable?: boolean;
 }
 
 function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
@@ -598,6 +601,17 @@ class PersonaStorageClass {
       )
       .orderBy(personas.sortOrder);
     const entries = rows.map(rowToEntry);
+    const platformById = new Map(entries.filter((entry) => entry.source === "seed").map((entry) => [entry.id, entry]));
+    const withBaseline = (entry: PersonaEntry): PersonaEntry => {
+      const baseline = entry.source === "seed" ? entry : entry.templatePersonaId ? platformById.get(entry.templatePersonaId) : undefined;
+      const platformBaseline = baseline ? revisionPayload(baseline) : null;
+      return {
+        ...entry,
+        platformBaseline,
+        changedFields: platformBaseline ? changedFields(platformBaseline, revisionPayload(entry)) : [],
+        updateAvailable: entry.updateState === "update_available" || entry.updateState === "conflict",
+      };
+    };
 
     // User copies shadow ordinary seed templates. System templates are never
     // shadowed or selectable; legacy copies derived from them are suppressed.
@@ -634,7 +648,7 @@ class PersonaStorageClass {
           !entry.isSystem &&
           (shadowedSeedIds.has(entry.id) || shadowedSeedNames.has(entry.name.toLowerCase()))
         ),
-    );
+    ).map(withBaseline);
   }
 
   /** Personas available to normal activation, orientation, and context flows. */

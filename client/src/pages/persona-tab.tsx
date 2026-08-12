@@ -1,7 +1,7 @@
 import { useState, type FocusEvent, type KeyboardEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Check, ChevronDown, ChevronUp, ChevronRight, Plus, Loader2, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, ChevronRight, Plus, Loader2, RotateCcw, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { HIERARCHY_SECTION_HEADER_CLASS, HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
@@ -40,6 +40,9 @@ interface Persona {
   updateState: "following" | "customized" | "update_available" | "conflict" | "pinned_legacy";
   createdAt: string;
   updatedAt: string;
+  platformBaseline?: Record<string, unknown> | null;
+  changedFields?: string[];
+  updateAvailable?: boolean;
 }
 
 interface PersonaPayloadDraft {
@@ -224,12 +227,12 @@ function PersonaPayloadEditor({
 
 function PersonaTreeItem({
   persona,
-  onDelete,
+  onRevert,
   onUpdate,
   onRefresh,
 }: {
   persona: Persona;
-  onDelete: () => void;
+  onRevert: () => void;
   onRefresh: () => void;
   onUpdate: (data: { description?: string; icon?: string; promptOverlay?: string; expressionTags?: string[]; semanticTier?: "max" | "high" | "balanced" | "fast"; contextSections?: Record<string, boolean>; toolBundle?: string[] }) => void;
 }) {
@@ -254,7 +257,7 @@ function PersonaTreeItem({
         onCommit={(next) => onUpdate(payloadFromDraft(next))}
         allowName={!persona.isSystem}
       />
-      {persona.updateState === "update_available" && (
+      {persona.updateAvailable && (
         <div className="border-l border-border/40 pl-3 text-sm">
           <p className="font-medium">Update available</p>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -279,9 +282,9 @@ function PersonaTreeItem({
       )}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">{persona.updateState.replaceAll("_", " ")} · Updated {timeAgo(persona.updatedAt)}</p>
-        {persona.source !== "seed" && (
-          <Button size="sm" variant="destructive" className="gap-1" onClick={onDelete}>
-            <Trash2 className="h-3 w-3" /> Delete
+        {persona.source !== "seed" && persona.updateState === "customized" && (
+          <Button size="sm" variant="outline" className="gap-1" onClick={onRevert}>
+            <RotateCcw className="h-3 w-3" /> Revert to default
           </Button>
         )}
       </div>
@@ -459,7 +462,6 @@ function PlatformPersonaItem({ persona, onPublished }: { persona: Persona; onPub
 
 export default function PersonasPage() {
   const queryClient = useQueryClient();
-  const { hasPermission } = useAuth();
   const { toast } = useToast();
   const [creating, setCreating] = useState(false);
 
@@ -468,13 +470,13 @@ export default function PersonasPage() {
     refetchInterval: 30000,
   });
 
-  const deleteMutation = useMutation({
+  const revertMutation = useMutation({
     mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/personas/${id}`);
+      await apiRequest("POST", `/api/personas/${id}/use-updated-default`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/personas/management"] });
-      toast({ title: "Persona deleted" });
+      toast({ title: "Persona reverted to default" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -499,13 +501,11 @@ export default function PersonasPage() {
   };
 
   const personas = allPersonas || [];
-  const sortedPersonas = personas.filter((persona) => !persona.isSystem).sort((a, b) => a.sortOrder - b.sortOrder);
-  const { data: platformDefaults = [] } = useQuery<Persona[]>({ queryKey: ["/api/personas/platform/defaults"], enabled: hasPermission("system:write") });
-
+  const sortedPersonas = personas.sort((a, b) => (a.isSystem ? -1 : 0) - (b.isSystem ? -1 : 0) || a.sortOrder - b.sortOrder);
   return (
     <div className="p-2 space-y-4 w-full">
       <section>
-        <h2 className={HIERARCHY_SECTION_HEADER_CLASS}>My Personas</h2>
+        <h2 className={HIERARCHY_SECTION_HEADER_CLASS}>Personas</h2>
       <button
         type="button"
         onClick={() => setCreating(true)}
@@ -528,11 +528,13 @@ export default function PersonasPage() {
         <div className="px-2 py-1.5 text-sm text-muted-foreground">No personas yet</div>
       ) : (
         <div className="space-y-0.5">
-          {sortedPersonas.map(persona => (
+          {sortedPersonas.map(persona => persona.isSystem ? (
+            <PlatformPersonaItem key={persona.id} persona={persona} onPublished={refresh} />
+          ) : (
             <PersonaTreeItem
               key={persona.id}
               persona={persona}
-              onDelete={() => deleteMutation.mutate(persona.id)}
+              onRevert={() => revertMutation.mutate(persona.id)}
               onRefresh={refresh}
               onUpdate={(data) => updateMutation.mutate({ id: persona.id, data })}
             />
@@ -540,14 +542,6 @@ export default function PersonasPage() {
         </div>
       )}
       </section>
-      {hasPermission("system:write") && (
-        <section className="border-t border-border/30 pt-4">
-          <h2 className={HIERARCHY_SECTION_HEADER_CLASS}>Platform Defaults</h2>
-          <div className="space-y-0.5">
-            {platformDefaults.map((persona) => <PlatformPersonaItem key={persona.id} persona={persona} onPublished={() => { refresh(); queryClient.invalidateQueries({ queryKey: ["/api/personas/platform/defaults"] }); }} />)}
-          </div>
-        </section>
-      )}
     </div>
   );
 }
