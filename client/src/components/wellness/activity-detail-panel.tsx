@@ -27,6 +27,7 @@ interface ActivityDetailPanelProps {
   activityId: number;
   category: string;
   pulseWindowSize: number;
+  intervalDays: number;
   windowStart: number | null;
   windowEnd: number | null;
   metricInfo?: ActivityMetricInfo;
@@ -41,32 +42,49 @@ function formatMetricValue(value: number, metricType?: string | null): string {
   return num;
 }
 
-function HeartbeatHistory({ logs, category, pulseWindowSize, windowStart, windowEnd }: Omit<ActivityDetailPanelProps, "activityId" | "metricInfo"> & { logs: WellnessLogEntry[] }) {
+function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windowStart, windowEnd }: Omit<ActivityDetailPanelProps, "activityId" | "metricInfo"> & { logs: WellnessLogEntry[] }) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const events = useMemo(() => {
-    const historyIntervalCount = Math.max(MIN_HISTORY_INTERVALS, pulseWindowSize);
-    const entries = logs.slice(0, historyIntervalCount).reverse();
-    const timestamps = entries.map((entry) => new Date(entry.completedAt).getTime());
-    const firstTimestamp = timestamps[0] ?? 0;
-    const lastTimestamp = timestamps[timestamps.length - 1] ?? firstTimestamp;
-    const elapsed = Math.max(1, lastTimestamp - firstTimestamp);
-
-    return entries.map((entry, index) => ({
-      entry,
-      x: entries.length === 1 ? 500 : 24 + ((timestamps[index] - firstTimestamp) / elapsed) * 952,
-      adherence: getWellnessWindowAdherence(category, windowStart, windowEnd, new Date(entry.completedAt), timezone),
+  const timeline = useMemo(() => {
+    const intervalCount = Math.max(MIN_HISTORY_INTERVALS, pulseWindowSize);
+    const intervalMs = Math.max(1, intervalDays) * 86_400_000;
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    const domainEnd = today.getTime();
+    const domainStart = domainEnd - intervalCount * intervalMs;
+    const domainDuration = domainEnd - domainStart;
+    const toX = (timestamp: number) => 24 + ((timestamp - domainStart) / domainDuration) * 952;
+    const ticks = Array.from({ length: intervalCount + 1 }, (_, index) => ({
+      timestamp: domainStart + index * intervalMs,
+      x: toX(domainStart + index * intervalMs),
     }));
-  }, [logs, category, pulseWindowSize, windowStart, windowEnd, timezone]);
+    const events = logs
+      .filter((entry) => {
+        const timestamp = new Date(entry.completedAt).getTime();
+        return timestamp >= domainStart && timestamp <= domainEnd;
+      })
+      .reverse()
+      .map((entry) => {
+        const completedAt = new Date(entry.completedAt);
+        return {
+          entry,
+          x: toX(completedAt.getTime()),
+          adherence: getWellnessWindowAdherence(category, windowStart, windowEnd, completedAt, timezone),
+        };
+      });
 
-  if (events.length === 0) {
-    return <p className="px-2 py-1.5 text-sm text-muted-foreground">No completions yet.</p>;
-  }
+    return { domainStart, domainEnd, events, ticks };
+  }, [logs, category, pulseWindowSize, intervalDays, windowStart, windowEnd, timezone]);
 
   return (
-    <div className="space-y-2">
-      <svg viewBox="0 0 1000 240" preserveAspectRatio="none" className="h-56 w-full" role="img" aria-label="Activity completion timeline; each heartbeat blip marks when the activity was completed">
+    <div className="min-w-0 space-y-2 overflow-hidden">
+      <svg viewBox="0 0 1000 240" preserveAspectRatio="none" className="h-56 w-full" role="img" aria-label="Activity timeline with ideal cadence ticks, completion heartbeats, and today at the right edge">
         <line x1="16" y1="128" x2="984" y2="128" className="stroke-border" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-        {events.map(({ entry, x, adherence }) => (
+        {timeline.ticks.map(({ timestamp, x }) => (
+          <line key={timestamp} x1={x} y1="118" x2={x} y2="138" className="stroke-muted-foreground" strokeWidth="0.75" vectorEffect="non-scaling-stroke">
+            <title>{`Ideal completion · ${new Date(timestamp).toLocaleDateString()}`}</title>
+          </line>
+        ))}
+        {timeline.events.map(({ entry, x, adherence }) => (
           <path
             key={entry.id}
             d={`M ${Math.max(16, x - 20)} 128 L ${x - 11} 128 L ${x - 7} 110 L ${x - 3} 150 L ${x + 2} 62 L ${x + 6} 142 L ${x + 11} 118 L ${Math.min(984, x + 20)} 128`}
@@ -82,10 +100,10 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, windowStart, window
           </path>
         ))}
       </svg>
-      <div className="flex justify-between text-xs text-muted-foreground">
-        <span>{new Date(events[0].entry.completedAt).toLocaleDateString()}</span>
-        <span>Each blip is one completion</span>
-        <span>{new Date(events[events.length - 1].entry.completedAt).toLocaleDateString()}</span>
+      <div className="grid min-w-0 grid-cols-[1fr_auto_1fr] items-center gap-2 text-xs text-muted-foreground">
+        <span className="truncate">{new Date(timeline.domainStart).toLocaleDateString()}</span>
+        <span className="hidden @sm:inline">Ticks show ideal cadence</span>
+        <span className="justify-self-end whitespace-nowrap">Today · {new Date(timeline.domainEnd).toLocaleDateString()}</span>
       </div>
     </div>
   );
@@ -107,7 +125,7 @@ function LogHistoryItem({ entry, onDelete, linkedMetricType }: { entry: Wellness
   );
 }
 
-export function ActivityDetailPanel({ activityId, category, pulseWindowSize, windowStart, windowEnd, metricInfo }: ActivityDetailPanelProps) {
+export function ActivityDetailPanel({ activityId, category, pulseWindowSize, intervalDays, windowStart, windowEnd, metricInfo }: ActivityDetailPanelProps) {
   const { toast } = useToast();
   const [showAll, setShowAll] = useState(false);
   const { data: trends, isLoading: trendsLoading } = useQuery<ActivityTrends>({ queryKey: ["/api/wellness/activities", activityId, "trends"] });
@@ -129,7 +147,7 @@ export function ActivityDetailPanel({ activityId, category, pulseWindowSize, win
 
   return (
     <div className="space-y-4" data-testid={`detail-panel-${activityId}`}>
-      <HeartbeatHistory logs={displayLogs} category={category} pulseWindowSize={pulseWindowSize} windowStart={windowStart} windowEnd={windowEnd} />
+      <HeartbeatHistory logs={displayLogs} category={category} pulseWindowSize={pulseWindowSize} intervalDays={intervalDays} windowStart={windowStart} windowEnd={windowEnd} />
       {trends && trends.totalCompletions > 0 && <div className="flex gap-6 text-xs text-muted-foreground"><span>Current streak · {trends.currentStreak}</span><span>30d · {trends.rate30d ?? "—"}%</span><span>90d · {trends.rate90d ?? "—"}%</span></div>}
       {metricInfo?.linkedMetricType && <div className="text-xs text-muted-foreground">Linked to {metricInfo.linkedMetricType}</div>}
       <div className="divide-y divide-border/20">

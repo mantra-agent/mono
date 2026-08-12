@@ -135,7 +135,7 @@ export function WindowEditor({ activityId, category, windowStart, windowEnd, inW
         <button
           onClick={handleSetDefault}
           disabled={saveMutation.isPending}
-          className="min-h-11 text-sm text-cta hover:text-active disabled:opacity-50"
+          className="min-h-11 whitespace-nowrap text-sm text-cta hover:text-active disabled:opacity-50"
         >
           {saveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Set window"}
         </button>
