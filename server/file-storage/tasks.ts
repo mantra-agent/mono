@@ -410,7 +410,7 @@ export class FileTaskStorage {
       });
     }
     const projectRows = await db.select({ id: projects.id, vaultId: projects.vaultId }).from(projects).where(
-      combineWithProjectAccess(principal, "read", eq(projects.id, projectId)),
+      combineWithProjectAccess(principal, "write", eq(projects.id, projectId)),
     ).limit(1);
     if (projectRows.length === 0) {
       throw new ToolFailureError(`Project ${projectId} not found`, {

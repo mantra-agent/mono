@@ -16,6 +16,7 @@ export interface LibraryPage {
   surfaceReason?: string | null;
   surfaceSection?: string | null;
   vaultId?: string | null;
+  ownerUserId?: string | null;
   structuralRole?: "source" | "artifact" | "wiki" | "meta";
   isPinned: boolean;
 

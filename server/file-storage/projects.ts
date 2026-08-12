@@ -163,20 +163,13 @@ export class FileProjectStorage {
 
     const principal = requireCurrentUserPrincipal();
     const rows = await db.select().from(milestoneRows).where(
-      principal.actorType === "system"
-        ? combineWithProjectDerivedWorkAccess(
-            principal,
-            milestoneScopeColumns,
-            "milestone",
-            "read",
-            inArray(milestoneRows.projectId, projectIds),
-          )
-        : and(
-            inArray(milestoneRows.projectId, projectIds),
-            eq(milestoneRows.scope, "user"),
-            eq(milestoneRows.ownerUserId, principal.userId!),
-            eq(milestoneRows.accountId, principal.accountId!),
-          )!,
+      combineWithProjectDerivedWorkAccess(
+        principal,
+        milestoneScopeColumns,
+        "milestone",
+        "read",
+        inArray(milestoneRows.projectId, projectIds),
+      ),
     ).orderBy(asc(milestoneRows.projectId), asc(milestoneRows.displayOrder), asc(milestoneRows.id));
 
     for (const row of rows) {

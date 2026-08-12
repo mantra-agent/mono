@@ -55,7 +55,7 @@ export function isDescendant(tree: TreeNode[], parentId: string, childId: string
   return check(parent.children);
 }
 
-export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onDiscuss, discussingPageId, dropTarget, expandedSet, toggleExpand, unreadIds, hasUnreadDescendantIds, resolveTitleColor }: {
+export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onDiscuss, discussingPageId, dropTarget, expandedSet, toggleExpand, unreadIds, hasUnreadDescendantIds, resolveTitleColor, readOnly = false }: {
   flatNode: FlatNode;
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -74,6 +74,7 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
   unreadIds?: Set<string>;
   hasUnreadDescendantIds?: Set<string>;
   resolveTitleColor: LibraryPageTitleColorResolver;
+  readOnly?: boolean;
 }) {
   const { node, depth } = flatNode;
   const [iconHovered, setIconHovered] = useState(false);
@@ -88,7 +89,7 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: node.id });
+  } = useSortable({ id: node.id, disabled: readOnly });
 
   const style = {
     transform: CSS.Transform.toString(transform ? { ...transform, scaleX: 1, scaleY: 1 } : null),
@@ -244,27 +245,35 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
                     )}
                     Discuss
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onTogglePin(node.id, !isPinned)} data-testid={`menu-tree-pin-${node.id}`}>
-                    <Pin
-                      className={cn("h-3.5 w-3.5 mr-2", isPinned ? "text-foreground" : "text-muted-foreground")}
-                      {...(isPinned ? { fill: "currentColor" } : {})}
-                    />
-                    {isPinned ? "Unpin" : "Pin"}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onCreateChild(node.id)} data-testid={`menu-tree-add-page-${node.id}`}>
-                    <FilePlus className="h-3.5 w-3.5 mr-2" /> Add Page
-                  </DropdownMenuItem>
-                  {node.emoji && (
+                  {!readOnly && (
+                    <DropdownMenuItem onClick={() => onTogglePin(node.id, !isPinned)} data-testid={`menu-tree-pin-${node.id}`}>
+                      <Pin
+                        className={cn("h-3.5 w-3.5 mr-2", isPinned ? "text-foreground" : "text-muted-foreground")}
+                        {...(isPinned ? { fill: "currentColor" } : {})}
+                      />
+                      {isPinned ? "Unpin" : "Pin"}
+                    </DropdownMenuItem>
+                  )}
+                  {!readOnly && (
+                    <DropdownMenuItem onClick={() => onCreateChild(node.id)} data-testid={`menu-tree-add-page-${node.id}`}>
+                      <FilePlus className="h-3.5 w-3.5 mr-2" /> Add Page
+                    </DropdownMenuItem>
+                  )}
+                  {!readOnly && node.emoji && (
                     <DropdownMenuItem onClick={() => onSetEmoji(node.id, null)} data-testid={`menu-tree-remove-icon-${node.id}`}>
                       <FileText className="h-3.5 w-3.5 mr-2" /> Remove Icon
                     </DropdownMenuItem>
                   )}
-                  <DropdownMenuItem onClick={() => onEnrich(node.id)} data-testid={`menu-tree-enrich-${node.id}`}>
-                    <Sparkles className="h-3.5 w-3.5 mr-2" /> Enrich
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onMove(node.id)} data-testid={`menu-tree-move-${node.id}`}>
-                    <FolderInput className="h-3.5 w-3.5 mr-2" /> Move
-                  </DropdownMenuItem>
+                  {!readOnly && (
+                    <DropdownMenuItem onClick={() => onEnrich(node.id)} data-testid={`menu-tree-enrich-${node.id}`}>
+                      <Sparkles className="h-3.5 w-3.5 mr-2" /> Enrich
+                    </DropdownMenuItem>
+                  )}
+                  {!readOnly && (
+                    <DropdownMenuItem onClick={() => onMove(node.id)} data-testid={`menu-tree-move-${node.id}`}>
+                      <FolderInput className="h-3.5 w-3.5 mr-2" /> Move
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     onClick={() => onDownload(node)}
@@ -272,13 +281,15 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
                   >
                     <Download className="h-3.5 w-3.5 mr-2" /> Download
                   </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => onDelete(node.id)}
-                    className="text-destructive"
-                    data-testid={`menu-tree-delete-${node.id}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
-                  </DropdownMenuItem>
+                  {!readOnly && (
+                    <DropdownMenuItem
+                      onClick={() => onDelete(node.id)}
+                      className="text-destructive"
+                      data-testid={`menu-tree-delete-${node.id}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
+                    </DropdownMenuItem>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -329,6 +340,7 @@ interface DndTreeProps {
   unreadIds?: Set<string>;
   hasUnreadDescendantIds?: Set<string>;
   resolveTitleColor: LibraryPageTitleColorResolver;
+  readOnly?: boolean;
 }
 
 export function DndTree({
@@ -339,6 +351,7 @@ export function DndTree({
   unreadIds,
   hasUnreadDescendantIds,
   resolveTitleColor,
+  readOnly = false,
 }: DndTreeProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -346,8 +359,9 @@ export function DndTree({
   );
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
+    if (readOnly) return;
     onDragActiveIdChange(event.active.id as string);
-  }, [onDragActiveIdChange]);
+  }, [onDragActiveIdChange, readOnly]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     const { active, over } = event;
@@ -458,6 +472,7 @@ export function DndTree({
             unreadIds={unreadIds}
             hasUnreadDescendantIds={hasUnreadDescendantIds}
             resolveTitleColor={resolveTitleColor}
+            readOnly={readOnly}
           />
         ))}
       </SortableContext>

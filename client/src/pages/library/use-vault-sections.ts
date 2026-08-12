@@ -6,21 +6,21 @@ import type { LibraryPage, TreeNode } from "./types";
 /**
  * Shared, reusable vault-awareness for the standard Library sidebar.
  *
- * Two derived views over the already-owner-scoped Library payload:
+ * Two derived views over the grant-aware Library payload:
  *  - `useVisibleVaults()` resolves the toggled-on, non-archived vault set and the
  *    page→vault resolution rule (null vault_id folds into the default vault so
  *    pre-backfill pages stay visible, matching the server move guard's
  *    "null vault_id rows stay unconstrained" semantics).
- *  - `useVaultSections()` groups pages/tree roots into one section per visible
- *    vault (INCLUDING empty vaults) and derives a RECENT list.
+ *  - `useVaultSections()` groups owned pages/tree roots into one section per
+ *    visible vault (INCLUDING empty vaults), projects grant-only roots into
+ *    Shared, and derives a RECENT list of owned visible pages.
  *
  * These are pure derived views. They never mutate a page's stored `vaultId` or
  * location. Vault visibility comes from `useVaults()`, whose optimistic
  * `visibleVaultIds` update makes toggling a vault off remove its section,
  * subtree, RECENT entries, and (via `resolveVaultId`/`isVaultVisible`) its move
- * destinations reactively, with no reload — the server library payload is only
- * owner-scoped, not vault-toggle-scoped, so this filtering is the source of
- * visibility truth on the client.
+ * destinations reactively, with no reload. Shared is a recipient projection of
+ * grant-only roots; it is not a real Library folder.
  */
 
 const DEFAULT_RECENT_LIMIT = 5;
@@ -51,6 +51,8 @@ export interface VaultSection {
 export interface VaultSectionsResult extends VisibleVaults {
   /** One section per visible vault, including vaults with zero pages. */
   sections: VaultSection[];
+  /** Grant-only roots whose parent is invisible. Projection, not a real folder. */
+  sharedRoots: TreeNode[];
   /** Up to `recentLimit` most-recently-modified visible pages across all visible vaults. */
   recent: LibraryPage[];
 }
@@ -59,6 +61,7 @@ export interface UseVaultSectionsArgs {
   pages: LibraryPage[];
   treeData?: TreeNode[];
   recentLimit?: number;
+  currentUserId?: string | null;
 }
 
 function sortVaults(a: Vault, b: Vault): number {
@@ -113,26 +116,40 @@ export function useVaultSections({
   pages,
   treeData,
   recentLimit = DEFAULT_RECENT_LIMIT,
+  currentUserId = null,
 }: UseVaultSectionsArgs): VaultSectionsResult {
   const visible = useVisibleVaults();
 
   return useMemo(() => {
     const { visibleVaults, resolveVaultId } = visible;
     const visibleVaultIdSet = new Set(visibleVaults.map((v) => v.id));
+    const isSharedRoot = (page: Pick<LibraryPage, "ownerUserId" | "vaultId">): boolean => {
+      const vid = resolveVaultId(page.vaultId);
+      const vaultVisible = Boolean(vid && visibleVaultIdSet.has(vid));
+      if (vaultVisible) return false;
+      return Boolean(currentUserId && page.ownerUserId && page.ownerUserId !== currentUserId);
+    };
 
     // Group flat pages by resolved vault (visible vaults only).
     const pagesByVault = new Map<string, LibraryPage[]>();
     for (const v of visibleVaults) pagesByVault.set(v.id, []);
     for (const page of pages) {
+      if (isSharedRoot(page)) continue;
       const vid = resolveVaultId(page.vaultId);
       if (vid && visibleVaultIdSet.has(vid)) pagesByVault.get(vid)!.push(page);
     }
 
     // Group root tree nodes by resolved vault (visible vaults only). The server
     // transfer boundary keeps every descendant in the root node's vault.
+    // Grant-only roots whose parent is invisible land in Shared instead.
     const rootsByVault = new Map<string, TreeNode[]>();
     for (const v of visibleVaults) rootsByVault.set(v.id, []);
+    const sharedRoots: TreeNode[] = [];
     for (const root of treeData ?? []) {
+      if (isSharedRoot(root)) {
+        sharedRoots.push(root);
+        continue;
+      }
       const vid = resolveVaultId(root.vaultId);
       if (vid && visibleVaultIdSet.has(vid)) rootsByVault.get(vid)!.push(root);
     }
@@ -148,6 +165,7 @@ export function useVaultSections({
     // lexicographically in chronological order.
     const recent = pages
       .filter((page) => {
+        if (isSharedRoot(page)) return false;
         const vid = resolveVaultId(page.vaultId);
         return vid !== null && visibleVaultIdSet.has(vid);
       })
@@ -155,6 +173,6 @@ export function useVaultSections({
       .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))
       .slice(0, recentLimit);
 
-    return { ...visible, sections, recent };
-  }, [visible, pages, treeData, recentLimit]);
+    return { ...visible, sections, sharedRoots, recent };
+  }, [visible, pages, treeData, recentLimit, currentUserId]);
 }

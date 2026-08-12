@@ -17,6 +17,7 @@ import { LibraryPageEditor, EmptyLibraryState, TrashSection, MovePageDialog, Pag
 import { flattenTree, DndTree } from "./library-tree";
 import { useVaultSections } from "./use-vault-sections";
 import { useVaults, type Vault } from "@/hooks/use-vaults";
+import { useAuth } from "@/hooks/use-auth";
 import { MUTED_TITLE_ALPHA } from "@/lib/vault-title-color";
 import { libraryPageTitleColor, type LibraryPageTitleColorResolver } from "./library-title-color";
 import { useLibraryUnread, computeHasUnreadDescendantIds } from "@/components/library-activity-indicator";
@@ -114,6 +115,72 @@ function VaultSectionHeader({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+    </div>
+  );
+}
+
+function SharedTreeSection({
+  rootNodes,
+  selectedId,
+  expandedIds,
+  onSelect,
+  onDownload,
+  onDiscuss,
+  discussingPageId,
+  toggleExpand,
+  unreadIds,
+  hasUnreadDescendantIds,
+  resolveTitleColor,
+}: {
+  rootNodes: TreeNode[];
+  selectedId: string | null;
+  expandedIds: Set<string>;
+  onSelect: (id: string, slug?: string) => void;
+  onDownload: (node: TreeNode) => void;
+  onDiscuss: (page: LibraryPage) => void;
+  discussingPageId: string | null;
+  toggleExpand: (id: string) => void;
+  unreadIds: Set<string>;
+  hasUnreadDescendantIds: Set<string>;
+  resolveTitleColor: LibraryPageTitleColorResolver;
+}) {
+  const flatNodes = useMemo(() => flattenTree(rootNodes, 0, null, expandedIds), [rootNodes, expandedIds]);
+  const flatNodeIds = useMemo(() => flatNodes.map((node) => node.id), [flatNodes]);
+  const flatNodeMap = useMemo(() => new Map(flatNodes.map((node) => [node.id, node])), [flatNodes]);
+
+  return (
+    <div className="mb-1 min-w-0" data-testid="library-shared-section">
+      <HierarchySectionHeader className="mt-2">
+        <span className="truncate">Shared</span>
+      </HierarchySectionHeader>
+      <DndTree
+        treeData={rootNodes}
+        flatNodes={flatNodes}
+        flatNodeIds={flatNodeIds}
+        flatNodeMap={flatNodeMap}
+        selectedId={selectedId}
+        expandedIds={expandedIds}
+        dragActiveId={null}
+        dropTarget={null}
+        onDragActiveIdChange={() => undefined}
+        onDropTargetChange={() => undefined}
+        onSelect={onSelect}
+        onCreateChild={() => undefined}
+        onSetEmoji={() => undefined}
+        onDelete={() => undefined}
+        onDownload={onDownload}
+        onEnrich={() => undefined}
+        onMove={() => undefined}
+        onTogglePin={() => undefined}
+        onDiscuss={onDiscuss}
+        discussingPageId={discussingPageId}
+        onReorder={() => undefined}
+        toggleExpand={toggleExpand}
+        unreadIds={unreadIds}
+        hasUnreadDescendantIds={hasUnreadDescendantIds}
+        resolveTitleColor={resolveTitleColor}
+        readOnly
+      />
     </div>
   );
 }
@@ -234,6 +301,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
   });
   const isResizing = useRef(false);
   const { vaults, activeVaultId } = useVaults();
+  const { user } = useAuth();
   const vaultById = useMemo(() => new Map(vaults.map((vault) => [vault.id, vault])), [vaults]);
   const defaultVaultId = useMemo(() => vaults.find((vault) => vault.isDefault)?.id ?? null, [vaults]);
   const resolveTitleColor = useCallback<LibraryPageTitleColorResolver>(
@@ -491,9 +559,10 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
   // query; RECENT derives from the full page list. Grouping/visibility come
   // from the shared hook, which reacts to top-bar vault toggles.
   const isSearching = searchQuery.trim().length > 0;
-  const { sections, recent, visibleVaults, isLoading: isVaultLoading } = useVaultSections({
+  const { sections, sharedRoots, recent, visibleVaults, isLoading: isVaultLoading } = useVaultSections({
     pages,
     treeData: filteredTreeData,
+    currentUserId: user?.id ?? null,
   });
   const useSectioned = !isVaultLoading && visibleVaults.length > 0;
   const renderedSections = useMemo(
@@ -699,10 +768,11 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                 </div>
               )}
               {useSectioned ? (
-                renderedSections.length === 0 ? (
+                renderedSections.length === 0 && sharedRoots.length === 0 ? (
                   <div className={QUIET_ROW_CLASS}>{isSearching ? "No matching pages." : "No pages yet."}</div>
                 ) : (
-                  renderedSections.map((section) => (
+                  <>
+                  {renderedSections.map((section) => (
                     <VaultTreeSection
                       key={section.vault.id}
                       vault={section.vault}
@@ -732,7 +802,23 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                         createMutation.mutate({ vaultId: section.vault.id });
                       }}
                     />
-                  ))
+                  ))}
+                  {sharedRoots.length > 0 && (
+                    <SharedTreeSection
+                      rootNodes={sharedRoots}
+                      selectedId={selectedId}
+                      expandedIds={expandedIds}
+                      onSelect={selectPage}
+                      onDownload={handleTreeDownload}
+                      onDiscuss={discussPage}
+                      discussingPageId={discussMutation.isPending ? discussMutation.variables?.id ?? null : null}
+                      toggleExpand={toggleExpand}
+                      unreadIds={unreadIds}
+                      hasUnreadDescendantIds={hasUnreadDescendantIds}
+                      resolveTitleColor={resolveTitleColor}
+                    />
+                  )}
+                  </>
                 )
               ) : filteredTreeData.length === 0 ? (
                 <div className={QUIET_ROW_CLASS}>{searchQuery ? "No matching pages." : "No pages yet."}</div>
