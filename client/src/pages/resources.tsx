@@ -21,6 +21,7 @@ import type {
   ReliabilityOutcomeMetrics,
   ReliabilityOutcomeSummary,
 } from "@shared/reliability-outcomes";
+import type { BuildDeploymentTimingSummary } from "@shared/models/build-deployments";
 import {
   RESOURCES_REFRESH_INTERVAL_MS as REFRESH_INTERVAL_MS,
   FRONTEND_EXPERIENCE_REFRESH_INTERVAL_MS,
@@ -477,13 +478,15 @@ function PerformanceSection({
   status,
   children,
   testId,
+  defaultOpen,
 }: {
   label: string;
   status: Status;
   children: ReactNode;
   testId?: string;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(status !== "ok");
+  const [open, setOpen] = useState(defaultOpen ?? status !== "ok");
 
   return (
     <Collapsible
@@ -516,6 +519,45 @@ function DetailList({ items }: { items: string[] }) {
   return (
     <div className="space-y-1 text-muted-foreground">
       {items.map(item => <div key={item}>{item}</div>)}
+    </div>
+  );
+}
+
+function formatDeploymentDuration(ms: number | null): string {
+  if (!ms) return "-";
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return seconds === 60 ? `${minutes + 1}m` : `${minutes}m ${seconds}s`;
+}
+
+function BuildDeploymentDetail({
+  environment,
+}: {
+  environment: BuildDeploymentTimingSummary["environments"][number];
+}) {
+  const recentSamples = environment.samples.slice(0, 10).reverse();
+  const maxDuration = Math.max(...recentSamples.map(sample => sample.durationMs), 1);
+
+  return (
+    <div className="space-y-2 text-muted-foreground">
+      <div>
+        Median {formatDeploymentDuration(environment.medianDurationMs)} · {environment.sampleCount} deployment{environment.sampleCount === 1 ? "" : "s"} in 30 days
+      </div>
+      <div
+        className="flex h-11 items-end gap-1"
+        aria-label={`Recent deployment durations for ${environment.environmentName}`}
+      >
+        {recentSamples.map(sample => (
+          <div
+            key={sample.observationId}
+            className="min-w-1 flex-1 rounded-sm bg-muted-foreground/40"
+            style={{ height: `${Math.max(10, Math.round((sample.durationMs / maxDuration) * 100))}%` }}
+            title={`${formatDeploymentDuration(sample.durationMs)} · ${new Date(sample.deployedAt).toLocaleString()}`}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -575,6 +617,20 @@ export default function ResourcesPage() {
     refetchIntervalInBackground: false,
   });
 
+  const {
+    data: buildDeploymentTimings,
+    isLoading: buildDeploymentTimingsLoading,
+    isError: buildDeploymentTimingsError,
+  } = useQuery<BuildDeploymentTimingSummary>({
+    queryKey: ["/api/performance/build-deployments"],
+    queryFn: async () => {
+      const res = await fetch("/api/performance/build-deployments", { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    staleTime: 5 * 60_000,
+  });
+
   if (isLoading) {
     return (
       <div className="flex h-full min-w-0 flex-col overflow-hidden">
@@ -621,6 +677,9 @@ export default function ResourcesPage() {
       onReliabilityHoursChange={setReliabilityHours}
       reliabilityLoading={reliabilityLoading}
       reliabilityError={reliabilityError}
+      buildDeploymentTimings={buildDeploymentTimings ?? null}
+      buildDeploymentTimingsLoading={buildDeploymentTimingsLoading}
+      buildDeploymentTimingsError={buildDeploymentTimingsError}
       failures={data.failures}
       now={now}
       isStale={dataUpdatedAt > 0 && now - dataUpdatedAt > STALE_AFTER_MS}
@@ -637,6 +696,9 @@ function ResourcesView({
   onReliabilityHoursChange,
   reliabilityLoading,
   reliabilityError,
+  buildDeploymentTimings,
+  buildDeploymentTimingsLoading,
+  buildDeploymentTimingsError,
   failures,
   now,
   isStale,
@@ -649,6 +711,9 @@ function ResourcesView({
   onReliabilityHoursChange: (hours: number) => void;
   reliabilityLoading: boolean;
   reliabilityError: boolean;
+  buildDeploymentTimings: BuildDeploymentTimingSummary | null;
+  buildDeploymentTimingsLoading: boolean;
+  buildDeploymentTimingsError: boolean;
   failures?: string[];
   now: number;
   isStale: boolean;
@@ -741,6 +806,36 @@ function ResourcesView({
     <div className="flex h-full min-w-0 flex-col overflow-hidden">
       <div className="min-h-0 flex-1 overflow-y-auto p-4 scrollbar-thin @sm:p-6">
         <div className="mx-auto max-w-5xl space-y-1">
+          <PerformanceSection
+            label="Build & Deploy Times"
+            status={buildDeploymentTimingsError ? "red" : buildDeploymentTimingsLoading || !buildDeploymentTimings?.environments.length ? "unknown" : "ok"}
+            testId="section-build-deploy-times"
+            defaultOpen
+          >
+            {buildDeploymentTimingsError ? (
+              <MetricRow
+                label="Deployment timings"
+                value="Unavailable"
+                status="red"
+                testId="build-deploy-times-error"
+              />
+            ) : buildDeploymentTimingsLoading ? (
+              <MetricRow label="Deployment timings" value="Loading" />
+            ) : !buildDeploymentTimings?.environments.length ? (
+              <MetricRow label="Deployment timings" value="Awaiting first observation" />
+            ) : (
+              buildDeploymentTimings.environments.map(environment => (
+                <MetricRow
+                  key={environment.platformEnvironmentId}
+                  label={`${environment.platformName} / ${environment.productName} / ${environment.environmentName}`}
+                  value={formatDeploymentDuration(environment.latestDurationMs)}
+                  detail={<BuildDeploymentDetail environment={environment} />}
+                  testId={`build-deploy-time-${environment.platformEnvironmentId}`}
+                />
+              ))
+            )}
+          </PerformanceSection>
+
           <PerformanceSection
             label="Service"
             status={serviceStatus}
