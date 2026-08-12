@@ -164,9 +164,9 @@ function pdfViewerHref(args: {
 
 export function resourceIcon(r: { resourceType: "file" | "folder" }) {
   return r.resourceType === "folder" ? (
-    <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
+    <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
   ) : (
-    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+    <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
   );
 }
 
@@ -523,7 +523,7 @@ function RowChevron({
   return (
     <button
       type="button"
-      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+      className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-transparent text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
       onClick={(event) => {
         event.stopPropagation();
         onToggle();
@@ -634,7 +634,7 @@ function RowOverflowMenu({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 min-h-6 w-6 min-w-6 shrink-0 rounded-md text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
+          className="h-6 min-h-6 w-6 min-w-6 shrink-0 rounded-md border border-border/40 bg-background text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
           aria-label="Indexing actions"
           onClick={(event) => event.stopPropagation()}
         >
@@ -733,7 +733,6 @@ function FilesRow({
         className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}
         style={{ paddingLeft: 8 + depth * 12 }}
       >
-        <RowChevron open={isOpen} onToggle={onToggleOpen} label={name} />
         {resourceIcon({ resourceType })}
         <ResourceTitle
           name={name}
@@ -745,6 +744,7 @@ function FilesRow({
           <ExternalOpenLink href={webViewLink} label={providerOpenLabel(provider)} />
         ) : null}
         <IndexStatusLabel status={status?.status} />
+        <RowChevron open={isOpen} onToggle={onToggleOpen} label={name} />
         <RowOverflowMenu
           vaultId={vaultId}
           driveResourceId={driveResourceId}
@@ -845,7 +845,7 @@ export function FilesIndexProgressBanner({
 
   return (
     <div
-      className="mb-3 rounded-md border border-border bg-card px-3 py-2"
+      className="mb-1 border-b border-border/20 px-2 py-1.5"
       data-testid="files-index-progress-banner"
     >
       <div className="flex items-center gap-2 text-sm">
@@ -1017,9 +1017,9 @@ export function DriveResourceGroup({
   return (
     <div className="mt-1">
       <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}>
-        <RowChevron open={isOpen} onToggle={() => setIsOpen((value) => !value)} label={label} />
         {resourceIcon({ resourceType: "folder" })}
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
+        <RowChevron open={isOpen} onToggle={() => setIsOpen((value) => !value)} label={label} />
       </div>
       {isOpen ? <div className="border-l border-border/60 pl-3">{children}</div> : null}
     </div>
@@ -1124,7 +1124,6 @@ export function RecentResourceRow({
   return (
     <div>
       <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}>
-        <span className="w-3.5 shrink-0" />
         {resourceIcon(resource)}
         <ResourceTitle
           name={resource.name}

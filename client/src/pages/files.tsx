@@ -165,7 +165,7 @@ export default function FilesPage() {
       className="flex h-full min-h-0 flex-col overflow-y-auto"
       data-testid="files-page"
     >
-      <div className="mx-auto w-full max-w-3xl px-4 pb-8">
+      <div className="w-full min-w-0 p-2 pb-8">
         {vaultsLoading ? (
           <div className="flex items-center gap-2 px-2 py-6 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading files…
@@ -195,12 +195,12 @@ export default function FilesPage() {
 
             {!isSearching && (
               <>
-                <HierarchySectionHeader className="mt-4">
+                <HierarchySectionHeader className="mt-2">
                   Recent
                 </HierarchySectionHeader>
                 {recent.length === 0 ? (
-                  <div className="px-2 py-1 text-xs text-muted-foreground">
-                    No files yet
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                    Nothing recent yet.
                   </div>
                 ) : (
                   <div className="flex flex-col">
@@ -221,7 +221,7 @@ export default function FilesPage() {
               if (isSearching && visibleResources.length === 0 && visibleUploads.length === 0) return null;
               return (
                 <div key={vault.id}>
-                  <HierarchySectionHeader className="mt-4">
+                  <HierarchySectionHeader className="mt-2">
                     {vault.name}
                   </HierarchySectionHeader>
                   <DriveResourceTree
@@ -249,8 +249,8 @@ export default function FilesPage() {
             })}
 
             {noSearchMatches && (
-              <div className="px-2 py-6 text-xs text-muted-foreground">
-                No matching files
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                No matching files.
               </div>
             )}
           </>
