@@ -22,6 +22,12 @@ export interface VoiceAudioStream {
   stream: Readable;
 }
 
+export interface VoiceSynthesisCorrelation {
+  runId?: string;
+  turnId?: string;
+  assistantMessageId?: string;
+}
+
 export interface VoiceAudio {
   provider: VoiceAudioStream["provider"];
   contentType: VoiceAudioStream["contentType"];
@@ -32,7 +38,11 @@ function responseBodyStream(
   body: ReadableStream<Uint8Array>,
   modelId: string,
   startedAt: number,
+  correlation?: VoiceSynthesisCorrelation,
 ): Readable {
+  const correlationLog = correlation
+    ? ` runId=${correlation.runId || "none"} turnId=${correlation.turnId || "none"} assistantMessageId=${correlation.assistantMessageId || "none"}`
+    : "";
   return Readable.from((async function* () {
     const reader = body.getReader();
     let byteCount = 0;
@@ -49,13 +59,13 @@ function responseBodyStream(
               `Voice synthesis returned an empty audio stream (model=${modelId})`,
             );
           }
-          log.info(`streamed portable voice audio model=${modelId} bytes=${byteCount} durationMs=${Date.now() - startedAt}`);
+          log.info(`streamed portable voice audio model=${modelId} bytes=${byteCount} durationMs=${Date.now() - startedAt}${correlationLog}`);
           return;
         }
         byteCount += value.byteLength;
         if (!receivedFirstByte) {
           receivedFirstByte = true;
-          log.info(`portable voice first audio byte model=${modelId} latencyMs=${Date.now() - startedAt}`);
+          log.info(`portable voice first audio byte model=${modelId} latencyMs=${Date.now() - startedAt}${correlationLog}`);
         }
         yield Buffer.from(value);
       }
@@ -72,7 +82,10 @@ function responseBodyStream(
  * Playback transports such as Recall and Twilio do not own speech synthesis
  * configuration. Buffered consumers derive their bytes from this stream.
  */
-export async function streamVoiceAudio(text: string): Promise<VoiceAudioStream> {
+export async function streamVoiceAudio(
+  text: string,
+  correlation?: VoiceSynthesisCorrelation,
+): Promise<VoiceAudioStream> {
   const normalized = text.trim().slice(0, MAX_TTS_CHARS);
   if (!normalized) throw new Error("Cannot synthesize empty speech");
 
@@ -133,7 +146,7 @@ export async function streamVoiceAudio(text: string): Promise<VoiceAudioStream> 
   return {
     provider: "elevenlabs",
     contentType: "audio/mpeg",
-    stream: responseBodyStream(response.body, modelId, startedAt),
+    stream: responseBodyStream(response.body, modelId, startedAt, correlation),
   };
 }
 
