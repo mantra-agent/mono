@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AgentOrb } from "@/components/agent-orb";
 import type { OrbState } from "@/components/agent-orb";
 import { VoiceCaptionOverlay } from "@/components/voice-caption-overlay";
+import { decodeMeetingCaptionCues, type VoiceCaptionCue } from "@/lib/voice-caption-timeline";
 import { createLogger } from "@/lib/logger";
 import type { AgentVisualizerEvent } from "@shared/agent-visualizer";
 
@@ -97,12 +98,10 @@ function useRecallMeetingLevel(enabled: boolean): number | undefined {
 function useMeetingVisualizerFeed(token: string): {
   state: OrbState;
   remoteAudioLevel: number;
-  caption: string;
   connected: boolean;
 } {
   const [state, setState] = useState<OrbState>(token ? "idle" : "degraded");
   const [remoteAudioLevel, setRemoteAudioLevel] = useState(0);
-  const [caption, setCaption] = useState("");
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
@@ -124,7 +123,6 @@ function useMeetingVisualizerFeed(token: string): {
           const event = JSON.parse(String(message.data)) as AgentVisualizerEvent;
           if (event.type === "agent.state") setState(event.state);
           if (event.type === "audio.level") setRemoteAudioLevel(event.level);
-          if (event.type === "agent.caption") setCaption(event.caption);
         } catch (error) {
           log.warn("Invalid visualizer state event", error);
         }
@@ -151,33 +149,111 @@ function useMeetingVisualizerFeed(token: string): {
     };
   }, [token]);
 
-  return { state: connected ? state : "degraded", remoteAudioLevel, caption: connected ? caption : "", connected };
+  return { state: connected ? state : "degraded", remoteAudioLevel, connected };
 }
 
-function useMeetingSpeech(token: string, enabled: boolean): void {
+/** Fallback decode of the plain caption header (base64url UTF-8 text). */
+function decodeCaptionText(encoded: string | null): string {
+  if (!encoded) return "";
+  try {
+    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(base64);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Poll the meeting speech endpoint, play each clip, and schedule its captions
+ * against the real audio clock. The server delivers true per-sentence cues
+ * (`X-Meeting-Caption-Cues`) built from ElevenLabs character alignment, so each
+ * caption appears exactly as that sentence is spoken — the same closed-loop
+ * mechanism normal voice sessions use, instead of a word-count estimate.
+ * Returns the currently visible caption for the bot tile.
+ */
+function useMeetingSpeech(token: string, enabled: boolean): string {
+  const [caption, setCaption] = useState("");
+
   useEffect(() => {
-    if (!token || !enabled) return;
+    if (!token || !enabled) {
+      setCaption("");
+      return;
+    }
     let stopped = false;
-    let activeAudio: HTMLAudioElement | undefined;
+    const audio = new Audio();
+    audio.preload = "auto";
+    const captionTimers: number[] = [];
+    const clearCaptionTimers = () => {
+      captionTimers.forEach((timer) => window.clearTimeout(timer));
+      captionTimers.length = 0;
+    };
+
+    const scheduleCaptions = (cues: VoiceCaptionCue[]) => {
+      clearCaptionTimers();
+      if (cues.length === 0) return;
+      setCaption(cues[0].text);
+      for (let index = 1; index < cues.length; index += 1) {
+        const cue = cues[index];
+        captionTimers.push(window.setTimeout(() => setCaption(cue.text), Math.max(0, cue.atMs)));
+      }
+    };
+
+    const playClip = (url: string, cues: VoiceCaptionCue[]) =>
+      new Promise<void>((resolve, reject) => {
+        let started = false;
+        const settle = (error?: unknown) => {
+          audio.onended = null;
+          audio.onerror = null;
+          audio.onplaying = null;
+          clearCaptionTimers();
+          setCaption("");
+          if (error) reject(error);
+          else resolve();
+        };
+        // Anchor caption timing to actual playback start, not fetch time.
+        audio.onplaying = () => {
+          if (started) return;
+          started = true;
+          scheduleCaptions(cues);
+        };
+        audio.onended = () => settle();
+        audio.onerror = () => settle(new Error("Meeting speech playback failed"));
+        audio.src = url;
+        void audio.play().catch(settle);
+      });
 
     const loop = async () => {
       while (!stopped) {
+        let clipUrl: string | null = null;
         try {
-          activeAudio = new Audio(meetingAudioEndpoint(token));
-          activeAudio.preload = "auto";
-          await activeAudio.play();
-          await new Promise<void>((resolve, reject) => {
-            if (!activeAudio) return reject(new Error("Meeting audio element unavailable"));
-            activeAudio.onended = () => resolve();
-            activeAudio.onerror = () => reject(new Error("Meeting audio playback failed"));
+          // Fetch (not a bare media src) so the caption-cues header is readable
+          // and an idle 204 re-polls immediately instead of erroring the element.
+          const response = await fetch(meetingAudioEndpoint(token), {
+            method: "GET",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { Accept: "audio/mpeg" },
           });
-          activeAudio.removeAttribute("src");
-          activeAudio.load();
-          activeAudio = undefined;
+          if (response.status === 204) continue;
+          if (!response.ok) {
+            await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+            continue;
+          }
+          const clip = await response.blob();
+          if (clip.size === 0) continue;
+          const fallbackText = decodeCaptionText(response.headers.get("X-Meeting-Caption"));
+          const cues = decodeMeetingCaptionCues(response.headers.get("X-Meeting-Caption-Cues"))
+            ?? (fallbackText ? [{ atMs: 0, text: fallbackText }] : []);
+          clipUrl = URL.createObjectURL(clip);
+          await playClip(clipUrl, cues);
         } catch (error) {
           if (stopped) return;
           log.debug("Meeting speech poll retry", error);
           await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+        } finally {
+          if (clipUrl) URL.revokeObjectURL(clipUrl);
         }
       }
     };
@@ -185,16 +261,20 @@ function useMeetingSpeech(token: string, enabled: boolean): void {
     void loop();
     return () => {
       stopped = true;
-      activeAudio?.pause();
-      activeAudio?.removeAttribute("src");
+      clearCaptionTimers();
+      audio.pause();
+      audio.removeAttribute("src");
+      setCaption("");
     };
   }, [enabled, token]);
+
+  return caption;
 }
 
 function RecallMeetingVisualizer({ token, search }: { token: string; search: URLSearchParams }) {
   const feed = useMeetingVisualizerFeed(token);
   const recallMeetingLevel = useRecallMeetingLevel(Boolean(token));
-  useMeetingSpeech(token, Boolean(token));
+  const spokenCaption = useMeetingSpeech(token, Boolean(token));
 
   const state = token ? feed.state : previewState(search);
   const audioLevel = token
@@ -212,7 +292,7 @@ function RecallMeetingVisualizer({ token, search }: { token: string; search: URL
         sustainFrameProduction={Boolean(token)}
         className="absolute inset-0"
       />
-      {token ? <VoiceCaptionOverlay text={feed.caption} /> : null}
+      {token ? <VoiceCaptionOverlay text={spokenCaption} /> : null}
     </main>
   );
 }

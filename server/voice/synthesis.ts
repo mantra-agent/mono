@@ -34,6 +34,20 @@ export interface VoiceAudio {
   bytes: Buffer;
 }
 
+export interface VoiceAlignment {
+  /** Spoken characters in order, exactly as synthesized. */
+  characters: string[];
+  /** Start time of each character in milliseconds from clip start. */
+  startTimesMs: number[];
+}
+
+export interface VoiceAudioWithAlignment {
+  provider: "elevenlabs";
+  contentType: "audio/mpeg";
+  bytes: Buffer;
+  alignment: VoiceAlignment;
+}
+
 function responseBodyStream(
   body: ReadableStream<Uint8Array>,
   modelId: string,
@@ -76,16 +90,22 @@ function responseBodyStream(
   })());
 }
 
+interface ResolvedTtsRequest {
+  apiKey: string;
+  voiceId: string;
+  modelId: string;
+  spokenText: string;
+  body: Record<string, unknown>;
+  optimizeLatency: boolean;
+}
+
 /**
- * Open portable audio with the same voice, model selection, expression-tag
- * policy, pronunciation dictionary, and voice settings as normal voice.
- * Playback transports such as Recall and Twilio do not own speech synthesis
- * configuration. Buffered consumers derive their bytes from this stream.
+ * Resolve the shared ElevenLabs request identity (credentials, voice, model,
+ * expression-tag policy, pronunciation dictionary, and voice settings) used by
+ * every meeting and portable synthesis path, so the streaming and timestamped
+ * endpoints cannot drift apart.
  */
-export async function streamVoiceAudio(
-  text: string,
-  correlation?: VoiceSynthesisCorrelation,
-): Promise<VoiceAudioStream> {
+async function resolveTtsRequest(text: string): Promise<ResolvedTtsRequest> {
   const normalized = text.trim().slice(0, MAX_TTS_CHARS);
   if (!normalized) throw new Error("Cannot synthesize empty speech");
 
@@ -105,32 +125,54 @@ export async function streamVoiceAudio(
     : normalized.replace(/\[(?:excited|calm|sighs|laughs|pause|nervous|cheerfully|whispers|curious|gravitas)\]\s*/gi, "");
   const dictionary = await getDictionaryLocator();
 
+  return {
+    apiKey,
+    voiceId,
+    modelId,
+    spokenText,
+    optimizeLatency: modelId !== "eleven_v3",
+    body: {
+      text: spokenText,
+      model_id: modelId,
+      voice_settings: {
+        speed: config.speed,
+        stability: config.stability,
+        similarity_boost: config.similarityBoost,
+        style: config.style,
+      },
+      ...(dictionary ? { pronunciation_dictionary_locators: [dictionary] } : {}),
+    },
+  };
+}
+
+/**
+ * Open portable audio with the same voice, model selection, expression-tag
+ * policy, pronunciation dictionary, and voice settings as normal voice.
+ * Playback transports such as Recall and Twilio do not own speech synthesis
+ * configuration. Buffered consumers derive their bytes from this stream.
+ */
+export async function streamVoiceAudio(
+  text: string,
+  correlation?: VoiceSynthesisCorrelation,
+): Promise<VoiceAudioStream> {
+  const req = await resolveTtsRequest(text);
+
   const query = new URLSearchParams({ output_format: "mp3_44100_128" });
-  if (modelId !== "eleven_v3") {
+  if (req.optimizeLatency) {
     query.set("optimize_streaming_latency", "3");
   }
 
   const startedAt = Date.now();
   const response = await providerFetch(
-    `${ELEVENLABS_API_BASE}/text-to-speech/${encodeURIComponent(voiceId)}/stream?${query.toString()}`,
+    `${ELEVENLABS_API_BASE}/text-to-speech/${encodeURIComponent(req.voiceId)}/stream?${query.toString()}`,
     {
       method: "POST",
       headers: {
-        "xi-api-key": apiKey,
+        "xi-api-key": req.apiKey,
         Accept: "audio/mpeg",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        text: spokenText,
-        model_id: modelId,
-        voice_settings: {
-          speed: config.speed,
-          stability: config.stability,
-          similarity_boost: config.similarityBoost,
-          style: config.style,
-        },
-        ...(dictionary ? { pronunciation_dictionary_locators: [dictionary] } : {}),
-      }),
+      body: JSON.stringify(req.body),
       timeoutMs: 30_000,
     },
   );
@@ -146,7 +188,7 @@ export async function streamVoiceAudio(
   return {
     provider: "elevenlabs",
     contentType: "audio/mpeg",
-    stream: responseBodyStream(response.body, modelId, startedAt, correlation),
+    stream: responseBodyStream(response.body, req.modelId, startedAt, correlation),
   };
 }
 
@@ -157,4 +199,72 @@ export async function synthesizeVoiceAudio(text: string): Promise<VoiceAudio> {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return { provider: audio.provider, contentType: audio.contentType, bytes: Buffer.concat(chunks) };
+}
+
+/**
+ * Synthesize a complete utterance with ElevenLabs character-level timing. Unlike
+ * streamVoiceAudio this buffers the whole clip, because the with-timestamps
+ * endpoint returns audio and alignment together in one JSON response. That
+ * alignment is the same real-clock timing normal voice captions use, so meeting
+ * captions can be pinned to actual speech instead of a word-count estimate.
+ */
+export async function synthesizeVoiceWithAlignment(
+  text: string,
+  correlation?: VoiceSynthesisCorrelation,
+): Promise<VoiceAudioWithAlignment> {
+  const req = await resolveTtsRequest(text);
+
+  const query = new URLSearchParams({ output_format: "mp3_44100_128" });
+  if (req.optimizeLatency) {
+    query.set("optimize_streaming_latency", "3");
+  }
+
+  const startedAt = Date.now();
+  const response = await providerFetch(
+    `${ELEVENLABS_API_BASE}/text-to-speech/${encodeURIComponent(req.voiceId)}/with-timestamps?${query.toString()}`,
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": req.apiKey,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(req.body),
+      timeoutMs: 30_000,
+    },
+  );
+
+  if (!response.ok) {
+    const detail = await readBoundedProviderBody(response, 500).catch(() => "");
+    throw new Error(`ElevenLabs timestamped voice synthesis failed (${response.status})${detail ? `: ${detail}` : ""}`);
+  }
+
+  const payload = (await response.json()) as {
+    audio_base64?: string;
+    alignment?: { characters?: string[]; character_start_times_seconds?: number[] };
+    normalized_alignment?: { characters?: string[]; character_start_times_seconds?: number[] };
+  };
+
+  const audioBase64 = payload.audio_base64 ?? "";
+  if (!audioBase64) {
+    log.error(`timestamped voice synthesis returned zero audio model=${req.modelId} durationMs=${Date.now() - startedAt}`);
+    throw new EmptyVoiceStreamError(`Voice synthesis returned an empty audio payload (model=${req.modelId})`);
+  }
+  const bytes = Buffer.from(audioBase64, "base64");
+
+  const source = payload.alignment ?? payload.normalized_alignment;
+  const characters = Array.isArray(source?.characters) ? source!.characters : [];
+  const starts = Array.isArray(source?.character_start_times_seconds) ? source!.character_start_times_seconds : [];
+  const count = Math.min(characters.length, starts.length);
+  const alignment: VoiceAlignment = {
+    characters: characters.slice(0, count),
+    startTimesMs: starts.slice(0, count).map((seconds) => Math.max(0, Math.round(seconds * 1000))),
+  };
+
+  const correlationLog = correlation
+    ? ` runId=${correlation.runId || "none"} turnId=${correlation.turnId || "none"} assistantMessageId=${correlation.assistantMessageId || "none"}`
+    : "";
+  log.info(`timestamped voice audio model=${req.modelId} bytes=${bytes.length} alignedChars=${count} durationMs=${Date.now() - startedAt}${correlationLog}`);
+
+  return { provider: "elevenlabs", contentType: "audio/mpeg", bytes, alignment };
 }
