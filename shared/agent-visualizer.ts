@@ -19,4 +19,10 @@ export type AgentVisualizerEvent =
       level: number;
       sequence: number;
       occurredAt: number;
+    }
+  | {
+      type: "agent.caption";
+      caption: string;
+      sequence: number;
+      occurredAt: number;
     };
