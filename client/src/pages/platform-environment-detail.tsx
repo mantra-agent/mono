@@ -351,13 +351,11 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
       <ProfileTreeRow label="Runtime" icon={<Server className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
         <span>{humanize(status.lifecycle.capabilities.runtimeMode)}</span>
       </ProfileTreeRow>
-      <ProfileTreeRow label="Actions" icon={<Waypoints className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" actionContent={(
-        <div className="flex items-center gap-1">
+      <ProfileTreeRow label="Actions" icon={<Waypoints className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
+        <div className="flex flex-wrap items-center gap-1">
           {status.lifecycle.capabilities.actions.includes("restart_stage") && <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => actionMutation.mutate({ action: "restart" })} disabled={actionMutation.isPending}>Restart</Button>}
           {status.lifecycle.capabilities.actions.includes("full_rebuild") && <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-warning" onClick={() => setRebuildConfirmOpen(true)} disabled={actionMutation.isPending}>Full Rebuild</Button>}
         </div>
-      )}>
-        <span>{status.lifecycle.capabilities.actions.map((action) => humanize(action)).join(" · ")}</span>
       </ProfileTreeRow>
       <ProfileTreeRow label="Active commit" icon={<GitBranch className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
         <span className="font-mono">{shortSha(status.lifecycle.activeCommitSha) || "—"}</span>
