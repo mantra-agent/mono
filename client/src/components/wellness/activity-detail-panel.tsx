@@ -6,7 +6,6 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { getWellnessWindowAdherence } from "@shared/wellness-window";
 import { Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { ActivityTrends } from "@shared/models/health";
 
 interface WellnessLogEntry {
   id: number;
@@ -63,13 +62,16 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windo
         return timestamp >= domainStart && timestamp <= domainEnd;
       })
       .reverse()
-      .map((entry) => {
+      .map((entry, index, orderedLogs) => {
         const completedAt = new Date(entry.completedAt);
-        return {
-          entry,
-          x: toX(completedAt.getTime()),
-          adherence: getWellnessWindowAdherence(category, windowStart, windowEnd, completedAt, timezone),
-        };
+        const adherence = getWellnessWindowAdherence(category, windowStart, windowEnd, completedAt, timezone);
+        const previousEntry = orderedLogs[index - 1];
+        const previousCompletedAt = previousEntry ? new Date(previousEntry.completedAt) : null;
+        const isStreakDay = adherence === 100 && previousEntry
+          && getWellnessWindowAdherence(category, windowStart, windowEnd, previousCompletedAt, timezone) === 100
+          && previousCompletedAt
+          && completedAt.getTime() - previousCompletedAt.getTime() <= Math.max(1, intervalDays) * 86_400_000;
+        return { entry, x: toX(completedAt.getTime()), adherence, isStreakDay };
       });
 
     return { domainStart, domainEnd, events, ticks };
@@ -93,12 +95,12 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windo
             </g>
           );
         })}
-        {timeline.events.map(({ entry, x, adherence }) => (
+        {timeline.events.map(({ entry, x, adherence, isStreakDay }) => (
           <path
             key={entry.id}
             d={`M ${Math.max(16, x - 20)} 128 L ${x - 11} 128 L ${x - 7} 110 L ${x - 3} 150 L ${x + 2} 62 L ${x + 6} 142 L ${x + 11} 118 L ${Math.min(984, x + 20)} 128`}
             fill="none"
-            className="stroke-foreground"
+            className={isStreakDay ? "stroke-success" : "stroke-foreground"}
             strokeWidth="0.75"
             vectorEffect="non-scaling-stroke"
             strokeLinecap="round"
@@ -135,7 +137,6 @@ function LogHistoryItem({ entry, onDelete, linkedMetricType }: { entry: Wellness
 export function ActivityDetailPanel({ activityId, category, pulseWindowSize, intervalDays, windowStart, windowEnd, metricInfo }: ActivityDetailPanelProps) {
   const { toast } = useToast();
   const [showAll, setShowAll] = useState(false);
-  const { data: trends, isLoading: trendsLoading } = useQuery<ActivityTrends>({ queryKey: ["/api/wellness/activities", activityId, "trends"] });
   const { data: logs, isLoading: logsLoading } = useQuery<WellnessLogEntry[]>({ queryKey: ["/api/wellness/logs", activityId], queryFn: async () => {
     const response = await fetch(`/api/wellness/logs?activityId=${activityId}&limit=500`, { credentials: "include" });
     if (!response.ok) throw new Error("Failed to load logs");
@@ -148,14 +149,13 @@ export function ActivityDetailPanel({ activityId, category, pulseWindowSize, int
     toast({ title: "Log deleted" });
   }, onError: (error: Error) => toast({ title: "Delete failed", description: error.message, variant: "destructive" }) });
 
-  if (trendsLoading || logsLoading) return <div className="space-y-3 py-3"><Skeleton className="h-40 w-full" /><Skeleton className="h-20 w-full" /></div>;
+  if (logsLoading) return <div className="space-y-3 py-3"><Skeleton className="h-40 w-full" /><Skeleton className="h-20 w-full" /></div>;
   const displayLogs = logs ?? [];
   const visibleLogs = showAll ? displayLogs : displayLogs.slice(0, 20);
 
   return (
     <div className="space-y-4" data-testid={`detail-panel-${activityId}`}>
       <HeartbeatHistory logs={displayLogs} category={category} pulseWindowSize={pulseWindowSize} intervalDays={intervalDays} windowStart={windowStart} windowEnd={windowEnd} />
-      {trends && trends.totalCompletions > 0 && <div className="flex gap-6 text-xs text-muted-foreground"><span>Current streak · {trends.currentStreak}</span><span>30d · {trends.rate30d ?? "—"}%</span><span>90d · {trends.rate90d ?? "—"}%</span></div>}
       {metricInfo?.linkedMetricType && <div className="text-xs text-muted-foreground">Linked to {metricInfo.linkedMetricType}</div>}
       <div className="divide-y divide-border/20">
         {visibleLogs.map((entry) => <LogHistoryItem key={entry.id} entry={entry} linkedMetricType={metricInfo?.linkedMetricType} onDelete={(id) => deleteMutation.mutate(id)} />)}
