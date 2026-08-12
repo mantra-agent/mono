@@ -445,10 +445,29 @@ export async function registerIntegrationsRoutes(app: Express) {
         resourceType: "folder",
         webViewLink: "https://app.box.com/folder/0",
       });
-      res.redirect("/integrations/box?connected=1");
+      res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#e0e0e0"><h2>Box Connected</h2><p>You can close this window.</p><script>
+(function () {
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage({ type: "mantra:box-oauth", status: "connected" }, window.location.origin);
+    }
+  } catch (e) {}
+  setTimeout(function () { window.close(); }, 1200);
+})();
+</script></body></html>`);
     } catch (error: any) {
       log.error("Box OAuth callback failed", { error: error.message });
-      res.redirect(`/integrations/box?error=${encodeURIComponent(error.message)}`);
+      const message = String(error?.message || "Authorization failed").replace(/[<>&"']/g, "");
+      const callbackPayload = JSON.stringify({ type: "mantra:box-oauth", status: "failed", message });
+      res.status(500).send(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#e0e0e0"><h2>Authorization Failed</h2><p>${message}</p><script>
+(function () {
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage(${callbackPayload}, window.location.origin);
+    }
+  } catch (e) {}
+})();
+</script></body></html>`);
     }
   });
 

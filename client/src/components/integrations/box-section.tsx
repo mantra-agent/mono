@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Box, Loader2, Plus, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
@@ -23,16 +24,19 @@ export function BoxSection({ vaultId }: { vaultId?: string }) {
     queryFn: async () => (await apiRequest("GET", "/api/connected-accounts?provider=box")).json(),
   });
   const connect = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (popup: Window) => {
       if (!vaultId) throw new Error("Choose an active Vault before connecting Box");
       const { url } = await (await apiRequest("POST", "/api/box/oauth/start", { vaultId })).json();
-      window.location.assign(url);
+      popup.location.replace(url);
     },
-    onError: (error: Error) => toast({
-      title: "Box connection failed",
-      description: error.message,
-      variant: "destructive",
-    }),
+    onError: (error: Error, popup) => {
+      popup.close();
+      toast({
+        title: "Box connection failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
   });
   const disconnect = useMutation({
     mutationFn: async (account: BoxAccount) => apiRequest(
@@ -51,6 +55,36 @@ export function BoxSection({ vaultId }: { vaultId?: string }) {
       variant: "destructive",
     }),
   });
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data as { type?: string; status?: string; message?: string } | null;
+      if (!data || data.type !== "mantra:box-oauth") return;
+      queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "box"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/drive/resources"] });
+      if (data.status === "connected") {
+        toast({ title: "Box connected" });
+      } else {
+        toast({
+          title: "Box connection failed",
+          description: data.message || "Please try connecting again.",
+          variant: "destructive",
+        });
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [queryClient, toast]);
+
+  const startBoxOAuth = () => {
+    const popup = window.open("about:blank", "mantra-box-oauth", "width=600,height=760,scrollbars=yes");
+    if (!popup) {
+      toast({ title: "Popup blocked", description: "Allow popups and try again.", variant: "destructive" });
+      return;
+    }
+    connect.mutate(popup);
+  };
 
   return (
     <div className="space-y-0" data-testid="box-section">
@@ -94,7 +128,7 @@ export function BoxSection({ vaultId }: { vaultId?: string }) {
           <button
             type="button"
             className={HIERARCHY_PRIMARY_ACTION_CLASS}
-            onClick={() => connect.mutate()}
+            onClick={startBoxOAuth}
             disabled={!status.data?.oauthConfigured || connect.isPending}
           >
             {connect.isPending
