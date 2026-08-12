@@ -1233,7 +1233,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (action === "update_agenda_item" || agendaTransitionStatus) {
       const targetId = args.sessionId || sessionId;
       const itemId = typeof args.itemId === "string" ? args.itemId.trim() : "";
-      if (!itemId) return { result: `Missing 'itemId' for ${action}`, error: true };
+      if (!itemId && action !== "complete_agenda_item") {
+        return { result: `Missing 'itemId' for ${action}`, error: true };
+      }
       const patch = agendaTransitionStatus
         ? {
             status: agendaTransitionStatus,
@@ -1247,9 +1249,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         return { result: "Missing 'resolution' for complete_agenda_item", error: true };
       }
       try {
-        const updated = await chatFileStorage.updateSessionAgendaItem(targetId, itemId, patch);
+        const updated = await chatFileStorage.updateSessionAgendaItem(targetId, itemId || undefined, patch);
         if (!updated?.agenda) return { result: `Session "${targetId}" has no agenda`, error: true };
-        const item = updated.agenda.items.find((candidate) => candidate.id === itemId);
+        const resolvedItemId = itemId
+          || updated.agenda.items.find((candidate) => candidate.status === "complete" && candidate.resolution === (typeof args.resolution === "string" ? args.resolution.trim() : undefined))?.id
+          || updated.agenda.items.find((candidate) => candidate.status === "complete")?.id;
+        const item = resolvedItemId
+          ? updated.agenda.items.find((candidate) => candidate.id === resolvedItemId)
+          : undefined;
         return { result: safeStringify({ sessionId: targetId, item, agenda: updated.agenda }, { label: "bridge.session.agenda.item" }) };
       } catch (err: unknown) {
         return { result: `Invalid agenda item update: ${err instanceof Error ? err.message : String(err)}`, error: true };
