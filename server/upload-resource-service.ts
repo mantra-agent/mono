@@ -64,7 +64,7 @@ export async function reconcileUploadResources(): Promise<{ scanned: number; reg
     SELECT document_id, vault_id, content FROM document_store_documents
     WHERE document_type = 'chat' AND owner_user_id = ${principal.userId}
       AND account_id = ${principal.accountId} AND vault_id IS NOT NULL
-    ORDER BY document_store_id ASC LIMIT 5000
+    ORDER BY id ASC LIMIT 5000
   `);
   let registered = 0;
   const seen = new Set<string>();
