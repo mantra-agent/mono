@@ -7,6 +7,8 @@ interface ProfileDetailSectionProps {
   title: ReactNode;
   count?: number;
   defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   children: ReactNode;
   collapsedContent?: ReactNode;
   testId?: string;
@@ -17,12 +19,19 @@ export function ProfileDetailSection({
   title,
   count,
   defaultOpen = false,
+  open: controlledOpen,
+  onOpenChange,
   children,
   collapsedContent,
   testId,
   headerAction,
 }: ProfileDetailSectionProps) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = (next: boolean) => {
+    if (controlledOpen === undefined) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>

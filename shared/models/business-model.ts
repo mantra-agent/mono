@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { budgetMonthlyTotal, departmentMonthlyTotal, type BudgetDepartment } from "./business-budgets";
 import type { JobRole } from "./job-roles";
 import {
   FORECAST_METRIC_CATALOG,
@@ -582,7 +583,8 @@ export interface MonthRow {
   consultingRevenue: number; totalCashRevenue: number; includedTokenCogs: number; seatCogs: number; overageTokenCogs: number; requiredOverageTokensMillions: number; totalTokenUsageMillions: number; overageGrossMargin: number;
   variableProductCogs: number; fixedProductCogs: number; productCogs: number; consultingCogs: number; productGrossMargin: number; consultingGrossMargin: number; blendedCompanyGrossMargin: number;
   acquisitionSpend: number; blendedCac: number; cacPaybackMonths: number; headcount: number; operatingExpense: number; capex: number;
-  grossProfit: number; staffOpex: number; marketingOpex: number; gaOpex: number; totalOpex: number; operatingIncome: number;
+  grossProfit: number; staffOpex: number; acquisitionOpex: number; budgetOpex: number; departmentOpex: Record<string, number>;
+  totalOpex: number; operatingIncome: number;
   netCashChange: number; financingCash: number; endingCash: number; trailingBurn: number; runwayMonths: number;
 }
 
@@ -592,7 +594,8 @@ export interface PeriodRow {
   activeAccounts: number; newAccounts: number; churnedAccounts: number; activeUsers: number; newUsers: number; expandedUsers: number; contractedUsers: number;
   startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; userContractionRevenue: number; tierExpansionRevenue: number; cohortNrr: number;
   totalCashRevenue: number; productRevenue: number; consultingRevenue: number; productCogs: number; consultingCogs: number; cogs: number; grossProfit: number;
-  staffOpex: number; marketingOpex: number; gaOpex: number; totalOpex: number; operatingIncome: number;
+  staffOpex: number; acquisitionOpex: number; budgetOpex: number; departmentOpex: Record<string, number>;
+  totalOpex: number; operatingIncome: number;
   acquisitionSpend: number; netCashChange: number; financingCash: number; endingCash: number;
 }
 
@@ -659,8 +662,10 @@ function loadedMonthlyForRole(role: JobRole, loadedCostMultiplier: number): numb
   return annualLoaded / 12;
 }
 
-export function computeProjection(input: Assumptions | unknown, roles: JobRole[] = []): Projection {
+export function computeProjection(input: Assumptions | unknown, roles: JobRole[] = [], budgetDepartments?: BudgetDepartment[]): Projection {
   const assumptions = normalizeAssumptions(input);
+  const departmentOpex = Object.fromEntries((budgetDepartments ?? []).map((department) => [department.id, departmentMonthlyTotal(department) / 100]));
+  const canonicalBudgetOpex = budgetDepartments ? budgetMonthlyTotal(budgetDepartments) / 100 : null;
   const roleById = new Map(roles.map((role) => [role.id, role]));
   const derivedHires: DerivedHire[] = [];
   for (const phase of assumptions.phases) {
@@ -792,11 +797,11 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     const acquisitionSpend = newAccounts * blendedEntryCac + keyHireAcquisitionSpend;
     const manualOpex = (category: OpexCategory) => assumptions.operatingCosts.filter((cost) => cost.classification === "opex" && (cost.opexCategory ?? "g_and_a") === category && activeCost(cost, month)).reduce((sum, cost) => sum + cost.monthlyAmount, 0);
     const staffOpex = keyHireStaffOpex + manualOpex("staff");
-    const marketingOpex = manualOpex("marketing") + acquisitionSpend;
-    const gaOpex = manualOpex("g_and_a");
-    const totalOpex = staffOpex + marketingOpex + gaOpex;
-    // Cash operating expense excludes acquisitionSpend, which is subtracted as its own cash line below.
-    const operatingExpense = staffOpex + manualOpex("marketing") + gaOpex;
+    const acquisitionOpex = acquisitionSpend;
+    const budgetOpex = canonicalBudgetOpex ?? manualOpex("marketing") + manualOpex("g_and_a");
+    const totalOpex = staffOpex + acquisitionOpex + budgetOpex;
+    // Cash operating expense excludes acquisition, which is subtracted as its own cash line below.
+    const operatingExpense = staffOpex + budgetOpex;
     const headcount = assumptions.operatingCosts.filter((cost) => activeCost(cost, month)).reduce((sum, cost) => sum + cost.headcount, 0) + keyHireHeadcount;
     const grossProfit = totalCashRevenue - productCogs - consultingCogs;
     const operatingIncome = grossProfit - totalOpex;
@@ -815,7 +820,7 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
       consultingRevenue, totalCashRevenue, includedTokenCogs, seatCogs, overageTokenCogs, requiredOverageTokensMillions, totalTokenUsageMillions: activeAccounts * assumptions.maxIncludedTokensMillions + requiredOverageTokensMillions, overageGrossMargin,
       variableProductCogs, fixedProductCogs, productCogs, consultingCogs, productGrossMargin: safeRatio(productRevenue - productCogs, productRevenue), consultingGrossMargin: safeRatio(consultingRevenue - consultingCogs, consultingRevenue),
       blendedCompanyGrossMargin: safeRatio(totalCashRevenue - productCogs - consultingCogs, totalCashRevenue), acquisitionSpend, blendedCac: newAccounts > 0 ? acquisitionSpend / newAccounts : blendedEntryCac,
-      cacPaybackMonths: baselineCacPaybackMonths, headcount, operatingExpense, capex: lane.capex, grossProfit, staffOpex, marketingOpex, gaOpex, totalOpex, operatingIncome, netCashChange, financingCash, endingCash, trailingBurn, runwayMonths: trailingBurn > 0 ? Math.max(0, endingCash) / trailingBurn : Number.POSITIVE_INFINITY,
+      cacPaybackMonths: baselineCacPaybackMonths, headcount, operatingExpense, capex: lane.capex, grossProfit, staffOpex, acquisitionOpex, budgetOpex, departmentOpex, totalOpex, operatingIncome, netCashChange, financingCash, endingCash, trailingBurn, runwayMonths: trailingBurn > 0 ? Math.max(0, endingCash) / trailingBurn : Number.POSITIVE_INFINITY,
     });
   }
 
@@ -932,11 +937,11 @@ function nextFundraiseStartMonth(projection: Projection): number {
   return Math.max(1, triggerMonth - projection.assumptions.fundraisingLeadMonths);
 }
 
-export function computePhaseOneFinancingScenario(input: Assumptions | unknown, roles: JobRole[], amount: number): PhaseOneFinancingScenario {
+export function computePhaseOneFinancingScenario(input: Assumptions | unknown, roles: JobRole[], amount: number, budgetDepartments?: BudgetDepartment[]): PhaseOneFinancingScenario {
   const assumptions = normalizeAssumptions(input);
   const financingEvents = assumptions.financingEvents.map((event) => event.key === "pre_seed" ? { ...event, amount: nonNegative(amount, event.amount) } : event);
-  const baseline = computeProjection({ ...assumptions, financingEvents }, roles);
-  const downside = computeProjection({ ...assumptions, financingEvents, accountExpansion90d: assumptions.downsideAccountExpansion90d }, roles);
+  const baseline = computeProjection({ ...assumptions, financingEvents }, roles, budgetDepartments);
+  const downside = computeProjection({ ...assumptions, financingEvents, accountExpansion90d: assumptions.downsideAccountExpansion90d }, roles, budgetDepartments);
   const gateIndex = Math.max(0, baseline.financingNeed.gateMonth - 1);
   const baselineCashAtGate = baseline.months[gateIndex]?.endingCash ?? assumptions.openingCash;
   const downsideCashAtGate = downside.months[gateIndex]?.endingCash ?? assumptions.openingCash;
@@ -995,8 +1000,12 @@ export function aggregateMonths(months: MonthRow[], mode: PeriodMode): PeriodRow
       cogs: sum((row) => row.productCogs + row.consultingCogs),
       grossProfit: sum((row) => row.grossProfit),
       staffOpex: sum((row) => row.staffOpex),
-      marketingOpex: sum((row) => row.marketingOpex),
-      gaOpex: sum((row) => row.gaOpex),
+      acquisitionOpex: sum((row) => row.acquisitionOpex),
+      budgetOpex: sum((row) => row.budgetOpex),
+      departmentOpex: Object.fromEntries(Object.keys(last.departmentOpex).map((departmentId) => [
+        departmentId,
+        sum((row) => row.departmentOpex[departmentId] ?? 0),
+      ])),
       totalOpex: sum((row) => row.totalOpex),
       operatingIncome: sum((row) => row.operatingIncome),
       acquisitionSpend: sum((row) => row.acquisitionSpend),

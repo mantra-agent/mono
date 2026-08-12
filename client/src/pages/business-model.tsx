@@ -5,11 +5,13 @@ import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/use-auth";
 import { useSelectedBusiness } from "@/hooks/use-selected-business";
 import { usePageLoadActivity } from "@/hooks/use-page-activity";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import type { BusinessBudget } from "@shared/models/business-budgets";
 import {
   aggregateMonths,
   computeProjection,
@@ -27,6 +29,34 @@ const PERIOD_MODES: { key: PeriodMode; label: string }[] = [
   { key: "quarterly", label: "Quarterly" },
   { key: "annually", label: "Annually" },
 ];
+const ASSUMPTIONS_DISCLOSURE_KEY = "mantra.forecast.assumptions-open.v1";
+const MAX_ASSUMPTION_PREFERENCES = 64;
+
+function readAssumptionsPreferences(): Record<string, boolean> {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(ASSUMPTIONS_DISCLOSURE_KEY) ?? "{}") as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean").slice(-MAX_ASSUMPTION_PREFERENCES));
+  } catch {
+    return {};
+  }
+}
+
+function readAssumptionsOpen(preferenceKey: string | null): boolean {
+  return preferenceKey ? readAssumptionsPreferences()[preferenceKey] ?? false : false;
+}
+
+function persistAssumptionsOpen(preferenceKey: string | null, open: boolean): void {
+  if (!preferenceKey) return;
+  try {
+    const preferences = readAssumptionsPreferences();
+    delete preferences[preferenceKey];
+    preferences[preferenceKey] = open;
+    window.localStorage.setItem(ASSUMPTIONS_DISCLOSURE_KEY, JSON.stringify(Object.fromEntries(Object.entries(preferences).slice(-MAX_ASSUMPTION_PREFERENCES))));
+  } catch {
+    // Browser storage is an optional preference layer. The section remains closed by default.
+  }
+}
 
 function trimNum(value: number): string {
   return (Math.round(value * 10) / 10).toLocaleString();
@@ -85,13 +115,25 @@ function SavedIndicator({ state }: { state: SaveState }) {
 
 export default function BusinessModelPage() {
   const { businesses, selectedId, setSelectedId } = useSelectedBusiness();
+  const { user, principal } = useAuth();
   const { toast } = useToast();
   const modelUrl = selectedId ? `/api/business/model?businessId=${encodeURIComponent(selectedId)}` : "/api/business/model";
+  const budgetUrl = selectedId ? `/api/business/budgets?businessId=${encodeURIComponent(selectedId)}` : "/api/business/budgets";
   const { data, isLoading, isFetching, error, refetch } = useQuery<FinancialModel>({ queryKey: [modelUrl], enabled: Boolean(selectedId) });
+  const { data: budget, isLoading: budgetLoading, isFetching: budgetFetching, error: budgetError, refetch: refetchBudget } = useQuery<BusinessBudget>({
+    queryKey: ["/api/business/budgets", selectedId],
+    enabled: Boolean(selectedId),
+    queryFn: async () => (await apiRequest("GET", budgetUrl)).json(),
+  });
   const { data: rolesData } = useQuery<{ roles: JobRole[] }>({ queryKey: ["/api/business/roles"] });
-  usePageLoadActivity("page:business-model", isLoading || isFetching);
+  usePageLoadActivity("page:business-model", isLoading || isFetching || budgetLoading || budgetFetching);
+  const assumptionsPreferenceKey = useMemo(() => {
+    if (!user?.id || !principal?.accountId || !selectedId) return null;
+    return `${principal.accountId}:${user.id}:${selectedId}`;
+  }, [principal?.accountId, selectedId, user?.id]);
   const [draft, setDraft] = useState<Assumptions | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [assumptionsOpen, setAssumptionsOpen] = useState(() => readAssumptionsOpen(assumptionsPreferenceKey));
   const [period, setPeriod] = useState<PeriodMode>("monthly");
   const [accountsOpen, setAccountsOpen] = useState(true);
   const [usersOpen, setUsersOpen] = useState(true);
@@ -113,6 +155,15 @@ export default function BusinessModelPage() {
     setDraft(null);
     setSaveState("idle");
   }, [selectedId]);
+
+  useEffect(() => {
+    setAssumptionsOpen(readAssumptionsOpen(assumptionsPreferenceKey));
+  }, [assumptionsPreferenceKey]);
+
+  const changeAssumptionsOpen = useCallback((open: boolean) => {
+    setAssumptionsOpen(open);
+    persistAssumptionsOpen(assumptionsPreferenceKey, open);
+  }, [assumptionsPreferenceKey]);
 
   const save = useMutation({
     mutationFn: async (assumptions: Assumptions) => {
@@ -149,28 +200,28 @@ export default function BusinessModelPage() {
     });
   }, [scheduleSave]);
 
-  const projection = useMemo(() => draft ? computeProjection(draft, rolesData?.roles ?? []) : null, [draft, rolesData]);
+  const projection = useMemo(() => draft && budget ? computeProjection(draft, rolesData?.roles ?? [], budget.departments) : null, [budget, draft, rolesData]);
   const periods = useMemo(() => projection ? aggregateMonths(projection.months, period) : [], [projection, period]);
 
-  if (error) {
+  if (error || budgetError) {
     return (
       <div className="w-full p-4">
         <p className="text-sm font-medium text-foreground">Forecast unavailable</p>
-        <p className="mt-1 text-sm text-muted-foreground">{(error as Error).message}</p>
-        <Button type="button" variant="outline" size="sm" className="mt-4" disabled={isFetching} onClick={() => void refetch()}>
-          {isFetching && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />} Try again
+        <p className="mt-1 text-sm text-muted-foreground">{((error ?? budgetError) as Error).message}</p>
+        <Button type="button" variant="outline" size="sm" className="mt-4" disabled={isFetching || budgetFetching} onClick={() => { void refetch(); void refetchBudget(); }}>
+          {(isFetching || budgetFetching) && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />} Try again
         </Button>
       </div>
     );
   }
 
-  if (isLoading || !draft || !projection) return null;
+  if (isLoading || budgetLoading || !draft || !budget || !projection) return null;
 
   return (
     <div className="w-full space-y-6 p-4" data-testid="business-model-page">
       <BusinessPageHeader page="Model" businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} />
       <section className="overflow-hidden border-y border-border/20">
-        <ProfileDetailSection title="Assumptions" defaultOpen headerAction={<SavedIndicator state={saveState} />}>
+        <ProfileDetailSection title="Assumptions" open={assumptionsOpen} onOpenChange={changeAssumptionsOpen} headerAction={<SavedIndicator state={saveState} />}>
           <div className="space-y-0">
             <Driver label="Starting accounts"><NumericInput ariaLabel="Starting paying accounts" value={draft.startingAccounts} min={0} step={1} onChange={(startingAccounts) => updateGlobal({ startingAccounts })} /></Driver>
             <Driver label="Starting users"><NumericInput ariaLabel="Starting users" value={draft.startingUsers} min={0} step={1} onChange={(startingUsers) => updateGlobal({ startingUsers })} /></Driver>
@@ -229,8 +280,10 @@ export default function BusinessModelPage() {
               <DataRow label="Gross Profit" periods={periods} render={(row) => fmtCurrency(row.grossProfit)} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />
               <DataRow label="OpEx" periods={periods} render={(row) => fmtCurrency(-row.totalOpex)} onToggle={() => setOpexOpen((open) => !open)} open={opexOpen} />
               {opexOpen && <DataRow label="Staff" indent periods={periods} render={(row) => fmtCurrency(-row.staffOpex)} tone={() => "text-muted-foreground"} />}
-              {opexOpen && <DataRow label="Marketing / S&M" indent periods={periods} render={(row) => fmtCurrency(-row.marketingOpex)} tone={() => "text-muted-foreground"} />}
-              {opexOpen && <DataRow label="G&A" indent periods={periods} render={(row) => fmtCurrency(-row.gaOpex)} tone={() => "text-muted-foreground"} />}
+              {opexOpen && <DataRow label="Acquisition" indent periods={periods} render={(row) => fmtCurrency(-row.acquisitionOpex)} tone={() => "text-muted-foreground"} />}
+              {opexOpen && budget.departments.map((department) => (
+                <DataRow key={department.id} label={department.name} indent periods={periods} render={(row) => fmtCurrency(-(row.departmentOpex[department.id] ?? 0))} tone={() => "text-muted-foreground"} />
+              ))}
               <DataRow label="Operating Income" periods={periods} render={(row) => fmtCurrency(row.operatingIncome)} tone={(row) => row.operatingIncome < 0 ? "text-destructive" : "text-foreground"} />
               <DataRow label="Net Cash Flow" periods={periods} render={(row) => fmtCurrency(row.netCashChange)} tone={(row) => row.netCashChange < 0 ? "text-destructive" : "text-foreground"} />
               <DataRow label="Cash Balance" periods={periods} render={(row) => fmtCurrency(row.endingCash)} tone={(row) => row.endingCash < 0 ? "font-medium text-destructive" : "text-foreground"} emphasize />
