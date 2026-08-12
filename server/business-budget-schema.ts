@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-/** Additive, replay-safe schema convergence for Business-owned annual budgets. */
+/** Additive, replay-safe schema convergence for one hypothetical monthly budget per Business. */
 export async function ensureBusinessBudgetsSchema(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS business_budgets (
