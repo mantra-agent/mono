@@ -92,20 +92,6 @@ try {
   serverLog.warn(`GitHub credential migration skipped: ${err?.message || err}`);
 }
 
-// Load GITHUB_REPO_URL from system settings if not already in env
-if (!process.env.GITHUB_REPO_URL) {
-  try {
-    const { getSetting } = await import("./system-settings");
-    const saved = await getSetting<string>("system.github_repo_url");
-    if (saved) {
-      process.env.GITHUB_REPO_URL = saved;
-      serverLog.log("GITHUB_REPO_URL loaded from system settings");
-    }
-  } catch (err: any) {
-    serverLog.warn(`Failed to load GITHUB_REPO_URL from settings: ${err?.message || err}`);
-  }
-}
-
 // Boot-time encryption status scan (Task #1036). Logs an INFO line with
 // counts; emits an ERROR `encryption_key_mismatch` line if any app secret
 // or connected account fails to decrypt with the current ENCRYPTION_KEY.

@@ -5012,8 +5012,6 @@ interface GitHubStatus {
   status?: "connected" | "disconnected" | "error";
   error?: string;
   login?: string;
-  repoUrlSet: boolean;
-  repoUrlDisplay?: string;
   credentials?: GitHubCredential[];
 }
 
@@ -5433,22 +5431,6 @@ function GitHubDetail() {
     },
   });
 
-  const [repoUrlInput, setRepoUrlInput] = useState(data?.repoUrlDisplay ? `https://${data.repoUrlDisplay}` : "");
-
-  const saveRepoUrlMutation = useMutation({
-    mutationFn: async (url: string) => {
-      const res = await apiRequest("POST", "/api/integrations/github/repo-url", { url });
-      return (await res.json()) as { ok: true; repoUrlSet: boolean };
-    },
-    onSuccess: (res) => {
-      toast({ title: res.repoUrlSet ? "Repository URL saved" : "Repository URL cleared" });
-      queryClient.invalidateQueries({ queryKey: ["/api/integrations/github/status"] });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to save URL", description: err.message, variant: "destructive" });
-    },
-  });
-
   if (isLoading) {
     return (
       <div className="space-y-4" data-testid="github-tab-loading">
@@ -5460,8 +5442,6 @@ function GitHubDetail() {
 
   const connected = !!data?.connected || hasPlatformGitHubConnection;
   const hasError = !connected;
-  const isProd = import.meta.env.MODE === "production";
-  const repoMisconfigured = isProd && !data?.repoUrlSet;
 
   return (
     <div className="space-y-6" data-testid="github-tab">
@@ -5836,89 +5816,6 @@ function GitHubDetail() {
         </Card>
       )}
 
-      <div className={HIERARCHY_TREE_STACK_CLASS} data-testid="github-repo-card">
-        <ProfileDetailSection title="Repository URL" defaultOpen testId="github-repo">
-            <ProfileTreeRow
-              label="Configured"
-              icon={<Github className="h-3.5 w-3.5" />}
-              hasValue
-              showEmpty
-              mobileLayout="inline"
-              valueLayout="compact"
-              testId="row-repo-url-configured"
-            >
-              {data?.repoUrlSet ? (
-                <Badge className="bg-success/15 text-success-foreground border-success/30" data-testid="badge-repo-url-set">Set</Badge>
-              ) : (
-                <Badge variant={repoMisconfigured ? "destructive" : "secondary"} data-testid="badge-repo-url-set">Not set</Badge>
-              )}
-            </ProfileTreeRow>
-            {data?.repoUrlSet ? (
-              <ProfileTreeRow
-                label="Repository"
-                icon={<Globe className="h-3.5 w-3.5" />}
-                hasValue
-                showEmpty
-                mobileLayout="inline"
-                valueLayout="compact"
-                testId="row-repo-url-display"
-              >
-                <span className="font-mono" data-testid="text-repo-url-display">{data.repoUrlDisplay}</span>
-              </ProfileTreeRow>
-            ) : null}
-            <ProfileTreeRow
-              label="URL"
-              icon={<Globe className="h-3.5 w-3.5" />}
-              hasValue
-              showEmpty
-              menuVisibility="hover"
-              menuContent={data?.repoUrlSet ? (
-                <DropdownMenuItem
-                  className="text-destructive focus:text-destructive"
-                  onClick={() => {
-                    if (confirm("Clear GITHUB_REPO_URL? GitNexus will not be able to sync the repo in production.")) {
-                      saveRepoUrlMutation.mutate("");
-                    }
-                  }}
-                  disabled={saveRepoUrlMutation.isPending}
-                  data-testid="button-repo-url-clear"
-                >
-                  <Trash2 className="mr-2 h-4 w-4" /> Clear
-                </DropdownMenuItem>
-              ) : undefined}
-              testId="row-repo-url-edit"
-            >
-              <div className="flex min-w-0 items-center gap-1.5">
-                <Input
-                  type="text"
-                  value={repoUrlInput}
-                  onChange={(e) => setRepoUrlInput(e.target.value)}
-                  placeholder="https://github.com/org/repo"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="font-mono"
-                  data-testid="input-repo-url"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => saveRepoUrlMutation.mutate(repoUrlInput.trim())}
-                  disabled={saveRepoUrlMutation.isPending}
-                  data-testid="button-repo-url-save"
-                >
-                  {saveRepoUrlMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                  <span className="sr-only">Save repository URL</span>
-                </Button>
-              </div>
-            </ProfileTreeRow>
-            {repoMisconfigured ? (
-              <p className="px-2 py-1.5 text-xs text-error-foreground" data-testid="text-repo-url-warning">
-                Production is running without GITHUB_REPO_URL. GitNexus cannot sync the repo from origin.
-              </p>
-            ) : null}
-        </ProfileDetailSection>
-      </div>
     </div>
   );
 }

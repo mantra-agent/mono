@@ -13,6 +13,7 @@ import { db } from "../db";
 import { createLogger } from "../log";
 import pLimit from "p-limit";
 import { TTLCache } from "../utils/ttl-cache";
+import { resolveDefaultIndexedGitSource } from "../git-source-resolver";
 
 const log = createLogger("VersionTimeline");
 
@@ -95,20 +96,6 @@ const MERGED_PR_MAX_PAGES = 10;
 const MERGED_PR_PAGE_CONCURRENCY = 3;
 
 // ── Helpers ────────────────────────────────────────────────────────────
-
-function repoRefFromUrl(): RepoRef | null {
-  const url = process.env.GITHUB_REPO_URL;
-  if (!url) return null;
-  // Handle full URLs: https://github.com/owner/repo(.git)
-  try {
-    const parsed = new URL(url);
-    const slug = parsed.pathname.replace(/^\//, "").replace(/\.git$/, "");
-    return parseRepoSlug(slug);
-  } catch {
-    // Try as bare slug: owner/repo
-    return parseRepoSlug(url);
-  }
-}
 
 // ── Fetch functions ────────────────────────────────────────────────────
 
@@ -302,7 +289,7 @@ function mergeTimeline(
 }
 
 
-/** Resolve all distinct GitHub repos from platform source bindings, falling back to GITHUB_REPO_URL. */
+/** Resolve all distinct GitHub repositories from canonical Platform source bindings. */
 async function allGitHubRepos(): Promise<RepoRef[]> {
   try {
     const rows = await db
@@ -319,13 +306,11 @@ async function allGitHubRepos(): Promise<RepoRef[]> {
       seen.add(key);
       refs.push({ owner: row.owner, repo: row.repo });
     }
-    if (refs.length > 0) return refs;
+    return refs;
   } catch (err) {
     log.warn("Failed to query platform source bindings for PR count", { error: err instanceof Error ? err.message : String(err) });
+    return [];
   }
-  // Fallback to env var
-  const fallback = repoRefFromUrl();
-  return fallback ? [fallback] : [];
 }
 
 function mergedPrPagePath(ref: RepoRef, page: number): string {
@@ -400,7 +385,8 @@ export async function fetchVersionTimeline(): Promise<TimelineResponse> {
     return cache.data;
   }
 
-  const repoRef = repoRefFromUrl();
+  const source = await resolveDefaultIndexedGitSource();
+  const repoRef = source ? { owner: source.owner, repo: source.repo } : null;
   let githubConnected = !!repoRef;
   let prs: TimelinePR[] = [];
   let commits: TimelineCommit[] = [];
