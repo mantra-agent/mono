@@ -100,7 +100,7 @@ function MonthlyAmountInput({ item, onSet }: { item: BudgetLineItem; onSet: (amo
     return (
       <Input
         ref={inputRef}
-        className="!h-5 !w-16 text-right tabular-nums"
+        className="!mr-5 !h-5 !w-16 text-right tabular-nums"
         inputMode="decimal"
         aria-label={`${item.name} monthly budget`}
         value={draft}
@@ -120,7 +120,7 @@ function MonthlyAmountInput({ item, onSet }: { item: BudgetLineItem; onSet: (amo
   return (
     <button
       type="button"
-      className="tabular-nums"
+      className="mr-5 tabular-nums text-muted-foreground"
       aria-label={`Edit ${item.name} monthly budget`}
       onClick={() => setEditing(true)}
     >
@@ -176,7 +176,7 @@ function CategoryRow({ department, category, continues, mutate, openNameDialog }
   return (
     <BudgetTreeRow continues={continues}>
       <ProfileTreeRow
-        label={category.name}
+        label={<span className="italic text-foreground">{category.name}</span>}
         icon={<Folder className="h-3.5 w-3.5" />}
         hasValue
         showEmpty
@@ -203,7 +203,7 @@ function CategoryRow({ department, category, continues, mutate, openNameDialog }
         />}
         menuVisibility="hover"
       >
-        <span className="tabular-nums">{formatMoney(categoryMonthlyTotal(category))}</span>
+        <span className="italic tabular-nums">{formatMoney(categoryMonthlyTotal(category))}</span>
       </ProfileTreeRow>
     </BudgetTreeRow>
   );
@@ -217,7 +217,7 @@ function DepartmentSection({ department, mutate, openNameDialog }: {
   return (
     <div className={HIERARCHY_TREE_STACK_CLASS}>
       <ProfileTreeRow
-        label={department.name}
+        label={<span className="italic text-foreground">{department.name}</span>}
         icon={<Building2 className="h-3.5 w-3.5" />}
         hasValue
         showEmpty
@@ -244,7 +244,7 @@ function DepartmentSection({ department, mutate, openNameDialog }: {
         />}
         menuVisibility="hover"
       >
-        <span className="tabular-nums">{formatMoney(departmentMonthlyTotal(department))}</span>
+        <span className="italic tabular-nums">{formatMoney(departmentMonthlyTotal(department))}</span>
       </ProfileTreeRow>
     </div>
   );
