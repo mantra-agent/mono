@@ -2655,13 +2655,11 @@ function GoogleDetail() {
 function BoxDetail() {
   const { activeVaultId } = useVaults();
   return (
-    <Card className="min-w-0 overflow-hidden" data-testid="box-detail">
-      <CardContent className="space-y-0 p-0">
-        <IntegrationTreeSection label="Box account" initialOpen>
-          <BoxSection vaultId={activeVaultId || undefined} />
-        </IntegrationTreeSection>
-      </CardContent>
-    </Card>
+    <div className="min-w-0" data-testid="box-detail">
+      <IntegrationTreeSection label="Box account" initialOpen>
+        <BoxSection vaultId={activeVaultId || undefined} />
+      </IntegrationTreeSection>
+    </div>
   );
 }
 
