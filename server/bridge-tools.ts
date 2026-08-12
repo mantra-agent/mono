@@ -6395,7 +6395,7 @@ ${refs}` : ""),
     const action = typeof args.action === "string" ? args.action : "";
     if (!action) return { result: "Missing 'action' parameter", error: true };
 
-    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "provision_database_roles", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "create_product", "update_product", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection", "save_context_artifact", "get_context_artifacts", "remove_context_artifact", "get_cloudflare_pages_project", "deploy_cloudflare_pages", "cancel_cloudflare_pages_deployment", "poll_cloudflare_pages_deployment", "repair_cloudflare_pages_project"]);
+    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "provision_database_roles", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "list_products", "create_product", "update_product", "create_product_legacy", "update_product_legacy", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection", "save_context_artifact", "get_context_artifacts", "remove_context_artifact", "get_cloudflare_pages_project", "deploy_cloudflare_pages", "cancel_cloudflare_pages_deployment", "poll_cloudflare_pages_deployment", "repair_cloudflare_pages_project"]);
     if (!allowed.has(action)) {
       return { result: `Unknown platforms action: ${action}. Allowed: ${[...allowed].join(", ")}`, error: true };
     }
@@ -6557,10 +6557,45 @@ ${refs}` : ""),
         return { result: JSON.stringify(updated, null, 2) };
       }
 
+      // ── list_products ──
+      if (action === "list_products") {
+        const { productStorage } = await import("./product-storage");
+        return { result: JSON.stringify(await productStorage.list(), null, 2) };
+      }
+
       // ── create_product ──
       if (action === "create_product") {
+        const { productStorage } = await import("./product-storage");
+        const platformIds = Array.isArray(args.platformIds)
+          ? args.platformIds.filter((value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value > 0)
+          : (positiveId(args.id) ? [positiveId(args.id)!] : []);
+        const created = await productStorage.create({
+          name: typeof args.name === "string" ? args.name : "",
+          description: typeof args.description === "string" ? args.description : undefined,
+          status: typeof args.status === "string" ? args.status : undefined,
+          platformIds,
+        });
+        return { result: JSON.stringify(created, null, 2) };
+      }
+
+      // ── update_product ──
+      if (action === "update_product") {
+        const productId = positiveId(args.id);
+        if (!productId) return { result: "Missing positive product 'id' parameter for update_product", error: true };
+        const { productStorage } = await import("./product-storage");
+        const updated = await productStorage.update(productId, {
+          name: typeof args.name === "string" ? args.name : undefined,
+          description: typeof args.description === "string" ? args.description : undefined,
+          status: typeof args.status === "string" ? args.status : undefined,
+        });
+        if (!updated) return { result: `Product ${productId} not found or not writable`, error: true };
+        return { result: JSON.stringify(updated, null, 2) };
+      }
+
+      // ── create_product_legacy ──
+      if (action === "create_product_legacy") {
         const platformId = positiveId(args.id);
-        if (!platformId) return { result: "Missing positive platform 'id' parameter for create_product", error: true };
+        if (!platformId) return { result: "Missing positive platform 'id' parameter for create_product_legacy", error: true };
         const [plat] = await db.select({ id: platformsTable.id }).from(platformsTable).where(writablePlat(eq(platformsTable.id, platformId))).limit(1);
         if (!plat) return { result: `Platform ${platformId} not found or not writable`, error: true };
         const parsed = insertPlatformProductSchema.parse({
@@ -6573,10 +6608,10 @@ ${refs}` : ""),
         return { result: JSON.stringify({ ...created, environments: [] }, null, 2) };
       }
 
-      // ── update_product ──
-      if (action === "update_product") {
+      // ── update_product_legacy ──
+      if (action === "update_product_legacy") {
         const productId = positiveId(args.id);
-        if (!productId) return { result: "Missing positive product 'id' parameter for update_product", error: true };
+        if (!productId) return { result: "Missing positive product 'id' parameter for update_product_legacy", error: true };
         const productAccess = await getWritableProduct(productId);
         if (!productAccess) return { result: `Product ${productId} not found or not writable`, error: true };
         const prod = productAccess.product;
