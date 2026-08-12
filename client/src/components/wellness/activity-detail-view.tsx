@@ -5,6 +5,7 @@ import { useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Trash2, Loader2 } from "lucide-react";
 import { useState, useCallback, useRef, useEffect } from "react";
@@ -118,7 +119,7 @@ function DetailEditableText({
       return (
         <textarea
           ref={inputRef as React.RefObject<HTMLTextAreaElement>}
-          className="bg-transparent border border-border rounded px-2 py-1 outline-none text-sm w-full min-h-[60px] resize-y"
+          className="min-h-20 w-full resize-none"
           value={localValue}
           onChange={(e) => setLocalValue(e.target.value)}
           onBlur={commitEdit}
@@ -131,7 +132,7 @@ function DetailEditableText({
     return (
       <input
         ref={inputRef as React.RefObject<HTMLInputElement>}
-        className="bg-transparent border border-border rounded px-2 py-1 outline-none text-sm w-full"
+        className="w-full"
         value={localValue}
         onChange={(e) => setLocalValue(e.target.value)}
         onBlur={commitEdit}
@@ -145,7 +146,7 @@ function DetailEditableText({
 
   return (
     <span
-      className="cursor-pointer hover:bg-muted/50 rounded px-1 py-0.5 -mx-1 transition-colors text-sm"
+      className="block w-full cursor-pointer truncate rounded px-1 py-0.5 text-right text-xs transition-colors hover:bg-muted/50"
       onClick={() => { setEditing(true); setLocalValue(value); }}
       title="Click to edit"
     >
@@ -203,7 +204,7 @@ function DetailEditableNumber({
   if (editing) {
     return (
       <input
-        className="bg-transparent border border-border rounded px-2 py-1 outline-none text-sm w-20"
+        className="w-48"
         type="number"
         value={localValue}
         onChange={(e) => setLocalValue(e.target.value)}
@@ -220,23 +221,12 @@ function DetailEditableNumber({
   const display = value != null ? `${value}${suffix ?? ""}` : "—";
   return (
     <span
-      className="cursor-pointer hover:bg-muted/50 rounded px-1 py-0.5 -mx-1 transition-colors text-sm"
+      className="block w-full cursor-pointer truncate rounded px-1 py-0.5 text-right text-xs transition-colors hover:bg-muted/50"
       onClick={() => { setEditing(true); setLocalValue(String(value ?? "")); }}
       title="Click to edit"
     >
       {display}
     </span>
-  );
-}
-
-// --- Property row ---
-
-function PropRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex min-w-0 flex-col items-start gap-1 py-1.5 @sm:flex-row @sm:gap-3">
-      <span className="shrink-0 pt-0.5 text-xs text-muted-foreground @sm:w-24">{label}</span>
-      <div className="min-w-0 w-full flex-1">{children}</div>
-    </div>
   );
 }
 
@@ -281,71 +271,37 @@ export function ActivityDetailView({
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {/* Header */}
-        <div className="p-4 border-b">
-          <div className="flex items-center">
-            <DetailEditableText
-              value={activity.name}
-              activityId={activity.id}
-              field="name"
-              placeholder="Activity name"
-            />
-          </div>
-        </div>
-
         {/* Properties */}
-        <div className="p-4 border-b space-y-0">
-          <PropRow label="Benefit">
-            <DetailEditableText
-              value={activity.benefit ?? ""}
-              activityId={activity.id}
-              field="benefit"
-              placeholder="Why this matters"
-              multiline
-            />
-          </PropRow>
-          <PropRow label="Risk">
-            <DetailEditableText
-              value={activity.risk ?? ""}
-              activityId={activity.id}
-              field="risk"
-              placeholder="Risk if skipped"
-              multiline
-            />
-          </PropRow>
-          <PropRow label="Frequency">
-            <div className="flex items-center gap-2">
-              <DetailEditableNumber
-                value={activity.intervalDays}
-                activityId={activity.id}
-                field="intervalDays"
-                suffix=" days"
-                currentCategory={activity.category}
-              />
-              <Badge variant="outline" className="shrink-0 text-xs">
-                {CATEGORY_LABELS[activity.category] ?? activity.category}
-              </Badge>
-            </div>
-          </PropRow>
-          {activity.linkedMetricType && (
-            <PropRow label="Linked metric">
-              <span className="text-sm text-muted-foreground">
-                {activity.linkedMetricType}
-                {activity.goodThreshold != null && ` · Good ≥${activity.goodThreshold}`}
-                {activity.greatThreshold != null && ` · Great ≥${activity.greatThreshold}`}
-              </span>
-            </PropRow>
-          )}
-
-          <PropRow label="Window">
-            <WindowEditor
-              activityId={activity.id}
-              category={activity.category}
-              windowStart={activity.windowStart}
-              windowEnd={activity.windowEnd}
-              inWindow={activity.inWindow}
-            />
-          </PropRow>
+        <div className="border-b p-4">
+          <div className="overflow-hidden rounded-md border border-border/20">
+            <ProfileTreeRow label="Name" hasValue={Boolean(activity.name)} showEmpty mobileLayout="inline" testId="row-wellness-name">
+              <DetailEditableText value={activity.name} activityId={activity.id} field="name" placeholder="Activity name" />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Benefit" hasValue={Boolean(activity.benefit)} showEmpty mobileLayout="inline" testId="row-wellness-benefit">
+              <DetailEditableText value={activity.benefit ?? ""} activityId={activity.id} field="benefit" placeholder="Why this matters" multiline />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Risk" hasValue={Boolean(activity.risk)} showEmpty mobileLayout="inline" testId="row-wellness-risk">
+              <DetailEditableText value={activity.risk ?? ""} activityId={activity.id} field="risk" placeholder="Risk if skipped" multiline />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Frequency" hasValue showEmpty mobileLayout="inline" testId="row-wellness-frequency">
+              <div className="flex min-w-0 items-center justify-end gap-2">
+                <DetailEditableNumber value={activity.intervalDays} activityId={activity.id} field="intervalDays" suffix=" days" currentCategory={activity.category} />
+                <Badge variant="outline" className="shrink-0 text-xs">{CATEGORY_LABELS[activity.category] ?? activity.category}</Badge>
+              </div>
+            </ProfileTreeRow>
+            {activity.linkedMetricType && (
+              <ProfileTreeRow label="Linked metric" hasValue showEmpty mobileLayout="inline" testId="row-wellness-linked-metric">
+                <span className="truncate text-muted-foreground">
+                  {activity.linkedMetricType}
+                  {activity.goodThreshold != null && ` · Good ≥${activity.goodThreshold}`}
+                  {activity.greatThreshold != null && ` · Great ≥${activity.greatThreshold}`}
+                </span>
+              </ProfileTreeRow>
+            )}
+            <ProfileTreeRow label="Window" hasValue showEmpty mobileLayout="inline" testId="row-wellness-window">
+              <WindowEditor activityId={activity.id} category={activity.category} windowStart={activity.windowStart} windowEnd={activity.windowEnd} inWindow={activity.inWindow} />
+            </ProfileTreeRow>
+          </div>
         </div>
 
         {/* Trends & History */}
