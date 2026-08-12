@@ -1,4 +1,6 @@
 import { cn } from "@/lib/utils";
+import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
+import { stripExpressionTags } from "@shared/expression-tags";
 
 interface VoiceCaptionOverlayProps {
   text: string;
@@ -7,7 +9,10 @@ interface VoiceCaptionOverlayProps {
 
 /** Quiet, non-interactive projection of the currently audible agent phrase. */
 export function VoiceCaptionOverlay({ text, className }: VoiceCaptionOverlayProps) {
-  if (!text) return null;
+  const { layer } = useVisibilityLayer();
+  const visibleText = layer === 0 ? stripExpressionTags(text) : text;
+
+  if (!visibleText) return null;
 
   return (
     <div
@@ -16,7 +21,7 @@ export function VoiceCaptionOverlay({ text, className }: VoiceCaptionOverlayProp
       data-testid="voice-caption-overlay"
     >
       <p className="max-w-2xl text-balance text-center text-base font-medium leading-relaxed text-foreground drop-shadow-[0_1px_10px_rgba(0,0,0,0.9)] md:text-lg">
-        {text}
+        {visibleText}
       </p>
     </div>
   );
