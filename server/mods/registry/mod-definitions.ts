@@ -291,6 +291,25 @@ const finance: ModDefinition = {
   },
 };
 
+const slack: ModDefinition = {
+  key: "slack",
+  version: "1.0.0",
+  name: "Slack",
+  description: "A default-deny Slack interaction adapter for explicitly mapped internal workspaces.",
+  outcome: {
+    label: "Use Mantra in Slack",
+    promise: "Bring bounded, explicit Slack conversations into canonical Mantra Sessions.",
+    activationSignals: ["slack.integration.slack"],
+  },
+  experience: { primaryObjectKind: "integration", primaryActionId: "slack.action.connect", rootSurfaceKey: "integrations" },
+  compatibility: { minimumCoreVersion: MIN_CORE },
+  requiresCore: ["agent", "integration-custody", "ui-composition"],
+  contributions: {
+    integrations: [integration("slack.integration.slack", "slack", "available", ["dm", "explicit-mention"])],
+    serverRouteGroups: [serverRouteGroupRef("slack.routes.api", "slack.api")],
+  },
+};
+
 export const modDefinitions: ModDefinition[] = [
   planning,
   build,
@@ -298,4 +317,5 @@ export const modDefinitions: ModDefinition[] = [
   wellness,
   network,
   finance,
+  slack,
 ];

@@ -22,6 +22,15 @@
       "reviewTrigger": "Server root composition, authority, persistence, or runtime-boundary changes"
     },
     {
+      "id": "server-slack",
+      "status": "reviewed",
+      "prefixes": ["server/slack/"],
+      "owner": "Slack Mod",
+      "principles": ["Canonical Mutation Path", "Principal Scope", "Provider Authority", "Replay Safety", "Bounded Operations", "Observability"],
+      "evidence": "Reviewed against the TIVE Slack pilot specification, root/server AGENTS, SECURITY.md, current Slack Socket Mode/Web API contracts, and the canonical Mod, Principal, Session, provider credential, schema convergence, API policy, and graceful shutdown boundaries.",
+      "reviewTrigger": "Slack installation, mapping, event admission, Session binding, inference policy, provider delivery, or lifecycle changes"
+    },
+    {
       "id": "server-memory",
       "status": "reviewed",
       "prefixes": ["server/memory/"],
