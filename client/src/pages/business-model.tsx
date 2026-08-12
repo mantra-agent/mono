@@ -280,7 +280,6 @@ export default function BusinessModelPage() {
               <DataRow label="Gross Profit" periods={periods} render={(row) => fmtCurrency(row.grossProfit)} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />
               <DataRow label="OpEx" periods={periods} render={(row) => fmtCurrency(-row.totalOpex)} onToggle={() => setOpexOpen((open) => !open)} open={opexOpen} />
               {opexOpen && <DataRow label="Staff" indent periods={periods} render={(row) => fmtCurrency(-row.staffOpex)} tone={() => "text-muted-foreground"} />}
-              {opexOpen && <DataRow label="Acquisition" indent periods={periods} render={(row) => fmtCurrency(-row.acquisitionOpex)} tone={() => "text-muted-foreground"} />}
               {opexOpen && budget.departments.map((department) => (
                 <DataRow key={department.id} label={department.name} indent periods={periods} render={(row) => fmtCurrency(-(row.departmentOpex[department.id] ?? 0))} tone={() => "text-muted-foreground"} />
               ))}
