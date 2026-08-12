@@ -2,6 +2,18 @@ import { z } from "zod";
 import type { JobRole } from "./job-roles";
 
 export const calendarMonthSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Month must use YYYY-MM");
+export const calendarQuarterSchema = z.string().regex(/^\d{4} Q[1-4]$/, "Quarter must use YYYY Q1-Q4");
+
+export function quarterToMonth(quarter: string): string {
+  const parsed = calendarQuarterSchema.parse(quarter);
+  const [year, q] = parsed.split(" ");
+  return `${year}-${String((Number(q.slice(1)) - 1) * 3 + 1).padStart(2, "0")}`;
+}
+
+export function monthToQuarter(month: string): string {
+  const [year, monthNumber] = calendarMonthSchema.parse(month).split("-");
+  return `${year} Q${Math.floor((Number(monthNumber) - 1) / 3) + 1}`;
+}
 export const hiringSlotCreateSchema = z.object({
   businessId: z.string().min(1), roleId: z.string().min(1), approvalMonth: calendarMonthSchema,
   plannedStartMonth: calendarMonthSchema.nullable().optional(), idempotencyKey: z.string().trim().min(8).max(200),
@@ -20,6 +32,9 @@ export interface BusinessHiringSlot {
 }
 export interface HiringMonthProjection { calendarMonth: string; label: string; quarterLabel: string; approvedSlots: number; headcount: number; staffOpex: number; }
 export interface BusinessHiringProjection { businessId: string; roles: JobRole[]; slots: BusinessHiringSlot[]; months: HiringMonthProjection[]; unresolvedLegacyRoleIds: string[]; }
+
+export interface HiringQuarter { quarter: string; roles: Array<JobRole & { slotId: string }>; }
+export interface BusinessHiringPlan { businessId: string; roles: JobRole[]; quarters: HiringQuarter[]; }
 
 export function calendarMonthAt(start: string, offset: number): string {
   const [year, month] = start.split("-").map(Number);

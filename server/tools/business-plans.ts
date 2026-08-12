@@ -1,4 +1,5 @@
 import { safeStringify } from "../utils/safe-stringify";
+import { quarterToMonth } from "@shared/models/business-hiring";
 import { businessPlanStorage } from "../business-plan-storage";
 import { businessStorage, type Business } from "../business-storage";
 import { businessCreateSchema, businessPatchSchema } from "@shared/schema";
@@ -511,21 +512,24 @@ const ENTITY_ACTIONS = new Set([
   "list_businesses", "get_business", "create_business", "update_business", "archive_business",
   "list_business_vaults", "add_business_vault", "remove_business_vault", "set_business_vaults",
 ]);
-const HIRING_ACTIONS = new Set(["list_hiring_slots", "create_hiring_slot", "update_hiring_slot", "cancel_hiring_slot"]);
+const HIRING_ACTIONS = new Set(["list_hiring_slots", "get_hiring_plan", "create_hiring_slot", "approve_hiring_role", "update_hiring_slot", "cancel_hiring_slot", "remove_hiring_role"]);
 async function handleHiringAction(action: string, args: Record<string, unknown>) {
   const businessId = requiredStr(args, "businessId");
   if (!businessId) return { result: `business.${action} requires businessId`, error: true };
   const { businessHiringStorage } = await import("../business-hiring-storage");
-  if (action === "list_hiring_slots") return { result: safeStringify(await businessHiringStorage.projection(businessId), { label: "bridge.business.hiring.list" }) };
+  if (action === "list_hiring_slots" || action === "get_hiring_plan") return { result: safeStringify(await businessHiringStorage.plan(businessId), { label: "bridge.business.hiring.list" }) };
   const slotId = requiredStr(args, "hiringSlotId");
+  if (action === "remove_hiring_role" && !slotId) return { result: "business.remove_hiring_role requires hiringSlotId", error: true };
   if (action === "cancel_hiring_slot") {
     if (!slotId) return { result: "business.cancel_hiring_slot requires hiringSlotId", error: true };
     return { result: safeStringify(await businessHiringStorage.cancel(businessId, slotId), { label: "bridge.business.hiring.cancel" }) };
   }
   const idempotencyKey = requiredStr(args, "idempotencyKey");
   if (!idempotencyKey) return { result: `business.${action} requires idempotencyKey`, error: true };
+  if (action === "remove_hiring_role") action = "cancel_hiring_slot";
+  if (action === "approve_hiring_role") action = "create_hiring_slot";
   if (action === "create_hiring_slot") {
-    const roleId = requiredStr(args, "roleId"); const approvalMonth = requiredStr(args, "approvalMonth");
+    const roleId = requiredStr(args, "roleId"); const quarter = requiredStr(args, "quarter"); const approvalMonth = quarter ? quarterToMonth(quarter) : requiredStr(args, "approvalMonth");
     if (!roleId || !approvalMonth) return { result: "business.create_hiring_slot requires roleId and approvalMonth", error: true };
     return { result: safeStringify(await businessHiringStorage.create({ businessId, roleId, approvalMonth, plannedStartMonth: optionalStr(args, "plannedStartMonth"), idempotencyKey }), { label: "bridge.business.hiring.create" }) };
   }

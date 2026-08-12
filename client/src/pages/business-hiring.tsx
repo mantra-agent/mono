@@ -1,42 +1,55 @@
 import { useMemo, useState } from "react";
-import { CalendarPlus, ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
+import { Briefcase, Loader2, Plus, Trash2 } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
-import { HierarchySectionHeader } from "@/components/hierarchy-section-header";
+import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSelectedBusiness } from "@/hooks/use-selected-business";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { JOB_TEAMS, type JobRole } from "@shared/models/job-roles";
-import type { BusinessHiringProjection, BusinessHiringSlot } from "@shared/models/business-hiring";
+import type { BusinessHiringPlan, HiringQuarter } from "@shared/models/business-hiring";
+import type { JobRole } from "@shared/models/job-roles";
 
-function money(value: number): string { return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value); }
-function monthInputValue(value: string | null): string { return value ?? ""; }
-function SlotRow({ slot, role, businessId }: { slot: BusinessHiringSlot; role: JobRole; businessId: string }) {
+function quarterOptions(): string[] {
+  const year = new Date().getFullYear();
+  return Array.from({ length: 12 }, (_, index) => `${year + Math.floor(index / 4)} Q${(index % 4) + 1}`);
+}
+
+function AddRole({ businessId, quarter, roles, onDone }: { businessId: string; quarter: string; roles: JobRole[]; onDone: () => void }) {
+  const [roleId, setRoleId] = useState("");
   const { toast } = useToast();
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/business/hiring", businessId] });
-  const update = useMutation({ mutationFn: async (plannedStartMonth: string | null) => (await apiRequest("PATCH", `/api/business/hiring/slots/${slot.id}`, { businessId, ...(plannedStartMonth ? { plannedStartMonth } : { clearFields: ["plannedStartMonth"] }), idempotencyKey: `ui-update-${slot.id}-${Date.now()}` })).json(), onSuccess: invalidate, onError: (error: Error) => toast({ title: "Could not update opening", description: error.message, variant: "destructive" }) });
-  const cancel = useMutation({ mutationFn: async () => (await apiRequest("DELETE", `/api/business/hiring/slots/${slot.id}?businessId=${encodeURIComponent(businessId)}`)).json(), onSuccess: invalidate, onError: (error: Error) => toast({ title: "Could not cancel opening", description: error.message, variant: "destructive" }) });
-  return <ProfileTreeRow label={slot.plannedStartMonth ? `${slot.plannedStartMonth} start` : "Unplanned opening"} icon={<ChevronRight className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" menuContent={<button type="button" className="flex items-center gap-2 text-destructive" onClick={() => cancel.mutate()}><Trash2 className="h-3.5 w-3.5" />Cancel opening</button>}>
-    <div className="flex items-center gap-2"><span className="text-xs text-muted-foreground">{role.title} · approved {slot.approvalMonth}</span><Input type="month" className="h-8 w-36" value={monthInputValue(slot.plannedStartMonth)} onChange={(event) => update.mutate(event.target.value || null)} aria-label={`Planned start for ${role.title}`} /></div>
-  </ProfileTreeRow>;
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const [year, q] = quarter.split(" ");
+      const month = String((Number(q.slice(1)) - 1) * 3 + 1).padStart(2, "0");
+      return apiRequest("POST", "/api/business/hiring/slots", { businessId, roleId, approvalMonth: `${year}-${month}`, idempotencyKey: `ui-${businessId}-${quarter}-${roleId}` });
+    },
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["/api/business/hiring", businessId] }); onDone(); },
+    onError: (error: Error) => toast({ title: "Could not approve role", description: error.message, variant: "destructive" }),
+  });
+  return <div className="flex flex-wrap items-center gap-2 py-2 pl-8"><Select value={roleId} onValueChange={setRoleId}><SelectTrigger className="w-64" aria-label="Job Role"><SelectValue placeholder="Choose a Job Role" /></SelectTrigger><SelectContent>{roles.map((role) => <SelectItem key={role.id} value={role.id}>{role.title}</SelectItem>)}</SelectContent></Select><Button className="bg-cta text-cta-foreground" size="sm" disabled={!roleId || mutation.isPending} onClick={() => mutation.mutate()}>Approve Role</Button><Button variant="ghost" size="sm" onClick={onDone}>Cancel</Button></div>;
 }
-function NewSlot({ roles, businessId, onDone }: { roles: JobRole[]; businessId: string; onDone: () => void }) {
-  const { toast } = useToast(); const [roleId, setRoleId] = useState(roles[0]?.id ?? ""); const [approvalMonth, setApprovalMonth] = useState(""); const [plannedStartMonth, setPlannedStartMonth] = useState("");
-  const create = useMutation({ mutationFn: async () => (await apiRequest("POST", "/api/business/hiring/slots", { businessId, roleId, approvalMonth, plannedStartMonth: plannedStartMonth || null, idempotencyKey: `ui-create-${businessId}-${roleId}-${approvalMonth}-${plannedStartMonth}` })).json(), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/business/hiring", businessId] }); onDone(); }, onError: (error: Error) => toast({ title: "Could not add opening", description: error.message, variant: "destructive" }) });
-  return <div className="space-y-3 border-b border-border/20 px-2 py-3"><Select value={roleId} onValueChange={setRoleId}><SelectTrigger aria-label="Role"><SelectValue placeholder="Choose role" /></SelectTrigger><SelectContent>{roles.map((role) => <SelectItem key={role.id} value={role.id}>{role.title}</SelectItem>)}</SelectContent></Select><div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><label className="space-y-1 text-sm"><span className="text-muted-foreground">Approval month</span><Input type="month" value={approvalMonth} onChange={(event) => setApprovalMonth(event.target.value)} /></label><label className="space-y-1 text-sm"><span className="text-muted-foreground">Planned start</span><Input type="month" value={plannedStartMonth} min={approvalMonth || undefined} onChange={(event) => setPlannedStartMonth(event.target.value)} /></label></div><div className="flex justify-end gap-2"><Button variant="ghost" size="sm" onClick={onDone}>Cancel</Button><Button size="sm" disabled={!roleId || !approvalMonth || create.isPending} onClick={() => create.mutate()}>{create.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}Add Opening</Button></div></div>;
+
+function QuarterRow({ plan, quarter, businessId, query, onRefresh }: { plan: BusinessHiringPlan; quarter: HiringQuarter; businessId: string; query: string; onRefresh: () => void }) {
+  const [adding, setAdding] = useState(false);
+  const { toast } = useToast();
+  const visibleRoles = quarter.roles.filter((role) => role.title.toLowerCase().includes(query.toLowerCase()));
+  const remove = useMutation({ mutationFn: async (slotId: string) => apiRequest("DELETE", `/api/business/hiring/slots/${slotId}?businessId=${encodeURIComponent(businessId)}`), onSuccess: onRefresh, onError: (error: Error) => toast({ title: "Could not remove approval", description: error.message, variant: "destructive" }) });
+  return <div><ProfileTreeRow label={quarter.quarter} icon={<Briefcase className="h-3.5 w-3.5" />} hasValue showEmpty defaultOpen expandedContent={<div>{visibleRoles.map((role) => <HierarchyTreeRow key={role.slotId} continues={false} connectorAnchor="first-row-center"><ProfileTreeRow label={role.title} icon={<Briefcase className="h-3.5 w-3.5" />} menuContent={<button type="button" className="flex items-center gap-2 text-destructive" onClick={() => remove.mutate(role.slotId)}><Trash2 className="h-3.5 w-3.5" />Remove approval</button>} menuVisibility="hover"><span className="text-sm text-muted-foreground">{role.team}</span></ProfileTreeRow></HierarchyTreeRow>)}{adding ? <AddRole businessId={businessId} quarter={quarter.quarter} roles={plan.roles.filter((role) => !quarter.roles.some((existing) => existing.id === role.id))} onDone={() => setAdding(false)} /> : <HierarchyTreeRow continues={false} connectorAnchor="first-row-center"><button type="button" className="flex items-center gap-2 px-2 py-1.5 text-sm text-cta" onClick={() => setAdding(true)}><Plus className="h-3.5 w-3.5" />Add role</button></HierarchyTreeRow>}</div>} expandedContentClassName="px-0 pb-0 pl-0" /> </div>;
 }
+
 export default function BusinessHiringPage() {
-  const { businesses, selectedId, setSelectedId } = useSelectedBusiness(); const [query, setQuery] = useState(""); const [creating, setCreating] = useState(false);
-  const { data, isLoading, error, refetch } = useQuery<BusinessHiringProjection>({ queryKey: ["/api/business/hiring", selectedId], enabled: Boolean(selectedId), queryFn: async () => (await apiRequest("GET", `/api/business/hiring?businessId=${encodeURIComponent(selectedId ?? "")}`)).json() });
-  const roleById = useMemo(() => new Map((data?.roles ?? []).map((role) => [role.id, role])), [data?.roles]);
-  const grouped = useMemo(() => JOB_TEAMS.map((team) => ({ team, roles: (data?.roles ?? []).filter((role) => role.team === team && `${role.title} ${role.description}`.toLowerCase().includes(query.toLowerCase()) && (data?.slots ?? []).some((slot) => slot.roleId === role.id && slot.status === "approved")) })).filter((group) => group.roles.length), [data, query]);
-  if (!selectedId) return <div className="w-full p-4 text-sm text-muted-foreground">Select a Business to plan hiring.</div>;
-  if (isLoading) return <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
-  if (error || !data) return <div className="w-full p-4 text-sm text-destructive">Hiring plan unavailable. <button className="text-cta" onClick={() => void refetch()}>Try again</button></div>;
-  return <div className="w-full space-y-4 overflow-y-auto p-4" data-testid="business-hiring-page"><BusinessPageHeader page="Hiring" businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} /><div className="flex flex-wrap items-center gap-2"><HierarchySearchInput value={query} onChange={setQuery} ariaLabel="Search hiring roles" inputTestId="input-search-hiring" clearTestId="button-clear-hiring-search" />{creating ? null : <Button className="bg-cta text-cta-foreground" onClick={() => setCreating(true)}><Plus className="mr-1.5 h-3.5 w-3.5" />Add Opening</Button>}</div>{creating && <NewSlot roles={data.roles} businessId={selectedId} onDone={() => setCreating(false)} />}<div className="overflow-x-auto border-y border-border/20"><div className="min-w-[980px]"><div className="grid grid-cols-[13rem_repeat(18,minmax(4.2rem,1fr))] border-b border-border/20 text-xs text-muted-foreground"><div className="p-2">Role / opening</div>{data.months.map((month) => <div key={month.calendarMonth} className="border-l border-border/20 p-2 text-center"><div>{month.label}</div><div className="text-2xs">{month.quarterLabel}</div></div>)}</div>{grouped.map(({ team, roles }) => <section key={team}><HierarchySectionHeader>{team}</HierarchySectionHeader>{roles.map((role) => <div key={role.id} className="grid grid-cols-[13rem_repeat(18,minmax(4.2rem,1fr))] border-b border-border/10"><div className="p-2 text-sm">{role.title}<div className="text-xs text-muted-foreground">{money(role.annualSalaryMin)}–{money(role.annualSalaryMax)}</div>{data.slots.filter((slot) => slot.roleId === role.id && slot.status === "approved").map((slot) => <SlotRow key={slot.id} slot={slot} role={role} businessId={selectedId} />)}</div>{data.months.map((month) => <div key={month.calendarMonth} className="border-l border-border/10 p-2 text-center text-sm text-muted-foreground">{data.slots.filter((slot) => slot.roleId === role.id && slot.status === "approved" && slot.plannedStartMonth && slot.plannedStartMonth <= month.calendarMonth).length || "·"}</div>)}</div>)}</section>)}<div className="grid grid-cols-[13rem_repeat(18,minmax(4.2rem,1fr))] border-t border-border/30 text-sm font-medium"><div className="p-2">Cumulative headcount / staff OpEx</div>{data.months.map((month) => <div key={month.calendarMonth} className="border-l border-border/20 p-2 text-center"><div>{month.headcount}</div><div className="text-xs text-muted-foreground">{money(month.staffOpex)}</div></div>)}</div></div></div>{data.unresolvedLegacyRoleIds.length > 0 && <div className="text-sm text-muted-foreground">Some legacy openings reference Roles no longer visible. They remain in the model as unresolved compatibility evidence.</div>}</div>;
+  const { businesses, selectedId, setSelectedId, isLoading: businessesLoading } = useSelectedBusiness();
+  const [query, setQuery] = useState("");
+  const [newQuarter, setNewQuarter] = useState("");
+  const { toast } = useToast();
+  const key = ["/api/business/hiring", selectedId] as const;
+  const { data, isLoading, refetch } = useQuery<BusinessHiringPlan>({ queryKey: key, enabled: Boolean(selectedId), queryFn: async () => (await apiRequest("GET", `/api/business/hiring?businessId=${encodeURIComponent(selectedId ?? "")}`)).json() });
+  const addQuarter = useMutation({ mutationFn: async () => { const [year, q] = newQuarter.split(" "); const month = String((Number(q.slice(1)) - 1) * 3 + 1).padStart(2, "0"); const role = data?.roles[0]; if (!role) throw new Error("Create a Job Role first in Roles"); return apiRequest("POST", "/api/business/hiring/slots", { businessId: selectedId, roleId: role.id, approvalMonth: `${year}-${month}`, idempotencyKey: `ui-quarter-${selectedId}-${newQuarter}` }); }, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: key }); setNewQuarter(""); }, onError: (error: Error) => toast({ title: "Could not add quarter", description: error.message, variant: "destructive" }) });
+  const quarters = useMemo(() => data?.quarters.filter((quarter) => !query || quarter.quarter.toLowerCase().includes(query.toLowerCase()) || quarter.roles.some((role) => role.title.toLowerCase().includes(query.toLowerCase()))) ?? [], [data?.quarters, query]);
+  if (businessesLoading || isLoading) return <div className="flex h-full items-center justify-center text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+  return <div className="w-full p-4"><BusinessPageHeader page="Hiring" businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} /><div className="flex flex-wrap items-center gap-2 pb-2"><div className="min-w-0 flex-1"><HierarchySearchInput value={query} onChange={setQuery} placeholder="Search hiring plan" /></div><Select value={newQuarter} onValueChange={setNewQuarter}><SelectTrigger className="w-40" aria-label="Quarter"><SelectValue placeholder="Add quarter" /></SelectTrigger><SelectContent>{quarterOptions().map((quarter) => <SelectItem key={quarter} value={quarter}>{quarter}</SelectItem>)}</SelectContent></Select><Button className="bg-cta text-cta-foreground" disabled={!newQuarter || addQuarter.isPending} onClick={() => addQuarter.mutate()}><Plus className="mr-1.5 h-3.5 w-3.5" />Add quarter</Button></div>{selectedId && data ? quarters.map((quarter) => <QuarterRow key={quarter.quarter} plan={data} quarter={quarter} businessId={selectedId} query={query} onRefresh={() => { void refetch(); }} />) : <div className="px-2 py-1.5 text-sm text-muted-foreground">No Business selected.</div>}{data && quarters.length === 0 && <div className="px-2 py-1.5 text-sm text-muted-foreground">No hiring quarters yet.</div>}</div>;
 }
