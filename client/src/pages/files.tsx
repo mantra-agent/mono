@@ -235,6 +235,7 @@ export default function FilesPage() {
                       key={`${vault.id}:${isSearching ? "search" : "browse"}`}
                       label="Uploads"
                       defaultOpen={isSearching}
+                      vaultColor={vault.color ?? null}
                     >
                       <DriveResourceTree
                         vaultId={vault.id}

@@ -6,6 +6,7 @@ import {
   Loader2,
   FileText,
   Folder,
+  FolderOpen,
   ChevronRight,
   ExternalLink,
   MoreHorizontal,
@@ -1006,20 +1007,36 @@ function FolderChildren({
 export function DriveResourceGroup({
   label,
   defaultOpen = false,
+  vaultColor,
   children,
 }: {
   label: string;
   defaultOpen?: boolean;
+  vaultColor?: string | null;
   children: ReactNode;
 }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
+  const titleStyle = titleStyleForVault(vaultColor);
 
   return (
     <div className="mt-1">
       <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}>
-        {resourceIcon({ resourceType: "folder" })}
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
+        <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span
+          className="min-w-0 flex-1 truncate text-sm font-medium italic"
+          style={titleStyle}
+        >
+          {label}
+        </span>
         <RowChevron open={isOpen} onToggle={() => setIsOpen((value) => !value)} label={label} />
+        <button
+          type="button"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border/40 bg-background text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+          aria-label={`${label} actions`}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <MoreHorizontal className="h-3.5 w-3.5" />
+        </button>
       </div>
       {isOpen ? <div className="border-l border-border/60 pl-3">{children}</div> : null}
     </div>
