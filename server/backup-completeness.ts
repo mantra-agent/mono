@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import type { ClientBase } from "pg";
 
-export const BACKUP_DISPOSITION_MANIFEST_VERSION = 2;
+export const BACKUP_DISPOSITION_MANIFEST_VERSION = 3;
 
 export type BackupClassification = "authoritative" | "control" | "projection" | "transient" | "retired" | "secret";
 export type BackupSensitivity = "S0" | "S1" | "S2" | "S3";
@@ -52,8 +52,10 @@ const INCLUSIONS: Record<string, Omit<BackupDisposition, "relation" | "action">>
 
 const SOURCE_VERIFIED_INCLUDES = new Set(`vaults invited_subjects teams team_members organizations organization_members project_vault_memberships person_vault_memberships business_vault_memberships object_acls object_grants privileged_access_audit app_migrations milestones companies company_identity_keys job_roles businesses business_plans business_budgets financial_models metrics metric_samples kpis hours_used_intervals hours_used_rollups opportunity_interactions document_store_documents agenda_definitions meeting_drafts compaction_operations historical_continuity_entries meeting_turn_enrollments meeting_turns meeting_recap_distributions meeting_audio_samples meeting_audio_evaluations plan_session_links plan_step_attempts plan_step_reviews runtime_capacity_policies runtime_runs runtime_attempts runtime_run_events transactional_outbox memory_vnext_claims memory_vnext_sources memory_vnext_source_links memory_vnext_entity_links memory_vnext_claim_links memory_vnext_claim_link_evidence memory_vnext_source_queue memory_vnext_transition_paths memory_vnext_transition_members memory_vnext_transition_edges memory_vnext_prediction_runs memory_vnext_predictions memory_vnext_prediction_resolutions memory_vnext_relationship_certainty_events memory_vnext_exposures memory_vnext_strength_events memory_vnext_retrieval_controls memory_vnext_retrieval_activation_events memory_vnext_retrieval_labels memory_vnext_retrieval_evaluation_runs memory_vnext_causal_path_reviews memory_vnext_prediction_evaluation_runs memory_entries memory_sources memory_links memory_transitions memory_content_blocks memory_events memory_entity_links legacy_memory_quarantine_state document_store_cutover_state document_store_migration_runs document_store_migration_conflicts library_vault_identity_migrations library_placements library_page_pins library_page_trash address_links drive_resources file_index_policies file_index_reconciliation_runs document_artifacts media_items render_jobs export_jobs mod_entitlements mod_installations mod_installation_resources environment_context_artifacts environment_promotion_releases railway_api_call_receipts api_calls inference_payload_captures application_error_aggregates backup_jobs communication_audiences email_campaigns waitlist_applications people_import_decisions people_import_batches persona_revisions skill_persona_preferences skill_scores magic_demo_sessions magic_demo_session_events magic_demo_vision_frames intentions parked_ideas`.split(/\s+/));
 
-export type CatalogRelation = { name: string; oid: number; relkind: string; identityColumns: string[]; sequenceColumns: Array<{ column: string; sequence: string }>; foreignKeys: Array<{ parent: string; deferrable: boolean }> };
-export type BackupCoverage = { version: number; discovered: CatalogRelation[]; included: BackupDisposition[]; excluded: BackupDisposition[]; insertOrder: string[]; schemaFingerprint: string; manifestFingerprint: string };
+export type CatalogForeignKey = { name: string; parent: string; deferrable: boolean };
+export type CatalogRelation = { name: string; oid: number; relkind: string; identityColumns: string[]; sequenceColumns: Array<{ column: string; sequence: string }>; foreignKeys: CatalogForeignKey[] };
+export type BackupRestoreStrategy = { id: "principle-current-revision-v1" | "runtime-reference-reconciliation-v1"; relations: string[]; insertOrder: string[]; deferredConstraints: string[]; reconciledReferences: string[] };
+export type BackupCoverage = { version: number; discovered: CatalogRelation[]; included: BackupDisposition[]; excluded: BackupDisposition[]; insertOrder: string[]; restoreStrategies: BackupRestoreStrategy[]; schemaFingerprint: string; manifestFingerprint: string };
 
 const stableHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
@@ -62,11 +64,11 @@ function includeDisposition(relation: string, registered: boolean): BackupDispos
 }
 
 export async function inspectBackupCoverage(client: ClientBase, registeredRelations: string[]): Promise<BackupCoverage> {
-  const result = await client.query<CatalogRelation & { identity_columns: string[] | null; sequence_columns: Array<{ column: string; sequence: string }> | null; foreign_keys: Array<{ parent: string; deferrable: boolean }> | null }>(`
+  const result = await client.query<CatalogRelation & { identity_columns: string[] | null; sequence_columns: Array<{ column: string; sequence: string }> | null; foreign_keys: CatalogForeignKey[] | null }>(`
     SELECT c.oid::int AS oid, c.relname AS name, c.relkind,
       COALESCE((SELECT jsonb_agg(a.attname ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND NOT a.attisdropped AND a.attidentity <> ''), '[]') AS identity_columns,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('column', a.attname, 'sequence', pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname)) ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND NOT a.attisdropped AND pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname) IS NOT NULL), '[]') AS sequence_columns,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('parent', pc.relname, 'deferrable', con.condeferrable) ORDER BY con.conname) FROM pg_constraint con JOIN pg_class pc ON pc.oid=con.confrelid WHERE con.conrelid=c.oid AND con.contype='f'), '[]') AS foreign_keys
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('name', con.conname, 'parent', pc.relname, 'deferrable', con.condeferrable) ORDER BY con.conname) FROM pg_constraint con JOIN pg_class pc ON pc.oid=con.confrelid WHERE con.conrelid=c.oid AND con.contype='f'), '[]') AS foreign_keys
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname=current_schema() AND c.relkind IN ('r','p') AND NOT c.relispartition
     ORDER BY c.relname`);
@@ -84,19 +86,23 @@ export async function inspectBackupCoverage(client: ClientBase, registeredRelati
   const included = dispositions.filter((d): d is BackupDisposition => d?.action === "include");
   const excluded = dispositions.filter((d): d is BackupDisposition => d?.action === "exclude");
   const includedNames = new Set(included.map(d => d.relation));
-  const indegree = new Map([...includedNames].map(name => [name, 0]));
-  const children = new Map<string, string[]>();
-  for (const rel of discovered.filter(r => includedNames.has(r.name))) for (const fk of rel.foreignKeys) if (includedNames.has(fk.parent) && fk.parent !== rel.name) { indegree.set(rel.name, (indegree.get(rel.name) ?? 0) + 1); children.set(fk.parent, [...(children.get(fk.parent) ?? []), rel.name]); }
-  const queue = [...indegree].filter(([, n]) => n === 0).map(([name]) => name).sort();
+  const graph = new Map([...includedNames].map(name => [name, [] as string[]]));
+  for (const rel of discovered.filter(r => includedNames.has(r.name))) for (const fk of rel.foreignKeys) if (includedNames.has(fk.parent)) graph.get(rel.name)!.push(fk.parent);
+  const components = stronglyConnectedComponents(graph);
+  const restoreStrategies = validateRestoreComponents(components, discovered);
+  const componentByRelation = new Map(components.flatMap((component, index) => component.map(name => [name, index] as const)));
+  const indegree = new Map(components.map((_, index) => [index, 0]));
+  const children = new Map<number, Set<number>>();
+  for (const [child, parents] of graph) for (const parent of parents) { const childIndex=componentByRelation.get(child)!; const parentIndex=componentByRelation.get(parent)!; if(childIndex===parentIndex) continue; const next=children.get(parentIndex) ?? new Set<number>(); if(!next.has(childIndex)) indegree.set(childIndex,indegree.get(childIndex)!+1); next.add(childIndex); children.set(parentIndex,next); }
+  const queue = [...indegree].filter(([, n]) => n === 0).map(([index]) => index).sort((a,b)=>components[a][0].localeCompare(components[b][0]));
   const insertOrder: string[] = [];
-  while (queue.length) { const name = queue.shift()!; insertOrder.push(name); for (const child of (children.get(name) ?? []).sort()) { const next=(indegree.get(child) ?? 0)-1; indegree.set(child,next); if(next===0){queue.push(child);queue.sort();} } }
-  if (insertOrder.length !== included.length) {
-    const cycle = [...indegree].filter(([, n]) => n > 0).map(([name]) => name);
-    const unsafe = discovered.filter(r => cycle.includes(r.name)).flatMap(r => r.foreignKeys.filter(f => cycle.includes(f.parent) && !f.deferrable).map(f => `${r.name}->${f.parent}`));
-    if (unsafe.length) throw new Error(`Backup completeness preflight failed: non-deferrable FK cycle(s): ${unsafe.join(", ")}`);
-    insertOrder.push(...cycle.sort());
-  }
+  while(queue.length){const index=queue.shift()!; const strategy=restoreStrategies.find(s=>s.relations.includes(components[index][0])); insertOrder.push(...(strategy?.insertOrder??components[index])); for(const child of children.get(index)??[]){const next=indegree.get(child)!-1; indegree.set(child,next); if(next===0)queue.push(child);} queue.sort((a,b)=>components[a][0].localeCompare(components[b][0]));}
   const schemaShape = discovered.map(r => ({ name:r.name, relkind:r.relkind, identityColumns:r.identityColumns, sequenceColumns:r.sequenceColumns, foreignKeys:r.foreignKeys }));
   const manifestShape = [...included, ...excluded].sort((a,b)=>a.relation.localeCompare(b.relation));
-  return { version: BACKUP_DISPOSITION_MANIFEST_VERSION, discovered, included, excluded, insertOrder, schemaFingerprint: stableHash(schemaShape), manifestFingerprint: stableHash(manifestShape) };
+  return { version: BACKUP_DISPOSITION_MANIFEST_VERSION, discovered, included, excluded, insertOrder, restoreStrategies, schemaFingerprint: stableHash(schemaShape), manifestFingerprint: stableHash({ manifestShape, restoreStrategies }) };
 }
+
+function stronglyConnectedComponents(graph: Map<string,string[]>): string[][] { let i=0; const indexes=new Map<string,number>(), low=new Map<string,number>(), stack:string[]=[], active=new Set<string>(), out:string[][]=[]; const visit=(name:string)=>{indexes.set(name,i);low.set(name,i++);stack.push(name);active.add(name);for(const parent of graph.get(name)??[]){if(!indexes.has(parent)){visit(parent);low.set(name,Math.min(low.get(name)!,low.get(parent)!));}else if(active.has(parent))low.set(name,Math.min(low.get(name)!,indexes.get(parent)!));}if(low.get(name)!==indexes.get(name))return;const part:string[]=[];let member:string;do{member=stack.pop()!;active.delete(member);part.push(member);}while(member!==name);out.push(part.sort());};for(const name of [...graph.keys()].sort())if(!indexes.has(name))visit(name);return out; }
+
+function validateRestoreComponents(components:string[][], discovered:CatalogRelation[]):BackupRestoreStrategy[]{const byName=new Map(discovered.map(r=>[r.name,r]));const out:BackupRestoreStrategy[]=[];for(const component of components){const self=component.flatMap(name=>(byName.get(name)?.foreignKeys??[]).filter(f=>f.parent===name));if(component.length===1&&self.length===0)continue;const signature=component.join(",");if(signature==="principle_revisions,principles"){out.push({id:"principle-current-revision-v1",relations:component,insertOrder:["principles","principle_revisions"],deferredConstraints:requireDeferrable(byName,"principles","principle_revisions"),reconciledReferences:[]});continue;}if(signature==="runtime_attempts,runtime_run_events,runtime_runs"){const causal=(byName.get("runtime_runs")?.foreignKeys??[]).filter(f=>f.parent==="runtime_runs"&&!f.deferrable);if(causal.length!==1)throw new Error("Backup completeness preflight failed: runtime self-reference restore contract drifted");out.push({id:"runtime-reference-reconciliation-v1",relations:component,insertOrder:["runtime_runs","runtime_attempts","runtime_run_events"],deferredConstraints:[...requireDeferrable(byName,"runtime_runs","runtime_attempts"),...requireDeferrable(byName,"runtime_runs","runtime_run_events")].sort(),reconciledReferences:["runtime_runs.causal_parent_run_id"]});continue;}throw new Error(`Backup completeness preflight failed: unsupported FK strongly connected component: ${component.join(" <-> ")}`);}return out.sort((a,b)=>a.id.localeCompare(b.id));}
+function requireDeferrable(byName:Map<string,CatalogRelation>,child:string,parent:string):string[]{const matches=(byName.get(child)?.foreignKeys??[]).filter(f=>f.parent===parent);if(!matches.length||matches.some(f=>!f.deferrable))throw new Error(`Backup completeness preflight failed: ${child}->${parent} must be deferrable for its declared restore strategy`);return matches.map(f=>`${child}.${f.name}`);}
