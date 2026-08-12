@@ -1604,12 +1604,22 @@ export async function runSchemaBootstrap(
 
     // Replay-safe migration: deduplicate legacy runtime product names per account.
     await pool.query(`INSERT INTO products (name, description, status, scope, owner_user_id, account_id)
-      SELECT DISTINCT ON (p.account_id, lower(pp.name)) pp.name, pp.description, pp.status, p.scope, p.owner_user_id, p.account_id
-      FROM platform_products pp JOIN platforms p ON p.id = pp.platform_id
-      WHERE p.account_id IS NOT NULL ORDER BY p.account_id, lower(pp.name), pp.id ON CONFLICT DO NOTHING`);
+      SELECT DISTINCT ON (COALESCE(p.account_id, v.account_id), lower(pp.name))
+        pp.name, pp.description, pp.status, p.scope, p.owner_user_id, COALESCE(p.account_id, v.account_id)
+      FROM platform_products pp
+      JOIN platforms p ON p.id = pp.platform_id
+      LEFT JOIN vaults v ON v.id = p.vault_id
+      WHERE COALESCE(p.account_id, v.account_id) IS NOT NULL
+      ORDER BY COALESCE(p.account_id, v.account_id), lower(pp.name), pp.id
+      ON CONFLICT DO NOTHING`);
     await pool.query(`INSERT INTO product_backlogs (product_id) SELECT id FROM products ON CONFLICT DO NOTHING`);
     await pool.query(`INSERT INTO product_platform_associations (product_id, platform_id)
-      SELECT pr.id, pp.platform_id FROM platform_products pp JOIN platforms p ON p.id = pp.platform_id JOIN products pr ON pr.account_id = p.account_id AND lower(pr.name) = lower(pp.name) ON CONFLICT DO NOTHING`);
+      SELECT pr.id, pp.platform_id
+      FROM platform_products pp
+      JOIN platforms p ON p.id = pp.platform_id
+      LEFT JOIN vaults v ON v.id = p.vault_id
+      JOIN products pr ON pr.account_id = COALESCE(p.account_id, v.account_id) AND lower(pr.name) = lower(pp.name)
+      ON CONFLICT DO NOTHING`);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS platform_product_environments (
