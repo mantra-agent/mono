@@ -25,6 +25,16 @@ export function firstOpenAgendaItem(
 
 export const RECAP_FTUE_AGENDA_ITEMS = [
   {
+    id: "say-hello",
+    title: "Say hello",
+    description: "Greet the user warmly and establish the conversation. Complete this item immediately through session.complete_agenda_item once you have exchanged an initial hello with the user; do not begin the introduction or any later agenda item before this completion is persisted.",
+  },
+  {
+    id: "introduce-mantra",
+    title: "Introduce Mantra",
+    description: "Briefly explain that Mantra helps the user hold context, pursue meaningful goals, and carry commitments into action. Ask what the user already knows about Mantra, offer to explain more, and invite their questions. Answer those initial questions before proceeding. Complete this item immediately through session.complete_agenda_item only after that introduction and invitation have happened and the user's initial questions have been answered or they confirm they have none.",
+  },
+  {
     id: "review-meeting-notes",
     title: "Review meeting notes",
     description: "Open on the recipient-safe meeting recap supplied in context, walking through summary, decisions, open questions, action items, and assigned tasks without leaving Home/Simple. Use ui in guide mode with the exact recipient-owned meetingResource from ftue_recap_context and surface=home so the real recap row expands and highlights inline. Never use the source meeting triggerId or open the meeting owner's private session or Library page. Complete only after the user has activated the highlighted recap row and reviewed what was captured.",
@@ -37,12 +47,12 @@ export const RECAP_FTUE_AGENDA_ITEMS = [
   {
     id: "set-first-goal",
     title: "Set first goal",
-    description: "Elicit one meaningful goal and create it through the canonical goals tool while the user remains on Home/Simple. The new goal surfaces there automatically through the data:goals_changed event; do not navigate to Goals or any other page. Complete this item only after the goal exists and is visible in the live Home view.",
+    description: "Elicit one meaningful goal and create it through the canonical goals tool while the user remains on Home/Simple. The new goal surfaces there automatically through the data:goals_changed event; do not navigate to Goals or any other page. Complete this item immediately through session.complete_agenda_item only after the canonical goal creation succeeds and the goal is visible in the live Home view; discussing or naming a goal without creating it is not completion.",
   },
   {
     id: "plan-goal-as-project",
     title: "Plan goal as project",
-    description: "Turn the first goal into a canonical project linked to that goal, with measurable milestones and concrete tasks created through work and tasks while the user remains on Home/Simple. Give every milestone a real dueDate and every task a real deadline, near-term and dependency-ordered, never omitted. The project, milestones, and tasks surface in the live Simple hierarchy automatically; do not navigate to Projects or any other page. Complete only after the project, milestones, and tasks exist with their dates and are visible on Home.",
+    description: "First propose 3–5 measurable, dependency-ordered milestones for the new goal, each with a deliberate due date, and ask the user to confirm or revise that milestone plan. Do not create a project, milestone, or task until the user explicitly confirms the proposal. After confirmation, create the canonical goal-linked project, confirmed milestones, and concrete tasks through work and tasks while the user remains on Home/Simple; every task needs a real deadline. Complete this item immediately through session.complete_agenda_item only after confirmation and successful creation are both true and the dated structure is visible on Home.",
   },
   {
     id: "show-the-memory-graph",
@@ -68,11 +78,11 @@ export function createRecapFtueAgenda(): SessionAgenda {
 }
 
 /**
- * Composes the authenticated FTUE greeting (the replay-safe first assistant
- * message). Recap onboarding opens on the first open agenda mission rather than
- * a hardcoded goal ask, so the greeting always matches whatever the agenda leads
- * with. Keyed on the canonical first item so a future reorder cannot reintroduce
- * a stale goal question.
+ * Composes the authenticated FTUE hello (the replay-safe first assistant
+ * message). The persisted agenda owns every step after that greeting, including
+ * the distinct introduction and goal rows, so this message must not skip ahead.
+ * Recap onboarding remains keyed on its first open item for compatibility with
+ * user-edited definitions.
  */
 export function composeFtueFirstMessage(params: {
   recapAware: boolean;
@@ -82,7 +92,7 @@ export function composeFtueFirstMessage(params: {
 }): string {
   const { recapAware, userFirstName, agentName, openItem } = params;
   if (!recapAware) {
-    return `Hello ${userFirstName}. I'm ${agentName}. I help you keep track of what matters and turn it into action. To start, what's one goal you'd like me to help move forward?`;
+    return `Hello ${userFirstName}. I'm ${agentName}. It's good to meet you.`;
   }
   if (!openItem) {
     return `Hello ${userFirstName}. Your onboarding agenda is complete. What should we move forward next?`;
