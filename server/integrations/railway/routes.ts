@@ -1,6 +1,11 @@
 import type { Express, Request, Response } from "express";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { environmentSourceBindings } from "@shared/models/platforms";
 import { requireAuth, requireAdmin } from "../../auth";
+import { db } from "../../db";
+import { requirePermission } from "../../permissions";
+import { composeStageLifecycleStatus } from "../../platforms/stage-lifecycle-status";
 import { createLogger } from "../../log";
 import { RailwayApiError } from "./client";
 import {
@@ -185,11 +190,34 @@ export function registerRailwayRoutes(app: Express) {
     }
   });
 
-  app.get("/api/railway/environments/:platformEnvironmentId/status", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/railway/environments/:platformEnvironmentId/status", requireAuth, requireActiveBuild, requirePermission("build:read"), async (req, res) => {
     const control = await parseEnvironment(req, res);
     if (!control) return;
     try {
-      const deployments = await fetchEnvironmentDeployments(control, 1);
+      const [source] = await db.select({
+        owner: environmentSourceBindings.owner,
+        repo: environmentSourceBindings.repo,
+        branch: environmentSourceBindings.branch,
+      }).from(environmentSourceBindings)
+        .where(eq(environmentSourceBindings.environmentId, control.environment.platformEnvironmentId))
+        .limit(1);
+      const [deploymentsResult, targetResult] = await Promise.allSettled([
+        fetchEnvironmentDeployments(control, 20),
+        source?.owner && source.repo && source.branch
+          ? getBranchHead({ owner: source.owner, repo: source.repo }, source.branch)
+          : Promise.resolve(null),
+      ]);
+      const deployments = deploymentsResult.status === "fulfilled" ? deploymentsResult.value : [];
+      const targetCommitSha = targetResult.status === "fulfilled" ? targetResult.value?.sha ?? null : null;
+      const lifecycle = composeStageLifecycleStatus({
+        deployments,
+        targetCommitSha,
+        providerError: deploymentsResult.status === "rejected"
+          ? (deploymentsResult.reason instanceof Error ? deploymentsResult.reason.message : "Railway deployment truth is unavailable.")
+          : targetResult.status === "rejected"
+            ? "The bound source branch head could not be resolved."
+            : null,
+      });
       res.json({
         configured: true,
         platformEnvironmentId: control.environment.platformEnvironmentId,
@@ -199,6 +227,7 @@ export function registerRailwayRoutes(app: Express) {
         environmentId: control.railwayEnvironmentId,
         serviceId: control.serviceId,
         deployment: serializeEnvironmentDeployment(deployments[0] ?? null),
+        lifecycle,
         fetchedAt: new Date().toISOString(),
       });
     } catch (error) {
