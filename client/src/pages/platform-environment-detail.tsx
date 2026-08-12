@@ -280,6 +280,28 @@ function useDevStatus(platformEnvironmentId: number) {
 
 function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmentId: number }) {
   const { data: status, isLoading, error, refetch, isFetching } = useDevStatus(platformEnvironmentId);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [rebuildConfirmOpen, setRebuildConfirmOpen] = useState(false);
+  const actionMutation = useMutation({
+    mutationFn: async ({ action, confirmation }: { action: "restart" | "full-rebuild"; confirmation?: "FULL_REBUILD" }) => {
+      const res = await fetch(`/api/railway/environments/${platformEnvironmentId}/actions/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ...(confirmation ? { confirmation } : {}), ...(confirmation ? { idempotencyKey: `stage-full-rebuild:${platformEnvironmentId}:${Date.now()}` } : {}) }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Stage action failed");
+      return result;
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/railway/environments", platformEnvironmentId, "status"] });
+      toast({ title: result.action === "full_rebuild" ? "Full Rebuild triggered" : "Stage restart triggered", description: result.action === "full_rebuild" ? "Railway is rebuilding the Stage environment." : "The Stage service is restarting." });
+      setRebuildConfirmOpen(false);
+    },
+    onError: (actionError: Error) => toast({ title: "Stage action failed", description: actionError.message, variant: "destructive" }),
+  });
 
   if (isLoading && !status) {
     return (
@@ -329,7 +351,12 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
       <ProfileTreeRow label="Runtime" icon={<Server className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
         <span>{humanize(status.lifecycle.capabilities.runtimeMode)}</span>
       </ProfileTreeRow>
-      <ProfileTreeRow label="Actions" icon={<Waypoints className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
+      <ProfileTreeRow label="Actions" icon={<Waypoints className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" actionContent={(
+        <div className="flex items-center gap-1">
+          {status.lifecycle.capabilities.actions.includes("restart_stage") && <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => actionMutation.mutate({ action: "restart" })} disabled={actionMutation.isPending}>Restart</Button>}
+          {status.lifecycle.capabilities.actions.includes("full_rebuild") && <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-warning" onClick={() => setRebuildConfirmOpen(true)} disabled={actionMutation.isPending}>Full Rebuild</Button>}
+        </div>
+      )}>
         <span>{status.lifecycle.capabilities.actions.map((action) => humanize(action)).join(" · ")}</span>
       </ProfileTreeRow>
       <ProfileTreeRow label="Active commit" icon={<GitBranch className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
@@ -341,6 +368,18 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
       <ProfileTreeRow label="Provider" icon={<Server className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" defaultOpen={Boolean(status.lifecycle.reason)} expandedContent={status.lifecycle.reason ? <p className="border-l border-border/30 pl-3 text-sm text-muted-foreground">{status.lifecycle.reason}</p> : undefined}>
         <span>{status.lifecycle.state === "rebuilding" ? "Railway is building the next deployment" : status.lifecycle.providerStatus ? humanize(status.lifecycle.providerStatus) : "Unavailable"}</span>
       </ProfileTreeRow>
+      <AlertDialog open={rebuildConfirmOpen} onOpenChange={setRebuildConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Run a Full Rebuild?</AlertDialogTitle>
+            <AlertDialogDescription>This invokes Railway's cold rebuild path for Stage. It may take several minutes and replaces the current deployment. Continue only if recovery is necessary.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actionMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => actionMutation.mutate({ action: "full-rebuild", confirmation: "FULL_REBUILD" })} disabled={actionMutation.isPending} className="bg-warning text-warning-foreground hover:bg-warning/90">{actionMutation.isPending ? "Rebuilding…" : "Confirm Full Rebuild"}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </EnvironmentSection>
   );
 }
