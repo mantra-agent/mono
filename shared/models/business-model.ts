@@ -122,6 +122,8 @@ export interface Assumptions {
   averageEntrySeatsPerTeamAccount: number;
   maxIncludedTokensMillions: number;
   maxPlusIncludedTokensMillions: number;
+  hoursUsedPerActiveUser: number;
+  tokensUsedPerHour: number;
   blendedTokenCostPerMillion: number;
   overageMarkupPct: number;
   nrrSeatSharePct: number;
@@ -255,6 +257,8 @@ export function defaultAssumptions(): Assumptions {
     averageEntrySeatsPerTeamAccount: 5,
     maxIncludedTokensMillions: 12,
     maxPlusIncludedTokensMillions: 30,
+    hoursUsedPerActiveUser: 20,
+    tokensUsedPerHour: 600_000,
     blendedTokenCostPerMillion: 3,
     overageMarkupPct: 400,
     nrrSeatSharePct: 50,
@@ -320,7 +324,7 @@ const rawAssumptionsSchema = z.object({
   annualAccountChurnPct: z.number().optional(), annualExistingAccountUserGrowthPct: z.number().optional(), annualExistingAccountUserContractionPct: z.number().optional(), annualAccountUpgradePct: z.number().optional(),
   annualGrossLogoRetentionPct: z.number().optional(), annualNrrPct: z.number().optional(), individualEntrySharePct: z.number().optional(), maxSubscriptionMonthly: z.number().optional(), revenuePerCustomerMonthly: z.number().optional(),
   maxPlusSubscriptionMonthly: z.number().optional(), participantSeatMonthly: z.number().optional(), averageEntrySeatsPerTeamAccount: z.number().optional(),
-  maxIncludedTokensMillions: z.number().optional(), maxPlusIncludedTokensMillions: z.number().optional(), blendedTokenCostPerMillion: z.number().optional(), overageMarkupPct: z.number().optional(),
+  maxIncludedTokensMillions: z.number().optional(), maxPlusIncludedTokensMillions: z.number().optional(), hoursUsedPerActiveUser: z.number().optional(), tokensUsedPerHour: z.number().optional(), blendedTokenCostPerMillion: z.number().optional(), overageMarkupPct: z.number().optional(),
   nrrSeatSharePct: z.number().optional(), nrrTierSharePct: z.number().optional(), nrrOverageSharePct: z.number().optional(),
   infrastructurePerActiveAccount: z.number().optional(), supportPerActiveAccount: z.number().optional(), seatInferenceAndSupportCost: z.number().optional(), paymentProcessingPct: z.number().optional(), onboardingCostPerNewAccount: z.number().optional(),
   productizedOnboardingMonth: z.number().optional(), productizedOnboardingCostPerNewAccount: z.number().optional(),
@@ -535,6 +539,7 @@ export function normalizeAssumptions(input: unknown): Assumptions {
     maxSubscriptionMonthly: nonNegative(compatibility.maxSubscriptionMonthly, defaults.maxSubscriptionMonthly), maxPlusSubscriptionMonthly: nonNegative(raw.maxPlusSubscriptionMonthly, defaults.maxPlusSubscriptionMonthly),
     participantSeatMonthly: nonNegative(raw.participantSeatMonthly, defaults.participantSeatMonthly), averageEntrySeatsPerTeamAccount: nonNegative(raw.averageEntrySeatsPerTeamAccount, defaults.averageEntrySeatsPerTeamAccount),
     maxIncludedTokensMillions: nonNegative(raw.maxIncludedTokensMillions, defaults.maxIncludedTokensMillions), maxPlusIncludedTokensMillions: nonNegative(raw.maxPlusIncludedTokensMillions, defaults.maxPlusIncludedTokensMillions),
+    hoursUsedPerActiveUser: nonNegative(raw.hoursUsedPerActiveUser, defaults.hoursUsedPerActiveUser), tokensUsedPerHour: nonNegative(raw.tokensUsedPerHour, defaults.tokensUsedPerHour),
     blendedTokenCostPerMillion: nonNegative(raw.blendedTokenCostPerMillion, defaults.blendedTokenCostPerMillion), overageMarkupPct: nonNegative(raw.overageMarkupPct, defaults.overageMarkupPct),
     nrrSeatSharePct: bounded(raw.nrrSeatSharePct, 0, 100, defaults.nrrSeatSharePct), nrrTierSharePct: bounded(raw.nrrTierSharePct, 0, 100, defaults.nrrTierSharePct), nrrOverageSharePct: bounded(raw.nrrOverageSharePct, 0, 100, defaults.nrrOverageSharePct),
     infrastructurePerActiveAccount: nonNegative(raw.infrastructurePerActiveAccount, defaults.infrastructurePerActiveAccount), supportPerActiveAccount: nonNegative(raw.supportPerActiveAccount, defaults.supportPerActiveAccount),
@@ -578,6 +583,7 @@ export interface MonthRow {
   month: number; calendarMonth: string; label: string; phaseKey: PhaseKey; phaseLabel: string;
   newAccounts: number; newPlgAccounts: number; newTopDownAccounts: number; churnedAccounts: number; activeAccounts: number;
   newUsers: number; expandedUsers: number; contractedUsers: number; existingAccountUsers: number; activeUsers: number;
+  hoursUsed: number; tokensUsed: number; tokenCost: number;
   startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; userContractionRevenue: number; tierExpansionRevenue: number; sameCohortRecurringRevenue: number; cohortNrr: number;
   subscriptionRevenue: number; seatExpansionRevenue: number; overageRevenue: number; productRevenue: number; productArr: number;
   activeSeats: number; requiredTierUpgrades: number; overageDominant: boolean;
@@ -593,6 +599,7 @@ export interface PeriodRow {
   key: string; label: string; startMonth: number; endMonth: number; monthCount: number;
   phaseKey: PhaseKey; phaseLabel: string; financingKey: FinancingKey;
   activeAccounts: number; newAccounts: number; churnedAccounts: number; activeUsers: number; newUsers: number; expandedUsers: number; contractedUsers: number;
+  hoursUsed: number; tokensUsed: number; tokenCost: number;
   startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; userContractionRevenue: number; tierExpansionRevenue: number; cohortNrr: number;
   totalCashRevenue: number; productRevenue: number; consultingRevenue: number; productCogs: number; consultingCogs: number; cogs: number; grossProfit: number;
   staffOpex: number; acquisitionOpex: number; budgetOpex: number; departmentOpex: Record<string, number>;
@@ -692,7 +699,11 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
   const overageGrossMargin = overagePriceMultiple > 0 ? 1 - 1 / overagePriceMultiple : 0;
   const startingUsersPerAccount = assumptions.startingAccounts > 0 ? Math.max(1, assumptions.startingUsers / assumptions.startingAccounts) : assumptions.averageUsersPerNewAccount;
   const entryRevenuePerAccount = assumptions.maxSubscriptionMonthly + Math.max(0, assumptions.averageUsersPerNewAccount - 1) * assumptions.participantSeatMonthly;
-  const includedInferencePerAccount = assumptions.maxIncludedTokensMillions * assumptions.blendedTokenCostPerMillion;
+  const hoursUsedPerUser = assumptions.hoursUsedPerActiveUser;
+  const tokensUsedPerHour = assumptions.tokensUsedPerHour;
+  const entryHoursUsed = assumptions.averageUsersPerNewAccount * hoursUsedPerUser;
+  const entryTokensUsed = entryHoursUsed * tokensUsedPerHour;
+  const includedInferencePerAccount = (entryTokensUsed / 1_000_000) * assumptions.blendedTokenCostPerMillion;
   const entryVariableCogsPerAccount = includedInferencePerAccount
     + assumptions.averageUsersPerNewAccount * assumptions.seatInferenceAndSupportCost
     + assumptions.infrastructurePerActiveAccount
@@ -768,7 +779,10 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
       : 0;
     const overageTokenCogs = overagePriceMultiple > 0 ? overageRevenue / overagePriceMultiple : 0;
     const requiredOverageTokensMillions = assumptions.blendedTokenCostPerMillion > 0 ? overageTokenCogs / assumptions.blendedTokenCostPerMillion : 0;
-    const includedTokenCogs = activeAccounts * includedInferencePerAccount;
+    const hoursUsed = activeUsers * hoursUsedPerUser;
+    const tokensUsed = hoursUsed * tokensUsedPerHour;
+    const tokenCost = (tokensUsed / 1_000_000) * assumptions.blendedTokenCostPerMillion;
+    const includedTokenCogs = tokenCost;
     const seatCogs = activeSeats * assumptions.seatInferenceAndSupportCost;
     const activeHires = derivedHires.filter((hire) => hire.startMonth <= month);
     const keyHireStaffOpex = activeHires.reduce((sum, hire) => {
@@ -807,10 +821,10 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     months.push({
       month, calendarMonth: calendarMonthAt(assumptions.startCalendarMonth, month), label: calendarMonthLabel(assumptions.startCalendarMonth, month), phaseKey: phaseForMonth(assumptions.phases, month).key, phaseLabel: PHASE_LABELS[phaseForMonth(assumptions.phases, month).key],
       newAccounts, newPlgAccounts, newTopDownAccounts: newAccounts - newPlgAccounts, churnedAccounts, activeAccounts,
-      newUsers, expandedUsers, contractedUsers, existingAccountUsers, activeUsers, startingCohortRevenue, churnedRevenue, userExpansionRevenue, userContractionRevenue, tierExpansionRevenue, sameCohortRecurringRevenue, cohortNrr,
+      newUsers, expandedUsers, contractedUsers, existingAccountUsers, activeUsers, hoursUsed, tokensUsed, tokenCost, startingCohortRevenue, churnedRevenue, userExpansionRevenue, userContractionRevenue, tierExpansionRevenue, sameCohortRecurringRevenue, cohortNrr,
       subscriptionRevenue, seatExpansionRevenue, overageRevenue, productRevenue, productArr: productRevenue * 12,
       activeSeats, requiredTierUpgrades, overageDominant: false,
-      consultingRevenue, totalCashRevenue, includedTokenCogs, seatCogs, overageTokenCogs, requiredOverageTokensMillions, totalTokenUsageMillions: activeAccounts * assumptions.maxIncludedTokensMillions + requiredOverageTokensMillions, overageGrossMargin,
+      consultingRevenue, totalCashRevenue, includedTokenCogs, seatCogs, overageTokenCogs, requiredOverageTokensMillions, totalTokenUsageMillions: tokensUsed / 1_000_000 + requiredOverageTokensMillions, overageGrossMargin,
       variableProductCogs, fixedProductCogs, productCogs, consultingCogs, productGrossMargin: safeRatio(productRevenue - productCogs, productRevenue), consultingGrossMargin: safeRatio(consultingRevenue - consultingCogs, consultingRevenue),
       blendedCompanyGrossMargin: safeRatio(totalCashRevenue - productCogs - consultingCogs, totalCashRevenue), acquisitionSpend, blendedCac: newAccounts > 0 ? acquisitionSpend / newAccounts : blendedEntryCac,
       cacPaybackMonths: baselineCacPaybackMonths, headcount, operatingExpense, capex: lane.capex, grossProfit, staffOpex, acquisitionOpex, budgetOpex, departmentOpex, totalOpex, operatingIncome, netCashChange, financingCash, endingCash, trailingBurn, runwayMonths: trailingBurn > 0 ? Math.max(0, endingCash) / trailingBurn : Number.POSITIVE_INFINITY,
@@ -979,6 +993,9 @@ export function aggregateMonths(months: MonthRow[], mode: PeriodMode): PeriodRow
       newUsers: sum((row) => row.newUsers),
       expandedUsers: sum((row) => row.expandedUsers),
       contractedUsers: sum((row) => row.contractedUsers),
+      hoursUsed: sum((row) => row.hoursUsed),
+      tokensUsed: sum((row) => row.tokensUsed),
+      tokenCost: sum((row) => row.tokenCost),
       startingCohortRevenue: sum((row) => row.startingCohortRevenue),
       churnedRevenue: sum((row) => row.churnedRevenue),
       userExpansionRevenue: sum((row) => row.userExpansionRevenue),
