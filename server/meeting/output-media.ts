@@ -28,7 +28,12 @@ const audioQueues = new Map<string, MeetingAudioClip[]>();
 const waiters = new Map<string, Array<(audio: MeetingAudioClip | null) => void>>();
 const speechLocks = new Map<string, Promise<void>>();
 const visualizerCaptionTimers = new Map<string, ReturnType<typeof setTimeout>[]>();
-const CAPTION_WORDS_PER_MINUTE = 150;
+// Spoken-word pacing for advancing sentence captions. Kept slower than a raw
+// reading rate and floored per sentence so each phrase lingers long enough to
+// read and does not race ahead of the actual synthesized speech.
+const CAPTION_WORDS_PER_MINUTE = 115;
+const CAPTION_MIN_SENTENCE_HOLD_MS = 1_800;
+const CAPTION_SENTENCE_READ_PADDING_MS = 400;
 
 function splitCaptionSentences(text: string): string[] {
   return text.trim().match(/[^.!?]+[.!?]+(?:["')\]]+)?|[^.!?]+$/g)?.map((sentence) => sentence.trim()).filter(Boolean) ?? [];
@@ -296,7 +301,8 @@ export function setMeetingVisualizerCaption(sessionId: string, caption: string):
   sentences.forEach((sentence, index) => {
     if (index > 0) {
       const previousSentence = sentences[index - 1] ?? "";
-      elapsedMs += Math.max(700, (previousSentence.split(/\s+/).length / CAPTION_WORDS_PER_MINUTE) * 60_000);
+      const spokenMs = (previousSentence.split(/\s+/).length / CAPTION_WORDS_PER_MINUTE) * 60_000;
+      elapsedMs += Math.max(CAPTION_MIN_SENTENCE_HOLD_MS, spokenMs) + CAPTION_SENTENCE_READ_PADDING_MS;
     }
     const timer = setTimeout(() => {
       if (index === sentences.length - 1) visualizerCaptionTimers.delete(sessionId);
