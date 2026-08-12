@@ -165,12 +165,6 @@ async function analyzeMagicDemoFrame(buffer: Buffer, contentType: string): Promi
   return { text: result.content.trim() || "I can see the scene, but I do not have a confident description yet.", latencyMs: Date.now() - startedAt };
 }
 
-async function synthesizeMagicDemoSpeech(text: string): Promise<{ audioBase64: string; contentType: string }> {
-  const { textToSpeech } = await import("../integrations/audio/client");
-  const buffer = await textToSpeech(text, "alloy", "mp3");
-  return { audioBase64: buffer.toString("base64"), contentType: "audio/mpeg" };
-}
-
 function compactFrameResponse(frame: {
   id: string;
   source: string;
@@ -402,7 +396,6 @@ export function registerMagicDemoRoutes(app: Express): void {
         const shouldRespond = req.body.respond === "true" || req.body.respond === true;
         if (shouldRespond) {
           answer = await analyzeMagicDemoFrame(fileBuffer, contentType);
-          const speech = await synthesizeMagicDemoSpeech(answer.text);
           await db.insert(magicDemoSessionEvents).values({
             sessionId: params.data.id,
             ownerUserId: principal.userId,
@@ -415,7 +408,6 @@ export function registerMagicDemoRoutes(app: Express): void {
             telemetry: {
               frameId: frame.id,
               answerLength: answer.text.length,
-              speechContentType: speech.contentType,
             },
             occurredAt: new Date(),
           });
@@ -430,7 +422,7 @@ export function registerMagicDemoRoutes(app: Express): void {
         }
         await db.update(magicDemoSessions).set(sessionUpdate).where(and(eq(magicDemoSessions.id, params.data.id), magicDemoSessionWritableScope(principal)));
 
-        res.status(201).json({ ...compactFrameResponse(frame), answer: answer ? { ...answer, speech } : undefined });
+        res.status(201).json({ ...compactFrameResponse(frame), answer });
       } catch (error: unknown) {
         const err = routeError(error, "upload_magic_demo_vision_frame");
         res.status(500).json({ error: err.message, operation: err.operation });
