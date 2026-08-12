@@ -4,6 +4,7 @@ import { VoiceCaptionOverlay } from "@/components/voice-caption-overlay";
 import { useVoiceCaptionsPreference } from "@/hooks/use-voice-captions-preference";
 import type { VoiceSessionContextValue } from "@/hooks/use-voice-session";
 import { publishCanonicalOrbReady } from "@/lib/claim-visual-handoff";
+import { stripExpressionTags } from "@shared/expression-tags";
 
 interface DesktopVoiceSurfaceProps {
   voiceSession: VoiceSessionContextValue;
@@ -32,7 +33,7 @@ export function DesktopVoiceSurface({ voiceSession }: DesktopVoiceSurfaceProps) 
           />
         )}
       />
-      {voiceCaptions ? <VoiceCaptionOverlay text={voiceSession.voiceCaption} /> : null}
+      {voiceCaptions ? <VoiceCaptionOverlay text={stripExpressionTags(voiceSession.voiceCaption)} /> : null}
     </div>
   );
 }

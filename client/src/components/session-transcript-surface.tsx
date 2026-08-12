@@ -11,6 +11,7 @@ import { useVoiceCaptionsPreference } from "@/hooks/use-voice-captions-preferenc
 import { VoiceCaptionOverlay } from "@/components/voice-caption-overlay";
 import { isNativeVoiceBridge } from "@/lib/native-voice-bridge";
 import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
+import { stripExpressionTags } from "@shared/expression-tags";
 import type { MeetingSessionMeta, QuestionResponseMeta, SessionAgenda } from "@shared/models/chat";
 import type { ChatMessage as Message } from "@/components/chat-shared";
 import type { PendingChatTurn } from "@/hooks/use-chat-send";
@@ -203,7 +204,7 @@ export function SessionTranscriptSurface({
                 readAudioLevel={nativeTranscription.readAudioLevel}
                 testId="desktop-native-transcription-surface"
               />
-              {voiceCaptions ? <VoiceCaptionOverlay text={nativeTranscription.voiceCaption} /> : null}
+              {voiceCaptions ? <VoiceCaptionOverlay text={stripExpressionTags(nativeTranscription.voiceCaption)} /> : null}
             </div>
           );
         }

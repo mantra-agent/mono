@@ -1,18 +1,17 @@
 import { cn } from "@/lib/utils";
-import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
-import { stripExpressionTags } from "@shared/expression-tags";
 
 interface VoiceCaptionOverlayProps {
   text: string;
   className?: string;
 }
 
-/** Quiet, non-interactive projection of the currently audible agent phrase. */
+/**
+ * Quiet, non-interactive projection of the currently audible agent phrase.
+ * This component must stay provider-free: the Recall camera page mounts it
+ * from the standalone `/visualizer` root, which has no QueryClient or auth.
+ */
 export function VoiceCaptionOverlay({ text, className }: VoiceCaptionOverlayProps) {
-  const { layer } = useVisibilityLayer();
-  const visibleText = layer === 0 ? stripExpressionTags(text) : text;
-
-  if (!visibleText) return null;
+  if (!text) return null;
 
   return (
     <div
@@ -21,7 +20,7 @@ export function VoiceCaptionOverlay({ text, className }: VoiceCaptionOverlayProp
       data-testid="voice-caption-overlay"
     >
       <p className="max-w-2xl text-balance text-center text-base font-medium leading-relaxed text-foreground drop-shadow-[0_1px_10px_rgba(0,0,0,0.9)] md:text-lg">
-        {visibleText}
+        {text}
       </p>
     </div>
   );
