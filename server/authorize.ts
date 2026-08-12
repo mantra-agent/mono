@@ -133,43 +133,28 @@ export function liveVaultGatePredicate(principal: Principal, vaultIdColumn: AnyC
 }
 
 /**
- * A live library_page grant covers that page and every live descendant.
- * The walk follows parent_id only; it never invents ancestors or siblings.
- * Trashed pages drop out of the walk so a grant cannot resurrect Trash.
+ * Folder-descendant grant cascade — TEMPORARILY DISABLED (returns FALSE).
+ *
+ * The prior implementation built a correlated RECURSIVE CTE whose base case was
+ * `WHERE library_pages.id = <outer library_pages.id>`. Because the CTE's own
+ * `FROM library_pages` reused the same table name, the outer-row correlation was
+ * shadowed and the base case resolved to `library_pages.id = library_pages.id` —
+ * trivially true for EVERY row. The `EXISTS` therefore returned true for every
+ * candidate page whenever the recipient held any single live `library_page`
+ * grant, exposing the entire `library_pages` table across all owners/accounts.
+ *
+ * Returning FALSE removes only the folder -> descendant cascade. Direct grants on
+ * an exact page/file are unaffected: they authorize correctly through
+ * `liveObjectGrantPredicate`, which matches the exact `object_id`. A correctly
+ * correlated descendant walk (aliasing the CTE tables so the outer reference is
+ * not shadowed) will be reintroduced under review in a follow-up.
  */
 export function liveLibraryPageTreeGrantPredicate(
-  principal: Principal,
-  pageIdColumn: AnyColumn,
-  required: ObjectRole,
+  _principal: Principal,
+  _pageIdColumn: AnyColumn,
+  _required: ObjectRole,
 ): SQL {
-  if (principal.actorType === "system") return sql`TRUE`;
-  if (principal.actorType !== "user" || !principal.userId) return sql`FALSE`;
-  return sql`EXISTS (
-    WITH RECURSIVE page_tree AS (
-      SELECT ${libraryPages.id} AS id, ${libraryPages.parentId} AS parent_id
-      FROM ${libraryPages}
-      WHERE ${libraryPages.id} = ${pageIdColumn}
-        AND NOT EXISTS (
-          SELECT 1 FROM library_page_trash trash
-          WHERE trash.page_id = ${libraryPages.id}
-        )
-      UNION ALL
-      SELECT parent.id, parent.parent_id
-      FROM ${libraryPages} parent
-      INNER JOIN page_tree child ON child.parent_id = parent.id
-      WHERE NOT EXISTS (
-        SELECT 1 FROM library_page_trash trash
-        WHERE trash.page_id = parent.id
-      )
-    )
-    SELECT 1
-    FROM page_tree
-    INNER JOIN ${objectGrants} ON ${objectGrants.objectType} = 'library_page'
-      AND ${objectGrants.objectId} = page_tree.id::text
-    WHERE ${subjectMatchPredicate(principal)}
-      AND ${objectGrants.revokedAt} IS NULL
-      AND ${inArray(objectGrants.capability, acceptedRoles(required))}
-  )`;
+  return sql`FALSE`;
 }
 
 /** Default owned-scope predicate for objects whose vault gate is the scope columns themselves. */
