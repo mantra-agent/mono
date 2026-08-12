@@ -165,19 +165,21 @@ export function combineWithProjectAccess(
 function parentProjectAccessExists(
   principal: Principal,
   projectId: AnyColumn,
+  required: ObjectGrantCapability,
 ): SQL {
   return exists(
     db
       .select({ id: projects.id })
       .from(projects)
-      .where(and(eq(projects.id, projectId), projectAccessPredicate(principal, "read"))),
+      .where(and(eq(projects.id, projectId), projectAccessPredicate(principal, required))),
   );
 }
 
 /**
- * Project-attached work derives visibility from its parent Project while
- * preserving child owner/account scope. Direct grants on the exact child
- * remain deliberate recipient access without granting unrelated work.
+ * Project-attached work derives access from its parent Project. A live project
+ * grant authorizes every attached milestone and task at the same capability.
+ * Direct child grants remain deliberate extra access. Structure and custody
+ * stay with the owner; this predicate does not reparent or transfer rows.
  */
 export function projectDerivedWorkAccessPredicate(
   principal: Principal,
@@ -190,19 +192,10 @@ export function projectDerivedWorkAccessPredicate(
     workObjectIdentity(objectType, columns),
     required,
   );
-  if (required === "read") {
-    const childOwned = visibleScopePredicate(principal, columns);
-    return or(
-      and(childOwned, parentProjectAccessExists(principal, columns.projectId)),
-      directGrant,
-    )!;
-  }
-  const childOwned = writableScopePredicate(principal, columns);
-  const ownerMutation = and(
-    childOwned,
-    parentProjectAccessExists(principal, columns.projectId),
+  return or(
+    parentProjectAccessExists(principal, columns.projectId, required),
+    directGrant,
   )!;
-  return or(ownerMutation, directGrant)!;
 }
 
 export function combineWithProjectDerivedWorkAccess(

@@ -1,3 +1,10 @@
+<!-- 2026-08-12 cascade sharing derived access:
+- Assets/data: A01/A06/A07 `object_grants`, projects/milestones/tasks, and `library_pages` hierarchy (S2 work and knowledge).
+- Flow/threat: Share sheet writes one grant on a project or page; recipients previously saw the parent object (or nothing) while children stayed owner-scoped, and Library list/tree ignored grants then dropped orphans whose parent was invisible (STRIDE information disclosure / elevation analogue; DATA-01/IAM-01). Fan-out grant rows or reparenting into the recipient vault would confuse access with custody.
+- Deterministic controls/owner: `authorize.ts` remains the sole ACL spine. A live project grant authorizes attached milestones/tasks at the same capability via `projectDerivedWorkAccessPredicate`. A live `library_page` grant authorizes that page and live descendants via `liveLibraryPageTreeGrantPredicate`. Library reads use `combineWithAuthorizedScope`; trees re-root grant orphans under a synthetic Shared projection without changing `parent_id`. `library-move.ts`, create-under-parent, pin, and trash stay owner-writable. Owner: Core Sharing / Library / Work. Severity: high confidentiality and integrity. SLA: immediate. Status: repaired in source pending production build and merge.
+- Residual/rollback: a write grant can edit content but cannot reparent or trash; a project write/admin grant still reaches attached work at that capability. Revert the authorize/project-derived/Library projection changes and this finding together; no grant-row fan-out or schema mutation is involved.
+-->
+
 <!-- 2026-08-12 Default Persona Id:
 - Assets/data: A01/A06/A07 user/account identity configuration. Default session Persona is now a single `persona_preferences.default_persona_id` rather than a boolean on every Persona row (S2 identity/config).
 - Flow/threat: Persona editor or fallback resolution -> `PersonaStorage.setDefaultPersona` / `resolveDefaultPersonaId` -> session/orientation fallback. A per-row boolean can desynchronize, leak another user's default through unscoped writes, or let a system Root become default (STRIDE tampering/elevation analogue; IAM-01).

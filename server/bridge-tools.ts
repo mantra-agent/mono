@@ -8123,6 +8123,7 @@ ${refs}` : ""),
           emoji: libraryPages.emoji,
           oneLiner: libraryPages.oneLiner,
           vaultId: libraryPages.vaultId,
+          ownerUserId: libraryPages.ownerUserId,
         }).from(libraryPages).where(visibleLib(vaultFilter)).orderBy(asc(libraryPages.sortOrder), asc(libraryPages.title));
 
         if (allPages.length === 0) return { result: "No library pages found." };
@@ -8143,21 +8144,42 @@ ${refs}` : ""),
         // Within a Vault, a page is a root when it has no parent or its parent
         // is not part of the same Vault's visible page set (surfaces orphans
         // instead of silently dropping them).
+        const vmap = await buildVaultMap();
+        const visSet = principal.visibleVaultIds && principal.visibleVaultIds.length > 0 ? new Set(principal.visibleVaultIds) : null;
         const byVault = new Map<string, TreeNode[]>();
+        const sharedNodes: TreeNode[] = [];
         for (const p of allPages) {
+          const vaultVisible = Boolean(p.vaultId && visSet?.has(p.vaultId));
+          const grantOnly = Boolean(principal.userId && p.ownerUserId && p.ownerUserId !== principal.userId);
+          if (grantOnly && !vaultVisible) {
+            sharedNodes.push({ ...p, children: [] });
+            continue;
+          }
           const key = p.vaultId ?? "__unassigned__";
           if (!byVault.has(key)) byVault.set(key, []);
           byVault.get(key)!.push({ ...p, children: [] });
         }
-
-        const vmap = await buildVaultMap();
-        const visSet = principal.visibleVaultIds && principal.visibleVaultIds.length > 0 ? new Set(principal.visibleVaultIds) : null;
 
         const orderedKeys = Array.from(byVault.keys()).sort((a, b) => {
           if (a === "__unassigned__") return 1;
           if (b === "__unassigned__") return -1;
           return vaultLabel(a, vmap).localeCompare(vaultLabel(b, vmap));
         });
+
+        const formatShared = () => {
+          if (sharedNodes.length === 0) return "";
+          const idSet = new Set(sharedNodes.map(n => n.id));
+          const nodeById = new Map(sharedNodes.map(n => [n.id, n]));
+          const roots: TreeNode[] = [];
+          for (const n of sharedNodes) {
+            if (n.parentId && idSet.has(n.parentId)) {
+              nodeById.get(n.parentId)!.children.push(n);
+            } else {
+              roots.push(n);
+            }
+          }
+          return `## Shared — ${sharedNodes.length} pages\n${formatTree(roots, 0)}`;
+        };
 
         const sections = orderedKeys.map(key => {
           const nodes = byVault.get(key)!;
@@ -8179,7 +8201,10 @@ ${refs}` : ""),
           return `## ${name}${idTag}${flags} — ${nodes.length} pages\n${formatTree(roots, 0)}`;
         });
 
-        return { result: `Library tree — ${byVault.size} groups, ${allPages.length} pages:\n\n${sections.join("\n\n")}` };
+        const sharedSection = formatShared();
+        const allSections = sharedSection ? [...sections, sharedSection] : sections;
+        const groupCount = byVault.size + (sharedNodes.length > 0 ? 1 : 0);
+        return { result: `Library tree — ${groupCount} groups, ${allPages.length} pages:\n\n${allSections.join("\n\n")}` };
       }
 
       if (action === "get_library_page" || action === "get") {
@@ -8278,9 +8303,22 @@ ${refs}` : ""),
       if (action === "update_library_page" || action === "update") {
         const id = args.id;
         if (!id) return { result: "Provide an id to update.", error: true };
-        const byId = await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(writableLib(eq(libraryPages.id, id)));
-        const resolved = byId[0] || (await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(writableLib(eq(libraryPages.slug, id))))[0];
-        if (!resolved) return { result: `Library page "${id}" not found.`, error: true };
+        const parentIdProvided = args.parentId !== undefined;
+        const vaultProvided = args.destinationVaultId !== undefined;
+        const structureRequested =
+          parentIdProvided
+          || vaultProvided
+          || args.tags !== undefined
+          || args.surface !== undefined
+          || args.surfaceDurationHours !== undefined
+          || args.surfaceReason !== undefined
+          || args.surfaceSection !== undefined;
+        const lookup = structureRequested
+          ? (predicate?: SQL) => combineWithWritableScope(principal, libScopeColumns, predicate)
+          : writableLib;
+        const byId = await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(lookup(eq(libraryPages.id, id)));
+        const resolved = byId[0] || (await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(lookup(eq(libraryPages.slug, id))))[0];
+        if (!resolved) return { result: structureRequested ? `Write access does not include moving, tagging, or surfacing "${id}".` : `Library page "${id}" not found.`, error: true };
         const resolvedId = resolved.id;
         const oldParentId = resolved.parentId;
 
@@ -8292,8 +8330,6 @@ ${refs}` : ""),
           setData.content = synced.content;
           setData.plainTextContent = synced.plainTextContent;
         }
-        const parentIdProvided = args.parentId !== undefined;
-        const vaultProvided = args.destinationVaultId !== undefined;
         // "" and the string "null" both mean the vault root (no parent); a real
         // id string is a reparent. When only destinationVaultId is supplied, the
         // intent is "move to that vault's root", so the destination parent is null.
@@ -8339,7 +8375,7 @@ ${refs}` : ""),
             await acquireLibraryParentLocks(tx, lockTargets);
             const hasMetadataUpdates = Object.keys(setData).some((key) => key !== "updatedAt");
             if (!hasMetadataUpdates && movedPage) return movedPage;
-            const [row] = await tx.update(libraryPages).set(setData).where(writableLib(eq(libraryPages.id, resolvedId))).returning();
+            const [row] = await tx.update(libraryPages).set(setData).where(lookup(eq(libraryPages.id, resolvedId))).returning();
             if (row && args.plainTextContent !== undefined) {
               const { indexLibraryPageReferences } = await import("./library-reference-index");
               await indexLibraryPageReferences(principal, row);
@@ -8388,6 +8424,15 @@ ${refs}` : ""),
         const byId = await db.select().from(libraryPages).where(writableLib(eq(libraryPages.id, id)));
         const page = byId[0] || (await db.select().from(libraryPages).where(writableLib(eq(libraryPages.slug, id))))[0];
         if (!page) return { result: `Library page "${id}" not found.`, error: true };
+        if (
+          args.surface !== undefined
+          || args.surfaceDurationHours !== undefined
+          || args.surfaceReason !== undefined
+          || args.surfaceSection !== undefined
+        ) {
+          const owned = await db.select({ id: libraryPages.id }).from(libraryPages).where(combineWithWritableScope(principal, libScopeColumns, eq(libraryPages.id, page.id))).limit(1);
+          if (!owned[0]) return { result: `Write access does not include surfacing "${id}".`, error: true };
+        }
 
         const { tiptapToMarkdown } = await import("@shared/markdown-tiptap");
         const currentContent = page.plainTextContent || (page.content ? tiptapToMarkdown(page.content as any) : "");
@@ -8455,9 +8500,10 @@ ${refs}` : ""),
       if (action === "dismiss_library_page" || action === "desurface_library_page" || action === "dismiss" || action === "desurface") {
         const id = args.id;
         if (!id) return { result: "Provide an id or slug to dismiss.", error: true };
-        const byId = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(writableLib(eq(libraryPages.id, id)));
-        const page = byId[0] || (await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(writableLib(eq(libraryPages.slug, id))))[0];
-        if (!page) return { result: `Library page "${id}" not found.`, error: true };
+        const ownedWritable = (predicate?: SQL) => combineWithWritableScope(principal, libScopeColumns, predicate);
+        const byId = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(ownedWritable(eq(libraryPages.id, id)));
+        const page = byId[0] || (await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(ownedWritable(eq(libraryPages.slug, id))))[0];
+        if (!page) return { result: `Write access does not include surfacing "${id}".`, error: true };
         const [updated] = await db.update(libraryPages).set({
           surface: false,
           surfaceUntil: null,
@@ -8473,8 +8519,9 @@ ${refs}` : ""),
       if (action === "delete_library_page" || action === "delete") {
         const id = args.id;
         if (!id) return { result: "Provide an id to delete.", error: true };
-        const byId = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(writableLib(eq(libraryPages.id, id)));
-        const resolved = byId[0] || (await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(writableLib(eq(libraryPages.slug, id))))[0];
+        const ownedWritable = (predicate?: SQL) => combineWithWritableScope(principal, libScopeColumns, predicate);
+        const byId = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(ownedWritable(eq(libraryPages.id, id)));
+        const resolved = byId[0] || (await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(ownedWritable(eq(libraryPages.slug, id))))[0];
         if (!resolved) return { result: `Library page "${id}" not found.`, error: true };
         try {
           // Soft-delete: write a library_page_trash sidecar row across the page and its whole subtree.

@@ -7,6 +7,7 @@ import { createLogger } from "./log";
 import type { Principal } from "./principal";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
+import { combineWithAuthorizedScope } from "./authorize";
 
 const log = createLogger("LibraryLinkGraph");
 
@@ -15,6 +16,7 @@ const pageScopeColumns = {
   ownerUserId: libraryPages.ownerUserId,
   accountId: libraryPages.accountId,
   vaultId: libraryPages.vaultId,
+  objectId: libraryPages.id,
 };
 const linkScopeColumns = {
   scope: libraryPageLinks.scope,
@@ -23,8 +25,8 @@ const linkScopeColumns = {
 };
 
 function visible(principal: Principal, predicate?: SQL): SQL {
-  const notTrashed = libraryPageIsLive();
-  return combineWithVisibleScope(principal, pageScopeColumns, predicate ? and(predicate, notTrashed) : notTrashed);
+  const ownedLive = combineWithVisibleScope(principal, pageScopeColumns, libraryPageIsLive());
+  return combineWithAuthorizedScope(principal, ownedLive, "library_page", pageScopeColumns, "read", predicate);
 }
 
 function visibleLinks(principal: Principal, predicate?: SQL): SQL {
