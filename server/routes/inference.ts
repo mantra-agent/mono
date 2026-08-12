@@ -17,12 +17,21 @@ import { getSetting, setSetting } from "../system-settings";
 import { runWithPrincipal } from "../principal-context";
 import { getReliabilityOutcomeSummary } from "../reliability-outcomes";
 import { createNamedSystemPrincipal } from "../principal";
-import { requirePermission } from "../permissions";
+import { principalHasPermission, requirePermission } from "../permissions";
 import { requireAuth } from "../auth";
+import { runWithApiCallReportingScope } from "../file-storage/api-calls";
 import { listModelConnectors, reorderModelConnectors, updateModelConnector } from "../model-connectors";
 import { claudeCliTierMappingsSchema, modelTierMappingsSchema, openAITierMappingsSchema } from "@shared/model-connectors";
 
 const INFERENCE_DEBUG_KEY = "system.inference_debug";
+
+function withCostReportingScope<T>(req: { principal?: Parameters<typeof principalHasPermission>[0] | null }, fn: () => T): T {
+  const principal = req.principal ?? null;
+  if (principal && principalHasPermission(principal, "system:read")) {
+    return runWithApiCallReportingScope("all-accounts", fn);
+  }
+  return fn();
+}
 
 const EMBED_MODELS = new Set(["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002", "all-MiniLM-L6-v2"]);
 
@@ -197,20 +206,22 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
   app.use(["/api/performance", "/api/inference"], requireAuth);
   app.get("/api/performance/summary", async (req, res) => {
     try {
-      const period = req.query.period as string || "all";
-      const since = computeSince(period);
-      const summary = await storage.getApiCallSummary(since);
-      const byModel = await storage.getApiCallsByModel(since);
-      const byDay = await storage.getApiCallsByDay(since);
-      const byHour = await storage.getApiCallsByHour(since);
-      const byModelByDay = await storage.getApiCallsByModelByDay(since);
-      const byModelByHour = await storage.getApiCallsByModelByHour(since);
-      const byProfile = await storage.getApiCallsByProfile(since);
+      await withCostReportingScope(req, async () => {
+        const period = req.query.period as string || "all";
+        const since = computeSince(period);
+        const summary = await storage.getApiCallSummary(since);
+        const byModel = await storage.getApiCallsByModel(since);
+        const byDay = await storage.getApiCallsByDay(since);
+        const byHour = await storage.getApiCallsByHour(since);
+        const byModelByDay = await storage.getApiCallsByModelByDay(since);
+        const byModelByHour = await storage.getApiCallsByModelByHour(since);
+        const byProfile = await storage.getApiCallsByProfile(since);
 
-      const config = await executorManager.readConfig();
-      const modelPrimary = config?.agents?.defaults?.model?.primary || config?.agents?.defaults?.model || "unknown";
+        const config = await executorManager.readConfig();
+        const modelPrimary = config?.agents?.defaults?.model?.primary || config?.agents?.defaults?.model || "unknown";
 
-      res.json({ summary, byModel, byDay, byHour, byModelByDay, byModelByHour, byProfile, currentModel: modelPrimary });
+        res.json({ summary, byModel, byDay, byHour, byModelByDay, byModelByHour, byProfile, currentModel: modelPrimary });
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -240,11 +251,13 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
 
   app.get("/api/performance/calls", async (req, res) => {
     try {
-      const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
-      const offset = parseInt(req.query.offset as string) || 0;
-      const calls = await storage.getApiCalls(limit, offset);
-      const total = await storage.getTotalApiCallCount();
-      res.json({ calls, total, limit, offset });
+      await withCostReportingScope(req, async () => {
+        const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+        const offset = parseInt(req.query.offset as string) || 0;
+        const calls = await storage.getApiCalls(limit, offset);
+        const total = await storage.getTotalApiCallCount();
+        res.json({ calls, total, limit, offset });
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -263,6 +276,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
 
   app.get("/api/inference/calls", async (req, res) => {
     try {
+      await withCostReportingScope(req, async () => {
       const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
       const offset = parseInt(req.query.offset as string) || 0;
       const status = req.query.status as string || "all";
@@ -405,6 +419,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
         aggregateTotalInputTokens: aggregateSummary.totalInputTokens,
         aggregateTotalOutputTokens: aggregateSummary.totalOutputTokens,
       });
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -486,6 +501,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
 
   app.get("/api/inference/summary", async (req, res) => {
     try {
+      await withCostReportingScope(req, async () => {
       const period = req.query.period as string || "all";
       const groupBy = req.query.groupBy as string || "model";
       const tz = req.query.tz as string || undefined;
@@ -677,6 +693,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
       const modelPrimary = (await executorManager.readConfig())?.agents?.defaults?.model?.primary || "unknown";
 
       res.json({ summary, byModel, byDay, byHour, byModelByDay, byModelByHour, byProfile: resolvedByProfile, currentModel: modelPrimary, groupBy });
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -684,6 +701,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
 
   app.get("/api/inference/summary/hierarchy", async (req, res) => {
     try {
+      await withCostReportingScope(req, async () => {
       const period = req.query.period as string || "all";
       const tz = req.query.tz as string || undefined;
 
@@ -922,6 +940,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
         }));
 
       res.json({ hierarchy, totals });
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
