@@ -59,6 +59,7 @@ const SERVICE_RULES: ApiPolicyRule[] = [
 
 const PERSONAL_RULES: ApiPolicyRule[] = [
   { classification: "personal", exact: ["/api/client-logs", "/api/browser-telemetry", "/api/browser-telemetry/summary"], reason: "authenticated bounded client diagnostics" },
+  { classification: "personal", methods: ["POST", "DELETE"], pattern: /^\/api\/objects\/[^/]+\/[^/]+\/grants$/, reason: "authenticated object grant mutation; ObjectGrantService.assertTargetAdmin remains the authoritative admin gate downstream" },
   { classification: "personal", prefixes: ["/api/mods"], reason: "authenticated Mod catalog and lifecycle; route-owned named permissions remain authoritative" },
   { classification: "personal", prefixes: ["/api/slack"], reason: "authenticated Slack Mod setup and operational status; route-owned Mod and named permissions remain authoritative" },
   { classification: "personal", prefixes: ["/api/runtime"], reason: "authenticated principal-scoped Runtime diagnostics; route-owned build:read remains authoritative" },
