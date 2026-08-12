@@ -17,6 +17,7 @@ import { requirePermission } from "../permissions";
 import { createLogger } from "../log";
 import { isContributionModality, type ContributionModality } from "@shared/models/product-composition";
 import { resolveProductComposition } from "../mods/composition/contribution-resolver";
+import { modLifecycleService } from "../mods/mod-lifecycle-service";
 import { runShadowParityCheck } from "../mods/composition/shadow-parity";
 
 const log = createLogger("product-composition-route");
@@ -39,6 +40,7 @@ export function registerProductCompositionRoutes(app: Express): void {
 
       try {
         const modality = readModality(req);
+        await modLifecycleService.ensureBaseline(principal);
         const composition = await resolveProductComposition(principal, modality);
 
         // Bounded, throttled shadow-parity drift logging (does not block the
