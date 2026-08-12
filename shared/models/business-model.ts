@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { budgetMonthlyTotal, departmentMonthlyTotal, type BudgetDepartment } from "./business-budgets";
 import type { JobRole } from "./job-roles";
+import { loadedMonthlyForRole, monthOffset, type BusinessHiringSlot } from "./business-hiring";
 import {
   FORECAST_METRIC_CATALOG,
   type ProjectedMetricSeries,
@@ -655,31 +656,23 @@ interface DerivedHire {
   headcount: number;
 }
 
-/** Loaded monthly cost for one role: base-midpoint × (1 + target bonus) × loaded multiplier ÷ 12. */
-function loadedMonthlyForRole(role: JobRole, loadedCostMultiplier: number): number {
-  const baseMidpoint = (role.annualSalaryMin + role.annualSalaryMax) / 2;
-  const annualLoaded = baseMidpoint * (1 + role.targetBonusPercent / 100) * loadedCostMultiplier;
-  return annualLoaded / 12;
-}
-
-export function computeProjection(input: Assumptions | unknown, roles: JobRole[] = [], budgetDepartments?: BudgetDepartment[]): Projection {
+export function computeProjection(input: Assumptions | unknown, roles: JobRole[] = [], budgetDepartments?: BudgetDepartment[], hiringSlots?: BusinessHiringSlot[]): Projection {
   const assumptions = normalizeAssumptions(input);
   const departmentOpex = Object.fromEntries((budgetDepartments ?? []).map((department) => [department.id, departmentMonthlyTotal(department) / 100]));
   const canonicalBudgetOpex = budgetDepartments ? budgetMonthlyTotal(budgetDepartments) / 100 : null;
   const roleById = new Map(roles.map((role) => [role.id, role]));
   const derivedHires: DerivedHire[] = [];
-  for (const phase of assumptions.phases) {
-    for (const hire of phase.keyHires) {
-      const role = roleById.get(hire.roleId);
-      if (!role) continue;
+  if (hiringSlots) {
+    for (const slot of hiringSlots) {
+      const role = roleById.get(slot.roleId);
+      if (!role || slot.status !== "approved" || !slot.plannedStartMonth) continue;
+      derivedHires.push({ startMonth: monthOffset(assumptions.startCalendarMonth, slot.plannedStartMonth) + 1, monthlyCost: loadedMonthlyForRole(role, assumptions.loadedCostMultiplier), costAllocation: "opex", acquisitionAllocationPct: 0, headcount: 1 });
+    }
+  } else {
+    for (const phase of assumptions.phases) for (const hire of phase.keyHires) {
+      const role = roleById.get(hire.roleId); if (!role) continue;
       const headcount = Math.max(1, hire.headcount ?? 1);
-      derivedHires.push({
-        startMonth: hire.startMonth ?? phase.startMonth ?? 1,
-        monthlyCost: loadedMonthlyForRole(role, assumptions.loadedCostMultiplier) * headcount,
-        costAllocation: hire.costAllocation ?? "opex",
-        acquisitionAllocationPct: hire.acquisitionAllocationPct ?? 0,
-        headcount,
-      });
+      derivedHires.push({ startMonth: hire.startMonth ?? phase.startMonth ?? 1, monthlyCost: loadedMonthlyForRole(role, assumptions.loadedCostMultiplier) * headcount, costAllocation: hire.costAllocation ?? "opex", acquisitionAllocationPct: hire.acquisitionAllocationPct ?? 0, headcount });
     }
   }
   const accountSurvivalMonthly = Math.pow(1 - assumptions.annualAccountChurnPct / 100, 1 / 12);

@@ -511,6 +511,27 @@ const ENTITY_ACTIONS = new Set([
   "list_businesses", "get_business", "create_business", "update_business", "archive_business",
   "list_business_vaults", "add_business_vault", "remove_business_vault", "set_business_vaults",
 ]);
+const HIRING_ACTIONS = new Set(["list_hiring_slots", "create_hiring_slot", "update_hiring_slot", "cancel_hiring_slot"]);
+async function handleHiringAction(action: string, args: Record<string, unknown>) {
+  const businessId = requiredStr(args, "businessId");
+  if (!businessId) return { result: `business.${action} requires businessId`, error: true };
+  const { businessHiringStorage } = await import("../business-hiring-storage");
+  if (action === "list_hiring_slots") return { result: safeStringify(await businessHiringStorage.projection(businessId), { label: "bridge.business.hiring.list" }) };
+  const slotId = requiredStr(args, "hiringSlotId");
+  if (action === "cancel_hiring_slot") {
+    if (!slotId) return { result: "business.cancel_hiring_slot requires hiringSlotId", error: true };
+    return { result: safeStringify(await businessHiringStorage.cancel(businessId, slotId), { label: "bridge.business.hiring.cancel" }) };
+  }
+  const idempotencyKey = requiredStr(args, "idempotencyKey");
+  if (!idempotencyKey) return { result: `business.${action} requires idempotencyKey`, error: true };
+  if (action === "create_hiring_slot") {
+    const roleId = requiredStr(args, "roleId"); const approvalMonth = requiredStr(args, "approvalMonth");
+    if (!roleId || !approvalMonth) return { result: "business.create_hiring_slot requires roleId and approvalMonth", error: true };
+    return { result: safeStringify(await businessHiringStorage.create({ businessId, roleId, approvalMonth, plannedStartMonth: optionalStr(args, "plannedStartMonth"), idempotencyKey }), { label: "bridge.business.hiring.create" }) };
+  }
+  if (!slotId) return { result: "business.update_hiring_slot requires hiringSlotId", error: true };
+  return { result: safeStringify(await businessHiringStorage.update(slotId, { businessId, plannedStartMonth: optionalStr(args, "plannedStartMonth"), clearFields: stringArray(args.clearFields) as ["plannedStartMonth"] | undefined, idempotencyKey }), { label: "bridge.business.hiring.update" }) };
+}
 const BUDGET_ACTIONS = new Set(["get_budget", ...Object.keys(BUDGET_MUTATION_ACTIONS)]);
 const PLAN_ACTIONS = new Set([
   "list", "get", "create", "rename", "delete", "set_thematic_goal", "clear_thematic_goal",
@@ -527,6 +548,7 @@ export const handleBusiness: ToolHandler = async (args) => {
   try {
     if (ENTITY_ACTIONS.has(action)) return await handleEntityAction(action, args);
     if (BUDGET_ACTIONS.has(action)) return await handleBudgetAction(action, args);
+    if (HIRING_ACTIONS.has(action)) return await handleHiringAction(action, args);
     if (KPI_ACTIONS.has(action)) return await handleKpiAction(action, args);
     if (METRIC_ACTIONS.has(action)) return await handleMetricAction(action, args);
     if (PLAN_ACTIONS.has(action)) return await handlePlanAction(action, args);

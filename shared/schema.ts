@@ -1221,6 +1221,31 @@ export const jobRoles = pgTable("job_roles", {
 
 export type JobRoleRow = typeof jobRoles.$inferSelect;
 
+export const businessHiringSlots = pgTable("business_hiring_slots", {
+  id: text("id").primaryKey(),
+  businessId: text("business_id").notNull().references(() => businesses.id, { onDelete: "restrict" }),
+  roleId: text("role_id").notNull().references(() => jobRoles.id, { onDelete: "restrict" }),
+  approvalMonth: text("approval_month").notNull(),
+  plannedStartMonth: text("planned_start_month"),
+  status: text("status").notNull().default("approved"),
+  source: text("source").notNull().default("manual"),
+  legacySourceKey: text("legacy_source_key"),
+  idempotencyKey: text("idempotency_key"),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  createdByUserId: text("created_by_user_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_business_hiring_slots_business").on(table.businessId, table.status),
+  index("idx_business_hiring_slots_scope_owner").on(table.scope, table.ownerUserId),
+  uniqueIndex("uq_business_hiring_slots_legacy").on(table.businessId, table.legacySourceKey).where(sql`legacy_source_key IS NOT NULL`),
+  uniqueIndex("uq_business_hiring_slots_idempotency").on(table.businessId, table.idempotencyKey).where(sql`idempotency_key IS NOT NULL`),
+  check("business_hiring_slots_months", sql`${table.plannedStartMonth} IS NULL OR ${table.plannedStartMonth} >= ${table.approvalMonth}`),
+  check("business_hiring_slots_status", sql`${table.status} IN ('approved','canceled')`),
+]);
+
 // ── Persons ───────────────────────────────────────────────────────
 export const persons = pgTable("persons", {
   id: text("id").primaryKey(),

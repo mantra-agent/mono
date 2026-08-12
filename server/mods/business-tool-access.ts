@@ -15,7 +15,7 @@ import { hasActiveBusinessAccess } from "./business-access";
  * Deliberately excluded (they are NOT Business): `decisions` (core),
  * `strategy`/scenarios (Planning), `companies` and pipelines (Network).
  */
-export const BUSINESS_TOOL_NAMES = new Set(["jobs"]);
+export const BUSINESS_TOOL_NAMES = new Set(["jobs", "business"]);
 
 export function isBusinessOwnedTool(toolName: string): boolean {
   return BUSINESS_TOOL_NAMES.has(toolName);
