@@ -110,14 +110,16 @@ export function SessionTranscriptSurface({
           sessionTitle={sessionTitle}
         />
       )}
-      <SessionAgendaTree
-        key={activeSession}
-        sessionId={activeSession}
-        sessionTitle={sessionTitle}
-        parentSessionId={parentSessionId}
-        parentSessionTitle={parentSessionTitle}
-        agenda={agenda}
-      />
+      {layer !== 0 ? (
+        <SessionAgendaTree
+          key={activeSession}
+          sessionId={activeSession}
+          sessionTitle={sessionTitle}
+          parentSessionId={parentSessionId}
+          parentSessionTitle={parentSessionTitle}
+          agenda={agenda}
+        />
+      ) : null}
       {!wsConnected && sessionStatus === "streaming" && !voiceActive && (
         <div
           className="flex items-center gap-2 px-4 py-2 bg-warning/5 dark:bg-warning/5 border-b border-warning/20 text-warning-foreground text-xs"
