@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AgentOrb } from "@/components/agent-orb";
+import { VoiceCaptionOverlay } from "@/components/voice-caption-overlay";
 import { useLiveVoice } from "@/hooks/use-live-voice";
 import { createLogger } from "@/lib/logger";
 
@@ -19,7 +20,7 @@ const ENTRANCE_SETTLE_MS = 3_200;
  * capability-scoped entrance URL and cleanly mounts the real authenticated app.
  */
 export function ImmersiveOrbSlot() {
-  const { visualState, readAudioLevel } = useLiveVoice();
+  const { visualState, voiceCaption, readAudioLevel } = useLiveVoice();
   const [entranceActive, setEntranceActive] = useState(true);
   const frameRef = useRef<number>();
   const [audioLevel, setAudioLevel] = useState(0);
@@ -58,6 +59,7 @@ export function ImmersiveOrbSlot() {
         maxFrameRate={60}
         className="absolute inset-0"
       />
+      <VoiceCaptionOverlay text={voiceCaption} />
     </main>
   );
 }

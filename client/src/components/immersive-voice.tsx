@@ -10,7 +10,7 @@ import { useLiveVoicePublisher } from "@/hooks/use-live-voice";
  */
 export function ProvisionalVoiceController() {
   const voice = useVoiceSession();
-  const { publishVisualState, setAudioReader } = useLiveVoicePublisher();
+  const { publishVisualState, publishVoiceCaption, setAudioReader } = useLiveVoicePublisher();
 
   useEffect(() => {
     void voice.startSession();
@@ -24,6 +24,10 @@ export function ProvisionalVoiceController() {
   useEffect(() => {
     publishVisualState(voice.visualState);
   }, [voice.visualState, publishVisualState]);
+
+  useEffect(() => {
+    publishVoiceCaption(voice.voiceCaption);
+  }, [voice.voiceCaption, publishVoiceCaption]);
 
   useEffect(() => {
     setAudioReader(voice.readAudioLevel);
