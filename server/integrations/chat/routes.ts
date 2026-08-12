@@ -74,7 +74,7 @@ import { agendaDefinitionStorage } from "../../agenda-storage";
 import { instantiateAgendaDefinition } from "@shared/models/agendas";
 import { createLogger } from "../../log";
 import { requireAuth } from "../../auth";
-import { requireCurrentPrincipal, runWithPrincipal } from "../../principal-context";
+import { getCurrentPrincipal, requireCurrentPrincipal, runWithPrincipal } from "../../principal-context";
 import { resolveQuestionResponse } from "../../question-response";
 import { emailDraftStorage } from "../../email-draft-storage";
 
@@ -3126,35 +3126,51 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           );
       const msg = terminalDraftWrite?.message ?? createdTerminalMessage;
       if (msg && (result.status === "succeeded" || result.status === "degraded")) {
-        try {
-          const continuitySession = await chatStorage.getSession(sessionId);
-          const latestUser = [...(continuitySession?.messages || [])]
-            .reverse()
-            .find((message) => message.role === "user" && message.createdAt <= msg.createdAt);
-          if (!continuitySession?.vaultId) {
-            throw new Error("Completed turn has no canonical session Vault");
-          }
-          const { emitCompletedTurnSummary } = await import("../../historical-continuity");
-          await emitCompletedTurnSummary({
-            sessionId,
-            vaultId: continuitySession.vaultId,
-            assistantMessageId: msg.id,
-            turnId,
-            runId,
-            completedAt: msg.createdAt,
-            userContent: latestUser?.content || "",
-            assistantContent: responseContent,
-            toolCalls: (persistedToolCalls || []).map((toolCall) => ({
-              toolName: toolCall.toolName,
-              status: toolCall.status,
-              outcome: toolCall.outcome,
-              result: toolCall.result,
-              error: toolCall.error,
-            })),
-          });
-        } catch (continuityError) {
+        const continuityPrincipal = getCurrentPrincipal();
+        const continuityStartedAt = Date.now();
+        if (!continuityPrincipal || continuityPrincipal.actorType !== "user") {
           chatLog.error(
-            `completed turn continuity summary failed sessionId=${sessionId} assistantMessageId=${msg?.id || "none"}: ${continuityError instanceof Error ? continuityError.message : String(continuityError)}`,
+            `completed turn continuity skipped without user principal sessionId=${sessionId} assistantMessageId=${msg.id}`,
+          );
+        } else {
+          void runWithPrincipal(continuityPrincipal, async () => {
+            try {
+              const continuitySession = await chatStorage.getSession(sessionId);
+              const latestUser = [...(continuitySession?.messages || [])]
+                .reverse()
+                .find((message) => message.role === "user" && message.createdAt <= msg.createdAt);
+              if (!continuitySession?.vaultId) {
+                throw new Error("Completed turn has no canonical session Vault");
+              }
+              const { emitCompletedTurnSummary } = await import("../../historical-continuity");
+              await emitCompletedTurnSummary({
+                sessionId,
+                vaultId: continuitySession.vaultId,
+                assistantMessageId: msg.id,
+                turnId,
+                runId,
+                completedAt: msg.createdAt,
+                userContent: latestUser?.content || "",
+                assistantContent: responseContent,
+                toolCalls: (persistedToolCalls || []).map((toolCall) => ({
+                  toolName: toolCall.toolName,
+                  status: toolCall.status,
+                  outcome: toolCall.outcome,
+                  result: toolCall.result,
+                  error: toolCall.error,
+                })),
+              });
+              chatLog.info(
+                `completed turn continuity finished sessionId=${sessionId} assistantMessageId=${msg.id} durationMs=${Date.now() - continuityStartedAt} blocking=false`,
+              );
+            } catch (continuityError) {
+              chatLog.warn(
+                `completed turn continuity failed sessionId=${sessionId} assistantMessageId=${msg.id} durationMs=${Date.now() - continuityStartedAt} blocking=false error=${continuityError instanceof Error ? continuityError.message : String(continuityError)}`,
+              );
+            }
+          });
+          chatLog.debug(
+            `completed turn continuity started sessionId=${sessionId} assistantMessageId=${msg.id} blocking=false`,
           );
         }
       }
@@ -3162,6 +3178,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         terminalDurableRevision = terminalDraftWrite.durableRevision;
       }
       terminalPersistenceEndedAt = Date.now();
+      chatLog.debug(
+        `assistant persistence committed sessionId=${sessionId} assistantMessageId=${msg?.id || "none"} durationMs=${terminalPersistenceEndedAt - persistenceStartedAt} blocking=true`,
+      );
       eventBus.publish({
         category: "agent",
         event: "agent.stage_timing",
@@ -3241,11 +3260,17 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         clearMeetingVisualizerState(sessionId, "turn");
         const currentSession = await chatStorage.getSession(sessionId);
         if (currentSession?.type === "meeting") {
+          const speechRequestedAt = Date.now();
           chatLog.log(
-            `meeting speech scheduled sessionId=${sessionId} resultStatus=${result.status} terminationReason=${result.terminationReason || "unknown"} contentLen=${responseContent.length}`,
+            `meeting speech scheduled sessionId=${sessionId} runId=${runId} turnId=${turnId} assistantMessageId=${msg?.id || "none"} resultStatus=${result.status} terminationReason=${result.terminationReason || "unknown"} contentLen=${responseContent.length} postPersistenceMs=${terminalPersistenceEndedAt == null ? "unknown" : speechRequestedAt - terminalPersistenceEndedAt}`,
           );
           import("../../meeting/output-media")
-            .then(({ speakMeetingResponse }) => speakMeetingResponse(sessionId, responseContent))
+            .then(({ speakMeetingResponse }) => speakMeetingResponse(sessionId, responseContent, {
+              runId,
+              turnId,
+              assistantMessageId: msg?.id,
+              requestedAt: speechRequestedAt,
+            }))
             .catch((err) => chatLog.error(`say-aloud failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`));
         }
       }

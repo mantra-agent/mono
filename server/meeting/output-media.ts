@@ -9,7 +9,7 @@ import type { MeetingBotStatus } from "@shared/models/chat";
 import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
 import { resolveMeetingTransportSession } from "./owner-principal";
-import { EmptyVoiceStreamError, streamVoiceAudio, type VoiceAudioStream } from "../voice/synthesis";
+import { EmptyVoiceStreamError, streamVoiceAudio, type VoiceAudioStream, type VoiceSynthesisCorrelation } from "../voice/synthesis";
 
 const log = createLogger("MeetingOutputMedia");
 const TOKEN_TTL_MS = 6 * 60 * 60 * 1000;
@@ -17,6 +17,11 @@ const AUDIO_FRAME_INTERVAL_MS = 1000 / 15;
 interface MeetingAudioClip {
   audio: VoiceAudioStream;
   caption: string;
+  correlation?: MeetingSpeechCorrelation;
+}
+
+interface MeetingSpeechCorrelation extends VoiceSynthesisCorrelation {
+  requestedAt: number;
 }
 
 const audioQueues = new Map<string, MeetingAudioClip[]>();
@@ -373,8 +378,13 @@ export function registerMeetingVisualizerTransport(): (
   };
 }
 
-function enqueue(sessionId: string, audio: VoiceAudioStream, caption: string) {
-  const clip = { audio, caption };
+function enqueue(
+  sessionId: string,
+  audio: VoiceAudioStream,
+  caption: string,
+  correlation?: MeetingSpeechCorrelation,
+) {
+  const clip = { audio, caption, correlation };
   const waiter = waiters.get(sessionId)?.shift();
   if (waiter) {
     waiter(clip);
@@ -439,10 +449,19 @@ export async function sendNextMeetingAudio(
   res.setHeader("Accept-Ranges", "none");
   const encodedCaption = Buffer.from(clip.caption, "utf8").toString("base64url");
   if (encodedCaption.length <= 6_000) res.setHeader("X-Meeting-Caption", encodedCaption);
+  clip.audio.stream.once("data", () => {
+    log.info(
+      `first meeting transport byte sessionId=${sessionId} runId=${clip.correlation?.runId || "none"} turnId=${clip.correlation?.turnId || "none"} assistantMessageId=${clip.correlation?.assistantMessageId || "none"} speechRequestLatencyMs=${clip.correlation ? Date.now() - clip.correlation.requestedAt : "unknown"}`,
+    );
+  });
   await pipeline(clip.audio.stream, res);
 }
 
-export async function speakMeetingResponse(sessionId: string, text: string): Promise<void> {
+export async function speakMeetingResponse(
+  sessionId: string,
+  text: string,
+  correlation?: MeetingSpeechCorrelation,
+): Promise<void> {
   const prior = speechLocks.get(sessionId) ?? Promise.resolve();
   const current = prior.catch(() => undefined).then(async () => {
     const session = await chatStorage.getSession(sessionId);
@@ -461,14 +480,14 @@ export async function speakMeetingResponse(sessionId: string, text: string): Pro
       let spokenVia = "";
       for (let attempt = 1; ; attempt++) {
         if (abort.signal.aborted) throw new MeetingSpeechInterruptedError("Meeting speech interrupted before synthesis");
-        const audio = await streamVoiceAudio(text);
+        const audio = await streamVoiceAudio(text, correlation);
         if (abort.signal.aborted) {
           audio.stream.destroy();
           throw new MeetingSpeechInterruptedError("Meeting speech interrupted before playback");
         }
         trackSpeechStream(sessionId, audio);
-        enqueue(sessionId, audio, text);
-        log.info(`queued speech stream sessionId=${sessionId} provider=${audio.provider} attempt=${attempt}`);
+        enqueue(sessionId, audio, text, correlation);
+        log.info(`queued speech stream sessionId=${sessionId} provider=${audio.provider} attempt=${attempt} runId=${correlation?.runId || "none"} turnId=${correlation?.turnId || "none"} assistantMessageId=${correlation?.assistantMessageId || "none"} speechRequestLatencyMs=${correlation ? Date.now() - correlation.requestedAt : "unknown"}`);
         try {
           await finished(audio.stream);
           spokenVia = audio.provider;
