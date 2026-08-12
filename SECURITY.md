@@ -5,6 +5,13 @@
 - Residual/rollback: legacy `personas.is_default` remains compatibility seed/fallback evidence until a preference exists; it is no longer an authorable revision field.
 -->
 
+<!-- 2026-08-12 Product tool mutation split:
+- Assets/data: principal/account-scoped Product intent in `products` (A01/A07; S2) and rolling `platform_products` Environment ownership (A03; S1/S2).
+- Flow/threat: model-originated `platforms` tool -> Product create/update. Keeping `create_product` on `platform_products` lets the Agent invent a second Product authority, miss owner/account scope, and leave the BUILD Products screen empty (STRIDE tampering/repudiation; DATA-01/AGENT-03).
+- Deterministic controls/owner: `product-storage.ts` remains the sole ordinary Product mutation boundary. `list_products`, `create_product`, and `update_product` delegate to it and inherit its principal-scoped predicates. `create_product_legacy` and `update_product_legacy` are explicit compatibility names that still write `platform_products` for Environment ownership only. Both families remain engineering-write actions; named `build:write`, Build composition, and Platform writability stay independent. Owner: Build Products. Severity: high integrity during the dual-table transition. SLA: immediate.
+- Residual/rollback: this session cannot seed Live until the tool change is promoted. Revert the action split, AGENTS contract, and this finding together; no schema change is involved.
+-->
+
 <!-- 2026-08-12 Cost all-account reporting scope:
 - Assets/data: A01/A03/A07 inference audit rows in `api_calls` (S1 operational spend metadata; request/response content remains S2/S3 and is not widened).
 - Flow/threat: authenticated Cost/System page -> `/api/inference/summary`, `/api/inference/summary/hierarchy`, `/api/performance/summary`, `/api/performance/calls`, `/api/inference/calls` -> `FileApiCallStorage` read predicates. Owner-only predicates under-reported platform spend; removing those predicates would leak another user's S1 spend and session-key metadata to any authenticated user (STRIDE information disclosure; DATA-01/IAM-01).
