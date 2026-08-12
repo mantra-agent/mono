@@ -5835,8 +5835,9 @@ const REASONING_SUMMARIES: readonly OpenAIReasoningSummary[] = ["auto", "concise
 const VERBOSITIES: readonly OpenAIVerbosity[] = ["low", "medium", "high"];
 const SERVICE_TIERS: readonly OpenAIServiceTier[] = ["auto", "default", "flex", "priority"];
 const CLAUDE_EFFORT_OPTIONS = ["activity-default", "low", "medium", "high", "max"] as const;
-// Grok reasoning_effort is only honored by grok-4.5 (low/medium/high; default high).
+// Grok 4.5 supports low/medium/high; Grok 4.6 additionally supports xhigh.
 const GROK_EFFORT_OPTIONS = ["activity-default", "low", "medium", "high"] as const;
+const GROK_46_EFFORT_OPTIONS = [...GROK_EFFORT_OPTIONS, "xhigh"] as const;
 const CLAUDE_THINKING_OPTIONS = ["activity-default", "adaptive", "disabled"] as const;
 
 function tierConfigModel(value: TierModelConfig): string {
@@ -5943,7 +5944,7 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
   const settingsDescription = isClaude
     ? "Claude subscription tiers. Configure the model, adaptive reasoning effort, thinking mode, maximum agent turns, and max output tokens. Mantra continues to own prompts, tools, permissions, and sessions."
     : isGrok
-      ? "Grok subscription tiers. Map each semantic tier to a Grok model, set optional max output tokens, and choose reasoning effort on grok-4.5. xAI does not expose OpenAI Responses verbosity/service-tier controls here."
+      ? "Grok subscription tiers. Map each semantic tier to a Grok model, set optional max output tokens, and choose reasoning effort on supported models. xAI does not expose OpenAI Responses verbosity/service-tier controls here."
       : isSubscription
       ? "Subscription connector tiers. Effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, and max output tokens is capped by the selected model."
       : "API connector tiers. Settings follow OpenAI Responses API docs: effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, service tier controls latency class, and max output tokens is capped by the selected model.";
@@ -5994,7 +5995,7 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
                     const nextModel = models.find((item) => item.id === modelId);
                     updateTier(tier, {
                       model: modelId,
-                      reasoningEffort: modelId === "grok-4.5" ? config.reasoningEffort : undefined,
+                      reasoningEffort: modelId === "grok-4.5" || modelId === "grok-4.6" ? config.reasoningEffort : undefined,
                       maxOutputTokens: Math.min(
                         config.maxOutputTokens ?? nextModel?.maxTokens ?? 4096,
                         nextModel?.maxTokens ?? Number.MAX_SAFE_INTEGER,
@@ -6107,11 +6108,11 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
                   />
                 </div>
               </>}
-              {isGrok && config.model === "grok-4.5" && <TierSettingSelect
+              {isGrok && (config.model === "grok-4.5" || config.model === "grok-4.6") && <TierSettingSelect
                 label="Reasoning effort"
-                value={(config.reasoningEffort ?? "activity-default") as typeof GROK_EFFORT_OPTIONS[number]}
-                options={GROK_EFFORT_OPTIONS}
-                description="Activity default inherits Mantra's resolved depth (Grok defaults to high). Only grok-4.5 honors this control."
+                value={(config.reasoningEffort ?? "activity-default") as typeof GROK_46_EFFORT_OPTIONS[number]}
+                options={config.model === "grok-4.6" ? GROK_46_EFFORT_OPTIONS : GROK_EFFORT_OPTIONS}
+                description="Activity default inherits Mantra's resolved depth (Grok defaults to high). Supported models expose their documented effort controls."
                 disabled={mutation.isPending}
                 onChange={(value) => updateTier(tier, { reasoningEffort: value === "activity-default" ? undefined : value })}
               />}
@@ -6127,7 +6128,7 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
                 </div>
                 <Input type="number" min={1} max={model?.maxTokens} value={config.maxOutputTokens ?? ""} disabled={mutation.isPending} onChange={(event) => { const value = Number.parseInt(event.target.value, 10); if (Number.isFinite(value) && value > 0) updateTier(tier, { maxOutputTokens: model?.maxTokens ? Math.min(value, model.maxTokens) : value }); }} className="h-8 font-mono text-xs" />
               </div>}
-              {isGrok ? <p className="text-xs text-muted-foreground">Grok subscription exposes model selection, optional max output, and reasoning effort on grok-4.5. OpenAI Responses verbosity/service-tier controls do not apply.</p> : null}
+              {isGrok ? <p className="text-xs text-muted-foreground">Grok subscription exposes model selection, optional max output, and reasoning effort on supported models. OpenAI Responses verbosity/service-tier controls do not apply.</p> : null}
               {isOpenAI && !supported?.reasoningEffort && !supported?.verbosity && !supported?.serviceTier ? <p className="text-xs text-muted-foreground">This model exposes only model selection and max output in the current connector contract.</p> : null}
             </div>}
           >
