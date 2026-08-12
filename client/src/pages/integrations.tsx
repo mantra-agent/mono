@@ -5441,9 +5441,9 @@ function GitHubDetail() {
                         ) : (
                           <div className="space-y-1">
                             {usage.map((item) => (
-                              <div key={item.id} className="flex items-center justify-between gap-3 text-xs rounded-md bg-muted/30 px-2 py-1.5">
-                                <span className="truncate">{item.platformName} / {item.productName} / {item.environmentName}</span>
-                                <span className="font-mono text-muted-foreground truncate max-w-[45%] text-right">{item.owner}/{item.repo}:{item.branch}</span>
+                              <div key={item.id} className="flex min-w-0 flex-col gap-1 rounded-md bg-muted/30 px-2 py-1.5 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                                <span className="min-w-0 break-words sm:truncate">{item.platformName} / {item.productName} / {item.environmentName}</span>
+                                <span className="min-w-0 break-all font-mono text-muted-foreground sm:max-w-[45%] sm:truncate sm:text-right">{item.owner}/{item.repo}:{item.branch}</span>
                               </div>
                             ))}
                           </div>
@@ -5451,12 +5451,7 @@ function GitHubDetail() {
                       </div>
                     </>
                   )}
-                >
-                  <span className="flex items-center gap-1.5">
-                    <Badge variant="outline" className="text-xs">{connection.accountType || "source"}</Badge>
-                    <Badge variant={connection.status === "active" ? "secondary" : "destructive"} className="text-xs">{connection.status}</Badge>
-                  </span>
-                </ProfileTreeRow>
+                />
                 </HierarchyTreeRow>
               );
             })}
@@ -6204,7 +6199,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
 
   return (
     <div className="space-y-4">
-      {provider !== "google" && provider !== "recall" && provider !== "railway" && (
+      {provider !== "google" && provider !== "recall" && provider !== "railway" && provider !== "github" && (
         <div className="flex items-center gap-3">
           <Icon className="h-6 w-6" />
           <h2 className="text-lg font-semibold">{integration.name}</h2>
