@@ -178,11 +178,12 @@ export async function registerIntegrationsRoutes(app: Express) {
       const account = await handleAccountOAuthCallback(code, stateRaw, req.principal, originHost);
       const email = String(account.email || "").replace(/[<>&"']/g, "");
       const label = String(account.label || "").replace(/[<>&"']/g, "");
+      const accountId = String(account.id || "").replace(/[<>&"']/g, "");
       res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#e0e0e0"><h2>Account Connected</h2><p><strong>${email}</strong> (${label})</p><p>You can close this tab.</p><script>
 (function () {
   try {
     if (window.opener && !window.opener.closed) {
-      window.opener.postMessage({ type: "mantra:google-oauth", status: "connected" }, window.location.origin);
+      window.opener.postMessage({ type: "mantra:google-oauth", status: "connected", accountId: "${accountId}" }, window.location.origin);
     }
   } catch (e) {}
   setTimeout(function () { window.close(); }, 1200);

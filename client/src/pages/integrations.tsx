@@ -148,7 +148,7 @@ interface IntegrationDef {
 }
 
 const INTEGRATIONS: IntegrationDef[] = [
-  { id: "google", name: "Google", icon: Mail, statusFields: ["gmail", "gdrive"], healthField: "gmailHealthy", route: "google" },
+  { id: "google", name: "Google", icon: Mail, statusFields: ["google"], healthField: "gmailHealthy", route: "google" },
   { id: "box", name: "Box", icon: Box, statusFields: ["box"], route: "box" },
   { id: "elevenlabs", name: "ElevenLabs", icon: Volume2, statusFields: ["elevenlabs"], route: "elevenlabs" },
   { id: "cartesia", name: "Cartesia", icon: Volume2, statusFields: ["cartesia"], route: "cartesia" },
@@ -2195,6 +2195,7 @@ function TwitterAccountsSection() {
 function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oauthConfigured: boolean; drivePickerConfigured: boolean }) {
   const { toast } = useToast();
   const [showAddForm, setShowAddForm] = useState(false);
+  const [justConnectedAccountId, setJustConnectedAccountId] = useState<string | null>(null);
   const [selectedVaultId, setSelectedVaultId] = useState("");
   const [accountPendingRemoval, setAccountPendingRemoval] = useState<{ id: string; email: string } | null>(null);
   const [removalConfirmation, setRemovalConfirmation] = useState("");
@@ -2304,10 +2305,11 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
-      const data = event.data as { type?: string; status?: string } | null;
+      const data = event.data as { type?: string; status?: string; accountId?: string } | null;
       if (!data || data.type !== "mantra:google-oauth") return;
       refreshGoogleQueries();
       if (data.status === "connected") {
+        if (data.accountId) setJustConnectedAccountId(data.accountId);
         setShowAddForm(false);
         toast({ title: "Google account connected" });
       }
@@ -2429,7 +2431,7 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
           <IntegrationTreeSection
             key={account.id}
             label={account.email}
-            initialOpen={showReauth || vaultRequired}
+            initialOpen={showReauth || vaultRequired || account.id === justConnectedAccountId}
             testIdPrefix={`google-account-${account.id}`}
             expanderRight
             variant="item"

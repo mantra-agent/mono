@@ -53,7 +53,7 @@ export async function registerSetupRoutes(app: Express) {
   });
 
   app.get("/api/setup/secrets-status", async (_req, res) => {
-    const [elevenlabsConnected, gmailReadAccess, gmailHealthResult, openaiSubscriptionConnected, grokSubscriptionConnected, quickbooksStatus] = await Promise.all([
+    const [elevenlabsConnected, gmailReadAccess, gmailHealthResult, openaiSubscriptionConnected, grokSubscriptionConnected, quickbooksStatus, googleConnected] = await Promise.all([
       !!getSecretSync("ELEVENLABS_API_KEY"),
       (async () => {
         try {
@@ -116,6 +116,13 @@ export async function registerSetupRoutes(app: Express) {
           return { configured: false, connected: false, healthy: undefined };
         }
       })(),
+      (async () => {
+        try {
+          const { listGmailAccounts } = await import("../gmail");
+          const accounts = await listGmailAccounts();
+          return accounts.length > 0;
+        } catch { return false; }
+      })(),
     ]);
 
     res.json({
@@ -123,6 +130,7 @@ export async function registerSetupRoutes(app: Express) {
       openai: !!getSecretSync("OPENAI_API_KEY"),
       brave: !!getSecretSync("BRAVE_API_KEY") || !!getSecretSync("BRAVE_SEARCH_API_KEY"),
       elevenlabs: elevenlabsConnected,
+      google: googleConnected,
       gmail: gmailReadAccess,
       gmailHealthy: gmailHealthResult.configured ? gmailHealthResult.healthy : undefined,
       gdrive: !!getSecretSync("GOOGLE_CLIENT_ID") && !!getSecretSync("GOOGLE_CLIENT_SECRET"),
