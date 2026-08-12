@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Folder } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { apiRequest } from "@/lib/queryClient";
@@ -30,6 +30,7 @@ const COMPLETION_HOLD_MS = 8_000;
 export default function FilesPage() {
   usePageHeader({ title: "Files" });
 
+  const queryClient = useQueryClient();
   const { visibleVaults, isLoading: vaultsLoading } = useVisibleVaults();
   const [searchQuery, setSearchQuery] = useState("");
   const uploadReconciliation = useQuery({
@@ -41,6 +42,10 @@ export default function FilesPage() {
     staleTime: 60_000,
     retry: 1,
   });
+  useEffect(() => {
+    if (!uploadReconciliation.isSuccess) return;
+    void queryClient.invalidateQueries({ queryKey: ["/api/drive/resources"] });
+  }, [queryClient, uploadReconciliation.dataUpdatedAt, uploadReconciliation.isSuccess]);
   const trimmedQuery = searchQuery.trim().toLowerCase();
   const isSearching = trimmedQuery.length > 0;
 
