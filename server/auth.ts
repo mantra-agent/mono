@@ -22,6 +22,7 @@ import {
   loginSchema,
   memberships,
   registerSchema,
+  userProfiles,
   users,
   type User,
 } from "@shared/schema";
@@ -424,13 +425,25 @@ function saveSession(req: Request, context: string): Promise<void> {
   });
 }
 
-function userResponse(user: User, principal?: Principal | null, avatarObjectPath: string | null = null) {
+type UserResponseName = {
+  preferredName?: string | null;
+  displayName?: string | null;
+};
+
+function userResponse(
+  user: User,
+  principal?: Principal | null,
+  avatarObjectPath: string | null = null,
+  names: UserResponseName = {},
+) {
   return {
     user: {
       id: user.id,
       email: user.email,
       role: user.role,
       avatarObjectPath,
+      preferredName: names.preferredName ?? null,
+      displayName: names.displayName ?? null,
     },
     principal: principal ? {
       actorType: principal.actorType,
@@ -442,6 +455,21 @@ function userResponse(user: User, principal?: Principal | null, avatarObjectPath
       isAdmin: principal.isAdmin,
       source: principal.source,
     } : null,
+  };
+}
+
+async function loadUserProfileNames(userId: string): Promise<UserResponseName> {
+  const [profile] = await db
+    .select({
+      preferredName: userProfiles.preferredName,
+      displayName: userProfiles.displayName,
+    })
+    .from(userProfiles)
+    .where(eq(userProfiles.userId, userId))
+    .limit(1);
+  return {
+    preferredName: profile?.preferredName ?? null,
+    displayName: profile?.displayName ?? null,
   };
 }
 
@@ -740,9 +768,12 @@ export function setupAuth(app: Express) {
       req.session.destroy(() => {});
       return res.status(401).json({ error: "User not found" });
     }
-    const avatarObjectPath = await getAvatarObjectPath(principal);
+    const [avatarObjectPath, names] = await Promise.all([
+      getAvatarObjectPath(principal),
+      loadUserProfileNames(user.id),
+    ]);
     authTrace(req, "me:success", { userId: user.id });
-    res.json(userResponse(user, principal, avatarObjectPath));
+    res.json(userResponse(user, principal, avatarObjectPath, names));
   });
 
   app.post("/api/auth/setup", enforceAuthBudget("setup", 5), async (req: Request, res: Response) => {

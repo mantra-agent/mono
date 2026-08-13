@@ -36,3 +36,30 @@ export function deriveUserFirstName(
     : formatEmailLocalPart(input.email);
   return source?.split(/\s+/, 1)[0] || fallback;
 }
+
+/**
+ * Canonical avatar initials: first letter of first + last name when available.
+ * Prefer display name (usually full), then preferred name, then email local-part.
+ * Single-token names use the first two letters of that token; empty falls back to "?".
+ */
+export function deriveUserInitials(input: UserIdentityNameInput): string {
+  const profileName = cleanIdentityName(input.displayName)
+    ?? cleanIdentityName(input.preferredName);
+  const source = profileName && !profileName.includes("@")
+    ? profileName
+    : formatEmailLocalPart(input.email);
+  if (!source) return "?";
+
+  const parts = source.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    const first = parts[0]?.charAt(0) ?? "";
+    const last = parts[parts.length - 1]?.charAt(0) ?? "";
+    const initials = `${first}${last}`.toUpperCase();
+    return initials || "?";
+  }
+
+  const single = parts[0] ?? "";
+  if (single.length >= 2) return single.slice(0, 2).toUpperCase();
+  if (single.length === 1) return single.toUpperCase();
+  return "?";
+}

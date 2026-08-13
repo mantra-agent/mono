@@ -17,6 +17,7 @@ import { useVoiceCaptionsPreference } from "@/hooks/use-voice-captions-preferenc
 import { createLogger } from "@/lib/logger";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { deriveUserInitials } from "@shared/identity-name";
 
 const log = createLogger("Account");
 
@@ -99,7 +100,11 @@ export default function AccountPage() {
 
   if (!user) return null;
 
-  const initials = user.email.slice(0, 2).toUpperCase();
+  const initials = deriveUserInitials({
+    preferredName: user.preferredName,
+    displayName: user.displayName,
+    email: user.email,
+  });
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-auto bg-background" data-testid="account-page">
