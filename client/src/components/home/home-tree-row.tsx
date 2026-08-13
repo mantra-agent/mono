@@ -4,7 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SimpleAction, SimpleFeed, SimpleFeedItem } from "@shared/models/simple";
 import { createReferenceRef, type ReferenceRef } from "@shared/references";
 import type { MeetingAttendeePromotion } from "@shared/meeting-feed-items";
-import { simpleItemContainsReference, simpleItemReferenceRefs, sourceRefToReferenceRef, sourceRefsToReferenceRefs } from "@shared/simple-references";
+import { simpleItemContainsReference, simpleItemReferenceRefs, sourceRefToReferenceRef } from "@shared/simple-references";
+import { buildSimpleDiscussMessage, simpleDiscussTitle } from "@/lib/simple-discuss";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { Button } from "@/components/ui/button";
@@ -67,24 +68,6 @@ const EXTERNAL_URL_PATTERN = /(https?:\/\/\S+)/gi;
 
 type CreatedSession = { id: string };
 
-
-function itemDiscussTitle(item: SimpleFeedItem): string {
-  return item.title.trim().slice(0, 80) || "Simple Item";
-}
-
-function buildDiscussMessage(item: SimpleFeedItem): string {
-  const refs = item.references?.length ? item.references : sourceRefsToReferenceRefs(item.sourceRefs ?? []);
-  const canonicalRefs = refs.map(ref => ref.canonical);
-
-  const parts = [
-    `Let's discuss this Simple item: **${item.title}**`,
-    `Type: ${item.widgetType}`,
-    `Section: ${item.section}`,
-  ];
-  if (item.time) parts.push(`Display time: ${item.time}`);
-  if (canonicalRefs.length) parts.push(`Reference${canonicalRefs.length === 1 ? "" : "s"}: ${canonicalRefs.join(" ")}`);
-  return parts.join("\n");
-}
 
 function firstExternalUrl(value: string): string | null {
   return value.match(EXTERNAL_URL_PATTERN)?.[0] ?? null;
@@ -455,9 +438,9 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
 
   const discussMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/sessions", { title: itemDiscussTitle(item) });
+      const res = await apiRequest("POST", "/api/sessions", { title: simpleDiscussTitle(item) });
       const session: CreatedSession = await res.json();
-      await apiRequest("POST", `/api/sessions/${session.id}/messages`, { content: buildDiscussMessage(item) });
+      await apiRequest("POST", `/api/sessions/${session.id}/messages`, { content: buildSimpleDiscussMessage(item) });
       return session;
     },
     onSuccess: (session) => {
