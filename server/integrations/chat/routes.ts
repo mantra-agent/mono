@@ -1176,6 +1176,61 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
   });
 
+  // Session pin is personal user state. Keep it on /api/sessions so API policy
+  // classifies it as personal; the legacy /api/gateway attention route is admin-class.
+  app.patch("/api/sessions/:id/attention", async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const rawPinned = req.body?.isPinned ?? req.body?.needsAttention;
+      if (typeof rawPinned !== "boolean") {
+        return res.status(400).json({ error: "isPinned (boolean) is required" });
+      }
+      const session = await chatStorage.getSession(id);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+      await chatStorage.setSessionPinned(id, rawPinned);
+      res.json({ ok: true, isPinned: rawPinned });
+    } catch (error) {
+      chatLog.error("Error toggling session pin:", error);
+      res.status(500).json({ error: "Failed to toggle session pin" });
+    }
+  });
+
+  // Session-scoped persona pin is the same personal mutation class as attention.
+  app.patch("/api/sessions/:id/persona", async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      if (!req.body || !Object.prototype.hasOwnProperty.call(req.body, "personaId")) {
+        return res.status(400).json({ error: "personaId is required (a number to pin, or null for Auto)" });
+      }
+      const raw = req.body.personaId;
+      const personaId = raw === null ? null : Number(raw);
+      if (personaId !== null && (!Number.isInteger(personaId) || personaId <= 0)) {
+        return res.status(400).json({ error: "personaId must be a positive integer or null" });
+      }
+      if (personaId !== null) {
+        const { personaStorage } = await import("../../file-storage/persona-storage");
+        const persona = await personaStorage.get(personaId);
+        if (!persona) {
+          return res.status(404).json({ error: "Persona not found" });
+        }
+      }
+      const session = await chatStorage.getSession(id);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+      const updated = await chatStorage.setSessionPersonaPin(id, personaId);
+      if (!updated) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+      res.json({ ok: true, personaId, pinned: personaId !== null });
+    } catch (error) {
+      chatLog.error("Error updating session persona pin:", error);
+      res.status(500).json({ error: "Failed to update session persona pin" });
+    }
+  });
+
   app.post(
     "/api/sessions/:id/notices/:messageId/dismiss",
     async (req: Request, res: Response) => {

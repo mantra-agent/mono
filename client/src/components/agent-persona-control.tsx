@@ -91,7 +91,7 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
 
   const mutation = useMutation({
     mutationFn: async (nextPersonaId: number | null) => {
-      await apiRequest("PATCH", `/api/gateway/conversations/${sessionId}/persona`, {
+      await apiRequest("PATCH", `/api/sessions/${sessionId}/persona`, {
         personaId: nextPersonaId,
       });
       return nextPersonaId;
