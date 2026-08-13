@@ -97,6 +97,8 @@ interface MessageListProps {
   isSessionStreaming: boolean;
   runActive?: boolean;
   msgsLoading: boolean;
+  /** Quiet trailing wait while a visible prefix is still catching the durable snapshot. */
+  historyCatchingUp?: boolean;
   activeSession: string | null;
   sessionKey?: string | null;
   /** Server-projected Plan currently awaiting human review in this session. */
@@ -277,6 +279,7 @@ export function MessageList({
   isSessionStreaming,
   runActive,
   msgsLoading,
+  historyCatchingUp = false,
   activeSession,
   sessionKey,
   reviewPlanId,
@@ -1102,6 +1105,11 @@ export function MessageList({
   return (
     <>
       {elements}
+      {historyCatchingUp && !isSessionStreaming && !msgsLoading && (
+        <div className="flex justify-center py-3" data-testid="messages-catching-up">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      )}
       {/* Voice thinking now rendered through canonical server projection (visibleAssistantActivity),
           identical to text chat. voiceThinking demoted to voice control chrome only. */}
     </>

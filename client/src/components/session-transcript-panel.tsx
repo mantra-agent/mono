@@ -241,7 +241,12 @@ export function SessionTranscriptPanel({
     voiceActive,
   } = voice;
 
-  const { data: sessionData, isLoading: msgsLoading } = useQuery<{
+  const {
+    data: sessionData,
+    isLoading: msgsLoading,
+    isError: msgsError,
+    dataUpdatedAt,
+  } = useQuery<{
     messages: Message[];
     reviewPlan?: { id: string; pageId: string; status: string } | null;
   } & Session>({
@@ -253,6 +258,25 @@ export function SessionTranscriptPanel({
 
   const ownedSessionData = sessionData?.id === activeSession ? sessionData : undefined;
   const persistedMessages = ownedSessionData?.messages || [];
+  const historyCatchupBaselineRef = useRef<{ sessionId: string; dataUpdatedAt: number } | null>(null);
+  if (!activeSession) {
+    historyCatchupBaselineRef.current = null;
+  } else if (historyCatchupBaselineRef.current?.sessionId !== activeSession) {
+    const cachedState = queryClient.getQueryState(["/api/sessions", activeSession]);
+    const cached = cachedState?.data as { id?: string; messages?: unknown[] } | undefined;
+    const hasPrefix = cached?.id === activeSession && Array.isArray(cached.messages) && cached.messages.length > 0;
+    historyCatchupBaselineRef.current = hasPrefix
+      ? { sessionId: activeSession, dataUpdatedAt: cachedState?.dataUpdatedAt ?? 0 }
+      : null;
+  }
+
+  useEffect(() => {
+    if (!activeSession || historyCatchupBaselineRef.current?.sessionId !== activeSession) return;
+    void queryClient.refetchQueries({
+      queryKey: ["/api/sessions", activeSession],
+      type: "active",
+    });
+  }, [activeSession]);
 
   useEffect(() => {
     if (
@@ -447,6 +471,19 @@ export function SessionTranscriptPanel({
     displayLiveStreamRenderId,
     isStreaming,
   } = projection;
+  const revisionCatchingUp =
+    sessionSub.handoffPhase === "durable" &&
+    sessionSub.durableRevision !== null &&
+    (ownedSessionData?.durableRevision ?? 0) < sessionSub.durableRevision;
+  const selectCatchupPending =
+    !msgsError &&
+    historyCatchupBaselineRef.current?.sessionId === activeSession &&
+    dataUpdatedAt <= historyCatchupBaselineRef.current.dataUpdatedAt;
+  const historyCatchingUp =
+    !isStreaming &&
+    !msgsLoading &&
+    displayMessages.length > 0 &&
+    (selectCatchupPending || revisionCatchingUp);
 
   const questionProjectionTrace = useMemo(() => {
     const persistedCarriers = displayMessages.flatMap((message) =>
@@ -784,6 +821,7 @@ export function SessionTranscriptPanel({
         isSessionStreaming={isStreaming}
         runActive={isSessionActive}
         msgsLoading={msgsLoading}
+        historyCatchingUp={historyCatchingUp}
         voiceActive={voiceActive}
         voiceSession={voiceTranscriptOwnsSession ? voiceSession : null}
         voiceStatus={voiceTranscriptOwnsSession ? voiceSession?.status ?? "idle" : "idle"}

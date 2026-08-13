@@ -28,6 +28,8 @@ export interface SessionTranscriptSurfaceProps {
   isSessionStreaming: boolean;
   runActive?: boolean;
   msgsLoading: boolean;
+  /** Durable history is still arriving after a visible prefix. Not assistant activity. */
+  historyCatchingUp?: boolean;
   voiceActive: boolean;
   voiceSession?: VoiceSessionContextValue | null;
   voiceStatus: string;
@@ -65,6 +67,7 @@ export function SessionTranscriptSurface({
   isSessionStreaming,
   runActive,
   msgsLoading,
+  historyCatchingUp = false,
   voiceActive,
   voiceSession,
   voiceStatus,
@@ -175,6 +178,7 @@ export function SessionTranscriptSurface({
                 isSessionStreaming={isSessionStreaming}
                 runActive={runActive}
                 msgsLoading={msgsLoading}
+                historyCatchingUp={historyCatchingUp}
                 activeSession={activeSession}
                 sessionKey={sessionKey}
                 reviewPlanId={reviewPlanId}
