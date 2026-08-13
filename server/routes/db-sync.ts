@@ -32,7 +32,7 @@ import {
 } from "../lib/db-sync-safety";
 import {
   exportBrain,
-  INSERT_ORDER,
+  getDerivedExportTableCount,
   type ExportMode,
 } from "./brain";
 const log = createLogger("DbSyncRoutes");
@@ -486,7 +486,8 @@ async function runSync(
   const startedMs = Date.now();
   let rowsExported = 0;
   let tablesCompleted = 0;
-  let lastTable: string | null = INSERT_ORDER[0]?.key ?? null;
+  const derivedTableCount = getDerivedExportTableCount();
+  let lastTable: string | null = null;
   let lastIndex = 0;
   let archivePath: string | null = null;
   let lastProgressSaveAt = 0;
@@ -501,7 +502,7 @@ async function runSync(
     startedAt,
     currentTable: lastTable,
     currentTableIndex: 0,
-    totalTables: INSERT_ORDER.length,
+    totalTables: derivedTableCount,
     tablesCompleted: 0,
     rowsExported: 0,
     totalRowsExpected: 0,
@@ -734,7 +735,7 @@ async function runSync(
       status: "failed",
       currentTable: lastTable,
       currentTableIndex: lastIndex,
-      totalTables: INSERT_ORDER.length,
+      totalTables: derivedTableCount,
       tablesCompleted,
       rowsExported,
       totalRowsExpected,
@@ -1171,7 +1172,7 @@ export function registerDbSyncRoutes(app: Express) {
       destination: dest.key,
       syncId,
       startedAt: new Date().toISOString(),
-      totalTables: INSERT_ORDER.length,
+      totalTables: getDerivedExportTableCount(),
     });
 
     runSync(syncId, mode, dest.url, dest.key).catch((err) => {

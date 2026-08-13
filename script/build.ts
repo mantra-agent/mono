@@ -644,10 +644,10 @@ async function buildAll() {
 
   const backupFate = await validateBackupFateDisposition(process.cwd());
   console.log(
-    `backup fate disposition valid: ${backupFate.declaredRelations} declared relations fated (${backupFate.fatedRelations} disposition names)` +
+    `backup fate disposition valid: ${backupFate.declaredRelations} declared relations fated (${backupFate.fatedRelations} disposition names); derived producers: ${backupFate.producerCount}` +
       (backupFate.includedWithoutExporter.length
-        ? `; residual exporter-backfill debt (@task:2265): ${backupFate.includedWithoutExporter.length} included relation(s) without a TABLE_REGISTRY exporter`
-        : "; no exporter-backfill residual"),
+        ? `; residual included-without-producer: ${backupFate.includedWithoutExporter.length}`
+        : "; include implies export"),
   );
 
   if (DEV_MODE) {
