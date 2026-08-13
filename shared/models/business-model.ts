@@ -601,7 +601,7 @@ export interface PeriodRow {
   activeAccounts: number; newAccounts: number; churnedAccounts: number; activeUsers: number; newUsers: number; expandedUsers: number; contractedUsers: number;
   hoursUsed: number; tokensUsed: number; tokenCost: number;
   startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; userContractionRevenue: number; tierExpansionRevenue: number; cohortNrr: number;
-  totalCashRevenue: number; productRevenue: number; consultingRevenue: number; productCogs: number; consultingCogs: number; cogs: number; grossProfit: number;
+  totalCashRevenue: number; productRevenue: number; consultingRevenue: number; productCogs: number; consultingCogs: number; cogs: number; mrr: number; arr: number; grossProfit: number;
   staffOpex: number; acquisitionOpex: number; budgetOpex: number; departmentOpex: Record<string, number>;
   totalOpex: number; operatingIncome: number;
   acquisitionSpend: number; netCashChange: number; financingCash: number; endingCash: number;
@@ -1003,6 +1003,8 @@ export function aggregateMonths(months: MonthRow[], mode: PeriodMode): PeriodRow
       productCogs: sum((row) => row.productCogs),
       consultingCogs: sum((row) => row.consultingCogs),
       cogs: sum((row) => row.productCogs + row.consultingCogs),
+      mrr: last.productRevenue,
+      arr: last.productArr,
       grossProfit: sum((row) => row.grossProfit),
       staffOpex: sum((row) => row.staffOpex),
       acquisitionOpex: sum((row) => row.acquisitionOpex),
