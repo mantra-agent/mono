@@ -1,5 +1,19 @@
-import { useMemo, useState } from "react";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { useMemo, useState, type ComponentType } from "react";
+import {
+  Building2,
+  Code2,
+  DollarSign,
+  HeartHandshake,
+  Loader2,
+  Megaphone,
+  Package,
+  Palette,
+  Plus,
+  Settings2,
+  Trash2,
+  Users,
+  type LucideProps,
+} from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
@@ -21,12 +35,29 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import type { BusinessHiringProjection, BusinessHiringSlot } from "@shared/models/business-hiring";
 import { currentCalendarMonth } from "@shared/models/business-hiring";
-import type { JobRole } from "@shared/models/job-roles";
+import type { JobRole, JobTeam } from "@shared/models/job-roles";
 
-const FROZEN_CELL = "sticky left-0 z-10 min-w-[12rem] max-w-[12rem] border-r border-border/20 bg-background px-3 py-1.5 text-left";
+const FROZEN_CELL = "sticky left-0 z-10 min-w-[12rem] max-w-[12rem] border-r border-border/20 bg-background px-2 py-1.5 text-left";
 const MONTH_CELL = "min-w-[2.75rem] px-0 py-1 text-center";
 const YEAR_DIVIDER = "border-l-2 border-border/70";
 const MONTH_DIVIDER = "border-l border-border/10";
+
+const TEAM_ICONS: Record<JobTeam, ComponentType<LucideProps>> = {
+  Executive: Building2,
+  Product: Package,
+  Engineering: Code2,
+  Design: Palette,
+  "Go-to-Market": Megaphone,
+  "Customer Success": HeartHandshake,
+  Operations: Settings2,
+  Finance: DollarSign,
+  People: Users,
+};
+
+function TeamIcon({ team }: { team: JobTeam | undefined }) {
+  const Icon = team ? TEAM_ICONS[team] : Package;
+  return <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />;
+}
 
 function startMonthOf(slot: BusinessHiringSlot): string {
   return slot.plannedStartMonth ?? slot.approvalMonth;
@@ -78,11 +109,11 @@ function RoleRow({
   return (
     <tr className="border-t border-border/10">
       <td className={FROZEN_CELL}>
-        <div className="flex min-h-8 items-center justify-between gap-2">
-          <div className="min-w-0">
-            <div className="truncate text-sm text-foreground">{title}</div>
-            {role?.team ? <div className="truncate text-xs text-muted-foreground">{role.team}</div> : null}
-          </div>
+        <div className="flex items-center gap-2">
+          <TeamIcon team={role?.team} />
+          <span className="min-w-0 flex-1 truncate text-sm text-foreground" title={role?.team ? `${title} · ${role.team}` : title}>
+            {title}
+          </span>
           <button type="button" className="shrink-0 text-muted-foreground hover:text-destructive" aria-label={`Remove ${title}`} onClick={() => setConfirmOpen(true)}>
             <Trash2 className="h-3.5 w-3.5" />
           </button>
