@@ -1,26 +1,56 @@
-import { useMemo, useState, type ComponentType } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useMemo, useState, type ReactNode } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { usePageHeader } from "@/hooks/use-page-header";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import {
+  HIERARCHY_PRIMARY_ACTION_CLASS,
+  HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_SESSION_ROW_CLASS,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { UniversalTagPicker } from "@/components/universal-tag-picker";
+import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { normalizeTagSlug } from "@shared/models/tags";
 import {
   BookOpen,
   ChevronDown,
   ChevronRight,
-  MoreHorizontal,
   Compass,
+  FileText,
+  Layers,
+  Link2,
+  MoreHorizontal,
+  Plus,
   ShieldCheck,
-  Search,
-  X,
+  Tag,
   type LucideIcon,
 } from "lucide-react";
 
 type SectionKey = "theses" | "rules" | "principles";
-
 type OrientationRecord = Record<string, unknown> & { id?: string | number };
+type RuleScope = "always" | "contextual";
 
 interface SectionConfig {
   key: SectionKey;
@@ -29,7 +59,6 @@ interface SectionConfig {
   endpoint: string;
   title: (item: OrientationRecord) => string;
   subtitle?: (item: OrientationRecord) => string | null;
-  detailRows: Array<{ label: string; value: (item: OrientationRecord) => unknown }>;
   deleteEndpoint: (item: OrientationRecord) => string;
 }
 
@@ -42,13 +71,6 @@ const SECTION_CONFIGS: SectionConfig[] = [
     endpoint: "/api/rules",
     title: (item) => text(item.rule) || "Untitled rule",
     subtitle: (item) => text(item.context),
-    detailRows: [
-      { label: "Rule", value: (item) => item.rule },
-      { label: "Scope", value: (item) => item.scope },
-      { label: "Context", value: (item) => item.context },
-      { label: "Source", value: (item) => item.source },
-      { label: "Tags", value: (item) => item.tags },
-    ],
   },
   {
     key: "principles",
@@ -58,13 +80,6 @@ const SECTION_CONFIGS: SectionConfig[] = [
     endpoint: "/api/principles",
     title: (item) => text(item.title) || "Untitled principle",
     subtitle: (item) => text(item.layer1),
-    detailRows: [
-      { label: "Layer 1", value: (item) => item.layer1 },
-      { label: "Layer 2", value: (item) => item.layer2 },
-      { label: "Auto tags", value: (item) => item.autoTags },
-      { label: "Manual tags", value: (item) => item.manualTags },
-      { label: "Related", value: (item) => item.relatedIds },
-    ],
   },
   {
     key: "theses",
@@ -74,39 +89,65 @@ const SECTION_CONFIGS: SectionConfig[] = [
     endpoint: "/api/theses",
     title: (item) => text(item.title) || "Untitled thesis",
     subtitle: (item) => text(item.statement),
-    detailRows: [
-      { label: "Statement", value: (item) => item.statement },
-      { label: "Status", value: (item) => item.status },
-      { label: "Conviction", value: (item) => item.conviction },
-      { label: "Tags", value: (item) => item.tags },
-    ],
   },
-
-
 ];
 
-const SECTION_BY_KEY = Object.fromEntries(SECTION_CONFIGS.map((section) => [section.key, section])) as Record<SectionKey, SectionConfig>;
-const INDENT_PX = 16;
 const CONNECTOR_CLASS = "border-muted-foreground/50";
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+}
 
 function formatValue(value: unknown): string {
   if (value == null || value === "") return "—";
   if (Array.isArray(value)) {
     if (!value.length) return "—";
     if (value.every((item) => typeof item === "string")) return value.join(", ");
-    return value.map((item) => typeof item === "object" ? JSON.stringify(item) : String(item)).join("\n");
+    return value
+      .map((item) => (typeof item === "object" ? JSON.stringify(item) : String(item)))
+      .join("\n");
   }
   if (typeof value === "object") return JSON.stringify(value, null, 2);
   return String(value);
 }
 
-function sectionIcon(section: SectionConfig, _item?: OrientationRecord): LucideIcon {
-  return section.icon;
+function tagsToReferenceText(tags: string[]): string {
+  return tags
+    .map((tag) => {
+      const slug = normalizeTagSlug(tag);
+      return slug ? `@tag:${slug}` : "";
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+function searchableText(section: SectionConfig, item: OrientationRecord): string {
+  const parts = [
+    section.label,
+    section.title(item),
+    section.subtitle?.(item) ?? "",
+    formatValue(item.rule),
+    formatValue(item.context),
+    formatValue(item.scope),
+    formatValue(item.source),
+    formatValue(item.tags),
+    formatValue(item.layer1),
+    formatValue(item.layer2),
+    formatValue(item.autoTags),
+    formatValue(item.manualTags),
+    formatValue(item.relatedIds),
+    formatValue(item.statement),
+    formatValue(item.status),
+    formatValue(item.conviction),
+  ];
+  return parts.join(" ").toLowerCase();
 }
 
 async function fetchArray(endpoint: string): Promise<OrientationRecord[]> {
@@ -122,74 +163,300 @@ function useSectionData(section: SectionConfig) {
   });
 }
 
-function TreeRow({
-  depth,
-  icon: Icon,
-  title,
-  subtitle,
-  selected,
-  muted,
-  hasChildren,
-  expanded,
-  onClick,
+function TagLinks({ tags, empty = "—" }: { tags: string[]; empty?: string }) {
+  if (!tags.length) {
+    return <span className="text-muted-foreground">{empty}</span>;
+  }
+  return (
+    <InlineReferenceText
+      text={tagsToReferenceText(tags)}
+      className="inline-flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5"
+    />
+  );
+}
+
+function DetailTextRow({
+  label,
+  icon,
+  value,
+  testId,
+  mono = false,
 }: {
-  depth: number;
-  icon?: ComponentType<{ className?: string }>;
-  title: string;
-  subtitle?: string | null;
-  selected?: boolean;
-  muted?: boolean;
-  hasChildren?: boolean;
-  expanded?: boolean;
-  onClick?: () => void;
+  label: string;
+  icon: ReactNode;
+  value: unknown;
+  testId: string;
+  mono?: boolean;
+}) {
+  const display = formatValue(value);
+  const hasValue = display !== "—";
+  return (
+    <ProfileTreeRow
+      label={label}
+      icon={icon}
+      hasValue={hasValue}
+      showEmpty
+      mobileLayout="inline"
+      testId={testId}
+    >
+      <span className={cn("min-w-0 whitespace-pre-wrap break-words text-sm", mono && "font-mono text-xs")}>
+        {display}
+      </span>
+    </ProfileTreeRow>
+  );
+}
+
+function DetailTagsRow({
+  label,
+  tags,
+  testId,
+  editable = false,
+  onChange,
+}: {
+  label: string;
+  tags: string[];
+  testId: string;
+  editable?: boolean;
+  onChange?: (tags: string[]) => void;
 }) {
   return (
-    <div
-      className={cn(
-        "group relative flex items-center py-1 transition-colors duration-200 rounded-md",
-        selected ? "bg-accent" : "hover:bg-accent/50",
-        onClick && "cursor-pointer",
-      )}
-      style={{ paddingLeft: `${depth * INDENT_PX}px` }}
-      onClick={onClick}
-      role={onClick ? "button" : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onKeyDown={(event) => {
-        if (!onClick) return;
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onClick();
-        }
-      }}
+    <ProfileTreeRow
+      label={label}
+      icon={<Tag className="h-3.5 w-3.5" />}
+      hasValue={tags.length > 0}
+      showEmpty
+      mobileLayout="inline"
+      testId={testId}
+      expandedContent={
+        editable && onChange ? (
+          <UniversalTagPicker
+            variant="compact"
+            selected={tags}
+            onChange={onChange}
+            placeholder="Add tag"
+            testId={`${testId}-picker`}
+          />
+        ) : undefined
+      }
     >
-      {depth > 0 && (
-        <span className="pointer-events-none absolute inset-y-0 left-2 w-3" aria-hidden="true">
-          <span className={cn("absolute bottom-1/2 left-0 top-0 border-l", CONNECTOR_CLASS)} />
-          <span className={cn("absolute left-0 top-1/2 w-3 border-t", CONNECTOR_CLASS)} />
-        </span>
-      )}
-      {Icon ? (
-        <span className="w-4 shrink-0 flex items-center justify-center">
-          <Icon className={cn("h-3.5 w-3.5", muted ? "text-muted-foreground/60" : selected ? "text-foreground" : "text-muted-foreground")} />
-        </span>
-      ) : null}
-      <div className={cn("min-w-0 flex-1", Icon ? "pl-0.5" : "pl-1")}>
-        <div className="flex min-w-0 items-center gap-2">
-          <span
-            className={cn(
-              "truncate text-xs transition-all duration-200",
-              hasChildren ? "font-bold uppercase tracking-wider" : "font-medium",
-              muted ? "text-muted-foreground/60" : selected ? "text-foreground" : "text-muted-foreground",
-            )}
-          >
-            {title}
-          </span>
-          {subtitle ? <span className="hidden truncate text-[11px] text-muted-foreground/60 sm:inline">{subtitle}</span> : null}
-        </div>
-      </div>
+      <TagLinks tags={tags} empty="None" />
+    </ProfileTreeRow>
+  );
+}
 
+function RuleDetails({ item }: { item: OrientationRecord }) {
+  const ruleId = String(item.id ?? "");
+  const [ruleText, setRuleText] = useState(text(item.rule));
+  const [contextText, setContextText] = useState(text(item.context));
+  const scope = (text(item.scope) || "always") as RuleScope;
+  const tags = asStringArray(item.tags);
+
+  const updateMutation = useMutation({
+    mutationFn: async (patch: Record<string, unknown>) => {
+      const response = await apiRequest("PUT", `/api/rules/${ruleId}`, patch);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/rules"] });
+    },
+  });
+
+  const commitRule = () => {
+    const next = ruleText.trim();
+    if (!next || next === text(item.rule)) {
+      setRuleText(text(item.rule));
+      return;
+    }
+    updateMutation.mutate({ rule: next });
+  };
+
+  const commitContext = () => {
+    const next = contextText.trim();
+    if (next === text(item.context)) return;
+    if (scope === "contextual" && !next) {
+      setContextText(text(item.context));
+      return;
+    }
+    updateMutation.mutate({ context: next || undefined, scope: next ? "contextual" : "always" });
+  };
+
+  return (
+    <div className="space-y-0.5">
+      <ProfileTreeRow
+        label="Rule"
+        icon={<FileText className="h-3.5 w-3.5" />}
+        hasValue={Boolean(ruleText.trim())}
+        showEmpty
+        mobileLayout="inline"
+        testId={`row-rule-text-${ruleId}`}
+        expandedContent={
+          <Textarea
+            value={ruleText}
+            onChange={(event) => setRuleText(event.target.value)}
+            onBlur={commitRule}
+            className="min-h-20 text-sm"
+            data-testid={`input-rule-text-${ruleId}`}
+          />
+        }
+      >
+        <span className="min-w-0 whitespace-pre-wrap break-words text-sm">{ruleText || "—"}</span>
+      </ProfileTreeRow>
+
+      <ProfileTreeRow
+        label="Scope"
+        icon={<Layers className="h-3.5 w-3.5" />}
+        hasValue
+        showEmpty
+        mobileLayout="inline"
+        testId={`row-rule-scope-${ruleId}`}
+        expandedContent={
+          <div className="flex gap-2">
+            {(["always", "contextual"] as const).map((nextScope) => (
+              <button
+                key={nextScope}
+                type="button"
+                className={cn(
+                  "rounded-md border px-2 py-1 text-xs capitalize transition-colors",
+                  scope === nextScope
+                    ? "border-foreground/30 bg-accent text-foreground"
+                    : "border-border text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => {
+                  if (nextScope === scope) return;
+                  if (nextScope === "contextual" && !contextText.trim()) return;
+                  updateMutation.mutate({
+                    scope: nextScope,
+                    context: nextScope === "always" ? undefined : contextText.trim(),
+                  });
+                }}
+                data-testid={`button-rule-scope-${nextScope}-${ruleId}`}
+              >
+                {nextScope}
+              </button>
+            ))}
+          </div>
+        }
+      >
+        <span className="capitalize text-sm">{scope}</span>
+      </ProfileTreeRow>
+
+      <ProfileTreeRow
+        label="Context"
+        icon={<Compass className="h-3.5 w-3.5" />}
+        hasValue={Boolean(contextText.trim())}
+        showEmpty
+        mobileLayout="inline"
+        testId={`row-rule-context-${ruleId}`}
+        expandedContent={
+          <Input
+            value={contextText}
+            onChange={(event) => setContextText(event.target.value)}
+            onBlur={commitContext}
+            placeholder="When this rule applies"
+            className="h-8 text-sm"
+            data-testid={`input-rule-context-${ruleId}`}
+          />
+        }
+      >
+        <span className="min-w-0 truncate text-sm">{contextText || "—"}</span>
+      </ProfileTreeRow>
+
+      <DetailTextRow
+        label="Source"
+        icon={<Link2 className="h-3.5 w-3.5" />}
+        value={item.source}
+        testId={`row-rule-source-${ruleId}`}
+      />
+
+      <DetailTagsRow
+        label="Tags"
+        tags={tags}
+        testId={`row-rule-tags-${ruleId}`}
+        editable
+        onChange={(nextTags) => updateMutation.mutate({ tags: nextTags.length ? nextTags : undefined })}
+      />
     </div>
   );
+}
+
+function PrincipleDetails({ item }: { item: OrientationRecord }) {
+  const id = String(item.id ?? "");
+  return (
+    <div className="space-y-0.5">
+      <DetailTextRow
+        label="Layer 1"
+        icon={<FileText className="h-3.5 w-3.5" />}
+        value={item.layer1}
+        testId={`row-principle-layer1-${id}`}
+      />
+      <DetailTextRow
+        label="Layer 2"
+        icon={<Layers className="h-3.5 w-3.5" />}
+        value={item.layer2}
+        testId={`row-principle-layer2-${id}`}
+      />
+      <DetailTagsRow
+        label="Auto tags"
+        tags={asStringArray(item.autoTags)}
+        testId={`row-principle-auto-tags-${id}`}
+      />
+      <DetailTagsRow
+        label="Manual tags"
+        tags={asStringArray(item.manualTags)}
+        testId={`row-principle-manual-tags-${id}`}
+      />
+      <DetailTextRow
+        label="Related"
+        icon={<Link2 className="h-3.5 w-3.5" />}
+        value={item.relatedIds}
+        testId={`row-principle-related-${id}`}
+        mono
+      />
+    </div>
+  );
+}
+
+function ThesisDetails({ item }: { item: OrientationRecord }) {
+  const id = String(item.id ?? "");
+  return (
+    <div className="space-y-0.5">
+      <DetailTextRow
+        label="Statement"
+        icon={<FileText className="h-3.5 w-3.5" />}
+        value={item.statement}
+        testId={`row-thesis-statement-${id}`}
+      />
+      <DetailTextRow
+        label="Status"
+        icon={<Layers className="h-3.5 w-3.5" />}
+        value={item.status}
+        testId={`row-thesis-status-${id}`}
+      />
+      <DetailTextRow
+        label="Conviction"
+        icon={<Compass className="h-3.5 w-3.5" />}
+        value={item.conviction}
+        testId={`row-thesis-conviction-${id}`}
+      />
+      <DetailTagsRow
+        label="Tags"
+        tags={asStringArray(item.tags)}
+        testId={`row-thesis-tags-${id}`}
+      />
+    </div>
+  );
+}
+
+function OrientationItemDetails({
+  section,
+  item,
+}: {
+  section: SectionConfig;
+  item: OrientationRecord;
+}) {
+  if (section.key === "rules") return <RuleDetails item={item} />;
+  if (section.key === "principles") return <PrincipleDetails item={item} />;
+  return <ThesisDetails item={item} />;
 }
 
 function OrientationItemRow({ section, item }: { section: SectionConfig; item: OrientationRecord }) {
@@ -204,71 +471,175 @@ function OrientationItemRow({ section, item }: { section: SectionConfig; item: O
     onError: () => setDeleteOpen(false),
   });
   const title = section.title(item);
-  const hasExpansion = section.detailRows.some((row) => {
-    const v = row.value(item);
-    return v != null && v !== "" && !(Array.isArray(v) && v.length === 0);
-  });
+  const Icon = section.icon;
 
   return (
     <div className="space-y-0.5">
-      <div className={cn("group relative flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 pr-16 text-sm cursor-pointer select-none transition-colors overflow-hidden hover:bg-accent/50 text-foreground")} style={{ paddingLeft: "32px" }}>
+      <div
+        className={cn(
+          HIERARCHY_SESSION_ROW_CLASS,
+          "group pr-16 hover:bg-accent/50 text-foreground",
+        )}
+        style={{ paddingLeft: "32px" }}
+        onClick={() => setExpanded((value) => !value)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setExpanded((value) => !value);
+          }
+        }}
+        data-testid={`row-orientation-${section.key}-${String(item.id ?? "")}`}
+      >
         <span className="pointer-events-none absolute inset-y-0 left-2 w-4" aria-hidden="true">
           <span className={cn("absolute bottom-1/2 left-0 top-0 border-l", CONNECTOR_CLASS)} />
           <span className={cn("absolute left-0 top-1/2 w-4 border-t", CONNECTOR_CLASS)} />
         </span>
+        <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground">
+          <Icon className="h-3.5 w-3.5" />
+        </span>
         <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
-        {hasExpansion && (
-          <button
-            type="button"
-            className="absolute right-8 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-all group-hover:opacity-100 focus-visible:opacity-100 hover:bg-accent hover:text-foreground"
-            onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
-            aria-label={expanded ? "Collapse" : "Expand"}
-          >
-            <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-90")} />
-          </button>
-        )}
+        <button
+          type="button"
+          className="absolute right-8 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-all group-hover:opacity-100 focus-visible:opacity-100 hover:bg-accent hover:text-foreground"
+          onClick={(event) => {
+            event.stopPropagation();
+            setExpanded((value) => !value);
+          }}
+          aria-label={expanded ? "Collapse" : "Expand"}
+        >
+          <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-90")} />
+        </button>
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
               className="absolute right-1 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-all group-hover:opacity-100 focus-visible:opacity-100 hover:bg-accent hover:text-foreground"
-              onClick={(e) => e.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
               aria-label="Actions"
             >
               <MoreHorizontal className="h-3.5 w-3.5" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-32" onClick={(e) => e.stopPropagation()}>
-            <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteOpen(true)}>Delete</DropdownMenuItem>
+          <DropdownMenuContent align="end" className="w-32" onClick={(event) => event.stopPropagation()}>
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onSelect={() => setDeleteOpen(true)}
+            >
+              Delete
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      {expanded && (
-        <div className="ml-8 rounded-md border border-border/40 bg-card/40 p-3 text-sm">
-          {section.detailRows.map((row) => {
-            const v = row.value(item);
-            if (v == null || v === "" || (Array.isArray(v) && v.length === 0)) return null;
-            return (
-              <div key={row.label} className="mt-1 first:mt-0">
-                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{row.label}: </span>
-                <span className="whitespace-pre-wrap text-sm text-foreground">{formatValue(v)}</span>
-              </div>
-            );
-          })}
+
+      {expanded ? (
+        <div className="ml-8 border-l border-border/40 pl-2">
+          <OrientationItemDetails section={section} item={item} />
         </div>
-      )}
+      ) : null}
+
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete item?</AlertDialogTitle>
-            <AlertDialogDescription>This will permanently delete &ldquo;{title.slice(0, 80)}&rdquo;. This action cannot be undone.</AlertDialogDescription>
+            <AlertDialogDescription>
+              This will permanently delete &ldquo;{title.slice(0, 80)}&rdquo;. This action cannot be undone.
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => deleteMutation.mutate()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+            <AlertDialogAction
+              onClick={() => deleteMutation.mutate()}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+function NewRuleForm({
+  onCancel,
+  onCreated,
+}: {
+  onCancel: () => void;
+  onCreated: () => void;
+}) {
+  const [rule, setRule] = useState("");
+  const [context, setContext] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = {
+        rule: rule.trim(),
+        source: "manual",
+        scope: context.trim() ? "contextual" : "always",
+      };
+      if (context.trim()) body.context = context.trim();
+      if (tags.length) body.tags = tags;
+      const response = await apiRequest("POST", "/api/rules", body);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/rules"] });
+      onCreated();
+    },
+  });
+
+  const canSave = rule.trim().length > 0 && !createMutation.isPending;
+
+  return (
+    <div className="space-y-2 rounded-md border border-border/40 bg-card/30 p-2" data-testid="form-new-rule">
+      <Textarea
+        value={rule}
+        onChange={(event) => setRule(event.target.value)}
+        placeholder="Rule"
+        className="min-h-20 text-sm"
+        data-testid="input-new-rule-text"
+        autoFocus
+      />
+      <Input
+        value={context}
+        onChange={(event) => setContext(event.target.value)}
+        placeholder="Context (optional)"
+        className="h-8 text-sm"
+        data-testid="input-new-rule-context"
+      />
+      <UniversalTagPicker
+        variant="compact"
+        selected={tags}
+        onChange={setTags}
+        placeholder="Add tags"
+        testId="input-new-rule-tags"
+      />
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
+          data-testid="button-cancel-new-rule"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={!canSave}
+          onClick={() => createMutation.mutate()}
+          className="rounded-md bg-cta px-2 py-1 text-sm text-cta-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          data-testid="button-save-new-rule"
+        >
+          Save
+        </button>
+      </div>
+      {createMutation.isError ? (
+        <div className="text-xs text-destructive">
+          {(createMutation.error as Error)?.message || "Could not create rule"}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -277,7 +648,6 @@ function OrientationSection({
   section,
   items,
   loading,
-  selectedKey,
   searchActive,
 }: {
   section: SectionConfig;
@@ -287,12 +657,14 @@ function OrientationSection({
 }) {
   const [expanded, setExpanded] = useState(true);
   const isExpanded = searchActive || expanded;
+
   return (
     <div className="space-y-0.5">
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
-        className="flex w-full items-center gap-2 px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+        className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover:text-foreground")}
+        data-testid={`section-orientation-${section.key}`}
       >
         {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
         <span>{section.label}</span>
@@ -305,16 +677,18 @@ function OrientationSection({
               <Skeleton className="h-6 rounded-md" />
             </div>
           ) : items.length === 0 ? (
-            <div className="px-8 py-1.5 text-sm text-muted-foreground">
-              {searchActive ? `No matching ${section.label.toLowerCase()}.` : `No ${section.label.toLowerCase()} yet.`}
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+              {searchActive
+                ? `No matching ${section.label.toLowerCase()}.`
+                : `No ${section.label.toLowerCase()} yet.`}
             </div>
           ) : (
             items.map((item) => (
-                <OrientationItemRow
-                  key={`${section.key}:${String(item.id ?? "")}`}
-                  section={section}
-                  item={item}
-                />
+              <OrientationItemRow
+                key={`${section.key}:${String(item.id ?? "")}`}
+                section={section}
+                item={item}
+              />
             ))
           )}
         </div>
@@ -326,23 +700,15 @@ function OrientationSection({
 export default function OrientationPage() {
   usePageHeader({ title: "Orientation" });
   const [searchQuery, setSearchQuery] = useState("");
+  const [showNewRule, setShowNewRule] = useState(false);
   const queries = SECTION_CONFIGS.map((section) => useSectionData(section));
-
 
   const normalizedSearch = searchQuery.trim().toLowerCase();
   const sectionData = useMemo(() => {
     return SECTION_CONFIGS.map((section, index) => {
       const items = queries[index].data ?? [];
       const filteredItems = normalizedSearch
-        ? items.filter((item) => {
-          const searchable = [
-            section.label,
-            section.title(item),
-            section.subtitle?.(item) ?? "",
-            ...section.detailRows.map((row) => formatValue(row.value(item))),
-          ].join(" ").toLowerCase();
-          return searchable.includes(normalizedSearch);
-        })
+        ? items.filter((item) => searchableText(section, item).includes(normalizedSearch))
         : items;
       return {
         section,
@@ -350,31 +716,40 @@ export default function OrientationPage() {
         loading: queries[index].isLoading,
       };
     });
-  }, [normalizedSearch, queries.map((query) => query.data).join("|"), queries.map((query) => query.isLoading).join("|")]);
+  }, [
+    normalizedSearch,
+    queries.map((query) => query.dataUpdatedAt).join("|"),
+    queries.map((query) => query.isLoading).join("|"),
+  ]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto p-2 sm:p-3">
-      <div className="relative mb-2 min-w-0">
-        <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-        <input
-          type="text"
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto">
+      <div className={HIERARCHY_TREE_STACK_CLASS}>
+        <HierarchySearchInput
           value={searchQuery}
-          onChange={(event) => setSearchQuery(event.target.value)}
-          className="h-7 w-full rounded-md border border-input bg-background pl-7 pr-7 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          data-testid="input-search-orientation"
+          onChange={setSearchQuery}
+          inputTestId="input-search-orientation"
+          clearTestId="button-clear-orientation-search"
+          ariaLabel="Search orientation"
         />
-        {searchQuery ? (
-          <button
-            type="button"
-            onClick={() => setSearchQuery("")}
-            className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-            data-testid="button-clear-orientation-search"
-          >
-            <X className="h-3 w-3" />
-          </button>
+
+        <button
+          type="button"
+          onClick={() => setShowNewRule((value) => !value)}
+          className={HIERARCHY_PRIMARY_ACTION_CLASS}
+          data-testid="button-new-rule"
+        >
+          <Plus className="h-3.5 w-3.5 shrink-0" />
+          <span>New Rule</span>
+        </button>
+
+        {showNewRule ? (
+          <NewRuleForm
+            onCancel={() => setShowNewRule(false)}
+            onCreated={() => setShowNewRule(false)}
+          />
         ) : null}
-      </div>
-      <div className="w-full space-y-1 rounded-lg border border-black bg-background/40 p-2">
+
         {sectionData.map(({ section, items, loading }) => (
           <OrientationSection
             key={section.key}
