@@ -1,4 +1,7 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { createLogger } from "./logger";
+
+const log = createLogger("QueryClient");
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -40,6 +43,25 @@ function isDurableSessionSnapshot(value: unknown): value is DurableSessionSnapsh
     Array.isArray(candidate.messages);
 }
 
+function sessionDetailId(queryKey: readonly unknown[]): string | null {
+  return queryKey.length === 2 &&
+    queryKey[0] === "/api/sessions" &&
+    typeof queryKey[1] === "string" &&
+    queryKey[1].length > 0
+    ? queryKey[1]
+    : null;
+}
+
+function snapshotMeta(value: unknown): { messageCount: number | null; durableRevision: number | null } {
+  if (!isDurableSessionSnapshot(value)) {
+    return { messageCount: null, durableRevision: null };
+  }
+  return {
+    messageCount: value.messages.length,
+    durableRevision: value.durableRevision,
+  };
+}
+
 function preserveCoherentDurableSessionSnapshot(oldData: unknown, newData: unknown): unknown {
   if (
     !isDurableSessionSnapshot(oldData) ||
@@ -49,21 +71,31 @@ function preserveCoherentDurableSessionSnapshot(oldData: unknown, newData: unkno
     return newData;
   }
 
+  let decision: "keep" | "replace" | "reject" = "replace";
+  let next: unknown = newData;
   if (newData.durableRevision < oldData.durableRevision) {
-    return oldData;
-  }
-
-  if (
+    decision = "reject";
+    next = oldData;
+  } else if (
     newData.durableRevision > oldData.durableRevision &&
     newData.messages === oldData.messages
   ) {
-    return {
+    decision = "keep";
+    next = {
       ...newData,
       durableRevision: oldData.durableRevision,
     };
   }
 
-  return newData;
+  log.info("SESSION:HANDOFF_CACHE_APPLY", {
+    sessionId: oldData.id,
+    oldRevision: oldData.durableRevision,
+    newRevision: newData.durableRevision,
+    oldMessageCount: oldData.messages.length,
+    newMessageCount: newData.messages.length,
+    decision,
+  });
+  return next;
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
@@ -72,16 +104,66 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
-      credentials: "include",
-    });
-
-    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
-      return null;
+    const sessionId = sessionDetailId(queryKey);
+    const startedAt = Date.now();
+    if (sessionId) {
+      log.info("SESSION:HANDOFF_FETCH_START", { sessionId });
     }
 
-    await throwIfResNotOk(res);
-    return await res.json();
+    try {
+      const res = await fetch(queryKey.join("/") as string, {
+        credentials: "include",
+      });
+
+      if (unauthorizedBehavior === "returnNull" && res.status === 401) {
+        if (sessionId) {
+          log.info("SESSION:HANDOFF_FETCH_SETTLE", {
+            sessionId,
+            status: 401,
+            durationMs: Date.now() - startedAt,
+            messageCount: null,
+            durableRevision: null,
+          });
+        }
+        return null;
+      }
+
+      if (!res.ok) {
+        if (sessionId) {
+          log.info("SESSION:HANDOFF_FETCH_SETTLE", {
+            sessionId,
+            status: res.status,
+            durationMs: Date.now() - startedAt,
+            messageCount: null,
+            durableRevision: null,
+          });
+        }
+        await throwIfResNotOk(res);
+      }
+
+      const json = await res.json();
+      if (sessionId) {
+        log.info("SESSION:HANDOFF_FETCH_SETTLE", {
+          sessionId,
+          status: res.status,
+          durationMs: Date.now() - startedAt,
+          ...snapshotMeta(json),
+        });
+      }
+      return json;
+    } catch (error) {
+      if (sessionId && !(error instanceof Error && /^\d{3}:/.test(error.message))) {
+        log.info("SESSION:HANDOFF_FETCH_SETTLE", {
+          sessionId,
+          status: 0,
+          durationMs: Date.now() - startedAt,
+          messageCount: null,
+          durableRevision: null,
+          error: error instanceof Error ? error.name : "fetch_failed",
+        });
+      }
+      throw error;
+    }
   };
 
 export const queryClient = new QueryClient({

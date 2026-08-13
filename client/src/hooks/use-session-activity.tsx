@@ -15,6 +15,9 @@ import {
   type VisibleAssistantActivity,
 } from "@/hooks/use-session-subscription";
 import { isDurablyActiveSession, type ChatSession } from "@shared/models/chat";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("SessionActivity");
 
 const ACTIVITY_PRIORITY: Record<VisibleAssistantActivity, number> = {
   none: 0,
@@ -35,15 +38,20 @@ interface SessionActivityContextValue {
 const SessionStreamContext = createContext<SessionStreamContextValue | null>(null);
 const SessionActivityContext = createContext<SessionActivityContextValue | null>(null);
 
-function mostActiveAssistantActivity(streams: SessionStreamMap): VisibleAssistantActivity {
+function mostActiveAssistantActivity(streams: SessionStreamMap): {
+  activity: VisibleAssistantActivity;
+  sessionId: string | null;
+} {
   let mostActive: VisibleAssistantActivity = "none";
-  for (const stream of Object.values(streams)) {
+  let sessionId: string | null = null;
+  for (const [id, stream] of Object.entries(streams)) {
     if (!stream.runActive && stream.status !== "streaming") continue;
     if (ACTIVITY_PRIORITY[stream.visibleAssistantActivity] > ACTIVITY_PRIORITY[mostActive]) {
       mostActive = stream.visibleAssistantActivity;
+      sessionId = id;
     }
   }
-  return mostActive;
+  return { activity: mostActive, sessionId };
 }
 
 export function SessionActivityProvider({ children }: { children: ReactNode }) {
@@ -72,13 +80,24 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
   });
   const [visibleAssistantActivity, setVisibleAssistantActivity] = useState<VisibleAssistantActivity>("none");
   useEffect(() => {
+    let lastOwner: string | null = null;
+    let lastActivity: VisibleAssistantActivity = "none";
     const updateActivity = () => {
       const next = mostActiveAssistantActivity(store.getSnapshot());
-      setVisibleAssistantActivity((current) => current === next ? current : next);
+      if (next.activity !== lastActivity || next.sessionId !== lastOwner) {
+        lastActivity = next.activity;
+        lastOwner = next.sessionId;
+        log.info("SESSION:HANDOFF_ACTIVITY_OWNER", {
+          activeSession,
+          activity: next.activity,
+          ownerSessionId: next.sessionId,
+        });
+      }
+      setVisibleAssistantActivity((current) => current === next.activity ? current : next.activity);
     };
     updateActivity();
     return store.subscribe(updateActivity);
-  }, [store]);
+  }, [activeSession, store]);
   const streamValue = useMemo<SessionStreamContextValue>(() => ({
     store,
     wsConnected,
