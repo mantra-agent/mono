@@ -114,12 +114,7 @@ export function buildBootstrapSystemPrompt(router: PersonaEntry): string {
 function buildBootstrapUserPrompt(personas: PersonaEntry[], userMessage: string): string {
   const table = personas
     .filter((p) => !p.isSystem)
-    .map((p) => {
-      const examples = p.routingExamples.length
-        ? ` Examples: ${p.routingExamples.map((e) => `"${e}"`).join(" · ")}`
-        : "";
-      return `- ${p.name}: ${p.description}${examples}`;
-    })
+    .map((p) => `- ${p.name}: ${p.description}`)
     .join("\n");
   return [
     "Available user-facing personas:",

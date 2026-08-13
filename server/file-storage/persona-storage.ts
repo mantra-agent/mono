@@ -43,7 +43,6 @@ export interface PersonaEntry {
   expressionTags: string[];
   cognitiveOverrides: Record<string, unknown>;
   semanticTier: SemanticTier | null;
-  routingExamples: string[];
   contextSections: Record<string, boolean>;
   toolBundle: string[];
   isDefault: boolean;
@@ -73,7 +72,6 @@ function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
     cognitiveOverrides:
       (row.cognitiveOverrides as Record<string, unknown>) || {},
     semanticTier: row.semanticTier ? semanticTierSchema.parse(row.semanticTier) : null,
-    routingExamples: (row.routingExamples as string[]) || [],
     contextSections: (row.contextSections as Record<string, boolean>) || {},
     toolBundle: (row.toolBundle as string[]) || [],
     isDefault: row.isDefault,
@@ -113,33 +111,6 @@ const PERSONA_SEMANTIC_TIERS: Record<string, SemanticTier> = {
 
 function semanticTierForPersona(name: string): SemanticTier {
   return PERSONA_SEMANTIC_TIERS[name] ?? "balanced";
-}
-
-/** Example session openings that should route to each seed persona during orientation bootstrap. */
-const PERSONA_ROUTING_EXAMPLES: Record<string, string[]> = {
-  Default: ["Hey, how's it going?", "Quick question about my calendar"],
-  Strategist: ["How should I position against this competitor?", "Walk through the game theory of this negotiation"],
-  Architect: ["Design the schema for this new system", "There's a structural bug in how sessions orient"],
-  Engineer: ["Implement this feature in the codebase", "Debug why the deployed service is failing"],
-  Operator: ["Mark that task done and create a follow-up", "Log this interaction with Mike"],
-  Creative: ["Brainstorm names for this product", "Write a playful post about today's launch"],
-  Coach: ["I keep procrastinating on the demo, hold me accountable", "Help me reflect on this week"],
-  Companion: ["Rough day. Just need to talk", "Feeling anxious about tomorrow's call"],
-  Investigator: [
-    "Research this company and verify whether its traction claims are real",
-    "Do background diligence on this person and compare conflicting sources",
-    "Find out what is actually happening before we decide what to do",
-  ],
-  Persuader: [
-    "Help me frame this idea so the executive team understands why it matters",
-    "Write the pitch around this buyer's incentives and likely objections",
-    "Make this vision feel useful, credible, and personally relevant to the audience",
-  ],
-  Router: [],
-};
-
-function routingExamplesForPersona(name: string): string[] {
-  return PERSONA_ROUTING_EXAMPLES[name] ?? [];
 }
 
 const SEED_PERSONAS = [
@@ -499,16 +470,23 @@ export interface PersonaRevisionPayload {
   expressionTags: string[];
   cognitiveOverrides: Record<string, unknown>;
   semanticTier: SemanticTier | null;
-  routingExamples: string[];
   contextSections: Record<string, boolean>;
   toolBundle: string[];
 }
 
-const REVISION_FIELDS = ["name", "description", "icon", "promptOverlay", "expressionTags", "cognitiveOverrides", "semanticTier", "routingExamples", "contextSections", "toolBundle"] as const;
+const REVISION_FIELDS = ["name", "description", "icon", "promptOverlay", "expressionTags", "cognitiveOverrides", "semanticTier", "contextSections", "toolBundle"] as const;
 type RevisionField = typeof REVISION_FIELDS[number];
 
 function revisionPayload(persona: PersonaEntry): PersonaRevisionPayload {
   return Object.fromEntries(REVISION_FIELDS.map((field) => [field, persona[field]])) as unknown as PersonaRevisionPayload;
+}
+
+/** Strip retired keys (e.g. historical routingExamples) from stored revision JSON. */
+function sanitizeRevisionPayload(raw: unknown): PersonaRevisionPayload {
+  const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  return Object.fromEntries(
+    REVISION_FIELDS.map((field) => [field, source[field]]),
+  ) as unknown as PersonaRevisionPayload;
 }
 
 function stableValue(value: unknown): unknown {
@@ -581,8 +559,8 @@ class PersonaStorageClass {
   async compareRevisions(leftId: string, rightId: string) {
     const [left, right] = await Promise.all([this.getRevision(leftId), this.getRevision(rightId)]);
     if (!left || !right) return null;
-    const leftPayload = left.payload as PersonaRevisionPayload;
-    const rightPayload = right.payload as PersonaRevisionPayload;
+    const leftPayload = sanitizeRevisionPayload(left.payload);
+    const rightPayload = sanitizeRevisionPayload(right.payload);
     return { left, right, changedFields: changedFields(leftPayload, rightPayload).map((field) => ({ field, before: leftPayload[field], after: rightPayload[field] })) };
   }
 
@@ -895,8 +873,6 @@ class PersonaStorageClass {
       updates.contextSections = input.contextSections;
     if (input.toolBundle !== undefined)
       updates.toolBundle = input.toolBundle;
-    if (input.routingExamples !== undefined)
-      updates.routingExamples = input.routingExamples;
     const [updated] = await db
       .update(personas)
       .set({
@@ -932,7 +908,7 @@ class PersonaStorageClass {
     const persona = await this.get(id);
     const revision = await this.getRevision(revisionId);
     if (!persona || !revision || revision.scope !== "user" || revision.personaIdentityId !== id) return null;
-    const payload = revision.payload as PersonaRevisionPayload;
+    const payload = sanitizeRevisionPayload(revision.payload);
     return this.update(id, payload);
   }
 
@@ -944,7 +920,7 @@ class PersonaStorageClass {
     if (!templateRow?.currentRevisionId) return null;
     const platformRevision = await this.getRevision(templateRow.currentRevisionId);
     if (!platformRevision) return null;
-    const payload = platformRevision.payload as PersonaRevisionPayload;
+    const payload = sanitizeRevisionPayload(platformRevision.payload);
     const updated = await this.update(id, payload);
     if (!updated || !template) return updated;
     await db.update(personas).set({ baseRevisionId: platformRevision.id, currentRevisionId: platformRevision.id, updateState: "following" }).where(combineWithWritableScope(requireCurrentUserPrincipal(), personaScopeColumns, eq(personas.id, id)));
@@ -977,7 +953,7 @@ class PersonaStorageClass {
   async previewPlatformPublication(id: number, input: Partial<PersonaRevisionPayload>) {
     const template = (await this.platformTemplates()).find((persona) => persona.id === id);
     if (!template) return null;
-    const payload = { ...revisionPayload(template), ...input } as PersonaRevisionPayload;
+    const payload = sanitizeRevisionPayload({ ...revisionPayload(template), ...input });
     const rows = template.isSystem
       ? []
       : await db.select({ updateState: personas.updateState }).from(personas).where(eq(personas.templatePersonaId, id));
@@ -1391,7 +1367,6 @@ class PersonaStorageClass {
           expressionTags: seed.expressionTags,
           cognitiveOverrides: seed.cognitiveOverrides,
           semanticTier: semanticTierForPersona(seed.name),
-          routingExamples: routingExamplesForPersona(seed.name),
           contextSections: {},
           toolBundle: [],
           isDefault: seed.isDefault,
@@ -1534,15 +1509,11 @@ class PersonaStorageClass {
           existing.promptOverlay !== seed.promptOverlay);
       const expectedTier = semanticTierForPersona(seed.name);
       const needsTierUpdate = existing.semanticTier !== expectedTier;
-      const needsRoutingUpdate =
-        existing.routingExamples.length === 0 &&
-        routingExamplesForPersona(seed.name).length > 0;
       const expectedIsSystem = (seed as { isSystem?: boolean }).isSystem ?? false;
       const needsSystemUpdate = existing.isSystem !== expectedIsSystem;
       if (
         needsOverlayUpdate ||
         needsTierUpdate ||
-        needsRoutingUpdate ||
         needsSystemUpdate
       ) {
         const updates: Record<string, unknown> = { updatedAt: new Date() };
@@ -1553,9 +1524,6 @@ class PersonaStorageClass {
           updates.cognitiveOverrides = seed.cognitiveOverrides;
         }
         if (needsTierUpdate) updates.semanticTier = expectedTier;
-        if (needsRoutingUpdate) {
-          updates.routingExamples = routingExamplesForPersona(seed.name);
-        }
         if (needsSystemUpdate) updates.isSystem = expectedIsSystem;
         // Global seed personas are system-owned data reconciled at boot, when
         // no user principal exists in context. Authorize the write as system:

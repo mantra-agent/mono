@@ -27,7 +27,6 @@ interface Persona {
   expressionTags: string[];
   cognitiveOverrides: Record<string, unknown>;
   semanticTier: "max" | "high" | "balanced" | "fast" | null;
-  routingExamples: string[];
   contextSections: Record<string, boolean>;
   toolBundle: string[];
   isDefault: boolean;
@@ -52,7 +51,6 @@ interface PersonaPayloadDraft {
   expressionTags: string;
   cognitiveOverrides: string;
   semanticTier: "max" | "high" | "balanced" | "fast";
-  routingExamples: string;
   contextSections: Record<string, boolean>;
   toolBundle: string[];
 }
@@ -65,7 +63,6 @@ type LocalField =
   | "expressionTags"
   | "cognitiveOverrides"
   | "semanticTier"
-  | "routingExamples"
   | "contextSections"
   | "toolBundle";
 
@@ -77,7 +74,6 @@ const FIELD_LABELS: Record<LocalField, string> = {
   expressionTags: "Expressions",
   cognitiveOverrides: "Cognitive overrides",
   semanticTier: "Model",
-  routingExamples: "Routing examples",
   contextSections: "Context",
   toolBundle: "Tool bundle",
 };
@@ -96,7 +92,6 @@ function draftFromPersona(persona: Persona): PersonaPayloadDraft {
     expressionTags: persona.expressionTags.join(", "),
     cognitiveOverrides: JSON.stringify(persona.cognitiveOverrides || {}, null, 2),
     semanticTier: persona.semanticTier || "balanced",
-    routingExamples: persona.routingExamples.join("\n"),
     contextSections: persona.contextSections || {},
     toolBundle: persona.toolBundle || [],
   };
@@ -109,7 +104,6 @@ function payloadFromDraft(draft: PersonaPayloadDraft) {
     expressionTags: draft.expressionTags.split(",").map((value) => value.trim()).filter(Boolean),
     cognitiveOverrides: JSON.parse(draft.cognitiveOverrides || "{}") as Record<string, unknown>,
     semanticTier: draft.semanticTier,
-    routingExamples: draft.routingExamples.split("\n").map((value) => value.trim()).filter(Boolean),
     contextSections: draft.contextSections,
     toolBundle: draft.toolBundle,
   };
@@ -433,9 +427,6 @@ function PersonaPayloadEditor({
               <SelectItem value="fast">Fast</SelectItem>
             </SelectContent>
           </Select>
-        </ProfileTreeRow>
-        <ProfileTreeRow label="Routing examples" icon={mark("routingExamples")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("routingExamples")} expandedContent={<Textarea className="min-h-24" value={draft.routingExamples} onChange={(event) => set("routingExamples", event.target.value)} {...commitInput("routingExamples", persona.routingExamples.join("\n"))} />}>
-          <span>{draft.routingExamples.split("\n").filter(Boolean).length} examples</span>
         </ProfileTreeRow>
         <ProfileTreeRow label="Context" icon={mark("contextSections")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("contextSections")} expandedContent={<div>{sectionCatalog.map((entry) => {
           const on = entry.id in draft.contextSections ? draft.contextSections[entry.id] : entry.defaultIncluded;
