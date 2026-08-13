@@ -9,6 +9,8 @@ export interface AuthUser {
   email: string;
   role: string;
   avatarObjectPath: string | null;
+  preferredName?: string | null;
+  displayName?: string | null;
 }
 
 export interface AuthPrincipal {
