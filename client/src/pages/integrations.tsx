@@ -4367,12 +4367,12 @@ function IntegrationTree({ status }: IntegrationTreeProps) {
         </div>
 
         <IntegrationSection
-          title="User"
+          title="Connectors"
           integrations={userIntegrations}
           status={status}
           hasQuery={hasQuery}
           onOpen={openIntegration}
-          sectionTestId="button-integrations-section-user"
+          sectionTestId="button-integrations-section-connectors"
         />
 
         {canSeeSystem && (
