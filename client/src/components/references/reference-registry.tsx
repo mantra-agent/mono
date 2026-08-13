@@ -36,6 +36,8 @@ import {
   Tags,
   Timer,
   User,
+  Users,
+  Bot,
   type LucideIcon,
 } from "lucide-react";
 import { REFERENCE_REGISTRY, isKnownReferenceType, type ReferenceRef, type ResolvedReference } from "@shared/references";
@@ -312,6 +314,21 @@ const registry: Record<string, RegistryEntry> = {
     Icon: Bug,
     fallbackLabel: ref => metadataString(ref, "label") || `Issue ${ref.id}`,
     href: ref => metadataString(ref, "href") || `/issues/${encodeURIComponent(ref.id)}`,
+  },
+  account: {
+    Icon: Building2,
+    fallbackLabel: ref => metadataString(ref, "label") || `Account ${ref.id.slice(0, 8)}`,
+    href: ref => metadataString(ref, "href") || `/system?tab=accounts&account=${encodeURIComponent(ref.id)}`,
+  },
+  user: {
+    Icon: Users,
+    fallbackLabel: ref => metadataString(ref, "label") || `User ${ref.id.slice(0, 8)}`,
+    href: ref => metadataString(ref, "href") || `/system?tab=users&user=${encodeURIComponent(ref.id)}`,
+  },
+  agent_instance: {
+    Icon: Bot,
+    fallbackLabel: ref => metadataString(ref, "label") || `Agent ${ref.id.slice(0, 8)}`,
+    href: ref => metadataString(ref, "href") || `/system?tab=agents&agent=${encodeURIComponent(ref.id)}`,
   },
 };
 

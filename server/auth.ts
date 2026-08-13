@@ -15,11 +15,20 @@ import crypto from "crypto";
 import { storage } from "./storage";
 import { getSetting, setSetting } from "./system-settings";
 import { getAutomationAuthToken } from "./automation-auth-token";
-import { loginSchema, registerSchema, users, type User } from "@shared/schema";
+import {
+  accounts,
+  agentInstanceMemberships,
+  agentInstances,
+  loginSchema,
+  memberships,
+  registerSchema,
+  users,
+  type User,
+} from "@shared/schema";
 import multer from "multer";
 import { getAvatarObjectPath, replaceProfileAvatar } from "./profile-avatar";
 import { z } from "zod";
-import { eq, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import {
   attachUserPrincipal,
   createServicePrincipal,
@@ -1353,6 +1362,72 @@ export function setupAuth(app: Express) {
           stack: err instanceof Error ? err.stack : undefined,
         });
         res.status(500).json({ error: "Failed to fetch users" });
+      }
+    },
+  );
+
+  /**
+   * Super-admin identity graph for Accounts / Agents / Users Hierarchy Trees.
+   * Same users:read gate as /api/auth/users. Returns the four-noun graph edges
+   * needed to project each index without a second inspector.
+   */
+  app.get(
+    "/api/auth/identity-graph",
+    requireAuth,
+    requirePermission("users:read"),
+    async (_req: Request, res: Response) => {
+      try {
+        const [accountRows, membershipRows, instanceRows, instanceMembershipRows, userRows] = await Promise.all([
+          db.select({
+            id: accounts.id,
+            name: accounts.name,
+            kind: accounts.kind,
+            ownerUserId: accounts.ownerUserId,
+            createdAt: accounts.createdAt,
+            updatedAt: accounts.updatedAt,
+          }).from(accounts).orderBy(asc(accounts.name), asc(accounts.id)),
+          db.select({
+            accountId: memberships.accountId,
+            userId: memberships.userId,
+            role: memberships.role,
+          }).from(memberships),
+          db.select({
+            id: agentInstances.id,
+            accountId: agentInstances.accountId,
+            name: agentInstances.name,
+            status: agentInstances.status,
+            createdByUserId: agentInstances.createdByUserId,
+            quarantineReason: agentInstances.quarantineReason,
+            createdAt: agentInstances.createdAt,
+            updatedAt: agentInstances.updatedAt,
+          }).from(agentInstances).orderBy(asc(agentInstances.name), asc(agentInstances.id)),
+          db.select({
+            instanceId: agentInstanceMemberships.instanceId,
+            accountId: agentInstanceMemberships.accountId,
+            userId: agentInstanceMemberships.userId,
+            role: agentInstanceMemberships.role,
+          }).from(agentInstanceMemberships),
+          db.select({
+            id: users.id,
+            email: users.email,
+            role: users.role,
+            createdAt: users.createdAt,
+          }).from(users).orderBy(asc(users.email), asc(users.id)),
+        ]);
+
+        res.json({
+          accounts: accountRows,
+          memberships: membershipRows,
+          instances: instanceRows,
+          instanceMemberships: instanceMembershipRows,
+          users: userRows,
+        });
+      } catch (err) {
+        log.error("Failed to fetch identity graph for admin trees", {
+          error: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        });
+        res.status(500).json({ error: "Failed to fetch identity graph" });
       }
     },
   );
