@@ -2389,12 +2389,19 @@ export class AgentExecutor extends EventEmitter {
         });
         if (event.recoveryDecision === "quarantined" && event.failure) {
           const toolName = normalizedName || event.toolName;
-          ctx.terminalToolFailure ??= {
-            toolName,
-            result: event.result,
-            failure: event.failure,
-          };
-          log.warn(`[ToolRecovery] sdk failure quarantined runId=${ctx.runId} tool=${toolName} code=${event.failure.code} resource=${event.failure.resourceKey ?? "unknown"}`);
+          // Permission quarantine is run-terminal (authority cannot be restored).
+          // Input quarantine (e.g. shell_policy_denied exact-repeat) is operation-local:
+          // refuse the repeat, keep the model stream so the agent can pivot.
+          if (event.failure.kind === "permission") {
+            ctx.terminalToolFailure ??= {
+              toolName,
+              result: event.result,
+              failure: event.failure,
+            };
+            log.warn(`[ToolRecovery] sdk failure quarantined runId=${ctx.runId} tool=${toolName} code=${event.failure.code} resource=${event.failure.resourceKey ?? "unknown"}`);
+          } else {
+            log.warn(`[ToolRecovery] sdk operation quarantined (non-terminal) runId=${ctx.runId} tool=${toolName} kind=${event.failure.kind} code=${event.failure.code} resource=${event.failure.resourceKey ?? "unknown"}`);
+          }
         }
         break;
       }
@@ -2440,12 +2447,19 @@ export class AgentExecutor extends EventEmitter {
     ctx.budgets.toolCallsUsed++;
     const result = await ctx.operationRecovery.execute(ctx.runId, normalizedName, args, execute);
     if (result.recoveryDecision === "quarantined" && result.failure) {
-      ctx.terminalToolFailure ??= {
-        toolName: normalizedName,
-        result: result.result,
-        failure: result.failure,
-      };
-      log.warn(`[ToolRecovery] quarantined runId=${ctx.runId} tool=${normalizedName} code=${result.failure.code} resource=${result.failure.resourceKey ?? "unknown"}`);
+      // Permission quarantine is run-terminal (authority cannot be restored).
+      // Input quarantine (e.g. shell_policy_denied exact-repeat) is operation-local:
+      // refuse the repeat, keep the model stream so the agent can pivot.
+      if (result.failure.kind === "permission") {
+        ctx.terminalToolFailure ??= {
+          toolName: normalizedName,
+          result: result.result,
+          failure: result.failure,
+        };
+        log.warn(`[ToolRecovery] quarantined runId=${ctx.runId} tool=${normalizedName} code=${result.failure.code} resource=${result.failure.resourceKey ?? "unknown"}`);
+      } else {
+        log.warn(`[ToolRecovery] operation quarantined (non-terminal) runId=${ctx.runId} tool=${normalizedName} kind=${result.failure.kind} code=${result.failure.code} resource=${result.failure.resourceKey ?? "unknown"}`);
+      }
     } else if (result.recoveryDecision === "read_required") {
       log.warn(`[ToolRecovery] read-required runId=${ctx.runId} tool=${normalizedName} code=${result.failure?.code ?? "unknown"}`);
     }
