@@ -156,8 +156,17 @@ app.use((_req, res, next) => {
     // Older WebKit applies child-src, rather than worker-src, to AudioWorklet
     // module URLs. Keep this compatibility directive aligned with worker-src
     // so ElevenLabs' generated blob modules remain inside the same boundary.
-    "child-src 'self' blob:",
-    "worker-src 'self' blob:",
+    //
+    // The pinned libsamplerate worklet is an upstream ElevenLabs SDK bug: on
+    // iOS Safari (no sampleRate constraint) the OUTPUT AudioContext always
+    // loads libsamplerate, but VoiceSessionSetup.setupWebSocketIO does not
+    // forward `libsampleratePath` to MediaDeviceOutput.create (still true in
+    // @elevenlabs/client HEAD/1.17.0), so output falls back to this hardcoded,
+    // version-locked CDN worklet. Input uses our first-party /voice worklet;
+    // only this exact file is allowed remotely. Remove when upstream forwards
+    // libsampleratePath to output.
+    "child-src 'self' blob: https://cdn.jsdelivr.net/npm/@alexanderolsen/libsamplerate-js@2.1.2/dist/libsamplerate.worklet.js",
+    "worker-src 'self' blob: https://cdn.jsdelivr.net/npm/@alexanderolsen/libsamplerate-js@2.1.2/dist/libsamplerate.worklet.js",
     "object-src 'none'",
     "base-uri 'self'",
     `frame-ancestors ${frameAncestors}`,
