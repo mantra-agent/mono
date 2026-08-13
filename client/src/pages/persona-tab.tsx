@@ -49,7 +49,7 @@ interface PersonaPayloadDraft {
   description: string;
   promptOverlay: string;
   expressionTags: string;
-  cognitiveOverrides: string;
+  memoryGraphTokenBudget: string;
   semanticTier: "max" | "high" | "balanced" | "fast";
   contextSections: Record<string, boolean>;
   toolBundle: string[];
@@ -61,7 +61,7 @@ type LocalField =
   | "icon"
   | "promptOverlay"
   | "expressionTags"
-  | "cognitiveOverrides"
+  | "memoryGraphTokenBudget"
   | "semanticTier"
   | "contextSections"
   | "toolBundle";
@@ -70,27 +70,65 @@ const FIELD_LABELS: Record<LocalField, string> = {
   name: "Name",
   description: "Description",
   icon: "Icon",
-  promptOverlay: "Prompt overlay",
+  promptOverlay: "Prompt",
   expressionTags: "Expressions",
-  cognitiveOverrides: "Cognitive overrides",
+  memoryGraphTokenBudget: "Memory graph budget",
   semanticTier: "Model",
   contextSections: "Context",
   toolBundle: "Tool bundle",
 };
+
+const UPDATE_STATE_LABELS: Record<Persona["updateState"], string> = {
+  following: "Following default",
+  customized: "Customized",
+  update_available: "Update available",
+  conflict: "Conflict",
+  pinned_legacy: "Customized",
+};
+
+interface ApplyDiffRow {
+  field: string;
+  before: string;
+  after: string;
+}
 
 interface ApplyPending {
   title: string;
   description: string;
   changes: Record<string, unknown>;
   summary: string;
+  rows: ApplyDiffRow[];
+}
+
+function formatDiffValue(value: unknown): string {
+  if (value == null) return "—";
+  if (typeof value === "string") return value.trim() ? value : "—";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "—";
+    if (value.every((entry) => typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean")) {
+      return value.map(String).join(", ");
+    }
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function readMemoryGraphTokenBudget(overrides: Record<string, unknown> | null | undefined): number | null {
+  const budget = overrides?.memoryGraphTokenBudget;
+  return typeof budget === "number" && Number.isFinite(budget) && budget > 0 ? budget : null;
 }
 
 function draftFromPersona(persona: Persona): PersonaPayloadDraft {
+  const budget = readMemoryGraphTokenBudget(persona.cognitiveOverrides);
   return {
     description: persona.description,
     promptOverlay: persona.promptOverlay || "",
     expressionTags: persona.expressionTags.join(", "),
-    cognitiveOverrides: JSON.stringify(persona.cognitiveOverrides || {}, null, 2),
+    memoryGraphTokenBudget: budget == null ? "" : String(budget),
     semanticTier: persona.semanticTier || "balanced",
     contextSections: persona.contextSections || {},
     toolBundle: persona.toolBundle || [],
@@ -98,11 +136,16 @@ function draftFromPersona(persona: Persona): PersonaPayloadDraft {
 }
 
 function payloadFromDraft(draft: PersonaPayloadDraft) {
+  const trimmedBudget = draft.memoryGraphTokenBudget.trim();
+  const parsedBudget = trimmedBudget === "" ? null : Number(trimmedBudget);
   return {
     description: draft.description,
     promptOverlay: draft.promptOverlay,
     expressionTags: draft.expressionTags.split(",").map((value) => value.trim()).filter(Boolean),
-    cognitiveOverrides: JSON.parse(draft.cognitiveOverrides || "{}") as Record<string, unknown>,
+    cognitiveOverrides:
+      parsedBudget != null && Number.isFinite(parsedBudget) && parsedBudget > 0
+        ? { memoryGraphTokenBudget: parsedBudget }
+        : {},
     semanticTier: draft.semanticTier,
     contextSections: draft.contextSections,
     toolBundle: draft.toolBundle,
@@ -113,23 +156,93 @@ function fullApplyPayload(persona: Persona, draft: PersonaPayloadDraft): Record<
   return { name: persona.name, icon: persona.icon, ...payloadFromDraft(draft) };
 }
 
+function buildApplyDiffRows(
+  before: Record<string, unknown> | null | undefined,
+  after: Record<string, unknown>,
+): ApplyDiffRow[] {
+  const keys = Array.from(new Set([...Object.keys(before || {}), ...Object.keys(after)])).sort();
+  return keys
+    .map((field) => {
+      const left = formatDiffValue(before?.[field]);
+      const right = formatDiffValue(after[field]);
+      if (left === right) return null;
+      return { field: FIELD_LABELS[field as LocalField] || field, before: left, after: right };
+    })
+    .filter((row): row is ApplyDiffRow => row != null);
+}
+
 function buildApplyAll(persona: Persona, draft: PersonaPayloadDraft): ApplyPending {
+  const changes = fullApplyPayload(persona, draft);
+  const baseline =
+    persona.platformBaseline ||
+    (persona.isSystem || persona.source === "seed"
+      ? {
+          name: persona.name,
+          icon: persona.icon,
+          description: persona.description,
+          promptOverlay: persona.promptOverlay,
+          expressionTags: persona.expressionTags,
+          cognitiveOverrides: persona.cognitiveOverrides,
+          semanticTier: persona.semanticTier,
+          contextSections: persona.contextSections,
+          toolBundle: persona.toolBundle,
+        }
+      : null);
   return {
     title: `Apply ${persona.name} to default?`,
     description: `Publish ${persona.name}'s current values as the platform default for everyone. Personas following the default update automatically; customized copies get an "Update available".`,
-    changes: fullApplyPayload(persona, draft),
+    changes,
     summary: `Apply ${persona.name} to default`,
+    rows: buildApplyDiffRows(baseline as Record<string, unknown> | null, changes),
   };
 }
 
 function buildApplyField(persona: Persona, draft: PersonaPayloadDraft, field: LocalField): ApplyPending {
   const label = FIELD_LABELS[field];
+  const payload = fullApplyPayload(persona, draft);
+  const publishedField = field === "memoryGraphTokenBudget" ? "cognitiveOverrides" : field;
+  const changes = { [publishedField]: payload[publishedField] };
+  const beforeValue =
+    persona.platformBaseline
+      ? (persona.platformBaseline as Record<string, unknown>)[publishedField]
+      : persona.isSystem || persona.source === "seed"
+        ? (persona as unknown as Record<string, unknown>)[publishedField]
+        : undefined;
   return {
     title: `Apply ${label} to default?`,
     description: `Publish ${persona.name}'s ${label} as the platform default for everyone.`,
-    changes: { [field]: fullApplyPayload(persona, draft)[field] },
+    changes,
     summary: `Apply ${label} to default`,
+    rows: buildApplyDiffRows(
+      { [publishedField]: beforeValue },
+      changes,
+    ),
   };
+}
+
+function ApplyDiffView({ rows }: { rows: ApplyDiffRow[] }) {
+  if (rows.length === 0) {
+    return <p className="text-sm text-muted-foreground">No changes from the current default.</p>;
+  }
+  return (
+    <div className="max-h-80 space-y-2 overflow-auto pr-1">
+      {rows.map((row) => (
+        <div key={row.field} className="rounded-md border border-border/40 bg-muted/20 p-2">
+          <div className="mb-1 text-xs font-medium text-foreground">{row.field}</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="min-w-0">
+              <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Current default</div>
+              <pre className="whitespace-pre-wrap break-words rounded-md bg-background/60 px-2 py-1.5 text-xs text-muted-foreground">{row.before}</pre>
+            </div>
+            <div className="min-w-0">
+              <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">After apply</div>
+              <pre className="whitespace-pre-wrap break-words rounded-md bg-background/60 px-2 py-1.5 text-xs text-foreground">{row.after}</pre>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /** Promote a persona (or one field) up to its platform default, behind a confirmation prompt. */
@@ -177,14 +290,15 @@ function useApplyToDefault(persona: Persona, onDone: () => void) {
 function ApplyToDefaultDialog({ apply }: { apply: ReturnType<typeof useApplyToDefault> }) {
   return (
     <AlertDialog open={apply.pending != null} onOpenChange={(o) => { if (!o) apply.cancel(); }}>
-      <AlertDialogContent>
+      <AlertDialogContent className="max-w-3xl">
         <AlertDialogHeader>
           <AlertDialogTitle>{apply.pending?.title}</AlertDialogTitle>
           <AlertDialogDescription>{apply.pending?.description}</AlertDialogDescription>
         </AlertDialogHeader>
+        <ApplyDiffView rows={apply.pending?.rows || []} />
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction disabled={apply.applying} onClick={(event) => { event.preventDefault(); apply.confirm(); }}>
+          <AlertDialogAction disabled={apply.applying || (apply.pending?.rows.length ?? 0) === 0} onClick={(event) => { event.preventDefault(); apply.confirm(); }}>
             {apply.applying ? "Applying…" : "Apply to default"}
           </AlertDialogAction>
         </AlertDialogFooter>
@@ -200,7 +314,7 @@ function ApplyHeaderMenu({ onApplyAll }: { onApplyAll: () => void }) {
         <button
           type="button"
           onClick={(event) => event.stopPropagation()}
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
           aria-label="Persona actions"
           data-testid="button-persona-actions"
         >
@@ -246,7 +360,11 @@ function PersonaIconDisplay({ iconName, className }: { iconName: string; classNa
 }
 
 function LocalEditMark({ field, changedFields }: { field: LocalField; changedFields?: string[] }) {
-  if (!changedFields?.includes(field)) return null;
+  const matches =
+    field === "memoryGraphTokenBudget"
+      ? changedFields?.includes("cognitiveOverrides")
+      : changedFields?.includes(field);
+  if (!matches) return null;
   return <Circle className="h-1.5 w-1.5 fill-warning text-warning" aria-label="Edited locally" />;
 }
 
@@ -307,23 +425,31 @@ function IconPicker({
   );
 }
 
-function PersonaDescriptionEditor({
+function PersonaProseEditor({
   value,
   changed,
   onCommit,
   onApplyField,
+  applyField,
+  placeholder,
+  actionLabel,
+  minHeightClassName = "min-h-24",
 }: {
   value: string;
   changed?: boolean;
   onCommit: (next: string) => void;
   onApplyField?: (field: LocalField) => void;
+  applyField: LocalField;
+  placeholder: string;
+  actionLabel: string;
+  minHeightClassName?: string;
 }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => {
     setDraft(value);
   }, [value]);
   return (
-    <div className={cn(PROFILE_DESCRIPTION_FRAME_CLASS, "relative")}>
+    <div className={cn(PROFILE_DESCRIPTION_FRAME_CLASS, "group/editor relative")}>
       {(changed || onApplyField) && (
         <div className="absolute right-1.5 top-1.5 flex items-center gap-1">
           {changed && <Circle className="h-1.5 w-1.5 fill-warning text-warning" aria-label="Edited locally" />}
@@ -332,14 +458,14 @@ function PersonaDescriptionEditor({
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
-                  aria-label="Description actions"
+                  className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/editor:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
+                  aria-label={actionLabel}
                 >
                   <MoreHorizontal className="h-3.5 w-3.5" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
-                <DropdownMenuItem onSelect={() => onApplyField("description")}>Apply to Default</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onApplyField(applyField)}>Apply to Default</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -351,9 +477,10 @@ function PersonaDescriptionEditor({
         onBlur={() => {
           if (draft !== value) onCommit(draft);
         }}
-        placeholder="Add description"
+        placeholder={placeholder}
         className={cn(
-          "min-h-24 w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
+          minHeightClassName,
+          "w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
           PROFILE_DESCRIPTION_TEXT_CLASS,
         )}
       />
@@ -399,25 +526,55 @@ function PersonaPayloadEditor({
   const mark = (field: LocalField) => <LocalEditMark field={field} changedFields={persona.changedFields} />;
   const fieldMenu = (field: LocalField) =>
     onApplyField ? <DropdownMenuItem onSelect={() => onApplyField(field)}>Apply to Default</DropdownMenuItem> : undefined;
+  const originalBudget = readMemoryGraphTokenBudget(persona.cognitiveOverrides);
+  const originalBudgetText = originalBudget == null ? "" : String(originalBudget);
   return (
     <div className="space-y-1">
-      <PersonaDescriptionEditor
+      <PersonaProseEditor
         value={draft.description}
         changed={persona.changedFields?.includes("description")}
         onCommit={(description) => commit("description", description)}
         onApplyField={onApplyField}
+        applyField="description"
+        placeholder="Add description"
+        actionLabel="Description actions"
+      />
+      <PersonaProseEditor
+        value={draft.promptOverlay}
+        changed={persona.changedFields?.includes("promptOverlay")}
+        onCommit={(promptOverlay) => commit("promptOverlay", promptOverlay)}
+        onApplyField={onApplyField}
+        applyField="promptOverlay"
+        placeholder="Add prompt"
+        actionLabel="Prompt actions"
+        minHeightClassName="min-h-32"
       />
       <div className="overflow-hidden">
-        <ProfileTreeRow label="Prompt overlay" icon={mark("promptOverlay")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("promptOverlay")} expandedContent={<Textarea className="min-h-32 font-mono" value={draft.promptOverlay} onChange={(event) => set("promptOverlay", event.target.value)} {...commitInput("promptOverlay", persona.promptOverlay || "")} />}>
-          <span>{draft.promptOverlay ? "Configured" : "None"}</span>
-        </ProfileTreeRow>
-        <ProfileTreeRow label="Expressions" icon={mark("expressionTags")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("expressionTags")} expandedContent={<Input value={draft.expressionTags} onChange={(event) => set("expressionTags", event.target.value)} {...commitInput("expressionTags", persona.expressionTags.join(", "))} />}>
+        <ProfileTreeRow label="Expressions" icon={mark("expressionTags")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("expressionTags")} menuVisibility="hover" expandedContent={<Input value={draft.expressionTags} onChange={(event) => set("expressionTags", event.target.value)} {...commitInput("expressionTags", persona.expressionTags.join(", "))} />}>
           <span className="truncate">{draft.expressionTags || "None"}</span>
         </ProfileTreeRow>
-        <ProfileTreeRow label="Cognitive overrides" icon={mark("cognitiveOverrides")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("cognitiveOverrides")} expandedContent={<Textarea className="min-h-24 font-mono" value={draft.cognitiveOverrides} onChange={(event) => set("cognitiveOverrides", event.target.value)} {...commitInput("cognitiveOverrides", JSON.stringify(persona.cognitiveOverrides || {}, null, 2))} />}>
-          <span>{Object.keys(persona.cognitiveOverrides || {}).length} fields</span>
+        <ProfileTreeRow
+          label="Memory graph budget"
+          icon={mark("memoryGraphTokenBudget")}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          menuContent={fieldMenu("memoryGraphTokenBudget")}
+          menuVisibility="hover"
+          expandedContent={
+            <Input
+              type="number"
+              min={1}
+              value={draft.memoryGraphTokenBudget}
+              onChange={(event) => set("memoryGraphTokenBudget", event.target.value)}
+              {...commitInput("memoryGraphTokenBudget", originalBudgetText)}
+              placeholder="Default"
+            />
+          }
+        >
+          <span>{draft.memoryGraphTokenBudget || "Default"}</span>
         </ProfileTreeRow>
-        <ProfileTreeRow label="Model" icon={mark("semanticTier")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("semanticTier")}>
+        <ProfileTreeRow label="Model" icon={mark("semanticTier")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("semanticTier")} menuVisibility="hover">
           <Select value={draft.semanticTier} onValueChange={(value) => commit("semanticTier", value as PersonaPayloadDraft["semanticTier"])}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -428,7 +585,7 @@ function PersonaPayloadEditor({
             </SelectContent>
           </Select>
         </ProfileTreeRow>
-        <ProfileTreeRow label="Context" icon={mark("contextSections")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("contextSections")} expandedContent={<div>{sectionCatalog.map((entry) => {
+        <ProfileTreeRow label="Context" icon={mark("contextSections")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("contextSections")} menuVisibility="hover" expandedContent={<div>{sectionCatalog.map((entry) => {
           const on = entry.id in draft.contextSections ? draft.contextSections[entry.id] : entry.defaultIncluded;
           return (
             <button key={entry.id} type="button" className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")} onClick={() => commit("contextSections", { ...draft.contextSections, [entry.id]: !on })}>
@@ -439,7 +596,7 @@ function PersonaPayloadEditor({
         })}</div>}>
           <span>{Object.keys(draft.contextSections).length} overrides</span>
         </ProfileTreeRow>
-        <ProfileTreeRow label="Tool bundle" icon={mark("toolBundle")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("toolBundle")} expandedContent={<div>{toolCatalog.map((entry) => {
+        <ProfileTreeRow label="Tool bundle" icon={mark("toolBundle")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("toolBundle")} menuVisibility="hover" expandedContent={<div>{toolCatalog.map((entry) => {
           const on = entry.isCore || draft.toolBundle.includes(entry.name);
           return (
             <button key={entry.name} type="button" disabled={entry.isCore} className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70 disabled:opacity-60")} onClick={() => commit("toolBundle", on ? draft.toolBundle.filter((name) => name !== entry.name) : [...draft.toolBundle, entry.name])}>
@@ -546,7 +703,7 @@ function PersonaTreeItem({
   });
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={`persona-row-${persona.id}`}>
-      <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")}>
+      <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "group hover:bg-accent/70")}>
         {persona.isSystem ? (
           <PersonaIconDisplay iconName={persona.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         ) : (
@@ -603,12 +760,12 @@ function PersonaTreeItem({
             </div>
           )}
           <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between")}>
-            <p className="text-xs text-muted-foreground">{persona.updateState.replaceAll("_", " ")} · Updated {timeAgo(persona.updatedAt)}</p>
+            <p className="text-xs text-muted-foreground">{UPDATE_STATE_LABELS[persona.updateState]} · Updated {timeAgo(persona.updatedAt)}</p>
             <div className="flex items-center gap-2">
               {!persona.isSystem && !persona.isDefault && (
                 <Button size="sm" variant="ghost" onClick={onSetDefault}>Set as default</Button>
               )}
-              {persona.source !== "seed" && persona.updateState === "customized" && (
+              {persona.source !== "seed" && (persona.updateState === "customized" || persona.updateState === "pinned_legacy") && (
                 <Button size="sm" variant="outline" className="gap-1" onClick={onRevert}>
                   <RotateCcw className="h-3 w-3" /> Revert to default
                 </Button>
@@ -672,7 +829,14 @@ function CreatePersonaForm({ onSuccess, onClose }: { onSuccess: () => void; onCl
             className={cn("min-h-24 w-full resize-none border-0 bg-transparent p-0 shadow-none md:text-[14px]", PROFILE_DESCRIPTION_TEXT_CLASS)}
           />
         </div>
-        <Textarea value={promptOverlay} onChange={(event) => setPromptOverlay(event.target.value)} placeholder="Prompt overlay" className="min-h-24 font-mono text-sm" />
+        <div className={PROFILE_DESCRIPTION_FRAME_CLASS}>
+          <Textarea
+            value={promptOverlay}
+            onChange={(event) => setPromptOverlay(event.target.value)}
+            placeholder="Add prompt"
+            className={cn("min-h-32 w-full resize-none border-0 bg-transparent p-0 shadow-none md:text-[14px]", PROFILE_DESCRIPTION_TEXT_CLASS)}
+          />
+        </div>
         <Select value={semanticTier} onValueChange={(value) => setSemanticTier(value as typeof semanticTier)}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -709,7 +873,7 @@ function PlatformPersonaItem({ persona, canApply, onPublished }: { persona: Pers
   });
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={`persona-row-${persona.id}`}>
-      <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")}>
+      <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "group hover:bg-accent/70")}>
         <PersonaIconDisplay iconName={persona.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-foreground">{persona.name}</span>
         {showApply && <ApplyHeaderMenu onApplyAll={() => apply.request(() => buildApplyAll(persona, draft))} />}
@@ -737,6 +901,20 @@ function PlatformPersonaItem({ persona, canApply, onPublished }: { persona: Pers
                   description: `Publish this earlier ${persona.name} revision as the current platform default.`,
                   changes: revision.payload,
                   summary: `Republish ${revision.changeSummary}`,
+                  rows: buildApplyDiffRows(
+                    {
+                      name: persona.name,
+                      icon: persona.icon,
+                      description: persona.description,
+                      promptOverlay: persona.promptOverlay,
+                      expressionTags: persona.expressionTags,
+                      cognitiveOverrides: persona.cognitiveOverrides,
+                      semanticTier: persona.semanticTier,
+                      contextSections: persona.contextSections,
+                      toolBundle: persona.toolBundle,
+                    },
+                    revision.payload,
+                  ),
                 }))}>Republish</Button>
               )}
             </div>
