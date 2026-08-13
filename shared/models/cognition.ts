@@ -74,7 +74,6 @@ export const personas = pgTable(
     expressionTags: jsonb("expression_tags").default([]), // string[]
     cognitiveOverrides: jsonb("cognitive_overrides").default({}),
     semanticTier: text("semantic_tier"), // Record<string, unknown>
-    routingExamples: jsonb("routing_examples").default([]), // string[] — example openings that should route to this persona during orientation bootstrap
     contextSections: jsonb("context_sections").default({}), // Record<string, boolean> — persona-owned context section bundle; single source of truth for which optional context sections load
     toolBundle: jsonb("tool_bundle").default([]), // string[] — tool names loaded with full schema for this persona, beyond the always-on core (consumed by tool tiering)
     isDefault: boolean("is_default").notNull().default(false),
