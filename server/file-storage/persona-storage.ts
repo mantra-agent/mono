@@ -2,7 +2,7 @@ import { db } from "../db";
 import { personas, personaPreferences, personaRevisions } from "@shared/models/cognition";
 import { createHash, randomUUID } from "node:crypto";
 import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
-import { eq, and, inArray, or, sql } from "drizzle-orm";
+import { eq, and, inArray, or, sql, type SQL } from "drizzle-orm";
 import { TTLCache } from "../utils/ttl-cache";
 import { createLogger } from "../log";
 import { isUniqueViolationError, getPostgresConstraintName } from "../postgres-errors";
@@ -16,13 +16,29 @@ import {
 } from "../scoped-storage";
 
 const log = createLogger("PersonaStorage");
-// Personas are user/account identity and configuration, never Vault content.
-// Keep vault_id as an inert compatibility column in the physical schema during
-// rolling deployment, but exclude it from every read/write scope decision.
+// Personas are Instance mind configuration (dual-write with owner_user_id created_by),
+// never Vault content. Keep vault_id as an inert compatibility column during rolling
+// deployment, but exclude it from every read/write scope decision.
 const personaScopeColumns = {
   scope: personas.scope,
   ownerUserId: personas.ownerUserId,
   accountId: personas.accountId,
+  // Instance is the mind owner; dual-read pin OR (null + owner). Do not match account alone.
+  instanceId: personas.instanceId,
+};
+
+// User revisions dual-write Instance; platform revisions stay globally readable.
+// Omit scope from ScopeColumns so 'platform' is not mistaken for a template scope.
+const personaRevisionUserScopeColumns = {
+  ownerUserId: personaRevisions.ownerUserId,
+  accountId: personaRevisions.accountId,
+  instanceId: personaRevisions.instanceId,
+};
+
+const personaPreferenceScopeColumns = {
+  ownerUserId: personaPreferences.ownerUserId,
+  accountId: personaPreferences.accountId,
+  instanceId: personaPreferences.instanceId,
 };
 
 export class PersonaReservedNameError extends Error {
@@ -523,22 +539,36 @@ class PersonaStorageClass {
     this._cache.invalidateAll();
   }
 
+  private visiblePersonaRevisionPredicate(principal: Principal, identityPredicate: SQL) {
+    return and(
+      identityPredicate,
+      or(
+        eq(personaRevisions.scope, "platform"),
+        combineWithVisibleScope(principal, personaRevisionUserScopeColumns),
+      ),
+    )!;
+  }
+
   async getRevision(id: string) {
     const principal = requireCurrentUserPrincipal();
-    const [revision] = await db.select().from(personaRevisions).where(and(
-      eq(personaRevisions.id, id),
-      sql`(${personaRevisions.scope} = 'platform' OR (${personaRevisions.ownerUserId} = ${principal.userId} AND ${personaRevisions.accountId} = ${principal.accountId}))`,
-    )).limit(1);
+    const [revision] = await db.select().from(personaRevisions).where(
+      this.visiblePersonaRevisionPredicate(principal, eq(personaRevisions.id, id)),
+    ).limit(1);
     return revision ?? null;
   }
 
   private revisionValues(persona: PersonaEntry, options: { scope: "platform" | "user"; parentRevisionId?: string | null; platformBaseRevisionId?: string | null; changeSummary: string }) {
     const principal = requireCurrentUserPrincipal();
     const payload = revisionPayload(persona);
+    const ownership =
+      options.scope === "user"
+        ? ownedInsertValues(principal, personaRevisionUserScopeColumns)
+        : { ownerUserId: null, accountId: null, instanceId: null };
     return {
       id: randomUUID(), personaIdentityId: persona.id, scope: options.scope,
-      ownerUserId: options.scope === "user" ? principal.userId : null,
-      accountId: options.scope === "user" ? principal.accountId : null,
+      ownerUserId: ownership.ownerUserId ?? null,
+      accountId: ownership.accountId ?? null,
+      instanceId: ownership.instanceId ?? null,
       parentRevisionId: options.parentRevisionId ?? null,
       platformBaseRevisionId: options.platformBaseRevisionId ?? null,
       payload, contentHash: payloadHash(payload), changeSummary: options.changeSummary,
@@ -550,10 +580,12 @@ class PersonaStorageClass {
     const persona = await this.get(id);
     if (!persona) return [];
     const principal = requireCurrentUserPrincipal();
-    return db.select().from(personaRevisions).where(and(
-      eq(personaRevisions.personaIdentityId, id),
-      sql`(${personaRevisions.scope} = 'platform' OR (${personaRevisions.ownerUserId} = ${principal.userId} AND ${personaRevisions.accountId} = ${principal.accountId}))`,
-    )).orderBy(sql`${personaRevisions.createdAt} DESC`).limit(100);
+    return db.select().from(personaRevisions).where(
+      this.visiblePersonaRevisionPredicate(
+        principal,
+        eq(personaRevisions.personaIdentityId, id),
+      ),
+    ).orderBy(sql`${personaRevisions.createdAt} DESC`).limit(100);
   }
 
   async compareRevisions(leftId: string, rightId: string) {
@@ -659,10 +691,9 @@ class PersonaStorageClass {
         ?? entries.find((entry) => !entry.isSystem)?.id
         ?? null;
     }
-    const [preference] = await db.select().from(personaPreferences).where(and(
-      eq(personaPreferences.ownerUserId, principal.userId),
-      eq(personaPreferences.accountId, principal.accountId),
-    )).limit(1);
+    const [preference] = await db.select().from(personaPreferences).where(
+      combineWithVisibleScope(principal, personaPreferenceScopeColumns),
+    ).limit(1);
     if (preference && entries.some((entry) => entry.id === preference.defaultPersonaId && !entry.isSystem)) {
       return preference.defaultPersonaId;
     }
@@ -680,19 +711,24 @@ class PersonaStorageClass {
       throw new Error("Default Persona Id requires an authenticated user principal");
     }
     const now = new Date();
-    const [existing] = await db.select().from(personaPreferences).where(and(
-      eq(personaPreferences.ownerUserId, principal.userId),
-      eq(personaPreferences.accountId, principal.accountId),
-    )).limit(1);
+    const ownership = ownedInsertValues(principal, personaPreferenceScopeColumns);
+    const [existing] = await db.select().from(personaPreferences).where(
+      combineWithWritableScope(principal, personaPreferenceScopeColumns),
+    ).limit(1);
     if (existing) {
-      await db.update(personaPreferences).set({ defaultPersonaId: persona.id, updatedAt: now }).where(and(
-        eq(personaPreferences.ownerUserId, principal.userId),
-        eq(personaPreferences.accountId, principal.accountId),
-      ));
+      await db.update(personaPreferences).set({
+        defaultPersonaId: persona.id,
+        updatedAt: now,
+        // Stamp pin when present so legacy null rows migrate on write.
+        ...(ownership.instanceId ? { instanceId: ownership.instanceId } : {}),
+      }).where(
+        combineWithWritableScope(principal, personaPreferenceScopeColumns),
+      );
     } else {
       await db.insert(personaPreferences).values({
         ownerUserId: principal.userId,
         accountId: principal.accountId,
+        instanceId: ownership.instanceId ?? null,
         defaultPersonaId: persona.id,
         createdAt: now,
         updatedAt: now,

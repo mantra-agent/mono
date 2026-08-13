@@ -11,6 +11,8 @@ const emotionalScopeColumns = {
   scope: emotionalStates.scope,
   ownerUserId: emotionalStates.ownerUserId,
   accountId: emotionalStates.accountId,
+  // Instance is the mind owner; dual-read pin OR (null + owner). Do not match account alone.
+  instanceId: emotionalStates.instanceId,
   vaultId: emotionalStates.vaultId,
 };
 

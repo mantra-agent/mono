@@ -14,7 +14,8 @@ export interface ScopeColumns {
   vaultId?: AnyColumn;
   /**
    * Optional Instance ownership column (same opt-in as vaultId).
-   * Only memory claim tables should set this. When present:
+   * Mind seams that opt in today: memory claim graph, personas, persona_revisions,
+   * persona_preferences, emotional_states. When present:
    * - reads match pinned Instance OR (NULL instance + owner_user_id)
    * - inserts stamp principal.instanceId when set
    * - account_id is not used for visibility (prevents Business Instance leak)
@@ -223,7 +224,7 @@ function rowInstanceId(row: Record<string, unknown>): string | null {
 }
 
 /**
- * Row-level dual-read for Instance-stamped memory rows.
+ * Row-level dual-read for Instance-stamped mind rows (memory, personas, affect).
  * When the row carries instance_id (including null after opt-in tables),
  * match pin OR (null + owner). Account alone never grants visibility.
  */

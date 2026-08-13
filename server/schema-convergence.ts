@@ -103,6 +103,7 @@ export async function convergeBootSchema(): Promise<void> {
         const { ensureOrganizationsSchema } = await import("./organizations-schema");
         const { ensureAgentInstanceSchema } = await import("./agent-instance-schema");
         const { ensureMemoryInstanceOwnershipSchema } = await import("./memory-instance-schema");
+        const { ensurePersonaInstanceOwnershipSchema } = await import("./persona-instance-schema");
         const { ensureDriveResourcesSchema } = await import("./drive-resources-schema");
         const { ensureFilesIndexSchema } = await import("./files-index-schema");
         const { ensureDocumentArtifactsSchema } = await import("./document-artifacts-schema");
@@ -118,6 +119,8 @@ export async function convergeBootSchema(): Promise<void> {
         await ensureAgentInstanceSchema(pool);
         // Phase 2 memory ownership: claims stamp/read pinned Instance after Instance exists.
         await ensureMemoryInstanceOwnershipSchema(pool);
+        // Phase 2 mind seam: personas + affect stamp/read pinned Instance.
+        await ensurePersonaInstanceOwnershipSchema(pool);
         await ensureDriveResourcesSchema(pool);
         await ensureFilesIndexSchema(pool);
         await ensureDocumentArtifactsSchema(pool);
