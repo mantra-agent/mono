@@ -65,6 +65,32 @@ export async function listOwnedInstallations(principal: Principal): Promise<Slac
   return result.rows.map(mapInstallation);
 }
 
+export interface SlackMappingRow {
+  installationId: string;
+  slackUserId: string;
+  mantraUserId: string;
+  active: boolean;
+}
+
+export async function listOwnedMappings(principal: Principal): Promise<SlackMappingRow[]> {
+  requireUser(principal);
+  const result = await db.execute(sql`
+    SELECT spm.installation_id, spm.slack_user_id, spm.mantra_user_id, spm.active
+      FROM slack_principal_mappings spm
+      JOIN slack_installations i ON i.id = spm.installation_id
+     WHERE i.account_id = ${principal.accountId!}
+       AND i.owner_user_id = ${principal.userId!}
+     ORDER BY spm.created_at
+     LIMIT 100
+  `);
+  return result.rows.map((row) => ({
+    installationId: String(row.installation_id),
+    slackUserId: String(row.slack_user_id),
+    mantraUserId: String(row.mantra_user_id),
+    active: Boolean(row.active),
+  }));
+}
+
 export async function createInstallation(principal: Principal, input: {
   platformEnvironmentId: number;
   providerConnectionId: number;

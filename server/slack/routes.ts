@@ -4,7 +4,7 @@ import { requireAuth } from "../auth";
 import { requirePermission } from "../permissions";
 import { requireCurrentPrincipal } from "../principal-context";
 import { requireModRouteGroup } from "../mods/mod-access";
-import { createInstallation, listOwnedInstallations, setInstallationEnabled, upsertPrincipalMapping } from "./storage";
+import { createInstallation, listOwnedInstallations, listOwnedMappings, setInstallationEnabled, upsertPrincipalMapping } from "./storage";
 
 const idPattern = /^[A-Z0-9]{2,32}$/;
 const createSchema = z.object({
@@ -26,8 +26,14 @@ export function registerSlackRoutes(app: Express): void {
   const gates = [requireAuth, requireModRouteGroup("slack.api"), requirePermission("mods:manage")];
 
   app.get("/api/slack/installations", ...gates, async (_req, res) => {
-    const rows = await listOwnedInstallations(requireCurrentPrincipal());
-    res.json(rows.map((row) => ({ ...row, providerConnectionId: row.providerConnectionId })));
+    const principal = requireCurrentPrincipal();
+    const [rows, mappings] = await Promise.all([listOwnedInstallations(principal), listOwnedMappings(principal)]);
+    res.json(rows.map((row) => ({
+      ...row,
+      mappings: mappings
+        .filter((mapping) => mapping.installationId === row.id)
+        .map(({ slackUserId, mantraUserId, active }) => ({ slackUserId, mantraUserId, active })),
+    })));
   });
 
   app.post("/api/slack/installations", ...gates, async (req, res) => {

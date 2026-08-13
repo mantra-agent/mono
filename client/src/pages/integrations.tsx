@@ -29,6 +29,7 @@ import { usePageHeader } from "@/hooks/use-page-header";
 import { useVaults } from "@/hooks/use-vaults";
 import { DriveSection } from "@/components/integrations/drive-section";
 import { BoxSection } from "@/components/integrations/box-section";
+import { SlackDetail } from "@/components/integrations/slack-section";
 import {
   Select,
   SelectContent,
@@ -92,6 +93,7 @@ import {
   Copy,
   Glasses,
   Radio,
+  MessageSquare,
   Zap,
   Box,
   Clock,
@@ -170,6 +172,7 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "meta", name: "Meta", icon: Glasses, statusFields: ["meta"], route: "meta" },
   { id: "oura", name: "Oura Ring", icon: Activity, statusFields: ["oura"], route: "oura" },
   { id: "recall", name: "Recall", icon: Radio, statusFields: ["recall"], route: "recall" },
+  { id: "slack", name: "Slack", icon: MessageSquare, statusFields: ["slack"], route: "slack" },
 ];
 
 // User-owned connections every account manages directly. Everything else is
@@ -6228,7 +6231,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
 
   return (
     <div className="space-y-4">
-      {provider !== "google" && provider !== "recall" && provider !== "railway" && provider !== "github" && (
+      {provider !== "google" && provider !== "recall" && provider !== "railway" && provider !== "github" && provider !== "slack" && (
         <div className="flex items-center gap-3">
           <Icon className="h-6 w-6" />
           <h2 className="text-lg font-semibold">{integration.name}</h2>
@@ -6350,6 +6353,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
       {provider === "meta" && <MetaDetail />}
 
       {provider === "oura" && <OuraDetail />}
+      {provider === "slack" && <SlackDetail />}
     </div>
   );
 }
