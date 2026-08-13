@@ -554,6 +554,49 @@ app.use((req, res, next) => {
         process.stdout.write("\n__BOOT_COMPLETE__\n");
       } catch {}
 
+      // Warm Stage Sync Latest: if Live queued STAGE_SYNC_TARGET_SHA and restarted us,
+      // apply the bound-repo tarball now (DB/credentials ready) and request a planned
+      // restart so tsx/Vite load the new tree. Lockfile mismatch fails closed.
+      void (async () => {
+        try {
+          const [{ getRuntimeIdentity }, { db }, platforms, { eq }, { maybeApplyPendingStageSync }] = await Promise.all([
+            import("./runtime-identity"),
+            import("./db"),
+            import("@shared/models/platforms"),
+            import("drizzle-orm"),
+            import("./stage-sync"),
+          ]);
+          const identity = await getRuntimeIdentity();
+          if (!identity.platformEnvironmentId) return;
+          const [source] = await db.select({
+            owner: platforms.environmentSourceBindings.owner,
+            repo: platforms.environmentSourceBindings.repo,
+          }).from(platforms.environmentSourceBindings)
+            .where(eq(platforms.environmentSourceBindings.environmentId, identity.platformEnvironmentId))
+            .limit(1);
+          if (!source?.owner || !source.repo) return;
+          const result = await maybeApplyPendingStageSync({
+            environmentId: identity.platformEnvironmentId,
+            owner: source.owner,
+            repo: source.repo,
+          });
+          if (result.restartRequested) {
+            serverLog.info(`stage_sync_restart_requested environmentId=${identity.platformEnvironmentId}`);
+            await shutdownApplication({
+              terminationKind: "clean",
+              cause: "stage_sync_apply",
+              exitCode: 0,
+              signal: null,
+            }).then(() => process.exit(0)).catch((error) => {
+              serverLog.error(`stage_sync planned restart failed: ${error instanceof Error ? error.message : String(error)}`);
+              process.exit(1);
+            });
+          }
+        } catch (error) {
+          serverLog.warn(`stage_sync_boot_hook_failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      })();
+
       startPostReadySchemaConvergence();
       import("./slack/worker")
         .then(({ startSlackWorker }) => startSlackWorker())

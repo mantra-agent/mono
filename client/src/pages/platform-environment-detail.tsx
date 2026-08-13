@@ -285,12 +285,16 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
   const [rebuildConfirmOpen, setRebuildConfirmOpen] = useState(false);
   const [enableConfirmOpen, setEnableConfirmOpen] = useState(false);
   const actionMutation = useMutation({
-    mutationFn: async ({ action, confirmation }: { action: "restart" | "full-rebuild" | "enable-warm-stage"; confirmation?: "FULL_REBUILD" | "ENABLE_WARM_STAGE" }) => {
+    mutationFn: async ({ action, confirmation }: { action: "restart" | "full-rebuild" | "enable-warm-stage" | "sync-latest"; confirmation?: "FULL_REBUILD" | "ENABLE_WARM_STAGE" }) => {
+      const needsKey = action === "full-rebuild" || action === "enable-warm-stage" || action === "sync-latest";
       const res = await fetch(`/api/railway/environments/${platformEnvironmentId}/actions/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ ...(confirmation ? { confirmation } : {}), ...(confirmation ? { idempotencyKey: `stage-${action}:${platformEnvironmentId}:${Date.now()}` } : {}) }),
+        body: JSON.stringify({
+          ...(confirmation ? { confirmation } : {}),
+          ...(needsKey ? { idempotencyKey: `stage-${action}:${platformEnvironmentId}:${Date.now()}` } : {}),
+        }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || "Stage action failed");
@@ -299,10 +303,20 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/railway/environments", platformEnvironmentId, "status"] });
       toast({
-        title: result.action === "enable_warm_stage" ? "Warm Stage enabling" : result.action === "full_rebuild" ? "Full Rebuild triggered" : "Stage restart triggered",
+        title: result.action === "enable_warm_stage"
+          ? "Warm Stage enabling"
+          : result.action === "full_rebuild"
+            ? "Full Rebuild triggered"
+            : result.action === "sync_latest"
+              ? "Sync Latest queued"
+              : "Stage restart triggered",
         description: result.action === "enable_warm_stage"
           ? "Stage will restart into the warm workspace. Watch Runtime flip to Warm Workspace."
-          : result.action === "full_rebuild" ? "Railway is rebuilding the Stage environment." : "The Stage service is restarting.",
+          : result.action === "full_rebuild"
+            ? "Railway is rebuilding the Stage environment."
+            : result.action === "sync_latest"
+              ? `Target ${typeof result.targetCommitSha === "string" ? result.targetCommitSha.slice(0, 7) : "main"} — Stage will apply source without a cold image rebuild when lockfile matches.`
+              : "The Stage service is restarting.",
       });
       setRebuildConfirmOpen(false);
       setEnableConfirmOpen(false);
@@ -361,6 +375,7 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
       <ProfileTreeRow label="Actions" icon={<Waypoints className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
         <div className="flex flex-wrap items-center gap-1">
           {status.lifecycle.capabilities.actions.includes("enable_warm_stage") && <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setEnableConfirmOpen(true)} disabled={actionMutation.isPending}>Enable Warm Stage</Button>}
+          {status.lifecycle.capabilities.actions.includes("sync_latest") && <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => actionMutation.mutate({ action: "sync-latest" })} disabled={actionMutation.isPending}>Sync Latest</Button>}
           {status.lifecycle.capabilities.actions.includes("restart_stage") && <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => actionMutation.mutate({ action: "restart" })} disabled={actionMutation.isPending}>Restart</Button>}
           {status.lifecycle.capabilities.actions.includes("full_rebuild") && <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-warning" onClick={() => setRebuildConfirmOpen(true)} disabled={actionMutation.isPending}>Full Rebuild</Button>}
         </div>
