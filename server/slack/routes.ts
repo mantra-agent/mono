@@ -6,21 +6,39 @@ import { requireCurrentPrincipal } from "../principal-context";
 import { requireModRouteGroup } from "../mods/mod-access";
 import { createInstallation, listOwnedInstallations, listOwnedMappings, setInstallationEnabled, upsertPrincipalMapping } from "./storage";
 
-const idPattern = /^[A-Z0-9]{2,32}$/;
+const slackId = (prefix: "T" | "A" | "U" | "C") =>
+  z.string().regex(new RegExp(`^${prefix}[A-Z0-9]{1,31}$`));
 const createSchema = z.object({
   platformEnvironmentId: z.number().int().positive(),
   providerConnectionId: z.number().int().positive(),
-  teamId: z.string().regex(idPattern),
-  apiAppId: z.string().regex(idPattern),
-  botUserId: z.string().regex(idPattern),
+  teamId: slackId("T"),
+  apiAppId: slackId("A"),
+  botUserId: slackId("U"),
   vaultId: z.string().min(1).max(128),
-  allowedChannelId: z.string().regex(idPattern).optional(),
+  allowedChannelId: slackId("C").optional(),
 }).strict();
 const mappingSchema = z.object({
-  slackUserId: z.string().regex(idPattern),
+  slackUserId: slackId("U"),
   mantraUserId: z.string().min(1).max(128),
 }).strict();
 const enabledSchema = z.object({ enabled: z.boolean() }).strict();
+
+const PUBLIC_SLACK_ERRORS = new Set([
+  "Slack installation authority prerequisites are not satisfied",
+  "Slack installation not found",
+  "Slack mapping authority prerequisites are not satisfied",
+]);
+
+function publicSlackError(error: unknown, fallback: string): string {
+  if (error instanceof z.ZodError) {
+    return "Team, App, Bot, Channel, and User IDs must look like T… / A… / U… / C…";
+  }
+  if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "23505") {
+    return "A Slack installation for this team and app already exists on that environment";
+  }
+  if (error instanceof Error && PUBLIC_SLACK_ERRORS.has(error.message)) return error.message;
+  return fallback;
+}
 
 export function registerSlackRoutes(app: Express): void {
   const gates = [requireAuth, requireModRouteGroup("slack.api"), requirePermission("mods:manage")];
@@ -41,7 +59,7 @@ export function registerSlackRoutes(app: Express): void {
       const installation = await createInstallation(requireCurrentPrincipal(), createSchema.parse(req.body));
       res.status(201).json(installation);
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : "Slack installation could not be created" });
+      res.status(400).json({ error: publicSlackError(error, "Slack installation could not be created") });
     }
   });
 
@@ -50,7 +68,7 @@ export function registerSlackRoutes(app: Express): void {
       const { enabled } = enabledSchema.parse(req.body);
       res.json(await setInstallationEnabled(requireCurrentPrincipal(), req.params.id, enabled));
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : "Slack installation could not be updated" });
+      res.status(400).json({ error: publicSlackError(error, "Slack installation could not be updated") });
     }
   });
 
@@ -60,7 +78,7 @@ export function registerSlackRoutes(app: Express): void {
       await upsertPrincipalMapping(requireCurrentPrincipal(), { installationId: req.params.id, ...mapping });
       res.status(204).end();
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : "Slack mapping could not be updated" });
+      res.status(400).json({ error: publicSlackError(error, "Slack mapping could not be updated") });
     }
   });
 }

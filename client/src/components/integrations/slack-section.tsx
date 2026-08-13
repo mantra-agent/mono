@@ -18,7 +18,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
-const SLACK_ID = /^[A-Z0-9]{2,32}$/;
+const SLACK_TEAM_ID = /^T[A-Z0-9]{1,31}$/;
+const SLACK_APP_ID = /^A[A-Z0-9]{1,31}$/;
+const SLACK_USER_ID = /^U[A-Z0-9]{1,31}$/;
+const SLACK_CHANNEL_ID = /^C[A-Z0-9]{1,31}$/;
 
 interface SlackConnection {
   id: number;
@@ -232,7 +235,9 @@ export function SlackDetail() {
   const createInstall = useMutation({
     mutationFn: async () => {
       const ids = [teamId, apiAppId, botUserId, channelId].map((value) => value.trim().toUpperCase());
-      if (ids.some((value) => !SLACK_ID.test(value))) throw new Error("Team, App, Bot, and Channel IDs must look like T… / A… / U… / C…");
+      if (!SLACK_TEAM_ID.test(ids[0]) || !SLACK_APP_ID.test(ids[1]) || !SLACK_USER_ID.test(ids[2]) || !SLACK_CHANNEL_ID.test(ids[3])) {
+        throw new Error("Team, App, Bot, and Channel IDs must look like T… / A… / U… / C…");
+      }
       const environmentId = Number.parseInt(platformEnvironmentId, 10);
       const connectionId = Number.parseInt(providerConnectionId, 10);
       if (!Number.isInteger(environmentId) || environmentId <= 0) throw new Error("Choose a Platform Environment");
@@ -262,7 +267,7 @@ export function SlackDetail() {
   const saveMapping = useMutation({
     mutationFn: async (installation: SlackInstallation) => {
       const slackUserId = (mappingDrafts[installation.id] || "").trim().toUpperCase();
-      if (!SLACK_ID.test(slackUserId)) throw new Error("Slack User ID must look like U…");
+      if (!SLACK_USER_ID.test(slackUserId)) throw new Error("Slack User ID must look like U…");
       if (!user?.id) throw new Error("Sign in before mapping a Slack user");
       await apiRequest("PUT", `/api/slack/installations/${installation.id}/mappings`, {
         slackUserId,
