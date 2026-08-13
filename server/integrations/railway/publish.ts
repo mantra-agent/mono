@@ -526,11 +526,20 @@ export interface PublishManifestChange {
  * for ambient runtime context. Derived entirely from the last persisted
  * publish run — no separate store to drift.
  *
- * Returns null unless the most recent finished publish SUCCEEDED *and* its
- * promoted commit matches the commit this process is actually serving. That
- * commit-match guard is the whole point: a stale, unrelated, or in-flight run
- * can never misrepresent what is live, so a consumer that trusts a non-null
- * manifest is trusting ground truth (the served commit), not intent.
+ * Returns null unless the run recorded a promoted commit (`newProdCommitSha`,
+ * set only when a Railway deployment for the run reached SUCCESS) *and* that
+ * commit matches the one this process is actually serving. The served-commit
+ * match is the whole point: a stale, unrelated, or in-flight run can never
+ * misrepresent what is live, so a non-null manifest is ground truth (the
+ * served commit), not intent.
+ *
+ * We deliberately do NOT gate on run-level `status === "succeeded"`. A
+ * self-promotion deploys the new commit, which restarts this very process at
+ * Railway's cutover — typically between `wait_for_success` (SUCCESS recorded)
+ * and `health_check`. Boot recovery then stamps that interrupted run `failed`
+ * even though the promotion physically succeeded and its commit is now live.
+ * `newProdCommitSha` + served-commit match is the durable truth; the run
+ * status is not.
  */
 export interface LivePublishManifest {
   publishedAt: string | null;
@@ -543,7 +552,7 @@ export interface LivePublishManifest {
 export async function getLivePublishManifest(): Promise<LivePublishManifest | null> {
   await ensurePublishRunLoaded();
   const run = lastRun ?? currentRun;
-  if (!run || run.status !== "succeeded" || !run.newProdCommitSha) return null;
+  if (!run || !run.newProdCommitSha) return null;
 
   const { getRuntimeIdentity } = await import("../../runtime-identity");
   const servedCommit = (await getRuntimeIdentity()).gitCommit;
