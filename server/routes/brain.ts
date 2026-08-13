@@ -96,7 +96,7 @@ import { plaidAccounts, plaidTransactions, plaidSecurities, plaidHoldings, plaid
 import { signalSources, signalItems, scanRuns } from "@shared/models/signal";
 import { execSkills, execExperience, execMetrics, execEducation, execPassions, experienceSkills } from "@shared/models/exec";
 import { opportunities, opportunitySkills, opportunityArtifacts } from "@shared/models/opportunities";
-import { platforms, platformVaultMemberships, platformProducts, platformProductEnvironments, products, productBacklogs, productPlatformAssociations, featureRequests, environmentBuildLifecycleConfigs, providerConnections, environmentSourceBindings, environmentHostingBindings, environmentRuntimeVariables, environmentCapabilityBindings } from "@shared/models/platforms";
+import { platforms, platformVaultMemberships, platformProducts, platformProductEnvironments, products, productBacklogs, productPlatformAssociations, productContextArtifacts, featureRequests, environmentBuildLifecycleConfigs, providerConnections, environmentSourceBindings, environmentHostingBindings, environmentRuntimeVariables, environmentCapabilityBindings } from "@shared/models/platforms";
 import { buildDeploymentHomeProjections, platformDeploymentObservations } from "@shared/models/build-deployments";
 import { promptModules, promptModuleVersions } from "@shared/models/prompt-modules";
 import { systemHooks, systemHookExecutions } from "@shared/models/events";
@@ -248,6 +248,7 @@ export const TABLE_REGISTRY: TableRegistryEntry[] = [
   { key: "products", table: products, domain: "other", hasSerial: true, dependsOn: ["accounts", "users"] },
   { key: "product_backlogs", table: productBacklogs, domain: "other", hasSerial: true, dependsOn: ["products"] },
   { key: "product_platform_associations", table: productPlatformAssociations, domain: "other", hasSerial: true, dependsOn: ["products", "platforms"] },
+  { key: "product_context_artifacts", table: productContextArtifacts, domain: "other", hasSerial: true, dependsOn: ["products"] },
   { key: "feature_requests", table: featureRequests, domain: "other", hasSerial: true, dependsOn: ["product_backlogs"] },
   { key: "businesses", table: businesses, domain: "other", hasSerial: false, dependsOn: ["accounts", "users"] },
   { key: "job_roles", table: jobRoles, domain: "other", hasSerial: false, dependsOn: ["accounts", "users"] },
