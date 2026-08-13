@@ -1,3 +1,10 @@
+<!-- 2026-08-13 Business Identity narrative assign/clear:
+- Assets/data: A01/A07 Business `*_page_id` soft-refs and principal-visible `library_pages` (S2 knowledge).
+- Flow/threat: authenticated Identity PATCH -> client-supplied page ID written onto a Business slot. A raw ID without a visible-scope resolve would let a caller bind a foreign or trashed page (STRIDE tampering/information disclosure; DATA-01/IAM-01).
+- Deterministic controls/owner: PATCH accepts the six narrative columns as nullable soft-refs. Non-null IDs must resolve through the same principal-visible Library predicate used by Identity hydration before BusinessStorage writes. Null is an explicit clear of the slot, not of the Library page. Create-page remains a separate mint-and-wire path. Owner: Business Identity. Severity: medium integrity. SLA: immediate.
+- Residual/rollback: a later loss of page visibility hides the expander the same way as the original create-and-wire slots. Revert the PATCH fields, visible-page gate, and this finding together.
+-->
+
 <!-- 2026-08-12 Enable Warm Stage product activation:
 - Assets/data: A03 Stage runtime identity and source modules, A06 session/auth cookies, A07 privileged Build mutations, A08 Stage availability. Commit SHAs and lifecycle metadata are S1; Vite source maps and TypeScript modules are S2 implementation detail.
 - Flow/threat: authenticated Build UI -> build:write Enable Warm Stage -> lifecycle contract + STAGE_WARM_ENABLED + Railway restart -> process wrapper starts tsx/Vite on Stage. Credible abuse is flipping Live into a source-serving workspace, exposing unauthenticated source/HMR, or letting callers invent repo/start-command/volume mutations (STRIDE tampering/information disclosure/elevation analogue; DATA-03/AGENT-04).

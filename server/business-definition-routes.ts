@@ -85,6 +85,8 @@ const createSchema = z.object({
   vaultIds: z.array(z.string().min(1)).max(64).optional(),
 });
 
+const narrativePageIdSchema = z.string().min(1).nullable().optional();
+
 const patchSchema = z
   .object({
     publicName: z.string().trim().min(1).max(160).optional(),
@@ -94,6 +96,12 @@ const patchSchema = z
     dataRoomUrl: z.string().trim().url().max(2048)
       .refine((value) => new URL(value).protocol === "https:", "Data Room URL must use HTTPS")
       .optional(),
+    valuesPageId: narrativePageIdSchema,
+    visionPageId: narrativePageIdSchema,
+    missionPageId: narrativePageIdSchema,
+    phasesPageId: narrativePageIdSchema,
+    pitchPageId: narrativePageIdSchema,
+    gtmPageId: narrativePageIdSchema,
   })
   .refine((patch) => Object.keys(patch).length > 0, "At least one change is required");
 
@@ -206,6 +214,17 @@ export function registerBusinessDefinitionRoutes(app: Express): void {
       try {
         await ensureReady();
         const { vaultIds, ...patch } = patchSchema.parse(req.body ?? {});
+        const assignedIds = NARRATIVE_SLOTS
+          .map((slot) => patch[SLOT_COLUMN[slot]])
+          .filter((id): id is string => typeof id === "string" && id.length > 0);
+        if (assignedIds.length > 0) {
+          const refs = await loadNarrativeRefs(assignedIds);
+          const missing = assignedIds.find((id) => !refs.has(id));
+          if (missing) {
+            res.status(404).json({ error: "Library page not found or not visible" });
+            return;
+          }
+        }
         let business = Object.keys(patch).length > 0
           ? await businessStorage.update(req.params.id, patch)
           : await businessStorage.get(req.params.id);
