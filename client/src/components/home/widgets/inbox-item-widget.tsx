@@ -20,10 +20,11 @@ function sessionReviewTone(reviewKind: string | null): {
   className: string;
 } {
   switch (reviewKind) {
+    // Error = red circle; Warning = amber triangle.
     case "error":
-      return { Icon: AlertTriangle, className: "text-destructive" };
+      return { Icon: AlertCircle, className: "text-destructive" };
     case "warning":
-      return { Icon: AlertCircle, className: "text-warning" };
+      return { Icon: AlertTriangle, className: "text-warning" };
     case "question":
       return { Icon: MessageCircleQuestion, className: "text-active" };
     case "approval":
@@ -44,24 +45,32 @@ function SessionReviewInline({ item }: { item: SimpleFeedItem }) {
     null;
   const { Icon, className } = sessionReviewTone(reviewKind);
   const completed = item.status === "completed";
+  const sessionTitle = (stringPayload(item, "sessionTitle") ?? item.title)
+    .replace(/\s+/g, " ")
+    .trim();
 
   return (
     <div
       className={cn(
-        "mx-1 flex min-w-0 items-center gap-1.5",
+        "mx-1 flex min-w-0 items-center gap-1",
         completed && "opacity-70",
       )}
       data-testid={`session-review-inbox-${item.id}`}
     >
-      {sessionRef ? (
-        <ReferenceRenderer
-          refValue={sessionRef}
-          surface="simple-row"
-          className={cn("mx-0 max-w-[min(100%,14rem)]", completed && "text-neutral hover:text-neutral")}
-        />
-      ) : (
-        <span className="truncate text-xs font-medium">{stringPayload(item, "sessionTitle") ?? item.title}</span>
-      )}
+      <span className="min-w-0 max-w-[9rem] shrink">
+        {sessionRef ? (
+          <ReferenceRenderer
+            refValue={sessionRef}
+            surface="simple-row"
+            className={cn(
+              "mx-0 max-w-full",
+              completed && "text-neutral hover:text-neutral",
+            )}
+          />
+        ) : (
+          <span className="block truncate text-xs font-medium">{sessionTitle}</span>
+        )}
+      </span>
       <span className="shrink-0 text-xs text-muted-foreground">{phrase}</span>
       <span className={cn("inline-flex shrink-0 items-center gap-1 text-xs font-medium", className)}>
         <Icon className="h-3.5 w-3.5" aria-hidden="true" />

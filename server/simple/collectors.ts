@@ -1502,8 +1502,26 @@ function itemFromProject(project: Project, section: SimpleSection, index: number
 
 const SESSION_REVIEW_INBOX_LIMIT = 25;
 const SESSION_REVIEW_PLAN_CHUNK = 100;
+/** Undismissed error/warning attention older than this stays off Home. Clear once and it stays gone. */
+const SESSION_REVIEW_ERROR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Aggressive chip labels so "{@session} had an Error" stays scannable. */
+const SESSION_REVIEW_TITLE_MAX_CHARS = 22;
 
 type HomeSessionReviewKind = "error" | "warning" | "question" | "approval";
+
+function truncateSessionReviewTitle(title: string): string {
+  const cleaned = title.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "Session";
+  if (cleaned.length <= SESSION_REVIEW_TITLE_MAX_CHARS) return cleaned;
+  return `${cleaned.slice(0, Math.max(1, SESSION_REVIEW_TITLE_MAX_CHARS - 1)).trimEnd()}…`;
+}
+
+function isWithinSessionReviewErrorWindow(observedAt: string | undefined, nowMs: number): boolean {
+  if (!observedAt) return false;
+  const ms = Date.parse(observedAt);
+  if (!Number.isFinite(ms)) return false;
+  return nowMs - ms <= SESSION_REVIEW_ERROR_MAX_AGE_MS;
+}
 
 function selectPrimaryHomeSessionReviewKind(
   kinds: SessionReviewKind[],
@@ -1588,7 +1606,8 @@ function itemFromSessionReview(params: {
 }): SimpleFeedItem {
   const presentation = homeSessionReviewPresentation(params.reviewKind);
   const href = `/session?c=${encodeURIComponent(params.sessionId)}`;
-  const label = params.sessionTitle.trim() || "Session";
+  const fullTitle = params.sessionTitle.replace(/\s+/g, " ").trim() || "Session";
+  const label = truncateSessionReviewTitle(fullTitle);
   const sourceRef: SimpleSourceRef = {
     type: "session",
     id: params.sessionId,
@@ -1603,6 +1622,7 @@ function itemFromSessionReview(params: {
     metadata: { label, href },
   });
   const observedDate = new Date(params.observedAt);
+  // Keep title free of multi-space runs so chips + phrase stay tight.
   const title = `${label} ${presentation.phrase} ${presentation.label}`;
 
   return {
@@ -1670,18 +1690,25 @@ async function collectSessionReviewInboxItems(timezone: string): Promise<SimpleF
     listPlanReviewSessionIds(sessionIds),
   ]);
 
+  const nowMs = Date.now();
   const items: SimpleFeedItem[] = [];
   for (const session of candidates) {
+    const observedAt = session.updatedAt || session.createdAt || new Date().toISOString();
     const kinds: SessionReviewKind[] = [];
     if (session.awaitingQuestionResponse) kinds.push("question");
     if (planReviewSessionIds.has(session.id)) kinds.push("plan_review");
     const emailKinds = emailKindsBySession.get(session.id);
     if (emailKinds?.length) kinds.push(...emailKinds);
-    if (session.errorSeverity === "error") {
+
+    // Errors/warnings only surface while recent. Dismiss/check-circle clear is
+    // durable — this is not a per-boot resurrection of cleared notices.
+    const errorInWindow = isWithinSessionReviewErrorWindow(observedAt, nowMs);
+    if (errorInWindow && session.errorSeverity === "error") {
       kinds.push("error");
     } else if (
-      session.errorSeverity === "warning" ||
-      (session.errorSeverity as string | null | undefined) === "warn"
+      errorInWindow &&
+      (session.errorSeverity === "warning" ||
+        (session.errorSeverity as string | null | undefined) === "warn")
     ) {
       kinds.push("warning");
     }
@@ -1694,7 +1721,7 @@ async function collectSessionReviewInboxItems(timezone: string): Promise<SimpleF
         sessionId: session.id,
         sessionTitle: session.title || "Session",
         vaultId: session.vaultId,
-        observedAt: session.updatedAt || session.createdAt || new Date().toISOString(),
+        observedAt,
         reviewKind: primary,
         reviewKinds: Array.from(new Set(kinds)),
         index: items.length,

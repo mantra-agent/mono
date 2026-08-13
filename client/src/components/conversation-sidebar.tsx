@@ -415,11 +415,12 @@ export function ConversationItem({
     if (isAwaitingQuestion && !iconHovered && !isLive) {
       return <MessageCircleQuestion className="h-3.5 w-3.5 shrink-0 text-active" data-testid={`icon-conversation-question-${conv.id}`} />;
     }
+    // Error = red circle; Warning = amber triangle.
     if (isAwaitingErrorReview && !iconHovered && !isLive) {
-      return <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-destructive" data-testid={`icon-conversation-error-${conv.id}`} />;
+      return <AlertCircle className="h-3.5 w-3.5 shrink-0 text-destructive" data-testid={`icon-conversation-error-${conv.id}`} />;
     }
     if (isAwaitingWarningReview && !iconHovered && !isLive) {
-      return <AlertCircle className="h-3.5 w-3.5 shrink-0 text-warning" data-testid={`icon-conversation-warning-${conv.id}`} />;
+      return <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" data-testid={`icon-conversation-warning-${conv.id}`} />;
     }
     if ((isAwaitingPlanReview || isAwaitingEmailReview) && !iconHovered && !isLive) {
       return <MailOpen className="h-3.5 w-3.5 shrink-0 text-foreground" data-testid={`icon-conversation-review-${conv.id}`} />;

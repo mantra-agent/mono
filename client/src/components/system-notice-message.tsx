@@ -124,7 +124,8 @@ export function SystemNoticeMessage({
   const isActionableNotice = isError || notice.errorType !== "user_stopped";
   const isDismissed = typeof notice.dismissedAt === "string" && notice.dismissedAt.length > 0;
   const [locallyDismissed, setLocallyDismissed] = useState(false);
-  const Icon = isError ? AlertTriangle : AlertCircle;
+  // Error = red circle; Warning = amber triangle.
+  const Icon = isError ? AlertCircle : AlertTriangle;
   const label = ERROR_TYPE_LABELS[notice.errorType] || (isError ? "Error" : "Warning");
   const discussion = useAgendaDiscussion();
   const queryClient = useQueryClient();
