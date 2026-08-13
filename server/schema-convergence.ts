@@ -101,6 +101,7 @@ export async function convergeBootSchema(): Promise<void> {
         const { ensureOrganizationsSchema } = await import("./organizations-schema");
         const { ensureAgentInstanceSchema } = await import("./agent-instance-schema");
         const { ensureSpendAuthoritySchema } = await import("./spend-authority-schema");
+        const { ensureAccountModelAccessSchema } = await import("./account-model-access-schema");
         const { ensureDriveResourcesSchema } = await import("./drive-resources-schema");
         const { ensureFilesIndexSchema } = await import("./files-index-schema");
         const { ensureDocumentArtifactsSchema } = await import("./document-artifacts-schema");
@@ -116,6 +117,8 @@ export async function convergeBootSchema(): Promise<void> {
         await ensureAgentInstanceSchema(pool);
         // Account entitlement discriminant for Phase 2 spend gate (Account pays, Instance consumes).
         await ensureSpendAuthoritySchema(pool);
+        // Account model entitlement + reserved Stripe customer attach point (commercial gate over platform connectors).
+        await ensureAccountModelAccessSchema(pool);
         // One-shot inventory + quarantine of obvious fake/test/incomplete Accounts.
         const { runFakeAccountCull } = await import("./identity-quarantine");
         await runFakeAccountCull();

@@ -6,8 +6,21 @@ import { getAccount } from "./connected-accounts";
 import { createNamedSystemPrincipal } from "./principal";
 import { runWithPrincipal } from "./principal-context";
 import { listModelConnectors, type ModelConnector } from "./model-connectors";
-import { getConnectorTierModelConfig, type ConnectorTierModelConfig, semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
+import {
+  getConnectorTierModelConfig,
+  modelConnectorProviderSchema,
+  type ConnectorTierModelConfig,
+  semanticTierSchema,
+  type SemanticTier,
+} from "@shared/model-connectors";
 import type { ActivityId } from "./job-profiles";
+import {
+  filterConnectorsForAccountAccess,
+  isTierAllowed,
+  logModelAccessDecision,
+  resolveAccountModelAccess,
+  type AccountModelAccess,
+} from "./account-model-access";
 
 const log = createLogger("ModelRouting");
 
@@ -99,11 +112,44 @@ export async function resolveSemanticTier(sessionId?: string): Promise<{ tier: S
 
 export async function resolveModelCandidates(
   activity: ActivityId,
-  options: { model?: string; overrideReason?: string; semanticTierOverride?: SemanticTier; sessionId?: string } = {},
+  options: {
+    model?: string;
+    overrideReason?: string;
+    semanticTierOverride?: SemanticTier;
+    sessionId?: string;
+    /** Prefer when known (Runtime/Timer account). Defaults to ambient principal Account. */
+    accountId?: string | null;
+  } = {},
 ): Promise<ModelRoutingDecision[]> {
+  // Commercial gate: Account model entitlement over platform connectors.
+  // Spend authority (entitled + Instance) still runs at model-client entry.
+  const modelAccessDecision = await resolveAccountModelAccess({ accountId: options.accountId });
+  logModelAccessDecision(modelAccessDecision, { activity });
+  if (!modelAccessDecision.allowed) {
+    throw new ModelRoutingError(
+      modelAccessDecision.detail
+        ?? `Account is not entitled to model access (${modelAccessDecision.reason})`,
+      { activity, source: "default-fallback" },
+    );
+  }
+  const access: AccountModelAccess = modelAccessDecision.access;
+
   if (options.model) {
     if (!options.overrideReason) throw new ModelRoutingError("Explicit model override requires overrideReason");
+    if (!isTierAllowed(access, "explicit-override")) {
+      throw new ModelRoutingError("Account model access does not permit inference", { activity, tier: "explicit-override" });
+    }
     const parsed = splitModel(options.model);
+    // Explicit override still requires the provider to be commercially allowed when allowlisted.
+    if (access.mode === "allowlist" && access.providers.length > 0) {
+      const providerParsed = modelConnectorProviderSchema.safeParse(parsed.provider);
+      if (!providerParsed.success || !access.providers.includes(providerParsed.data)) {
+        throw new ModelRoutingError(
+          `Account model access does not permit provider ${parsed.provider}`,
+          { activity, tier: "explicit-override", provider: parsed.provider },
+        );
+      }
+    }
     return [{
       activity, tier: "explicit-override", model: parsed.model, provider: parsed.provider,
       modelString: options.model, configVersion: "explicit-override", configHash: "explicit-override",
@@ -117,13 +163,39 @@ export async function resolveModelCandidates(
     ? { tier: options.semanticTierOverride, source: "semantic-tier-override" as const, personaId: undefined }
     : await resolveSemanticTier(options.sessionId);
   if (options.semanticTierOverride && !options.overrideReason) throw new ModelRoutingError("Semantic tier override requires overrideReason");
-  const connectors = (await listModelConnectors()).filter((connector) => connector.status === "active");
-  const configHash = createHash("sha256").update(JSON.stringify(connectors.map((connector) => ({
-    id: connector.id, order: connector.sortOrder, provider: connector.provider,
-    mappings: connector.config.tierMappings,
-  })))).digest("hex").slice(0, 12);
+
+  if (!isTierAllowed(access, intent.tier)) {
+    throw new ModelRoutingError(
+      `Account model access does not permit tier ${intent.tier}`,
+      { activity, tier: intent.tier, source: intent.source, personaId: intent.personaId },
+    );
+  }
+
+  // Platform connectors are infrastructure; Account entitlement filters which may be used.
+  const platformConnectors = (await listModelConnectors()).filter((connector) => connector.status === "active");
+  const { allowed: connectors, skipped: accessSkipped } = filterConnectorsForAccountAccess(access, platformConnectors);
+  const configHash = createHash("sha256").update(JSON.stringify({
+    access,
+    connectors: connectors.map((connector) => ({
+      id: connector.id, order: connector.sortOrder, provider: connector.provider,
+      mappings: connector.config.tierMappings,
+    })),
+  })).digest("hex").slice(0, 12);
   const attempts: ConnectorAttempt[] = [];
   const decisions: ModelRoutingDecision[] = [];
+
+  for (const skipped of accessSkipped) {
+    attempts.push({
+      connectorId: skipped.connector.id,
+      connectorLabel: skipped.connector.label,
+      connectorOrder: skipped.connector.sortOrder,
+      provider: skipped.connector.provider,
+      tier: intent.tier,
+      model: "",
+      outcome: "skipped",
+      reason: skipped.reason,
+    });
+  }
 
   for (const connector of connectors) {
     const tierConfig = getConnectorTierModelConfig(connector.config, intent.tier);
@@ -147,9 +219,14 @@ export async function resolveModelCandidates(
     });
   }
   if (decisions.length > 1) decisions[0].fallbackCandidates = decisions.slice(1);
-  if (!decisions.length) throw new ModelRoutingError(`No enabled model connector can serve tier ${intent.tier}`, {
-    activity, tier: intent.tier, source: intent.source, personaId: intent.personaId, configHash, attempts,
-  });
+  if (!decisions.length) throw new ModelRoutingError(
+    access.mode === "platform_stack"
+      ? `No enabled model connector can serve tier ${intent.tier}`
+      : `No Account-entitled model connector can serve tier ${intent.tier}`,
+    {
+      activity, tier: intent.tier, source: intent.source, personaId: intent.personaId, configHash, attempts,
+    },
+  );
   return decisions;
 }
 

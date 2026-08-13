@@ -156,6 +156,18 @@ export const accounts = pgTable("accounts", {
    * Real personal Accounts backfill to entitled. Stripe attaches later — do not invent billing here.
    */
   entitlement: text("entitlement").notNull().default("unentitled"),
+  /**
+   * Commercial model gate over platform model connectors.
+   * Shape: { mode: "platform_stack" | "allowlist" | "none", providers?, connectorIds?, tiers? }.
+   * Platform provider_connections remain infrastructure; this is the Account entitlement.
+   * Default platform_stack so entitled tenants use the global stack until Stripe narrows it.
+   */
+  modelAccess: jsonb("model_access").notNull().default(sql`'{"mode":"platform_stack"}'::jsonb`),
+  /**
+   * Reserved Stripe customer id attach point for Account billing (@task:2359).
+   * No billing engine, webhooks, or second billing subject in this cut.
+   */
+  stripeCustomerId: text("stripe_customer_id"),
   metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -163,6 +175,7 @@ export const accounts = pgTable("accounts", {
   kindIdx: index("idx_accounts_kind").on(table.kind),
   ownerIdx: index("idx_accounts_owner_user").on(table.ownerUserId),
   entitlementIdx: index("idx_accounts_entitlement").on(table.entitlement),
+  stripeCustomerUnique: uniqueIndex("idx_accounts_stripe_customer_id_unique").on(table.stripeCustomerId),
   kindOwnerUnique: uniqueIndex("idx_accounts_kind_owner_unique").on(table.kind, table.ownerUserId),
 }));
 
