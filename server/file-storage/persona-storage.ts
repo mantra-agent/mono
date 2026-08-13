@@ -61,6 +61,17 @@ export interface PersonaEntry {
   updateAvailable?: boolean;
 }
 
+/** Only keys with a real runtime consumer belong in cognitiveOverrides. */
+function normalizeCognitiveOverrides(value: unknown): Record<string, unknown> {
+  const raw = value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+  const budget = raw.memoryGraphTokenBudget;
+  return typeof budget === "number" && Number.isFinite(budget) && budget > 0
+    ? { memoryGraphTokenBudget: budget }
+    : {};
+}
+
 function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
   return {
     id: row.id,
@@ -69,8 +80,7 @@ function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
     icon: row.icon || "Bot",
     promptOverlay: row.promptOverlay,
     expressionTags: (row.expressionTags as string[]) || [],
-    cognitiveOverrides:
-      (row.cognitiveOverrides as Record<string, unknown>) || {},
+    cognitiveOverrides: normalizeCognitiveOverrides(row.cognitiveOverrides),
     semanticTier: row.semanticTier ? semanticTierSchema.parse(row.semanticTier) : null,
     contextSections: (row.contextSections as Record<string, boolean>) || {},
     toolBundle: (row.toolBundle as string[]) || [],
@@ -222,12 +232,7 @@ const SEED_PERSONAS = [
       "- Prefer current primary sources, date important facts, and lower confidence when live research is unavailable",
     ].join("\n"),
     expressionTags: ["[gravitas]", "[pause]", "[calm]"],
-    cognitiveOverrides: {
-      semanticWeight: 1.2,
-      temporalWeight: 0.8,
-      contrastiveWeight: 1.1,
-      memoryGraphTokenBudget: 6000,
-    },
+    cognitiveOverrides: { memoryGraphTokenBudget: 6000 },
     isDefault: false,
     isActive: false,
     sortOrder: 1,
@@ -254,7 +259,7 @@ const SEED_PERSONAS = [
       "- Use dry humor to puncture an excuse or reveal a contradiction, never to diminish the person making it",
     ].join("\n"),
     expressionTags: ["[curious]", "[calm]", "[pause]"],
-    cognitiveOverrides: { causalWeight: 1.2, temporalWeight: 1.1, memoryGraphTokenBudget: 4000 },
+    cognitiveOverrides: { memoryGraphTokenBudget: 4000 },
     isDefault: false,
     isActive: false,
     sortOrder: 2,
@@ -275,7 +280,7 @@ const SEED_PERSONAS = [
       "- Preserve future optionality and prefer structures that make invalid states unrepresentable",
     ].join("\n"),
     expressionTags: ["[gravitas]", "[curious]", "[pause]"],
-    cognitiveOverrides: { semanticWeight: 1.2, contrastiveWeight: 1.2, memoryGraphTokenBudget: 6000 },
+    cognitiveOverrides: { memoryGraphTokenBudget: 6000 },
     isDefault: false,
     isActive: false,
     sortOrder: 3,
@@ -298,7 +303,7 @@ const SEED_PERSONAS = [
       "- Verify through the repository's required production gate. State clearly when evidence is unavailable or degraded",
     ].join("\n"),
     expressionTags: ["[calm]", "[curious]"],
-    cognitiveOverrides: { causalWeight: 1.2, semanticWeight: 1.1, memoryGraphTokenBudget: 5000 },
+    cognitiveOverrides: { memoryGraphTokenBudget: 5000 },
     isDefault: false,
     isActive: false,
     sortOrder: 4,
@@ -323,12 +328,7 @@ const SEED_PERSONAS = [
       "- If a task is ambiguous, make a reasonable call and note your assumption",
     ].join("\n"),
     expressionTags: ["[calm]"],
-    cognitiveOverrides: {
-      causalWeight: 1.3,
-      temporalWeight: 1.1,
-      semanticWeight: 0.9,
-      memoryGraphTokenBudget: 1500,
-    },
+    cognitiveOverrides: { memoryGraphTokenBudget: 1500 },
     isDefault: false,
     isActive: false,
     sortOrder: 5,
@@ -354,12 +354,7 @@ const SEED_PERSONAS = [
       "- Be willing to be wrong in interesting ways rather than right in boring ones",
     ].join("\n"),
     expressionTags: ["[excited]", "[curious]", "[laughs]"],
-    cognitiveOverrides: {
-      contrastiveWeight: 1.3,
-      semanticWeight: 1.1,
-      causalWeight: 0.8,
-      memoryGraphTokenBudget: 8000,
-    },
+    cognitiveOverrides: { memoryGraphTokenBudget: 8000 },
     isDefault: false,
     isActive: false,
     sortOrder: 6,
@@ -385,12 +380,7 @@ const SEED_PERSONAS = [
       "- Use gentle dry humor when it creates closeness or gives pressure somewhere harmless to escape. Never aim it at vulnerability",
     ].join("\n"),
     expressionTags: ["[calm]", "[whispers]", "[sighs]"],
-    cognitiveOverrides: {
-      temporalWeight: 1.2,
-      semanticWeight: 1.1,
-      contrastiveWeight: 0.8,
-      memoryGraphTokenBudget: 5000,
-    },
+    cognitiveOverrides: { memoryGraphTokenBudget: 5000 },
     isDefault: false,
     isActive: false,
     sortOrder: 7,
@@ -419,12 +409,7 @@ const SEED_PERSONAS = [
       "- When the task becomes system design, implementation, debugging, or operational execution, switch to the corresponding persona",
     ].join("\n"),
     expressionTags: ["[curious]", "[gravitas]"],
-    cognitiveOverrides: {
-      semanticWeight: 1.2,
-      contrastiveWeight: 1.1,
-      temporalWeight: 1.1,
-      memoryGraphTokenBudget: 6000,
-    },
+    cognitiveOverrides: { memoryGraphTokenBudget: 6000 },
     isDefault: false,
     isActive: false,
     sortOrder: 8,
@@ -450,11 +435,7 @@ const SEED_PERSONAS = [
       "- When the task becomes evidence gathering, strategy, system design, or execution, switch to the corresponding persona",
     ].join("\n"),
     expressionTags: ["[curious]", "[gravitas]"],
-    cognitiveOverrides: {
-      semanticWeight: 1.1,
-      contrastiveWeight: 1.2,
-      memoryGraphTokenBudget: 5000,
-    },
+    cognitiveOverrides: { memoryGraphTokenBudget: 5000 },
     isDefault: false,
     isActive: false,
     sortOrder: 9,
@@ -796,7 +777,7 @@ class PersonaStorageClass {
           icon: input.icon || "Bot",
           promptOverlay: input.promptOverlay || null,
           expressionTags: input.expressionTags || [],
-          cognitiveOverrides: input.cognitiveOverrides || {},
+          cognitiveOverrides: normalizeCognitiveOverrides(input.cognitiveOverrides),
           semanticTier: input.semanticTier ?? "balanced",
           contextSections: input.contextSections ?? {},
           toolBundle: input.toolBundle ?? [],
@@ -866,7 +847,7 @@ class PersonaStorageClass {
     if (input.expressionTags !== undefined)
       updates.expressionTags = input.expressionTags;
     if (input.cognitiveOverrides !== undefined)
-      updates.cognitiveOverrides = input.cognitiveOverrides;
+      updates.cognitiveOverrides = normalizeCognitiveOverrides(input.cognitiveOverrides);
     if (input.semanticTier !== undefined)
       updates.semanticTier = input.semanticTier === null ? null : semanticTierSchema.parse(input.semanticTier);
     if (input.contextSections !== undefined)

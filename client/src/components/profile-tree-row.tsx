@@ -25,7 +25,7 @@ export function ProfileTreeRow({
   expandedContentClassName,
   actionContent,
   menuContent,
-  menuVisibility = "always",
+  menuVisibility = "hover",
   testId,
   defaultOpen = false,
   mobileLayout = "stacked",
@@ -164,23 +164,6 @@ export function ProfileTreeRow({
               {children}
             </div>
           ) : null}
-          {canExpand ? (
-            <CollapsibleTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  "shrink-0 text-muted-foreground/60 hover:bg-accent hover:text-foreground",
-                  usesSessionMenuControls
-                    ? sessionDisclosureControlClassName
-                    : "min-h-11 min-w-11 rounded sm:min-h-5 sm:min-w-5",
-                )}
-                aria-label={`${open ? "Collapse" : "Expand"} ${typeof label === "string" ? label : "profile field"}`}
-              >
-                <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
-              </Button>
-            </CollapsibleTrigger>
-          ) : null}
           {showAction ? (
             <div
               className={cn(
@@ -203,7 +186,7 @@ export function ProfileTreeRow({
                     "shrink-0 text-muted-foreground/60 transition-opacity hover:bg-accent hover:text-foreground",
                     usesSessionMenuControls
                       ? sessionOverflowControlClassName
-                      : "min-h-11 min-w-11 rounded sm:min-h-5 sm:min-w-5 sm:opacity-0 sm:group-hover:opacity-100",
+                      : "min-h-11 min-w-11 rounded sm:min-h-5 sm:min-w-5",
                     menuVisibility === "hover" &&
                       "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100",
                   )}
@@ -214,6 +197,23 @@ export function ProfileTreeRow({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" onCloseAutoFocus={(e) => e.preventDefault()}>{menuContent}</DropdownMenuContent>
             </DropdownMenu>
+          ) : null}
+          {canExpand ? (
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  "shrink-0 text-muted-foreground/60 hover:bg-accent hover:text-foreground",
+                  usesSessionMenuControls
+                    ? sessionDisclosureControlClassName
+                    : "min-h-11 min-w-11 rounded sm:min-h-5 sm:min-w-5",
+                )}
+                aria-label={`${open ? "Collapse" : "Expand"} ${typeof label === "string" ? label : "profile field"}`}
+              >
+                <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
+              </Button>
+            </CollapsibleTrigger>
           ) : null}
         </div>
         {canExpand && (
