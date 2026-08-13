@@ -25,7 +25,7 @@ import {
   setStageSyncTargetVariable,
   verifyRailwayEnvironmentCapability,
 } from "./environment-control";
-import { resolveBoundBranchHead, writeStageSyncStatus } from "../../stage-sync";
+import { readStageSyncStatus, resolveBoundBranchHead, writeStageSyncStatus } from "../../stage-sync";
 import {
   checkPrereqs,
   getDisplayRun,
@@ -219,15 +219,17 @@ export function registerRailwayRoutes(app: Express) {
       }).from(environmentSourceBindings)
         .where(eq(environmentSourceBindings.environmentId, control.environment.platformEnvironmentId))
         .limit(1);
-      const [lifecycleResult, deploymentsResult, targetResult] = await Promise.allSettled([
+      const [lifecycleResult, deploymentsResult, targetResult, warmSyncResult] = await Promise.allSettled([
         getEnvironmentBuildLifecycleConfig(control.environment.platformEnvironmentId, { includeDisabled: true }),
         fetchEnvironmentDeployments(control, 20),
         source?.owner && source.repo && source.branch
           ? getBranchHead({ owner: source.owner, repo: source.repo }, source.branch)
           : Promise.resolve(null),
+        readStageSyncStatus(control.environment.platformEnvironmentId),
       ]);
       const deployments = deploymentsResult.status === "fulfilled" ? deploymentsResult.value : [];
       const targetCommitSha = targetResult.status === "fulfilled" ? targetResult.value?.sha ?? null : null;
+      const warmSync = warmSyncResult.status === "fulfilled" ? warmSyncResult.value : null;
       const lifecycleConfig = lifecycleResult.status === "fulfilled" ? lifecycleResult.value?.config : null;
       const deployPolicy = lifecycleConfig?.deployPolicy && typeof lifecycleConfig.deployPolicy === "object" && !Array.isArray(lifecycleConfig.deployPolicy)
         ? lifecycleConfig.deployPolicy as Record<string, unknown>
@@ -235,6 +237,14 @@ export function registerRailwayRoutes(app: Express) {
       const lifecycle = composeStageLifecycleStatus({
         deployments,
         targetCommitSha,
+        warmSync: warmSync
+          ? {
+            activeCommitSha: warmSync.activeCommitSha,
+            targetCommitSha: warmSync.targetCommitSha,
+            status: warmSync.status,
+            reason: warmSync.reason,
+          }
+          : null,
         capabilities: deriveStageLifecycleCapabilities(deployPolicy, lifecycleConfig?.providerKind || "railway", {
           platformName: control.environment.platformName,
           productName: control.environment.productName,
