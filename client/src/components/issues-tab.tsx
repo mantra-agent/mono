@@ -553,9 +553,14 @@ export function IssuesTab() {
     discussion.mutate({
       pendingKey: `issue-${issue.id}`,
       title: `Issue: ${issue.title}`,
-      message: `Discuss and resolve @issue:${issue.id}.\n\n${issue.description}${
-        issue.reproSteps ? `\n\nReproduction steps:\n${issue.reproSteps}` : ""
-      }`,
+      message: [
+        `Diagnose the issue @issue:${issue.id} and determine if a fix is obvious, if so then do it and resolve the issue.`,
+        "Look at the logs and code to ensure you understand the issue fully.",
+        "If you don't have a clear understanding of the issue, do not make a speculative fix.",
+        "",
+        issue.description,
+        ...(issue.reproSteps ? ["", "Reproduction steps:", issue.reproSteps] : []),
+      ].join("\n"),
       clientTurnSuffix: `issue-${issue.id}`,
       personaId: engineerId,
     });
