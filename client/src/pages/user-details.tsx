@@ -402,7 +402,7 @@ function TimezoneTreeRow() {
     },
     onSuccess: (result: { timezone: string }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/settings/timezone"] });
-      toast({ title: "Timezone updated", description: `Set to ${result.timezone}. Agent restarting to apply.` });
+      toast({ title: "Timezone updated", description: `Set to ${result.timezone}.` });
     },
     onError: (error: Error) => {
       log.error("timezone update failed:", error);
