@@ -73,11 +73,11 @@ export const WELLNESS_MANAGED_TIMER_DEFINITIONS: readonly WellnessManagedTimerDe
   {
     contributionId: "wellness.timer.reflect-daily",
     systemKey: "reflect-daily",
-    legacyNames: ["Reflect Daily", "Nightly Journal"],
+    legacyNames: ["Reflect Daily", "Nightly Journal", "Daily Digest"],
     legacySkillIds: ["reflect-daily"],
-    name: "Nightly Journal",
+    name: "Daily Digest",
     description:
-      "Daily journal using parameterized Reflect — creates a deterministic source artifact without surfacing inbox noise",
+      "Daily Digest using parameterized Reflect — creates a deterministic source artifact without surfacing inbox noise",
     type: "skill",
     skillId: "reflect",
     prompt: "cadence=daily",
