@@ -28,6 +28,8 @@ Secret-backed integration tools are normally withheld from the advertised regist
 
 `POST /api/railway/environments/:id/actions/sync-latest` is the Warm Stage seconds path. It requires `build:write`, Mantra Web Stage, and `runtimeMode: warm_workspace`. It resolves the bound source branch head, writes `STAGE_SYNC_TARGET_SHA` with Railway `skipDeploys`, and restarts Stage. On boot, Stage downloads that exact GitHub tarball into `/app` only when `package-lock.json` matches the image lockfile, records active SHA, then planned-restarts so tsx/Vite load the new tree. Lockfile drift fails closed and tells the operator to Full Rebuild. Railway autodeploy may stay enabled as the catch-all until Sync is proven.
 
+Proactive Sync is Build-owned, not a GitHub webhook. After a successful `git` tool `merge_pr` or `push` onto `main` for the Stage-bound repo, `queueStageSyncLatest` (via the same fail-soft fire-and-forget pattern as mobile auto-build) queues that exact merge SHA on Mantra Web Stage when Warm Stage is enabled. Manual Sync Latest remains available. Missing Stage binding, non-Stage repos, or cold runtime skip without failing the git tool.
+
 ## Railway request priority boundary
 
 Service CPU utilization derives its effective denominator locally from Linux cgroup quota, falling back to process CPU affinity only when quota is unlimited or unavailable. Railway API observations may corroborate provider allocation but must never be required for in-process CPU correctness or availability.
