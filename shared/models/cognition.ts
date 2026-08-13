@@ -33,6 +33,8 @@ export const emotionalStates = pgTable(
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
+    /** Pinned Agent Instance mind owner; dual-write/read via scoped-storage. */
+    instanceId: text("instance_id"),
     vaultId: text("vault_id"),
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
@@ -48,6 +50,7 @@ export const emotionalStates = pgTable(
       table.scope,
       table.ownerUserId,
     ),
+    index("idx_emotional_states_instance").on(table.instanceId),
   ],
 );
 
@@ -84,7 +87,9 @@ export const personas = pgTable(
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
-    // Rolling-deployment compatibility only. Persona ownership is user/account-wide;
+    /** Pinned Agent Instance mind owner; owner_user_id stays created_by. */
+    instanceId: text("instance_id"),
+    // Rolling-deployment compatibility only. Persona ownership is Instance/user;
     // runtime scope predicates and writes must never use this legacy column.
     vaultId: text("vault_id"),
     createdByUserId: text("created_by_user_id"),
@@ -105,6 +110,7 @@ export const personas = pgTable(
     index("idx_personas_default").on(table.isDefault),
     index("idx_personas_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_personas_account").on(table.accountId),
+    index("idx_personas_instance").on(table.instanceId),
   ],
 );
 
@@ -116,6 +122,8 @@ export const personaRevisions = pgTable(
     scope: text("scope").notNull(),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
+    /** Pinned Agent Instance mind owner for user revisions; platform rows stay null. */
+    instanceId: text("instance_id"),
     parentRevisionId: text("parent_revision_id"),
     platformBaseRevisionId: text("platform_base_revision_id"),
     payload: jsonb("payload").notNull(),
@@ -128,6 +136,7 @@ export const personaRevisions = pgTable(
     index("idx_persona_revisions_identity_created").on(table.personaIdentityId, table.createdAt),
     index("idx_persona_revisions_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_persona_revisions_identity_hash").on(table.personaIdentityId, table.contentHash),
+    index("idx_persona_revisions_instance").on(table.instanceId),
   ],
 );
 
@@ -138,6 +147,8 @@ export const personaPreferences = pgTable(
   {
     ownerUserId: text("owner_user_id").notNull(),
     accountId: text("account_id").notNull(),
+    /** Pinned Agent Instance mind owner; owner_user_id stays the acting User. */
+    instanceId: text("instance_id"),
     defaultPersonaId: integer("default_persona_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .default(sql`CURRENT_TIMESTAMP`)
@@ -149,6 +160,7 @@ export const personaPreferences = pgTable(
   (table) => [
     uniqueIndex("persona_preferences_owner_account_key").on(table.ownerUserId, table.accountId),
     index("idx_persona_preferences_default").on(table.defaultPersonaId),
+    index("idx_persona_preferences_instance").on(table.instanceId),
   ],
 );
 
