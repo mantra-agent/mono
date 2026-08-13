@@ -111,6 +111,11 @@ export function inputFailure(code: ToolFailureCode, detail?: string): ToolFailur
   return makeFailure("input", code, false, detail ? { detail } : undefined);
 }
 
+/**
+ * Authority / credential walls the caller cannot restore inside this run.
+ * Do not use for missing optional integration readiness (`integration_not_configured`) —
+ * that is `inputFailure` so the model can pivot without run-terminal quarantine.
+ */
 export function permissionFailure(code: ToolFailureCode, detail?: string): ToolFailure {
   return makeFailure("permission", code, false, detail ? { detail } : undefined);
 }

@@ -2517,7 +2517,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (connected.length === 0) return {
         result: "No Google accounts with calendar access. Connect one in Settings > Integrations.",
         error: true,
-        failure: permissionFailure("integration_not_configured", "google_calendar_access"),
+        // Missing optional connector readiness is caller-correctable input, not run-terminal authority loss.
+        failure: inputFailure("integration_not_configured", "google_calendar_access"),
       };
 
       const now = new Date();
@@ -2613,7 +2614,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (connected.length === 0) return {
         result: "No Google accounts with calendar access.",
         error: true,
-        failure: permissionFailure("integration_not_configured", "google_calendar_access"),
+        // Missing optional connector readiness is caller-correctable input, not run-terminal authority loss.
+        failure: inputFailure("integration_not_configured", "google_calendar_access"),
       };
 
       const accountId = args.accountId || connected[0].id;
@@ -2669,7 +2671,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (connected.length === 0) return {
         result: "No Google accounts with calendar access.",
         error: true,
-        failure: permissionFailure("integration_not_configured", "google_calendar_access"),
+        // Missing optional connector readiness is caller-correctable input, not run-terminal authority loss.
+        failure: inputFailure("integration_not_configured", "google_calendar_access"),
       };
 
       const accountId = args.accountId || connected[0].id;
@@ -7305,7 +7308,8 @@ ${refs}` : ""),
       return {
         result: `Sentry not configured. Missing: ${detail}. Add them via the Integrations page.`,
         error: true,
-        failure: permissionFailure("integration_not_configured", detail),
+        // Optional telemetry readiness gap — surface and continue; do not terminalize the run.
+        failure: inputFailure("integration_not_configured", detail),
       };
     }
 
