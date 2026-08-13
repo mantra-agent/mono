@@ -321,6 +321,14 @@ function buildBrowserVoiceStartOptions(input: {
     dynamicVariables: input.chatSessionId
       ? { chat_session_id: input.chatSessionId }
       : undefined,
+    // Same-origin worklets keep AudioWorklet.addModule inside worker-src
+    // 'self'. The SDK otherwise blobs generated processors and, on iOS,
+    // loads libsamplerate from jsdelivr — both fail the current CSP.
+    workletPaths: {
+      rawAudioProcessor: "/voice/rawAudioProcessor.worklet.js",
+      audioConcatProcessor: "/voice/audioConcatProcessor.worklet.js",
+    },
+    libsampleratePath: "/voice/libsamplerate.worklet.js",
     ...input.callbacks,
   } as Parameters<typeof Conversation.startSession>[0];
 }
