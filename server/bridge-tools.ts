@@ -3686,6 +3686,48 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         });
     }
 
+    /** After merge/push to Stage-bound main, queue Warm Stage Sync Latest. Fail-soft; never blocks git. */
+    function triggerStageSyncFromMainGitChange(input: {
+      sourceRef?: string | null;
+      reason: string;
+      owner?: string | null;
+      repo?: string | null;
+    }) {
+      const sourceRef = input.sourceRef?.trim() || null;
+      if (!sourceRef) {
+        toolExec.log("Git tool main change skipped Stage Sync Latest: missing commit SHA", {
+          reason: input.reason,
+        });
+        return;
+      }
+      import("./stage-sync")
+        .then(({ queueStageSyncLatest }) => queueStageSyncLatest({
+          commitSha: sourceRef,
+          reason: input.reason,
+          owner: input.owner,
+          repo: input.repo,
+        }))
+        .then((result) => {
+          toolExec.log("Git tool main change Stage Sync Latest trigger completed", {
+            reason: input.reason,
+            sourceRef,
+            triggered: result.triggered,
+            resultReason: result.reason,
+            environmentId: result.environmentId,
+            targetCommitSha: result.targetCommitSha,
+            deploymentId: result.deploymentId,
+          });
+        })
+        .catch((error: any) => {
+          toolExec.error("Git tool main change Stage Sync Latest trigger failed", {
+            reason: input.reason,
+            sourceRef,
+            error: error?.message || String(error),
+            stack: error?.stack,
+          });
+        });
+    }
+
     try {
       const implicitSessionClone = action === "clone" || action === "clone_from_environment"
         ? null
@@ -4020,6 +4062,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
                 sourceRef,
                 reason: `git_tool_push:main:${sourceRef || "unknown"}`,
               });
+              const pushRepo = pushRemoteUrl.match(/github\.com[:/]([^\/]+)\/(.+?)(?:\.git)?$/);
+              triggerStageSyncFromMainGitChange({
+                sourceRef,
+                reason: `git_tool_push:main:${sourceRef || "unknown"}`,
+                owner: pushRepo?.[1] ?? null,
+                repo: pushRepo?.[2] ?? null,
+              });
             }
             return { result: scrubTokens(output || `Pushed branch ${branch} to origin`) };
           } finally {
@@ -4143,6 +4192,12 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             triggerMobileBuildFromMainGitChange({
               sourceRef: result.sha,
               reason: `git_tool_merge_pr:${prNumber}:main:${result.sha || "unknown"}`,
+            });
+            triggerStageSyncFromMainGitChange({
+              sourceRef: result.sha,
+              reason: `git_tool_merge_pr:${prNumber}:main:${result.sha || "unknown"}`,
+              owner,
+              repo,
             });
           }
           return { result: `PR #${prNumber} merged successfully.\nSHA: ${result.sha}\nMessage: ${result.message}` };

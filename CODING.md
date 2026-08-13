@@ -51,6 +51,7 @@ The no-test policy below remains unchanged. Approved read-only scanners, depende
 
 - PRs always target `main`
 - Do not report coding work as done until the PR is merged to `main`, unless Ray explicitly asks for PR-only/review-first or merge is blocked
+- Successful `git merge_pr` / `git push` onto Stage-bound `main` proactively queues **Sync Latest** on Warm Stage (Build-owned, fail-soft). No GitHub webhook and no extra Agent step required. Manual Sync Latest remains the recovery path; Railway cold rebuild remains the parachute.
 - `live` branch is production — manual publish by a human, never merge directly to `live`
 - Branch names use short kebab-case:
   - `feat/<short-description>` for new behavior or product capability

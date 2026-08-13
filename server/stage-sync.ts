@@ -268,3 +268,84 @@ export async function resolveBoundBranchHead(ref: RepoRef, branch: string): Prom
   if (!head?.sha) throw new Error(`Could not resolve ${ref.owner}/${ref.repo}@${branch}`);
   return head;
 }
+
+export type QueueStageSyncLatestResult = {
+  triggered: boolean;
+  reason: string;
+  environmentId?: number;
+  targetCommitSha?: string;
+  deploymentId?: string;
+};
+
+/**
+ * Build-owned proactive Sync Latest. Call after a successful git merge/push onto
+ * Stage-bound main. No GitHub webhook — the coding ship path is the signal.
+ * Fail-soft: never throws into the git tool result.
+ */
+export async function queueStageSyncLatest(input: {
+  commitSha: string;
+  reason: string;
+  owner?: string | null;
+  repo?: string | null;
+}): Promise<QueueStageSyncLatestResult> {
+  const commitSha = boundedSha(input.commitSha);
+  const { resolveGitSource } = await import("./git-source-resolver");
+  const source = await resolveGitSource({
+    platformName: "Mantra",
+    productName: "Web",
+    environmentName: "stage",
+    matchBranch: false,
+  });
+  if (!source) {
+    return { triggered: false, reason: "stage_source_unresolved" };
+  }
+
+  if (input.owner && input.repo) {
+    if (source.owner.toLowerCase() !== input.owner.toLowerCase() || source.repo.toLowerCase() !== input.repo.toLowerCase()) {
+      return { triggered: false, reason: "repo_not_stage_bound", environmentId: source.environmentId };
+    }
+  }
+
+  const { getEnvironmentBuildLifecycleConfig } = await import("./platforms/build-lifecycle-service");
+  const { deriveStageLifecycleCapabilities } = await import("./platforms/stage-lifecycle-status");
+  const lifecycle = await getEnvironmentBuildLifecycleConfig(source.environmentId, { includeDisabled: true });
+  const policy = lifecycle?.config?.deployPolicy && typeof lifecycle.config.deployPolicy === "object" && !Array.isArray(lifecycle.config.deployPolicy)
+    ? lifecycle.config.deployPolicy as Record<string, unknown>
+    : {};
+  const capabilities = deriveStageLifecycleCapabilities(policy, lifecycle?.config?.providerKind || "railway", {
+    platformName: source.platformName,
+    productName: source.productName,
+    environmentName: source.environmentName,
+  });
+  if (!capabilities.actions.includes("sync_latest")) {
+    return {
+      triggered: false,
+      reason: "warm_stage_not_enabled",
+      environmentId: source.environmentId,
+      targetCommitSha: commitSha,
+    };
+  }
+
+  const {
+    resolveRailwayEnvironmentControl,
+    setStageSyncTargetVariable,
+    restartEnvironment,
+  } = await import("./integrations/railway/environment-control");
+
+  const control = await resolveRailwayEnvironmentControl(source.environmentId);
+  await writeStageSyncStatus(source.environmentId, {
+    targetCommitSha: commitSha,
+    status: "pending",
+    reason: `Queued ${commitSha.slice(0, 7)} from ${input.reason}`,
+  });
+  await setStageSyncTargetVariable(control, commitSha);
+  const restart = await restartEnvironment(control);
+  log.info(`stage_sync_queued sha=${commitSha.slice(0, 7)} environmentId=${source.environmentId} reason=${input.reason}`);
+  return {
+    triggered: true,
+    reason: "queued",
+    environmentId: source.environmentId,
+    targetCommitSha: commitSha,
+    deploymentId: restart.deploymentId,
+  };
+}
