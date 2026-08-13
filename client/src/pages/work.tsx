@@ -121,14 +121,16 @@ import { useTaskModal } from "@/contexts/task-modal-context";
 const log = createLogger("WorkPage");
 
 type DiscussableWorkItem =
-  | { type: "project"; id: number; title: string }
-  | { type: "milestone"; id: number; title: string; projectId: number }
-  | { type: "task"; id: number; title: string; projectId?: number | null; milestoneId?: number | null };
+  | { type: "project"; id: number; title: string; description?: string }
+  | { type: "milestone"; id: number; title: string; projectId: number; description?: string }
+  | { type: "task"; id: number; title: string; projectId?: number | null; milestoneId?: number | null; description?: string };
 
 type CreatedSession = { id: string };
 
 function buildWorkItemDiscussMessage(item: DiscussableWorkItem): string {
-  const reference = `@${item.type}:${item.id}`;
+  const reference = item.type === "milestone"
+    ? `@milestone:${item.projectId}~${item.id}`
+    : `@${item.type}:${item.id}`;
   const context = item.type === "project"
     ? []
     : item.type === "milestone"
@@ -137,12 +139,17 @@ function buildWorkItemDiscussMessage(item: DiscussableWorkItem): string {
           item.projectId ? `Project: @project:${item.projectId}` : null,
           item.projectId && item.milestoneId ? `Milestone: @milestone:${item.projectId}~${item.milestoneId}` : null,
         ].filter((line): line is string => Boolean(line));
+  const description = item.description?.trim() ?? "";
 
-  return [
+  const parts = [
     `Let's discuss this ${item.type}: **${item.title}**`,
     `Reference: ${reference}`,
     ...context,
-  ].join("\n");
+  ];
+  if (description) {
+    parts.push("", "Description:", description);
+  }
+  return parts.join("\n");
 }
 
 // Tasks are managed inline inside the Projects tree; no standalone tasks tab
@@ -879,6 +886,7 @@ function TaskRow({
                 title: task.title,
                 projectId: task.projectId,
                 milestoneId: task.milestoneId,
+                description: task.description,
               });
             }}
             data-testid={`menu-task-discuss-${task.id}`}
@@ -1804,7 +1812,7 @@ function ProjectTreeNode({
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem
                     disabled={discussPending}
-                    onClick={(e) => { e.stopPropagation(); onDiscuss({ type: "project", id: project.id, title: project.title }); }}
+                    onClick={(e) => { e.stopPropagation(); onDiscuss({ type: "project", id: project.id, title: project.title, description: project.description }); }}
                     data-testid={`menu-project-discuss-${project.id}`}
                   >
                     {discussPending ? <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> : <MessageSquare className="h-3.5 w-3.5 mr-2" />}
@@ -2106,7 +2114,13 @@ function ProjectTreeNode({
                               disabled={discussPending}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                onDiscuss({ type: "milestone", id: milestone.id, title: milestone.name, projectId: project.id });
+                                onDiscuss({
+                                  type: "milestone",
+                                  id: milestone.id,
+                                  title: milestone.name,
+                                  projectId: project.id,
+                                  description: project.description,
+                                });
                               }}
                               data-testid={`menu-tree-milestone-discuss-${milestone.id}`}
                             >

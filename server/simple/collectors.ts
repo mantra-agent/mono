@@ -1440,6 +1440,7 @@ function itemFromProject(project: Project, section: SimpleSection, index: number
     time: timeLabel,
     payload: {
       kind: "project",
+      description: project.description ?? "",
       status: project.status,
       projectPriority: project.priority,
       dueDate: project.dueDate,
