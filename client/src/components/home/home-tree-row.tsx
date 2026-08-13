@@ -380,6 +380,10 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
+      // Session-review clear mutates Session Menu REVIEW producers too.
+      if (item.payload?.kind === "session_review") {
+        queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      }
       if (entryUi) {
         queryClient.invalidateQueries({ queryKey: [entryUi.endpoint] });
         queryClient.invalidateQueries({ queryKey: ["/api/wellness/logs"] });

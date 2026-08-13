@@ -262,6 +262,31 @@ export class EmailDraftStorage {
    * Sessions. `email_drafts` remains authoritative; the Session index only
    * projects the pending human review state.
    */
+  /**
+   * Draft IDs still awaiting human review for one Session. Used by Home clear
+   * so check-circle completion can discard unsent draft attention.
+   */
+  async listDraftIdsBySession(
+    principal: Principal,
+    sessionId: string,
+  ): Promise<string[]> {
+    if (!sessionId) return [];
+    const rows = await db
+      .select({ id: emailDrafts.id })
+      .from(emailDrafts)
+      .where(
+        combineWithVisibleScope(
+          principal,
+          scopeColumns,
+          and(
+            eq(emailDrafts.sessionId, sessionId),
+            eq(emailDrafts.status, "draft"),
+          ),
+        ),
+      );
+    return rows.map((row) => row.id);
+  }
+
   async getPendingReviewKindsBySession(
     principal: Principal,
     sessionIds: string[],
