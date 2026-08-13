@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, or, and, isNull } from "drizzle-orm";
 import { agentProfiles, userProfiles, users } from "@shared/schema";
 import { DEFAULT_AGENT_NAME } from "@shared/instance-config";
 import { db, withQueryAttributionAsync } from "./db";
@@ -37,6 +37,13 @@ export async function resolveCurrentProfileIdentity(): Promise<ProfileIdentity> 
   }
 
   try {
+    const agentJoin = principal.instanceId
+      ? or(
+          eq(agentProfiles.instanceId, principal.instanceId),
+          and(eq(agentProfiles.userId, users.id), isNull(agentProfiles.instanceId)),
+        )
+      : eq(agentProfiles.userId, users.id);
+
     const [profile] = await withQueryAttributionAsync(
       "context-build",
       () => db
@@ -48,7 +55,7 @@ export async function resolveCurrentProfileIdentity(): Promise<ProfileIdentity> 
         })
         .from(users)
         .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
-        .leftJoin(agentProfiles, eq(agentProfiles.userId, users.id))
+        .leftJoin(agentProfiles, agentJoin)
         .where(eq(users.id, principal.userId))
         .limit(1),
       "profile-identity",

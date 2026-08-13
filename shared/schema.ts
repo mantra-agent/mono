@@ -254,7 +254,7 @@ export const agentProfiles = pgTable("agent_profiles", {
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => ({
-  userUnique: uniqueIndex("idx_agent_profiles_user_unique").on(table.userId),
+  // Ownership uniqueness is instance_id. user_id stays created_by / dual-write only.
   accountIdx: index("idx_agent_profiles_account").on(table.accountId),
   instanceIdx: index("idx_agent_profiles_instance").on(table.instanceId),
   // Partial unique: one profile per Instance when linked; nulls allowed during dual-write.

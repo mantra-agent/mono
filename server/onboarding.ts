@@ -338,7 +338,9 @@ export async function createUserWorkspace(
   const accountId = foundation.accountId;
   const [[existingProfile], [existingAgentProfile]] = await Promise.all([
     db.select().from(userProfiles).where(eq(userProfiles.userId, principal.userId)).limit(1),
-    db.select().from(agentProfiles).where(eq(agentProfiles.userId, principal.userId)).limit(1),
+    foundation.instanceId
+      ? db.select().from(agentProfiles).where(eq(agentProfiles.instanceId, foundation.instanceId)).limit(1)
+      : db.select().from(agentProfiles).where(eq(agentProfiles.userId, principal.userId)).limit(1),
   ]);
   const displayName = cleanText(input.name, 120) ?? existingProfile?.displayName ?? displayNameFor(user, input);
   const preferredName = cleanText(input.preferredName, 80) ?? existingProfile?.preferredName ?? preferredNameFor(user, input);
@@ -396,34 +398,54 @@ export async function createUserWorkspace(
       },
     });
 
-  await db
-    .insert(agentProfiles)
-    .values({
-      userId: principal.userId,
-      accountId,
-      instanceId: foundation.instanceId,
-      agentName,
-      relationshipState: {
-        preferredName,
-        memoryConsent,
-        onboardingCompleted: onboardingStatus === "completed",
-      },
-      metadata: { templateLinks: ["global-personas"], source: "onboarding" },
-    })
-    .onConflictDoUpdate({
-      target: agentProfiles.userId,
-      set: {
+  const relationshipState = {
+    preferredName,
+    memoryConsent,
+    onboardingCompleted: onboardingStatus === "completed",
+  };
+  if (existingAgentProfile) {
+    await db
+      .update(agentProfiles)
+      .set({
+        userId: principal.userId,
         accountId,
         instanceId: foundation.instanceId,
         agentName,
-        relationshipState: {
-          preferredName,
-          memoryConsent,
-          onboardingCompleted: onboardingStatus === "completed",
-        },
+        relationshipState,
         updatedAt: sql`CURRENT_TIMESTAMP`,
-      },
+      })
+      .where(eq(agentProfiles.id, existingAgentProfile.id));
+  } else if (foundation.instanceId) {
+    await db
+      .insert(agentProfiles)
+      .values({
+        userId: principal.userId,
+        accountId,
+        instanceId: foundation.instanceId,
+        agentName,
+        relationshipState,
+        metadata: { templateLinks: ["global-personas"], source: "onboarding" },
+      })
+      .onConflictDoUpdate({
+        target: agentProfiles.instanceId,
+        targetWhere: sql`${agentProfiles.instanceId} IS NOT NULL`,
+        set: {
+          userId: principal.userId,
+          accountId,
+          agentName,
+          relationshipState,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        },
+      });
+  } else {
+    await db.insert(agentProfiles).values({
+      userId: principal.userId,
+      accountId,
+      agentName,
+      relationshipState,
+      metadata: { templateLinks: ["global-personas"], source: "onboarding" },
     });
+  }
 
   eventBus.publish({
     category: "agent",
@@ -514,11 +536,17 @@ export async function getOnboardingStatus(principal: Principal & { userId: strin
     .from(userProfiles)
     .where(eq(userProfiles.userId, principal.userId))
     .limit(1);
-  const [agent] = await db
-    .select()
-    .from(agentProfiles)
-    .where(eq(agentProfiles.userId, principal.userId))
-    .limit(1);
+  const [agent] = principal.instanceId
+    ? await db
+        .select()
+        .from(agentProfiles)
+        .where(eq(agentProfiles.instanceId, principal.instanceId))
+        .limit(1)
+    : await db
+        .select()
+        .from(agentProfiles)
+        .where(eq(agentProfiles.userId, principal.userId))
+        .limit(1);
 
   const user = await getUserOrThrow(principal.userId);
   const preferredName = cleanText(profile?.preferredName ?? undefined, 80)

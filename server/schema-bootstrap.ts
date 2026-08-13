@@ -1403,8 +1403,12 @@ export async function runSchemaBootstrap(
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_profiles_user_unique ON agent_profiles(user_id)`);
+    // Ownership uniqueness is instance_id (agent-instance-schema). Never recreate user unique.
+    await pool.query(`DROP INDEX IF EXISTS idx_agent_profiles_user_unique`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_agent_profiles_account ON agent_profiles(account_id)`);
+    await pool.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS entitlement`);
+    await pool.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS model_access`);
+    await pool.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS stripe_customer_id`);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS system_settings (
@@ -1983,12 +1987,14 @@ export async function runSchemaBootstrap(
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    await pool.query(
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_profiles_user_unique ON agent_profiles(user_id)`,
-    );
+    // Ownership uniqueness is instance_id (agent-instance-schema). Never recreate user unique.
+    await pool.query(`DROP INDEX IF EXISTS idx_agent_profiles_user_unique`);
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_agent_profiles_account ON agent_profiles(account_id)`,
     );
+    await pool.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS entitlement`);
+    await pool.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS model_access`);
+    await pool.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS stripe_customer_id`);
     await pool.query(`ALTER TABLE agent_profiles ALTER COLUMN agent_name SET DEFAULT 'Mantra'`);
     await pool.query(`
       UPDATE agent_profiles
