@@ -66,9 +66,8 @@ function trimNum(value: number): string {
 function fmtCurrency(value: number): string {
   const sign = value < 0 ? "-" : "";
   const absolute = Math.abs(value);
-  if (absolute >= 1_000_000) return `${sign}${trimNum(absolute / 1_000_000)}M`;
-  if (absolute >= 1_000) return `${sign}${trimNum(absolute / 1_000)}k`;
-  return `${sign}${Math.round(absolute).toLocaleString()}`;
+  const amount = absolute >= 1_000_000 ? `${trimNum(absolute / 1_000_000)}M` : absolute >= 1_000 ? `${trimNum(absolute / 1_000)}k` : Math.round(absolute).toLocaleString();
+  return sign + String.fromCharCode(36) + amount;
 }
 
 function formatTokens(value: number): string {
@@ -149,8 +148,10 @@ export default function BusinessModelPage() {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [assumptionsOpen, setAssumptionsOpen] = useState(() => readAssumptionsOpen(assumptionsPreferenceKey));
   const [period, setPeriod] = useState<PeriodMode>("monthly");
+  const [utilizationOpen, setUtilizationOpen] = useState(true);
   const [accountsOpen, setAccountsOpen] = useState(true);
   const [usersOpen, setUsersOpen] = useState(true);
+  const [grossProfitOpen, setGrossProfitOpen] = useState(true);
   const [revenueOpen, setRevenueOpen] = useState(true);
   const [cogsOpen, setCogsOpen] = useState(true);
   const [opexOpen, setOpexOpen] = useState(false);
@@ -276,30 +277,31 @@ export default function BusinessModelPage() {
           <table className="w-max border-collapse text-xs tabular-nums" data-testid="projection-table">
             <thead>
               <tr>
-                <th className="sticky left-0 z-20 min-w-[11rem] border-b border-r border-border/20 bg-background px-3 py-2 text-left font-medium text-muted-foreground">{periods.length} {period === "monthly" ? "months" : period === "quarterly" ? "quarters" : "years"}</th>
-                {periods.map((row) => <th key={row.key} className="min-w-[4.75rem] border-b border-border/10 px-2 py-2 text-right font-medium text-muted-foreground">{row.label}</th>)}
+                <th className="sticky left-0 z-20 min-w-[11rem] h-8 border-b border-r border-border/20 bg-background px-3 py-0 text-left font-medium text-muted-foreground" />
+                {periods.map((row) => <th key={row.key} className="min-w-[4.75rem] h-8 border-b border-border/10 px-2 py-0 text-right font-medium text-muted-foreground">{row.label}</th>)}
               </tr>
             </thead>
             <tbody>
-              <DataRow label="Accounts" periods={periods} render={(row) => Math.round(row.activeAccounts).toLocaleString()} onToggle={() => setAccountsOpen((open) => !open)} open={accountsOpen} />
-              {accountsOpen && <DataRow label="New Accounts" indent periods={periods} render={(row) => row.newAccounts >= 0.05 ? `+${trimNum(row.newAccounts)}` : "—"} />}
-              {accountsOpen && <DataRow label="Churned Accounts" indent periods={periods} render={(row) => row.churnedAccounts >= 0.05 ? `-${trimNum(row.churnedAccounts)}` : "—"} tone={() => "text-muted-foreground"} />}
-              <DataRow label="Users" periods={periods} render={(row) => Math.round(row.activeUsers).toLocaleString()} onToggle={() => setUsersOpen((open) => !open)} open={usersOpen} />
-              {usersOpen && <DataRow label="New Users" indent periods={periods} render={(row) => row.newUsers >= 0.05 ? `+${trimNum(row.newUsers)}` : "—"} />}
-              {usersOpen && <DataRow label="Expanded Users" indent periods={periods} render={(row) => row.expandedUsers >= 0.05 ? `+${trimNum(row.expandedUsers)}` : "—"} />}
-              {usersOpen && <DataRow label="Contracted Users" indent periods={periods} render={(row) => row.contractedUsers >= 0.05 ? `-${trimNum(row.contractedUsers)}` : "—"} tone={() => "text-muted-foreground"} />}
-              <DataRow label="Net Revenue Retention" periods={periods} render={(row) => row.startingCohortRevenue > 0 ? fmtPercent(row.cohortNrr) : "—"} emphasize />
-              <DataRow label="Revenue" periods={periods} render={(row) => fmtCurrency(row.totalCashRevenue)} onToggle={() => setRevenueOpen((open) => !open)} open={revenueOpen} />
-              {revenueOpen && <DataRow label="Starting Cohort" indent periods={periods} render={(row) => fmtCurrency(row.startingCohortRevenue)} />}
-              {revenueOpen && <DataRow label="Account Churn" indent periods={periods} render={(row) => row.churnedRevenue > 0 ? fmtCurrency(-row.churnedRevenue) : "—"} tone={() => "text-muted-foreground"} />}
-              {revenueOpen && <DataRow label="Added Users" indent periods={periods} render={(row) => row.userExpansionRevenue > 0 ? `+${fmtCurrency(row.userExpansionRevenue)}` : "—"} />}
-              {revenueOpen && <DataRow label="Lost Users" indent periods={periods} render={(row) => row.userContractionRevenue > 0 ? fmtCurrency(-row.userContractionRevenue) : "—"} tone={() => "text-muted-foreground"} />}
-              {revenueOpen && <DataRow label="Upgrades" indent periods={periods} render={(row) => row.tierExpansionRevenue > 0 ? `+${fmtCurrency(row.tierExpansionRevenue)}` : "—"} />}
-              <DataRow label="COGS" periods={periods} render={(row) => fmtCurrency(-row.cogs)} onToggle={() => setCogsOpen((open) => !open)} open={cogsOpen} tone={() => "text-muted-foreground"} />
-              {cogsOpen && <DataRow label="Hours Used" indent periods={periods} render={(row) => row.hoursUsed >= 0.05 ? trimNum(row.hoursUsed) : "—"} />}
-              {cogsOpen && <DataRow label="Tokens Used" indent periods={periods} render={(row) => row.tokensUsed >= 0.5 ? formatTokens(row.tokensUsed) : "—"} />}
-              {cogsOpen && <DataRow label="Token Cost" indent periods={periods} render={(row) => row.tokenCost >= 0.5 ? fmtCurrency(-row.tokenCost) : "—"} tone={() => "text-muted-foreground"} />}
-              <DataRow label="Gross Profit" periods={periods} render={(row) => fmtCurrency(row.grossProfit)} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />
+              <DataRow label="Utilization" periods={periods} render={() => ""} onToggle={() => setUtilizationOpen((open) => !open)} open={utilizationOpen} />
+              {utilizationOpen && <DataRow label="Accounts" indent periods={periods} render={(row) => Math.round(row.activeAccounts).toLocaleString()} onToggle={() => setAccountsOpen((open) => !open)} open={accountsOpen} />}
+              {utilizationOpen && accountsOpen && <DataRow label="New Accounts" indent={2} periods={periods} render={(row) => row.newAccounts >= 0.05 ? `+${trimNum(row.newAccounts)}` : "—"} />}
+              {utilizationOpen && accountsOpen && <DataRow label="Churned Accounts" indent={2} periods={periods} render={(row) => row.churnedAccounts >= 0.05 ? `-${trimNum(row.churnedAccounts)}` : "—"} tone={() => "text-muted-foreground"} />}
+              {utilizationOpen && <DataRow label="Users" indent periods={periods} render={(row) => Math.round(row.activeUsers).toLocaleString()} onToggle={() => setUsersOpen((open) => !open)} open={usersOpen} />}
+              {utilizationOpen && usersOpen && <DataRow label="New Users" indent={2} periods={periods} render={(row) => row.newUsers >= 0.05 ? `+${trimNum(row.newUsers)}` : "—"} />}
+              {utilizationOpen && usersOpen && <DataRow label="Expanded Users" indent={2} periods={periods} render={(row) => row.expandedUsers >= 0.05 ? `+${trimNum(row.expandedUsers)}` : "—"} />}
+              {utilizationOpen && usersOpen && <DataRow label="Contracted Users" indent={2} periods={periods} render={(row) => row.contractedUsers >= 0.05 ? `-${trimNum(row.contractedUsers)}` : "—"} tone={() => "text-muted-foreground"} />}
+              {utilizationOpen && <DataRow label="Hours Used" indent periods={periods} render={(row) => row.hoursUsed >= 0.05 ? trimNum(row.hoursUsed) : "—"} />}
+              <DataRow label="Gross Profit" periods={periods} render={(row) => fmtCurrency(row.grossProfit)} onToggle={() => setGrossProfitOpen((open) => !open)} open={grossProfitOpen} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />
+              {grossProfitOpen && <DataRow label="Revenue" indent periods={periods} render={(row) => fmtCurrency(row.totalCashRevenue)} onToggle={() => setRevenueOpen((open) => !open)} open={revenueOpen} />}
+              {grossProfitOpen && revenueOpen && <DataRow label="Starting Cohort" indent={2} periods={periods} render={(row) => fmtCurrency(row.startingCohortRevenue)} />}
+              {grossProfitOpen && revenueOpen && <DataRow label="Account Churn" indent={2} periods={periods} render={(row) => row.churnedRevenue > 0 ? fmtCurrency(-row.churnedRevenue) : "—"} tone={() => "text-muted-foreground"} />}
+              {grossProfitOpen && revenueOpen && <DataRow label="Added Users" indent={2} periods={periods} render={(row) => row.userExpansionRevenue > 0 ? `+${fmtCurrency(row.userExpansionRevenue)}` : "—"} />}
+              {grossProfitOpen && revenueOpen && <DataRow label="Lost Users" indent={2} periods={periods} render={(row) => row.userContractionRevenue > 0 ? fmtCurrency(-row.userContractionRevenue) : "—"} tone={() => "text-muted-foreground"} />}
+              {grossProfitOpen && revenueOpen && <DataRow label="Upgrades" indent={2} periods={periods} render={(row) => row.tierExpansionRevenue > 0 ? `+${fmtCurrency(row.tierExpansionRevenue)}` : "—"} />}
+              {grossProfitOpen && revenueOpen && <DataRow label="NRR" indent={2} periods={periods} render={(row) => row.startingCohortRevenue > 0 ? fmtPercent(row.cohortNrr) : "—"} tone={() => "text-muted-foreground"} />}
+              {grossProfitOpen && <DataRow label="COGS" indent periods={periods} render={(row) => fmtCurrency(-row.cogs)} onToggle={() => setCogsOpen((open) => !open)} open={cogsOpen} tone={() => "text-muted-foreground"} />}
+              {grossProfitOpen && cogsOpen && <DataRow label="Tokens Used" indent={2} periods={periods} render={(row) => row.tokensUsed >= 0.5 ? formatTokens(row.tokensUsed) : "—"} />}
+              {grossProfitOpen && cogsOpen && <DataRow label="Token Cost" indent={2} periods={periods} render={(row) => row.tokenCost >= 0.5 ? fmtCurrency(-row.tokenCost) : "—"} tone={() => "text-muted-foreground"} />}
               <DataRow label="OpEx" periods={periods} render={(row) => fmtCurrency(-row.totalOpex)} onToggle={() => setOpexOpen((open) => !open)} open={opexOpen} />
               {opexOpen && <DataRow label="Staff" indent periods={periods} render={(row) => fmtCurrency(-row.staffOpex)} tone={() => "text-muted-foreground"} />}
               {opexOpen && budget.departments.map((department) => (
@@ -332,18 +334,19 @@ interface DataRowProps {
   render: (row: PeriodRow) => string;
   tone?: (row: PeriodRow) => string;
   emphasize?: boolean;
-  indent?: boolean;
+  indent?: boolean | number;
   onToggle?: () => void;
   open?: boolean;
 }
 
 function DataRow({ label, periods, render, tone, emphasize, indent, onToggle, open }: DataRowProps) {
+  const indentLevel = indent === true ? 1 : indent === false || indent == null ? 0 : indent;
   return (
-    <tr className="border-t border-border/10">
-      <td className={cn("sticky left-0 z-10 border-r border-border/20 bg-background px-3 py-1.5 text-left text-muted-foreground", emphasize && "font-medium text-foreground", indent && "pl-6 text-muted-foreground/80")}>
-        {onToggle ? <button type="button" onClick={onToggle} className="flex min-h-8 items-center gap-1 text-left hover:text-foreground"><ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />{label}</button> : label}
+    <tr className="h-8 border-t border-border/10">
+      <td className={cn("sticky left-0 z-10 h-8 border-r border-border/20 bg-background px-3 py-0 text-left text-muted-foreground", emphasize && "font-medium text-foreground", indentLevel > 0 && "text-muted-foreground/80", indentLevel === 1 && "pl-6", indentLevel >= 2 && "pl-9")}>
+        {onToggle ? <button type="button" onClick={onToggle} className="flex h-8 items-center gap-1 text-left hover:text-foreground"><ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />{label}</button> : label}
       </td>
-      {periods.map((row) => <td key={row.key} className={cn("px-2 py-1.5 text-right text-foreground", indent && "text-muted-foreground/80", tone?.(row))}>{render(row)}</td>)}
+      {periods.map((row) => <td key={row.key} className={cn("h-8 px-2 py-0 text-right text-foreground", indentLevel > 0 && "text-muted-foreground/80", tone?.(row))}>{render(row)}</td>)}
     </tr>
   );
 }
