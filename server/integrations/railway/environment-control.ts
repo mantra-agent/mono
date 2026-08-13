@@ -19,6 +19,8 @@ import { getSharedRailwayDeploymentSnapshot, type RailwayDeploymentSnapshot } fr
 import { getRailwayAttribution, runWithRailwayAttribution } from "./request-attribution";
 
 const IN_FLIGHT_STATUSES = new Set(["BUILDING", "DEPLOYING", "WAITING", "QUEUED", "INITIALIZING"]);
+/** Railway only restarts deployments that are already serving / completed. */
+const RESTARTABLE_STATUSES = new Set(["SUCCESS", "ACTIVE", "COMPLETED"]);
 
 export interface RailwayEnvironmentControl {
   environment: ResolvedPlatformEnvironment;
@@ -141,6 +143,23 @@ export async function resolveEnvironmentDeploymentId(
   return deployments[0]?.id ?? null;
 }
 
+/**
+ * Resolve a Railway deployment that can accept deploymentRestart.
+ * Newest deploy is often BUILDING during Stage autodeploy storms; restart those fails with
+ * "Deployment is not restartable". Prefer the newest SUCCESS/ACTIVE/COMPLETED deployment.
+ */
+export async function resolveRestartableDeploymentId(
+  control: RailwayEnvironmentControl,
+  deploymentId?: string,
+): Promise<string | null> {
+  if (deploymentId?.trim()) return deploymentId.trim();
+  const deployments = await fetchEnvironmentDeployments(control, 20);
+  const restartable = deployments.find((deployment) =>
+    RESTARTABLE_STATUSES.has((deployment.status || "").toUpperCase()),
+  );
+  return restartable?.id ?? null;
+}
+
 export async function listEnvironmentVariableNames(control: RailwayEnvironmentControl): Promise<string[]> {
   const variables = await fetchServiceVariables(
     control.projectId,
@@ -188,8 +207,14 @@ export async function restartEnvironment(
   control: RailwayEnvironmentControl,
   deploymentId?: string,
 ): Promise<{ deploymentId: string; ok: boolean }> {
-  const resolvedDeploymentId = await resolveEnvironmentDeploymentId(control, deploymentId);
-  if (!resolvedDeploymentId) throw new Error("No deployment exists for this Platform Environment");
+  const resolvedDeploymentId = await resolveRestartableDeploymentId(control, deploymentId);
+  if (!resolvedDeploymentId) {
+    throw new Error(
+      deploymentId?.trim()
+        ? "No deployment exists for this Platform Environment"
+        : "No restartable SUCCESS/ACTIVE deployment exists yet — wait for a healthy deploy, then retry Sync Latest / Restart",
+    );
+  }
   return {
     deploymentId: resolvedDeploymentId,
     ok: await restartDeployment(resolvedDeploymentId, control.token),
