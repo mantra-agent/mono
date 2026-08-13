@@ -421,6 +421,8 @@ export interface Issue {
   /** Canonical Product owning this Issue. */
   productId: number;
   createdAt: Date;
+  /** Reporting user's email when the Issue document has a known owner. Admin triage projection only. */
+  reporterEmail?: string | null;
 }
 export type InsertIssue = z.infer<typeof insertIssueSchema>;
 

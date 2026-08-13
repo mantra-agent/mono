@@ -4,6 +4,7 @@ import { IssueInlineProfile } from "@/components/issue-inline-profile";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
+  HIERARCHY_SECTION_HEADER_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
@@ -18,7 +19,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useAgendaDiscussion } from "@/hooks/use-agenda-discussion";
 import { useToast } from "@/hooks/use-toast";
-import { useTimezone, formatDate } from "@/hooks/use-timezone";
+import { useTimezone } from "@/hooks/use-timezone";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import {
@@ -28,6 +29,7 @@ import {
   CircleCheck,
   CircleDashed,
   CircleDot,
+  FolderOpen,
   Loader2,
   MessageSquare,
   Plus,
@@ -60,6 +62,20 @@ interface IssueTreeRowProps {
   onCycleStatus: (id: number, nextStatus: IssueStatus) => void;
   isUpdating: boolean;
   onDiscuss: () => void;
+  onOpen?: () => void;
+  isOpening?: boolean;
+}
+
+/** Match Home inbox timestamp format, e.g. "Oct 11". */
+function formatIssueListDate(value: Date | string | null | undefined, timezone: string): string {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    month: "short",
+    day: "numeric",
+  }).format(date);
 }
 
 function StatusIcon({ status, className }: { status: IssueStatus; className?: string }) {
@@ -75,29 +91,54 @@ function StatusIcon({ status, className }: { status: IssueStatus; className?: st
   }
 }
 
-function IssueTreeRow({ issue, onCycleStatus, isUpdating, onDiscuss }: IssueTreeRowProps) {
+function IssueTreeRow({
+  issue,
+  onCycleStatus,
+  isUpdating,
+  onDiscuss,
+  onOpen,
+  isOpening,
+}: IssueTreeRowProps) {
   const { timezone } = useTimezone();
   const status = issue.status as IssueStatus;
   const nextStatus = STATUS_CYCLE[(STATUS_CYCLE.indexOf(status) + 1) % STATUS_CYCLE.length];
+  const timestamp = formatIssueListDate(issue.createdAt, timezone);
+  const reporter = typeof issue.reporterEmail === "string" && issue.reporterEmail.trim()
+    ? issue.reporterEmail.trim()
+    : null;
 
   return (
     <ProfileTreeRow
       label={(
-        <span className="flex min-w-0 items-center gap-2" data-testid={`label-issue-${issue.id}`}>
-          <span
-            className={cn(
-              "min-w-0 flex-1 truncate font-medium text-foreground",
-              status === "resolved" && "text-muted-foreground line-through",
-            )}
-          >
-            {issue.title}
-          </span>
-          {issue.createdAt ? (
+        <span className="flex min-w-0 flex-col gap-0.5" data-testid={`label-issue-${issue.id}`}>
+          <span className="flex min-w-0 items-center gap-2">
+            {timestamp ? (
+              <span
+                className="w-14 shrink-0 whitespace-nowrap text-right text-[11px] leading-tight tabular-nums text-muted-foreground"
+                title={timestamp}
+              >
+                {timestamp}
+              </span>
+            ) : null}
             <span
-              className="shrink-0 text-xs text-muted-foreground"
-              title={formatDate(issue.createdAt, timezone)}
+              className={cn(
+                "min-w-0 flex-1 truncate font-medium text-foreground",
+                status === "resolved" && "text-muted-foreground line-through",
+              )}
             >
-              {formatDate(issue.createdAt, timezone)}
+              {issue.title}
+            </span>
+          </span>
+          {reporter ? (
+            <span
+              className={cn(
+                "truncate text-[11px] leading-tight text-muted-foreground",
+                timestamp ? "pl-[3.75rem]" : undefined,
+              )}
+              title={reporter}
+              data-testid={`text-issue-reporter-${issue.id}`}
+            >
+              Reporter {reporter}
             </span>
           ) : null}
         </span>
@@ -133,16 +174,31 @@ function IssueTreeRow({ issue, onCycleStatus, isUpdating, onDiscuss }: IssueTree
       expandedContentClassName="px-2 pb-3 pl-2"
       testId={`issue-item-${issue.id}`}
       menuContent={(
-        <DropdownMenuItem
-          onSelect={(event) => {
-            event.preventDefault();
-            onDiscuss();
-          }}
-          data-testid={`menu-discuss-issue-${issue.id}`}
-        >
-          <MessageSquare className="mr-2 h-4 w-4" />
-          Discuss
-        </DropdownMenuItem>
+        <>
+          {onOpen ? (
+            <DropdownMenuItem
+              disabled={isOpening}
+              onSelect={(event) => {
+                event.preventDefault();
+                onOpen();
+              }}
+              data-testid={`menu-open-issue-${issue.id}`}
+            >
+              <FolderOpen className="mr-2 h-4 w-4" />
+              Open
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault();
+              onDiscuss();
+            }}
+            data-testid={`menu-discuss-issue-${issue.id}`}
+          >
+            <MessageSquare className="mr-2 h-4 w-4" />
+            Discuss
+          </DropdownMenuItem>
+        </>
       )}
     />
   );
@@ -152,23 +208,28 @@ function ErrorTreeRow({
   error,
   onDiscuss,
   onDismiss,
+  onOpen,
   isDismissing,
+  isOpening,
 }: {
   error: AggregatedApplicationError;
   onDiscuss: () => void;
   onDismiss: () => void;
+  onOpen: () => void;
   isDismissing: boolean;
+  isOpening: boolean;
 }) {
   const { timezone } = useTimezone();
   const source = error.sourceFile
     ? `${error.sourceFile}${error.sourceLine ? `:${error.sourceLine}` : ""}`
     : null;
+  const timestamp = formatIssueListDate(error.lastSeenAt, timezone);
   const details = [
     ["Identity", error.errorIdentity],
     ["Source", source],
     ["Logger / site", [error.sourceSite, error.errorIdentity.split(":", 1)[0]].filter(Boolean).join(" · ")],
-    ["First seen", formatDate(error.firstSeenAt, timezone)],
-    ["Last seen", formatDate(error.lastSeenAt, timezone)],
+    ["First seen", formatIssueListDate(error.firstSeenAt, timezone)],
+    ["Last seen", timestamp],
     ["Count", error.occurrenceCount.toLocaleString()],
   ].filter((detail): detail is [string, string] => typeof detail[1] === "string" && detail[1].length > 0);
 
@@ -176,6 +237,11 @@ function ErrorTreeRow({
     <ProfileTreeRow
       label={(
         <span className="flex min-w-0 items-center gap-2" data-testid={`label-error-${error.fingerprint}`}>
+          {timestamp ? (
+            <span className="w-14 shrink-0 whitespace-nowrap text-right text-[11px] leading-tight tabular-nums text-muted-foreground">
+              {timestamp}
+            </span>
+          ) : null}
           <span className="min-w-0 flex-1 truncate font-medium text-foreground">
             {error.errorIdentity}
           </span>
@@ -202,6 +268,17 @@ function ErrorTreeRow({
       )}
       menuContent={(
         <>
+          <DropdownMenuItem
+            disabled={isOpening}
+            onSelect={(event) => {
+              event.preventDefault();
+              onOpen();
+            }}
+            data-testid={`menu-open-error-${error.fingerprint}`}
+          >
+            <FolderOpen className="mr-2 h-4 w-4" />
+            Open
+          </DropdownMenuItem>
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault();
@@ -257,7 +334,7 @@ function IssueTreeSection({
       <button
         type="button"
         onClick={() => onOpenChange(!open)}
-        className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground hover:bg-accent/50"
+        className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
         data-testid={testId}
         aria-expanded={open}
       >
@@ -310,7 +387,7 @@ function ErrorTreeSection({
       <button
         type="button"
         onClick={() => onOpenChange(!open)}
-        className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground hover:bg-accent/50"
+        className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
         data-testid={testId}
         aria-expanded={open}
       >
@@ -386,7 +463,13 @@ export function IssuesTab() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, updates }: { id: number; updates: { status?: IssueStatus } }) => {
+    mutationFn: async ({
+      id,
+      updates,
+    }: {
+      id: number;
+      updates: { status?: IssueStatus; kind?: "tracked" | "reported" };
+    }) => {
       setUpdatingId(id);
       const response = await apiRequest("PATCH", `/api/issues/${id}`, updates);
       return response.json();
@@ -421,9 +504,31 @@ export function IssuesTab() {
     },
   });
 
+  const openErrorMutation = useMutation({
+    mutationFn: async (fingerprint: string) => {
+      const response = await apiRequest("POST", `/api/issues/errors/${fingerprint}/open`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/issues"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/issues/errors/recent"] });
+      toast({ title: "Error opened as Issue" });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to open error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const normalized = search.trim();
   const activeIssues = (activeData?.issues || []).filter((issue) =>
-    matchesQuery(`${issue.title} ${issue.description} ${issue.reproSteps ?? ""}`, normalized),
+    matchesQuery(
+      `${issue.title} ${issue.description ?? ""} ${issue.reproSteps ?? ""} ${issue.reporterEmail ?? ""}`,
+      normalized,
+    ),
   );
   const reportedIssues = activeIssues.filter((issue) => issue.kind === "reported");
   const trackedIssues = activeIssues.filter((issue) => issue.kind !== "reported");
@@ -432,7 +537,10 @@ export function IssuesTab() {
   const inReviewIssues = trackedIssues.filter((issue) => issue.status === "in_review");
   const resolvedIssues = (resolvedData?.issues || []).filter((issue) =>
     issue.kind !== "reported"
-    && matchesQuery(`${issue.title} ${issue.description} ${issue.reproSteps ?? ""}`, normalized),
+    && matchesQuery(
+      `${issue.title} ${issue.description ?? ""} ${issue.reproSteps ?? ""} ${issue.reporterEmail ?? ""}`,
+      normalized,
+    ),
   );
   const filteredErrors = (errorsData || []).filter((error) =>
     matchesQuery(
@@ -476,13 +584,22 @@ export function IssuesTab() {
     });
   };
 
-  const renderIssue = (issue: Issue) => (
+  const openReportedIssue = (issue: Issue) => {
+    updateMutation.mutate({
+      id: issue.id,
+      updates: { kind: "tracked", status: "open" },
+    });
+  };
+
+  const renderIssue = (issue: Issue, options?: { canOpen?: boolean }) => (
     <IssueTreeRow
       key={issue.id}
       issue={issue}
       onCycleStatus={(id, nextStatus) => updateMutation.mutate({ id, updates: { status: nextStatus } })}
       isUpdating={updatingId === issue.id}
       onDiscuss={() => discussIssue(issue)}
+      onOpen={options?.canOpen ? () => openReportedIssue(issue) : undefined}
+      isOpening={options?.canOpen ? updatingId === issue.id && updateMutation.isPending : false}
     />
   );
 
@@ -515,7 +632,7 @@ export function IssuesTab() {
           count={reportedIssues.length}
           loading={isLoading}
           emptyLabel="No reported issues."
-          renderIssue={renderIssue}
+          renderIssue={(issue) => renderIssue(issue, { canOpen: true })}
         />
 
         <ErrorTreeSection
@@ -532,7 +649,9 @@ export function IssuesTab() {
               error={error}
               onDiscuss={() => discussError(error)}
               onDismiss={() => dismissErrorMutation.mutate(error.fingerprint)}
+              onOpen={() => openErrorMutation.mutate(error.fingerprint)}
               isDismissing={dismissErrorMutation.isPending && dismissErrorMutation.variables === error.fingerprint}
+              isOpening={openErrorMutation.isPending && openErrorMutation.variables === error.fingerprint}
             />
           )}
         />
@@ -546,7 +665,7 @@ export function IssuesTab() {
           count={openIssues.length}
           loading={isLoading}
           emptyLabel="No open issues."
-          renderIssue={renderIssue}
+          renderIssue={(issue) => renderIssue(issue)}
         />
 
         <IssueTreeSection
@@ -558,7 +677,7 @@ export function IssuesTab() {
           count={inProgressIssues.length}
           loading={isLoading}
           emptyLabel="No in-progress issues."
-          renderIssue={renderIssue}
+          renderIssue={(issue) => renderIssue(issue)}
         />
 
         <IssueTreeSection
@@ -570,7 +689,7 @@ export function IssuesTab() {
           count={inReviewIssues.length}
           loading={isLoading}
           emptyLabel="No issues in review."
-          renderIssue={renderIssue}
+          renderIssue={(issue) => renderIssue(issue)}
         />
 
         <IssueTreeSection
@@ -582,7 +701,7 @@ export function IssuesTab() {
           count={resolvedData ? resolvedIssues.length : 0}
           loading={resolvedLoading}
           emptyLabel="No resolved issues."
-          renderIssue={renderIssue}
+          renderIssue={(issue) => renderIssue(issue)}
         />
       </div>
     </div>

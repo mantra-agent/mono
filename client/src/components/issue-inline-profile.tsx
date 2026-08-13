@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -23,13 +23,13 @@ import {
   CircleDashed,
   CircleDot,
   FileText,
-  Link,
   Loader2,
   MapPin,
   MessageSquare,
   MoreHorizontal,
   Send,
   Trash2,
+  User,
 } from "lucide-react";
 import type { Issue, IssueNote, IssueStatus } from "@shared/schema";
 
@@ -146,15 +146,6 @@ export function IssueInlineProfile({ issueId, onDeleted }: { issueId: number; on
       return response.json();
     },
   });
-  const { data: issueList } = useQuery<{ issues: Issue[] }>({
-    queryKey: ["/api/issues", "profile-dependencies"],
-    queryFn: async () => {
-      const response = await fetch("/api/issues?lightweight=true");
-      if (!response.ok) throw new Error(`Failed to fetch issues: ${response.statusText}`);
-      return response.json();
-    },
-  });
-
   const updateIssue = useMutation({
     mutationFn: async (updates: Partial<Issue>) => {
       const response = await apiRequest("PATCH", `/api/issues/${issueId}`, updates);
@@ -185,17 +176,15 @@ export function IssueInlineProfile({ issueId, onDeleted }: { issueId: number; on
     },
   });
 
-  const dependencyIssues = useMemo(() => {
-    const ids = issue?.dependencies || [];
-    return (issueList?.issues || []).filter((candidate) => ids.includes(candidate.id));
-  }, [issue?.dependencies, issueList?.issues]);
-
   if (isLoading) {
     return <div className="space-y-2 py-2"><Skeleton className="h-7 w-48" /><Skeleton className="h-24 w-full" /></div>;
   }
   if (!issue) return <p className="py-2 text-sm text-muted-foreground">Issue not found.</p>;
 
   const status = issue.status as IssueStatus;
+  const reporter = typeof issue.reporterEmail === "string" && issue.reporterEmail.trim()
+    ? issue.reporterEmail.trim()
+    : null;
 
   return (
     <div className="space-y-6 py-2" data-testid={`issue-inline-profile-${issue.id}`}>
@@ -249,6 +238,11 @@ export function IssueInlineProfile({ issueId, onDeleted }: { issueId: number; on
             <ProfileTreeRow label="Created" icon={<Calendar className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
               <span className="truncate text-muted-foreground">{formatIssueDate(issue.createdAt)}</span>
             </ProfileTreeRow>
+            {reporter ? (
+              <ProfileTreeRow label="Reporter" icon={<User className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
+                <span className="truncate text-muted-foreground" data-testid="text-inline-issue-reporter">{reporter}</span>
+              </ProfileTreeRow>
+            ) : null}
             {issue.page ? (
               <ProfileTreeRow label="Page" icon={<MapPin className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
                 <span className="truncate font-mono text-muted-foreground">{issue.page}</span>
@@ -278,23 +272,6 @@ export function IssueInlineProfile({ issueId, onDeleted }: { issueId: number; on
             <pre className="max-h-64 overflow-auto rounded-md border border-border/20 bg-muted p-3 font-mono text-xs">{issue.logs}</pre>
           </ProfileDetailSection>
         ) : null}
-
-        <ProfileDetailSection title="Dependencies" count={dependencyIssues.length} testId="section-issue-dependencies">
-          <div className="overflow-hidden rounded-md border border-border/20">
-            {dependencyIssues.length > 0 ? dependencyIssues.map((dependency) => (
-              <ProfileTreeRow
-                key={dependency.id}
-                label={`#${dependency.id}`}
-                icon={<Link className="h-3.5 w-3.5" />}
-                hasValue
-                showEmpty
-                mobileLayout="inline"
-              >
-                <span className="truncate text-muted-foreground">{dependency.title}</span>
-              </ProfileTreeRow>
-            )) : <p className="px-2 py-1.5 text-sm text-muted-foreground">No dependencies linked.</p>}
-          </div>
-        </ProfileDetailSection>
 
         <IssueNotes issue={issue} />
       </div>
