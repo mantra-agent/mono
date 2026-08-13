@@ -557,8 +557,7 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
       <div
         ref={rowRef}
         className={cn(
-          "group flex items-center py-1 transition-colors duration-200",
-          !item.completable && "hover:bg-accent/50 rounded-md",
+          "group flex items-center py-1 rounded-md transition-colors duration-200 hover:bg-accent/50",
           canExpand && "cursor-pointer",
         )}
         style={{ paddingLeft: `${embedded ? 0 : depth * INDENT_PX}px` }}
