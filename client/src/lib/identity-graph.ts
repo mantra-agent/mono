@@ -6,6 +6,7 @@ export interface IdentityGraphAccount {
   name: string;
   kind: string;
   ownerUserId: string | null;
+  entitlement: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -116,6 +116,9 @@ export async function convergeBootSchema(): Promise<void> {
         await ensureAgentInstanceSchema(pool);
         // Account entitlement discriminant for Phase 2 spend gate (Account pays, Instance consumes).
         await ensureSpendAuthoritySchema(pool);
+        // One-shot inventory + quarantine of obvious fake/test/incomplete Accounts.
+        const { runFakeAccountCull } = await import("./identity-quarantine");
+        await runFakeAccountCull();
         await ensureDriveResourcesSchema(pool);
         await ensureFilesIndexSchema(pool);
         await ensureDocumentArtifactsSchema(pool);
