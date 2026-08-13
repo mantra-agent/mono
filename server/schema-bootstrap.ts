@@ -1601,7 +1601,7 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_products_scope_owner ON products(scope, owner_user_id, account_id)`);
     await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS vault_id TEXT`);
     await pool.query(`
-      DO $
+      DO $heal$
       BEGIN
         IF NOT EXISTS (
           SELECT 1 FROM pg_constraint WHERE conname = 'products_vault_id_vaults_id_fk'
@@ -1610,7 +1610,7 @@ export async function runSchemaBootstrap(
             ADD CONSTRAINT products_vault_id_vaults_id_fk
             FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE RESTRICT;
         END IF;
-      END $;
+      END $heal$;
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_products_vault ON products(vault_id)`);
     await pool.query(`
