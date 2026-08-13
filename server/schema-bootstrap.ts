@@ -1592,9 +1592,33 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_platform_products_platform ON platform_products(platform_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_platform_products_updated ON platform_products(updated_at)`);
 
-    await pool.query(`CREATE TABLE IF NOT EXISTS products (id SERIAL PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', scope TEXT NOT NULL DEFAULT 'user', owner_user_id TEXT, account_id TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS products (id SERIAL PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', vault_id TEXT REFERENCES vaults(id) ON DELETE RESTRICT, scope TEXT NOT NULL DEFAULT 'user', owner_user_id TEXT, account_id TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS products_account_name_unique ON products(account_id, lower(name))`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_products_scope_owner ON products(scope, owner_user_id, account_id)`);
+    await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS vault_id TEXT`);
+    await pool.query(`
+      DO $
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'products_vault_id_vaults_id_fk'
+        ) THEN
+          ALTER TABLE products
+            ADD CONSTRAINT products_vault_id_vaults_id_fk
+            FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE RESTRICT;
+        END IF;
+      END $;
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_products_vault ON products(vault_id)`);
+    await pool.query(`
+      UPDATE products p
+      SET vault_id = v.id
+      FROM vaults v
+      WHERE p.vault_id IS NULL
+        AND p.account_id IS NOT NULL
+        AND v.account_id = p.account_id
+        AND v.is_default = true
+        AND v.is_archived = false
+    `);
     await pool.query(`CREATE TABLE IF NOT EXISTS product_backlogs (id SERIAL PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS product_backlogs_product_unique ON product_backlogs(product_id)`);
     await pool.query(`CREATE TABLE IF NOT EXISTS product_platform_associations (id SERIAL PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT, platform_id INTEGER NOT NULL REFERENCES platforms(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`);

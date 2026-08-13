@@ -6692,6 +6692,7 @@ ${refs}` : ""),
           name: typeof args.name === "string" ? args.name : "",
           description: typeof args.description === "string" ? args.description : undefined,
           status: typeof args.status === "string" ? args.status : undefined,
+          vaultId: typeof args.vaultId === "string" ? args.vaultId : args.vaultId === null ? null : undefined,
           platformIds,
         });
         return { result: JSON.stringify(created, null, 2) };
@@ -6706,6 +6707,7 @@ ${refs}` : ""),
           name: typeof args.name === "string" ? args.name : undefined,
           description: typeof args.description === "string" ? args.description : undefined,
           status: typeof args.status === "string" ? args.status : undefined,
+          vaultId: typeof args.vaultId === "string" ? args.vaultId : args.vaultId === null ? null : undefined,
         });
         if (!updated) return { result: `Product ${productId} not found or not writable`, error: true };
         return { result: JSON.stringify(updated, null, 2) };

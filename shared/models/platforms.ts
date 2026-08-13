@@ -60,11 +60,18 @@ export type PlatformVaultMembership = typeof platformVaultMemberships.$inferSele
 /** Product intent is independent from runtime Platforms. */
 export const products = pgTable("products", {
   id: serial("id").primaryKey(), name: text("name").notNull(), description: text("description").notNull().default(""),
-  status: text("status").notNull().default("active"), scope: text("scope").notNull().default("user"),
+  status: text("status").notNull().default("active"),
+  /** Product Vault placement. Null remains visible; a set Vault is live same-account ownership. */
+  vaultId: text("vault_id").references(() => vaults.id, { onDelete: "restrict" }),
+  scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"), accountId: text("account_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [uniqueIndex("products_account_name_unique").on(table.accountId, sql`lower(${table.name})`), index("idx_products_scope_owner").on(table.scope, table.ownerUserId, table.accountId)]);
+}, (table) => [
+  uniqueIndex("products_account_name_unique").on(table.accountId, sql`lower(${table.name})`),
+  index("idx_products_scope_owner").on(table.scope, table.ownerUserId, table.accountId),
+  index("idx_products_vault").on(table.vaultId),
+]);
 
 export const productBacklogs = pgTable("product_backlogs", {
   id: serial("id").primaryKey(), productId: integer("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
@@ -320,7 +327,13 @@ export const insertPlatformProductSchema = createInsertSchema(platformProducts)
 
 export const insertProductSchema = createInsertSchema(products)
   .omit({ id: true, scope: true, ownerUserId: true, accountId: true, createdAt: true, updatedAt: true })
-  .extend({ name: z.string().trim().min(1).max(120), description: z.string().trim().max(500).optional().default(""), status: platformStatusEnum.optional().default("active"), platformIds: z.array(z.number().int().positive()).optional().default([]) });
+  .extend({
+    name: z.string().trim().min(1).max(120),
+    description: z.string().trim().max(500).optional().default(""),
+    status: platformStatusEnum.optional().default("active"),
+    vaultId: z.string().trim().min(1).nullable().optional(),
+    platformIds: z.array(z.number().int().positive()).optional().default([]),
+  });
 
 export const insertFeatureRequestSchema = createInsertSchema(featureRequests)
   .omit({ id: true, backlogId: true, createdAt: true, updatedAt: true })

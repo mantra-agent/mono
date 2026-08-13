@@ -1,24 +1,33 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Boxes, ChevronRight, Loader2, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { Archive, Boxes, ChevronDown, ChevronRight, Loader2, MoreHorizontal, Plus, Shield, Trash2 } from "lucide-react";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_SESSION_ROW_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
+import {
+  PROFILE_DESCRIPTION_FRAME_CLASS,
+  PROFILE_DESCRIPTION_TEXT_CLASS,
+} from "@/components/profile-description-style";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { ReferencePicker } from "@/components/references/reference-picker";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { usePageLoadActivity } from "@/hooks/use-page-activity";
+import { useVaults } from "@/hooks/use-vaults";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { createReferenceRef } from "@shared/references";
@@ -43,6 +52,7 @@ interface Product {
   name: string;
   description: string;
   status: "active" | "paused" | "archived";
+  vaultId?: string | null;
   backlogId: number;
   platforms: { platformId: number; platformName: string }[];
   context?: ProductContext[];
@@ -50,6 +60,41 @@ interface Product {
 
 function kindLabel(kind: string) {
   return CONTEXT_KINDS.find((item) => item.value === kind)?.label ?? kind;
+}
+
+function ProductDescriptionEditor({
+  product,
+  onSave,
+}: {
+  product: Product;
+  onSave: (description: string) => void;
+}) {
+  const [draft, setDraft] = useState(product.description || "");
+
+  useEffect(() => {
+    setDraft(product.description || "");
+  }, [product.id, product.description]);
+
+  const save = () => {
+    const next = draft.trim();
+    if (next !== (product.description || "")) onSave(next);
+  };
+
+  return (
+    <div className={PROFILE_DESCRIPTION_FRAME_CLASS}>
+      <Textarea
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={save}
+        placeholder="Add description"
+        className={cn(
+          "min-h-24 w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
+          PROFILE_DESCRIPTION_TEXT_CLASS,
+        )}
+        data-testid={`textarea-product-description-${product.id}`}
+      />
+    </div>
+  );
 }
 
 function ProductRow({
@@ -64,12 +109,21 @@ function ProductRow({
   onDelete: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { vaults } = useVaults();
   const [open, setOpen] = useState(defaultOpen);
   const [adding, setAdding] = useState(false);
   const [newKind, setNewKind] = useState("");
   const [pageId, setPageId] = useState("");
   const [pendingDelete, setPendingDelete] = useState<ProductContext | null>(null);
+  const selectedVault = vaults.find((vault) => vault.id === product.vaultId) ?? null;
 
+  const patchProduct = useMutation({
+    mutationFn: async (body: { description?: string; vaultId?: string | null }) =>
+      (await apiRequest("PATCH", `/api/products/${product.id}`, body)).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/products"] });
+    },
+  });
   const addContext = useMutation({
     mutationFn: async () => (await apiRequest("PUT", `/api/products/${product.id}/context-artifacts`, { kind: newKind, libraryPageId: pageId })).json(),
     onSuccess: () => {
@@ -91,20 +145,38 @@ function ProductRow({
 
   return (
     <div className="min-w-0" data-testid={`product-row-${product.id}`}>
-      <div className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm">
-        <button type="button" onClick={() => setOpen((value) => !value)} className="flex min-w-0 flex-1 items-center gap-2 text-left" aria-expanded={open}>
-          <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
-          <Boxes className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")}>
+        <Boxes className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="flex min-w-0 flex-1 items-center gap-2 pr-14 text-left"
+          aria-expanded={open}
+        >
           <span className="min-w-0 flex-1 truncate text-foreground">{product.name}</span>
           <span className="shrink-0 text-xs capitalize text-muted-foreground">{product.status}</span>
         </button>
-        <DropdownMenu>
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="absolute right-8 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+          aria-label={open ? `Collapse ${product.name}` : `Expand ${product.name}`}
+          data-testid={`button-product-expand-${product.id}`}
+        >
+          <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
+        </button>
+        <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label={`Actions for ${product.name}`}>
+            <button
+              type="button"
+              className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md bg-accent/50 opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+              aria-label={`Actions for ${product.name}`}
+              data-testid={`button-product-menu-${product.id}`}
+            >
               <MoreHorizontal className="h-3.5 w-3.5" />
-            </Button>
+            </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent>
+          <DropdownMenuContent align="end">
             <DropdownMenuItem onSelect={onArchive}><Archive className="mr-2 h-3.5 w-3.5" />Archive</DropdownMenuItem>
             <DropdownMenuItem className="text-destructive" onSelect={onDelete}><Trash2 className="mr-2 h-3.5 w-3.5" />Delete</DropdownMenuItem>
           </DropdownMenuContent>
@@ -112,16 +184,59 @@ function ProductRow({
       </div>
       {open ? (
         <>
-          {(product.description || product.platforms.length > 0) ? (
+          <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+            <ProductDescriptionEditor
+              product={product}
+              onSave={(description) => patchProduct.mutate({ description })}
+            />
+          </HierarchyTreeRow>
+          {product.platforms.length > 0 ? (
             <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
               <div className="px-2 py-1 text-xs text-muted-foreground">
-                {product.description || "No description"}
-                <div>{product.platforms.map((platform) => platform.platformName).join(", ") || "No Platforms"}</div>
+                {product.platforms.map((platform) => platform.platformName).join(", ")}
               </div>
             </HierarchyTreeRow>
           ) : null}
+          <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+            <ProfileTreeRow
+              label="Vault"
+              icon={<Shield className="h-3.5 w-3.5" />}
+              hasValue={Boolean(product.vaultId)}
+              showEmpty
+              mobileLayout="inline"
+              testId={`row-product-vault-${product.id}`}
+            >
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="ghost" className="h-5 max-w-48 justify-end px-1.5 text-right text-xs font-normal" data-testid={`button-edit-product-vault-${product.id}`}>
+                    <span className="truncate">{selectedVault?.name || "Choose Vault"}</span>
+                    <ChevronDown className="ml-1 h-3 w-3 shrink-0 text-muted-foreground" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-64 p-1" data-testid={`popover-product-vault-${product.id}`}>
+                  {vaults.length === 0 ? (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">No Vaults available.</div>
+                  ) : vaults.map((vault) => {
+                    const checked = product.vaultId === vault.id;
+                    return (
+                      <label key={vault.id} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent sm:min-h-9">
+                        <Checkbox
+                          checked={checked}
+                          disabled={patchProduct.isPending}
+                          onCheckedChange={(nextChecked) => patchProduct.mutate({ vaultId: nextChecked ? vault.id : null })}
+                          aria-label={`${checked ? "Unassign from" : "Assign to"} ${vault.name}`}
+                          data-testid={`checkbox-product-vault-${vault.id}`}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{vault.name}</span>
+                      </label>
+                    );
+                  })}
+                </PopoverContent>
+              </Popover>
+            </ProfileTreeRow>
+          </HierarchyTreeRow>
           {children.length === 0 && !adding ? (
-            <HierarchyTreeRow continues={false} indent="icon" connectorAnchor="first-row-center">
+            <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
               <div className="px-2 py-1.5 text-sm text-muted-foreground">No Context yet.</div>
             </HierarchyTreeRow>
           ) : children.map((artifact, index) => {
@@ -217,15 +332,13 @@ function ProductRow({
 export default function ProductsPage() {
   usePageHeader({ title: "Products" });
   const queryClient = useQueryClient();
-  const [name, setName] = useState("");
   const [search, setSearch] = useState("");
   const [pending, setPending] = useState<{ product: Product; action: "archive" | "delete" } | null>(null);
   const { data = [], isLoading } = useQuery<Product[]>({ queryKey: ["/api/products"] });
   usePageLoadActivity("page:products", isLoading);
   const create = useMutation({
-    mutationFn: async () => (await apiRequest("POST", "/api/products", { name })).json(),
+    mutationFn: async () => (await apiRequest("POST", "/api/products", { name: "New Product" })).json(),
     onSuccess: () => {
-      setName("");
       queryClient.invalidateQueries({ queryKey: ["/api/products"] });
     },
   });
@@ -273,21 +386,20 @@ export default function ProductsPage() {
             clearTestId="button-clear-product-search"
             ariaLabel="Search products"
           />
-          <div className="flex gap-2 pb-1">
-            <Input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Product name"
-              onKeyDown={(event) => { if (event.key === "Enter" && name.trim()) create.mutate(); }}
-            />
-            <Button className="bg-cta text-cta-foreground" disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>
-              <Plus className="mr-2 h-3.5 w-3.5" />New Product
-            </Button>
-          </div>
+          <button
+            type="button"
+            className={HIERARCHY_PRIMARY_ACTION_CLASS}
+            disabled={create.isPending}
+            onClick={() => create.mutate()}
+            data-testid="button-new-product"
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            <span>New Product</span>
+          </button>
           <Collapsible defaultOpen>
             <CollapsibleTrigger className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}>
               <ChevronRight className="h-3 w-3 shrink-0 rotate-90" />
-              Products <span className="font-normal">({products.length})</span>
+              Products
             </CollapsibleTrigger>
             <CollapsibleContent>
               {products.length === 0 ? (
