@@ -4230,6 +4230,17 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
           const result = await response.json() as { sha: string; message: string; merged: boolean };
           if (!result.merged) return { result: `Merge failed: ${result.message}`, error: true, failure: inputFailure("git_state_conflict", "merge_not_applied") };
+          // Bridge merge path bypasses mergePR(); write the CODE heatmap ledger here.
+          void import("./integrations/merged-pr-ledger")
+            .then(({ recordMergedPullRequestFromGithub }) =>
+              recordMergedPullRequestFromGithub(
+                { owner, repo },
+                prNumber,
+                result.sha ?? null,
+                "live",
+              ),
+            )
+            .catch(() => undefined);
           if (baseBranch === "main") {
             triggerMobileBuildFromMainGitChange({
               sourceRef: result.sha,

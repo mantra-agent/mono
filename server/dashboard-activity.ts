@@ -6,7 +6,7 @@ import { queryNonMeetingInteractionEventSeries } from "./interaction-activity";
 import { combineWithTaskAccess } from "./project-vault-access";
 import { combineWithSensitiveVisible } from "./sensitive-scope";
 import { userDateStr, userDayBounds } from "./utils/user-time";
-import { fetchMergedPrsSince } from "./integrations/github-timeline";
+import { queryMergedPrSeries } from "./integrations/merged-pr-ledger";
 import { createLogger } from "./log";
 import { classifyEventByTitle, listMetadataByEvents, makeMetaKey } from "./calendar-metadata";
 import { listAllEvents, type CalendarEvent } from "./google-calendar";
@@ -114,14 +114,6 @@ function recentDates(endDate: string, count: number): string[] {
     day.setUTCDate(end.getUTCDate() - (count - index - 1));
     return day.toISOString().slice(0, 10);
   });
-}
-
-function increment(map: Map<string, number>, date: string): void {
-  map.set(date, (map.get(date) ?? 0) + 1);
-}
-
-function localCalendarDate(value: Date): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago" }).format(value);
 }
 
 async function queryWellnessSeries(start: Date, end: Date, principal: Principal): Promise<Map<string, number>> {
@@ -324,18 +316,16 @@ export async function queryActivityDashboard(
     : Promise.resolve(new Map<string, number>());
 
   const shippedPromise = include("shipped_prs")
-    ? timedSource("shipped_prs", timings, () => fetchMergedPrsSince(rangeStart))
-    : Promise.resolve([]);
+    ? timedSource("shipped_prs", timings, () => queryMergedPrSeries(rangeStart, rangeEnd))
+    : Promise.resolve(new Map<string, number>());
 
-  const [interactions, wellness, completedTasks, shippedPrs] = await Promise.all([
+  const [interactions, wellness, completedTasks, shipped] = await Promise.all([
     interactionsPromise,
     wellnessPromise,
     tasksPromise,
     shippedPromise,
   ]);
 
-  const shipped = new Map<string, number>();
-  for (const pr of shippedPrs) increment(shipped, localCalendarDate(new Date(pr.mergedAt)));
   const countMaps: Record<ActivityDashboardKpi["key"], Map<string, number>> = {
     opportunity_interactions: interactions,
     wellness_completions: wellness,

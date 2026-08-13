@@ -455,6 +455,18 @@ export async function mergePR(
     }
   );
   log.log(`Merged PR #${prNumber}: ${data.sha}`);
+  if (data.merged) {
+    // Fail-soft durable CODE heatmap ledger write; never block the merge result.
+    void import("./merged-pr-ledger")
+      .then(({ recordMergedPullRequestFromGithub }) =>
+        recordMergedPullRequestFromGithub(ref, prNumber, data.sha ?? null, "live"),
+      )
+      .catch((error) => {
+        log.warn(`Merged PR ledger write failed for #${prNumber}`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
   return data;
 }
 

@@ -1183,6 +1183,15 @@ function startDeferredBackgroundServices(): void {
   );
 
   services.push(
+    import("./integrations/merged-pr-ledger").then(({ startMergedPrLedgerSync }) => {
+      startMergedPrLedgerSync();
+      log("[startup] merged PR ledger sync started", "boot");
+    }).catch(err => {
+      log(`[startup] merged PR ledger sync failed to start: ${err instanceof Error ? err.message : String(err)}`, "boot");
+    })
+  );
+
+  services.push(
     import("./hook-executor").then(({ hookExecutor }) => {
       return hookExecutor.initialize().then(() => {
         log("[startup] hook executor initialized", "boot");
