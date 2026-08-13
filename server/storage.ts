@@ -105,6 +105,7 @@ export interface IStorage {
   updateIssue(id: number, updates: Partial<InsertIssue>): Promise<Issue | undefined>;
   updateIssueForAdmin(principal: Principal, id: number, updates: Partial<InsertIssue>): Promise<Issue | undefined>;
   resolveIssueWithEvidence(id: number, note: string): Promise<Issue | undefined>;
+  resolveIssueWithEvidenceForAdmin(principal: Principal, id: number, note: string): Promise<Issue | undefined>;
   addIssueNote(id: number, text: string, author?: "user" | "agent"): Promise<Issue | undefined>;
   addIssueNoteForAdmin(principal: Principal, id: number, text: string, author?: "user" | "agent"): Promise<Issue | undefined>;
   deleteIssue(id: number): Promise<boolean>;
@@ -361,6 +362,10 @@ export class HybridStorage implements IStorage {
 
   async resolveIssueWithEvidence(id: number, note: string): Promise<Issue | undefined> {
     return fileIssueStorage.resolveWithEvidence(id, note);
+  }
+
+  async resolveIssueWithEvidenceForAdmin(principal: Principal, id: number, note: string): Promise<Issue | undefined> {
+    return fileIssueStorage.resolveWithEvidenceForAdmin(principal, id, note);
   }
 
   async addIssueNote(id: number, text: string, author: "user" | "agent" = "agent"): Promise<Issue | undefined> {
