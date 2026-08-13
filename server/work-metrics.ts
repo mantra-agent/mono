@@ -1,4 +1,4 @@
-import { fetchMergedPrsSince } from "./integrations/github-timeline";
+import { countMergedPrsInRange } from "./integrations/merged-pr-ledger";
 import { countCompletedMeetingsWithNotesInRange } from "./meetings/meeting-index";
 
 export interface WorkRangeSample {
@@ -12,15 +12,9 @@ export interface WorkRangeSample {
  * sampling composition.
  */
 export async function sampleWorkRange(start: Date, end: Date): Promise<WorkRangeSample> {
-  const [mergedPrs, meetings] = await Promise.all([
-    fetchMergedPrsSince(start),
+  const [shippedPrs, meetings] = await Promise.all([
+    countMergedPrsInRange(start, end),
     countCompletedMeetingsWithNotesInRange(start, end),
   ]);
-  const startMs = start.getTime();
-  const endMs = end.getTime();
-  const shippedPrs = mergedPrs.filter((pr) => {
-    const mergedAt = new Date(pr.mergedAt).getTime();
-    return Number.isFinite(mergedAt) && mergedAt >= startMs && mergedAt < endMs;
-  }).length;
   return { shippedPrs, meetings };
 }

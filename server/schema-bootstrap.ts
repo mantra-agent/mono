@@ -6856,5 +6856,26 @@ export async function runSchemaBootstrap(
 
   await heal("canonical Tag schema", ensureCanonicalTagSchema);
 
+  await heal("merged pull request ledger", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS merged_pull_requests (
+        id SERIAL PRIMARY KEY,
+        owner TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        author TEXT,
+        html_url TEXT NOT NULL,
+        merged_at TIMESTAMPTZ NOT NULL,
+        merge_commit_sha TEXT,
+        source TEXT NOT NULL DEFAULT 'live',
+        recorded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT merged_pull_requests_repo_number_unique UNIQUE (owner, repo, number)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_merged_pull_requests_merged_at ON merged_pull_requests (merged_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_merged_pull_requests_owner_repo ON merged_pull_requests (owner, repo)`);
+  });
+
   log(`schema bootstrap complete (reason=${reason})`, "migration");
 }

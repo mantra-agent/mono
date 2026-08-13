@@ -1386,6 +1386,30 @@ export const personMergeAliases = pgTable("person_merge_aliases", {
 
 export type PersonMergeAlias = typeof personMergeAliases.$inferSelect;
 
+/**
+ * Durable ledger of GitHub PRs merged into main for bound platform repos.
+ * Dashboard CODE heatmap and work metrics read this table only — never live GitHub scrape.
+ */
+export const mergedPullRequests = pgTable("merged_pull_requests", {
+  id: serial("id").primaryKey(),
+  owner: text("owner").notNull(),
+  repo: text("repo").notNull(),
+  number: integer("number").notNull(),
+  title: text("title").notNull(),
+  author: text("author"),
+  htmlUrl: text("html_url").notNull(),
+  mergedAt: timestamp("merged_at", { withTimezone: true }).notNull(),
+  mergeCommitSha: text("merge_commit_sha"),
+  source: text("source").notNull().default("live"),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  unique("merged_pull_requests_repo_number_unique").on(table.owner, table.repo, table.number),
+  index("idx_merged_pull_requests_merged_at").on(table.mergedAt),
+  index("idx_merged_pull_requests_owner_repo").on(table.owner, table.repo),
+]);
+
+export type MergedPullRequest = typeof mergedPullRequests.$inferSelect;
+
 export const simplePeopleSurfaceState = pgTable("simple_people_surface_state", {
   id: serial("id").primaryKey(),
   personId: text("person_id").notNull(),

@@ -1,5 +1,4 @@
-import { eq } from "drizzle-orm";
-import { gh, parseRepoSlug, GitHubError, type RepoRef } from "./github-pr";
+import { gh, type RepoRef } from "./github-pr";
 import {
   extractDeploymentMeta,
   type RailwayDeployment,
@@ -8,11 +7,7 @@ import {
   fetchEnvironmentDeployments,
   resolveRailwayEnvironmentControl,
 } from "./railway/environment-control";
-import { environmentSourceBindings, providerConnections } from "@shared/models/platforms";
-import { db } from "../db";
 import { createLogger } from "../log";
-import pLimit from "p-limit";
-import { TTLCache } from "../utils/ttl-cache";
 import { resolveDefaultIndexedGitSource } from "../git-source-resolver";
 
 const log = createLogger("VersionTimeline");
@@ -91,11 +86,6 @@ interface TimelineCache {
 
 let cache: TimelineCache | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const mergedPrCache = new TTLCache<TimelinePR[]>("MergedPrHistory", CACHE_TTL_MS);
-const MERGED_PR_MAX_PAGES = 10;
-const MERGED_PR_PAGE_CONCURRENCY = 3;
-
-// ── Helpers ────────────────────────────────────────────────────────────
 
 // ── Fetch functions ────────────────────────────────────────────────────
 
@@ -286,95 +276,6 @@ function mergeTimeline(
   }
 
   return { pending, deployments, githubConnected };
-}
-
-
-/** Resolve all distinct GitHub repositories from canonical Platform source bindings. */
-async function allGitHubRepos(): Promise<RepoRef[]> {
-  try {
-    const rows = await db
-      .select({ owner: environmentSourceBindings.owner, repo: environmentSourceBindings.repo })
-      .from(environmentSourceBindings)
-      .innerJoin(providerConnections, eq(providerConnections.id, environmentSourceBindings.connectionId))
-      .where(eq(environmentSourceBindings.provider, "github"));
-    const seen = new Set<string>();
-    const refs: RepoRef[] = [];
-    for (const row of rows) {
-      if (!row.owner || !row.repo) continue;
-      const key = `${row.owner.toLowerCase()}/${row.repo.toLowerCase()}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      refs.push({ owner: row.owner, repo: row.repo });
-    }
-    return refs;
-  } catch (err) {
-    log.warn("Failed to query platform source bindings for PR count", { error: err instanceof Error ? err.message : String(err) });
-    return [];
-  }
-}
-
-function mergedPrPagePath(ref: RepoRef, page: number): string {
-  return `/repos/${ref.owner}/${ref.repo}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=100&page=${page}`;
-}
-
-function qualifyingMergedPrs(raw: GHPullRaw[], since: Date): TimelinePR[] {
-  return raw.flatMap((pr) => {
-    if (!pr.merged_at || new Date(pr.merged_at) < since) return [];
-    return [{
-      number: pr.number,
-      title: pr.title,
-      author: pr.user?.login ?? null,
-      htmlUrl: pr.html_url,
-      mergedAt: pr.merged_at,
-      mergeCommitSha: pr.merge_commit_sha,
-      commits: [],
-    }];
-  });
-}
-
-async function fetchMergedPrsForRepo(ref: RepoRef, since: Date): Promise<TimelinePR[]> {
-  const firstPage = await gh<GHPullRaw[]>("GET", mergedPrPagePath(ref, 1));
-  const results = qualifyingMergedPrs(firstPage, since);
-  if (firstPage.length < 100) return results;
-
-  const limit = pLimit(MERGED_PR_PAGE_CONCURRENCY);
-  const remainingPages = Array.from(
-    { length: MERGED_PR_MAX_PAGES - 1 },
-    (_, index) => index + 2,
-  );
-  const pages = await Promise.all(
-    remainingPages.map((page) => limit(() => gh<GHPullRaw[]>("GET", mergedPrPagePath(ref, page)))),
-  );
-  for (const page of pages) results.push(...qualifyingMergedPrs(page, since));
-  return results;
-}
-
-async function fetchMergedPrHistory(since: Date): Promise<TimelinePR[]> {
-  const repos = await allGitHubRepos();
-  if (repos.length === 0) return [];
-  const perRepo = await Promise.all(
-    repos.map((ref) =>
-      fetchMergedPrsForRepo(ref, since).catch((err) => {
-        log.warn(`PR fetch failed for ${ref.owner}/${ref.repo}`, { error: err instanceof Error ? err.message : String(err) });
-        return [] as TimelinePR[];
-      }),
-    ),
-  );
-  const seen = new Set<string>();
-  const results: TimelinePR[] = [];
-  for (const prs of perRepo) {
-    for (const pr of prs) {
-      if (seen.has(pr.htmlUrl)) continue;
-      seen.add(pr.htmlUrl);
-      results.push(pr);
-    }
-  }
-  return results;
-}
-
-export async function fetchMergedPrsSince(since: Date): Promise<TimelinePR[]> {
-  const cacheKey = since.toISOString();
-  return mergedPrCache.getOrFetch(cacheKey, () => fetchMergedPrHistory(since));
 }
 
 // ── Public API ─────────────────────────────────────────────────────────
