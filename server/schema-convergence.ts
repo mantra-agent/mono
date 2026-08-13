@@ -99,6 +99,7 @@ export async function convergeBootSchema(): Promise<void> {
         const { ensureObjectGrantSchema } = await import("./object-grant-schema");
         const { ensureTeamsSchema } = await import("./teams-schema");
         const { ensureOrganizationsSchema } = await import("./organizations-schema");
+        const { ensureAgentInstanceSchema } = await import("./agent-instance-schema");
         const { ensureDriveResourcesSchema } = await import("./drive-resources-schema");
         const { ensureFilesIndexSchema } = await import("./files-index-schema");
         const { ensureDocumentArtifactsSchema } = await import("./document-artifacts-schema");
@@ -110,6 +111,8 @@ export async function convergeBootSchema(): Promise<void> {
         await ensureObjectGrantSchema(pool);
         await ensureTeamsSchema(pool);
         await ensureOrganizationsSchema(pool);
+        // After accounts/memberships (foundation) and grant subjects; before domain consumers.
+        await ensureAgentInstanceSchema(pool);
         await ensureDriveResourcesSchema(pool);
         await ensureFilesIndexSchema(pool);
         await ensureDocumentArtifactsSchema(pool);

@@ -201,10 +201,52 @@ export const userProfiles = pgTable("user_profiles", {
   accountIdx: index("idx_user_profiles_account").on(table.accountId),
 }));
 
+/**
+ * Agent Instance is the mind / continuity boundary.
+ * Account owns billing and which Instances exist; Instance owns memory/timers/skills (later phases).
+ * One Instance belongs to exactly one Account.
+ */
+export const agentInstances = pgTable("agent_instances", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  accountId: varchar("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  status: text("status").notNull().default("active"),
+  quarantineReason: text("quarantine_reason"),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => ({
+  accountIdx: index("idx_agent_instances_account").on(table.accountId),
+  createdByIdx: index("idx_agent_instances_created_by").on(table.createdByUserId),
+}));
+
+/**
+ * Instance membership: Manager | Participant.
+ * UNIQUE(account_id, user_id) encodes one User pin per Account.
+ */
+export const agentInstanceMemberships = pgTable("agent_instance_memberships", {
+  id: serial("id").primaryKey(),
+  instanceId: varchar("instance_id").notNull().references(() => agentInstances.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  accountId: varchar("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  role: text("role").notNull().default("participant"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => ({
+  accountUserUnique: uniqueIndex("idx_agent_instance_memberships_account_user_unique").on(table.accountId, table.userId),
+  instanceUserUnique: uniqueIndex("idx_agent_instance_memberships_instance_user_unique").on(table.instanceId, table.userId),
+  userIdx: index("idx_agent_instance_memberships_user").on(table.userId),
+  instanceIdx: index("idx_agent_instance_memberships_instance").on(table.instanceId),
+}));
+
 export const agentProfiles = pgTable("agent_profiles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  /** created_by / rolling-deploy dual-write key; ownership moves to instanceId. */
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   accountId: varchar("account_id").references(() => accounts.id, { onDelete: "cascade" }),
+  /** Owning Agent Instance. Unique when set; user_id remains compatibility dual-write. */
+  instanceId: varchar("instance_id").references(() => agentInstances.id, { onDelete: "set null" }),
   agentName: text("agent_name").notNull().default(DEFAULT_AGENT_NAME),
   relationshipState: jsonb("relationship_state").notNull().default(sql`'{}'::jsonb`),
   metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
@@ -213,6 +255,11 @@ export const agentProfiles = pgTable("agent_profiles", {
 }, (table) => ({
   userUnique: uniqueIndex("idx_agent_profiles_user_unique").on(table.userId),
   accountIdx: index("idx_agent_profiles_account").on(table.accountId),
+  instanceIdx: index("idx_agent_profiles_instance").on(table.instanceId),
+  // Partial unique: one profile per Instance when linked; nulls allowed during dual-write.
+  instanceUnique: uniqueIndex("idx_agent_profiles_instance_unique")
+    .on(table.instanceId)
+    .where(sql`${table.instanceId} IS NOT NULL`),
 }));
 
 export const privilegedAccessAudit = pgTable("privileged_access_audit", {
@@ -238,6 +285,10 @@ export type Membership = typeof memberships.$inferSelect;
 export type InsertMembership = typeof memberships.$inferInsert;
 export type UserProfile = typeof userProfiles.$inferSelect;
 export type InsertUserProfile = typeof userProfiles.$inferInsert;
+export type AgentInstance = typeof agentInstances.$inferSelect;
+export type InsertAgentInstance = typeof agentInstances.$inferInsert;
+export type AgentInstanceMembership = typeof agentInstanceMemberships.$inferSelect;
+export type InsertAgentInstanceMembership = typeof agentInstanceMemberships.$inferInsert;
 export type AgentProfile = typeof agentProfiles.$inferSelect;
 export type InsertAgentProfile = typeof agentProfiles.$inferInsert;
 export type PrivilegedAccessAudit = typeof privilegedAccessAudit.$inferSelect;

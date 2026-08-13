@@ -401,6 +401,7 @@ export async function createUserWorkspace(
     .values({
       userId: principal.userId,
       accountId,
+      instanceId: foundation.instanceId,
       agentName,
       relationshipState: {
         preferredName,
@@ -413,6 +414,7 @@ export async function createUserWorkspace(
       target: agentProfiles.userId,
       set: {
         accountId,
+        instanceId: foundation.instanceId,
         agentName,
         relationshipState: {
           preferredName,
