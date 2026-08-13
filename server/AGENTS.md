@@ -24,7 +24,7 @@ Secret-backed integration tools are normally withheld from the advertised regist
 
 ## Enable Warm Stage boundary
 
-`POST /api/railway/environments/:id/actions/enable-warm-stage` is the sole activation path. It is derived only for Mantra / Web / stage, requires `build:write` plus `ENABLE_WARM_STAGE` confirmation, and writes `runtimeMode: warm_workspace` plus `STAGE_WARM_ENABLED=true` before restarting that bound Stage service. Live names fail closed in the process wrapper and Vite mount. Source modules and `/vite-hmr` require a user session; unauthenticated visitors receive the built login page. Do not add Railway console, volume, start-command, or Cloudflare Access steps as activation. Full Rebuild remains the immutable-artifact parachute.
+`POST /api/railway/environments/:id/actions/enable-warm-stage` is the sole activation path. It is derived only for Mantra / Web / stage, requires `build:write` plus `ENABLE_WARM_STAGE` confirmation, and writes `runtimeMode: warm_workspace` plus `STAGE_WARM_ENABLED=true` before restarting that bound Stage service. Live names fail closed in the process wrapper, Vite mount, and `runtime-process-guard.ts`. Warm Stage is the only Railway path allowed to boot `tsx server/index.ts`; every other Railway source entrypoint stays refused. Source modules and `/vite-hmr` require a user session; unauthenticated visitors receive the built login page. Do not add Railway console, volume, start-command, or Cloudflare Access steps as activation. Full Rebuild remains the immutable-artifact parachute.
 
 ## Railway request priority boundary
 
