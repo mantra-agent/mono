@@ -249,8 +249,9 @@ export class ToolOperationRecovery {
    * - First observation of an input failure → surface as a normal tool error
    *   and remember the fingerprint so an identical retry quarantines.
    *
-   * This is the over-correction fix: shell allowlist denials, missing IDs, and
-   * similar correctable input mistakes must not stop the whole run on first hit.
+   * Quarantine is operation-local for input failures (including shell_policy_denied
+   * exact-repeats): AgentExecutor must refuse the repeat without stopping the run.
+   * Only permission quarantine is run-terminal — authority cannot be restored in-run.
    */
   private classifyDeterministicFailure(
     toolName: string,
