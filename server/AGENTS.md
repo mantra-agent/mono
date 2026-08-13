@@ -2,7 +2,7 @@
 
 ## Browser worklet CSP boundary
 
-`server/index.ts` owns the global browser Content Security Policy. `worker-src` is the modern worker boundary; `child-src` must carry the same `'self' blob:` sources because older WebKit applies that compatibility directive to AudioWorklet modules. Do not widen either directive independently or add remote worklet origins; ElevenLabs' generated modules remain limited to same-origin/blob execution.
+`server/index.ts` owns the global browser Content Security Policy. `worker-src` is the modern worker boundary; `child-src` must carry the same `'self' blob:` sources because older WebKit applies that compatibility directive to AudioWorklet modules. Do not widen either directive independently or add remote worklet origins. Browser voice worklets are first-party files under `/voice/*.worklet.js`, passed to ElevenLabs as `workletPaths` and `libsampleratePath`. The load-bearing control is same-origin `addModule`, not blob or CDN execution. Keep `blob:` only as the existing worker compatibility residue; do not add `https://cdn.jsdelivr.net` or `wasm-unsafe-eval` to unblock voice.
 
 ## Slack pilot boundary
 
