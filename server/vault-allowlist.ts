@@ -23,6 +23,8 @@ export const VAULT_CROSS_ACCESS_ALLOWLIST = new Set<string>([
   "schema-bootstrap",
   "ensure-vaults",
   "legacy-ownership-repair",
+  // Phase 2 one-shot: inventory identity graph and quarantine obvious fake Accounts.
+  "identity-fake-account-cull",
 
   // Chat restart recovery performs one bounded, content-free discovery of
   // streaming text documents, then immediately restores each persisted owner
