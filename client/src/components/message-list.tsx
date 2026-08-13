@@ -1022,7 +1022,15 @@ export function MessageList({
     if (msg.role === "system_notice") {
       const notice = parseSystemNotice(msg.content);
       if (notice) {
-        return <SystemNoticeMessage key={msg.id} notice={notice} timestamp={msg.createdAt} />;
+        return (
+          <SystemNoticeMessage
+            key={msg.id}
+            notice={notice}
+            timestamp={msg.createdAt}
+            sessionId={activeSession}
+            noticeKey={msg.id}
+          />
+        );
       }
     }
     const suppressed = draftIdsByMessageId.get(msg.id)?.filter((id) => emailDraftOwnerByDraftId.get(id) !== msg.id);
