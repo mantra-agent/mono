@@ -6,7 +6,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { Principal } from "../principal";
 import { createUserPrincipalFromUser } from "../principal";
 import { principalHasPermission } from "../permissions";
-import { runWithPrincipal } from "../principal-context";
+import { runWithPrincipal, requireCurrentPrincipal } from "../principal-context";
 
 const log = createLogger("StoreIssues");
 
