@@ -327,16 +327,8 @@ export function writeJournal(entry: JournalEntry): void {
         log.warn(`writeJournal: terminal for stale run sessionId=${convId} eventRun=${entry.runId} currentRun=${state.runId} — publishing without mutating run state`);
       } else {
         if (state.terminalEmitted) {
-          // Allow `error` to override a prior `done` for the same run so that
-          // persistence failures (executor emits `done`, then route catches an
-          // error during persistence) still reach the client. Otherwise suppress
-          // duplicates to enforce one terminal per run.
-          const isUpgrade = entry.type === "error" && state.terminalType === "done";
-          if (!isUpgrade) {
-            log.warn(`writeJournal: suppressing duplicate terminal event type=${entry.type} sessionId=${convId} runId=${entry.runId ?? "?"} (already emitted ${state.terminalType})`);
-            return;
-          }
-          log.warn(`writeJournal: upgrading terminal event done -> error sessionId=${convId} runId=${entry.runId ?? "?"} (persistence failure)`);
+          log.warn(`writeJournal: suppressing duplicate terminal event type=${entry.type} sessionId=${convId} runId=${entry.runId ?? "?"} (already emitted ${state.terminalType})`);
+          return;
         }
         state.terminalEmitted = true;
         state.terminalType = entry.type as "done" | "error";
