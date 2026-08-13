@@ -329,6 +329,14 @@ export class FileIssueStorage {
     return this.withAdminIssueOwner(principal, id, "system:write", () => this.addNote(id, text, author));
   }
 
+  async resolveWithEvidenceForAdmin(
+    principal: Principal,
+    id: number,
+    evidenceNote: string,
+  ): Promise<Issue | undefined> {
+    return this.withAdminIssueOwner(principal, id, "system:write", () => this.resolveWithEvidence(id, evidenceNote));
+  }
+
   async readAttachmentForAdmin(
     principal: Principal,
     filename: string,

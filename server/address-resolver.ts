@@ -679,10 +679,16 @@ const adapters: AddressResolverAdapter[] = [
   }),
   ...(["web_article", "x_item", "reddit_post", "rss_item"] as const).map(type => simpleAdapter(type, async (_principal, refs) => new Map(refs.map(ref => [requestedAddress(ref), resolved(ref, { label: ref.id, route: ref.id })])))),
   simpleAdapter("pr", async (_principal, refs) => new Map(refs.map(ref => [requestedAddress(ref), resolved(ref, { label: ref.id })]))),
-  simpleAdapter("issue", async (_principal, refs) => {
+  simpleAdapter("issue", async (principal, refs) => {
+    const canTriageReported = principalHasPermission(principal, "system:read");
     const entries = await Promise.all(refs.map(async ref => {
       const id = Number(ref.id);
-      const issue = Number.isSafeInteger(id) ? await fileIssueStorage.getIssue(id) : undefined;
+      if (!Number.isSafeInteger(id)) return null;
+      // Own Issues resolve under ordinary scope; Build triage may also resolve
+      // cross-owner kind=reported Issues via the admin owner-restore boundary.
+      const issue = canTriageReported
+        ? await fileIssueStorage.getIssueForAdmin(principal, id)
+        : await fileIssueStorage.getIssue(id);
       return issue
         ? [requestedAddress(ref), resolved(ref, { label: issue.title || `Issue ${ref.id}`, summary: `Status: ${issue.status}`, updatedAt: issue.createdAt })] as const
         : null;

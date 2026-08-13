@@ -1944,8 +1944,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         return { result: `Invalid issue id '${rawId}'; expected a positive integer`, error: true };
       }
       try {
+        // Own Issues use ordinary principal scope. Cross-owner browser reports
+        // (kind=reported) require the Build admin triage path, which restores the
+        // reporter principal under system:read / system:write.
+        const { requireCurrentPrincipal } = await import("./principal-context");
+        const { principalHasPermission } = await import("./permissions");
+        const principal = requireCurrentPrincipal();
         if (action === "get") {
-          const issue = await storage.getIssue(idNum);
+          const issue = principalHasPermission(principal, "system:read")
+            ? await storage.getIssueForAdmin(principal, idNum)
+            : await storage.getIssue(idNum);
           if (!issue) return { result: `Issue ${idNum} not found`, error: true };
           return { result: JSON.stringify(issue) };
         }
@@ -1954,7 +1962,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         if (!evidence || evidence.length > 2_000) {
           return { result: "resolve requires an affirmative evidence note of 1-2000 characters", error: true };
         }
-        const issue = await storage.resolveIssueWithEvidence(idNum, evidence);
+        const issue = principalHasPermission(principal, "system:write")
+          ? await storage.resolveIssueWithEvidenceForAdmin(principal, idNum, evidence)
+          : await storage.resolveIssueWithEvidence(idNum, evidence);
         if (!issue) return { result: `Issue ${idNum} not found`, error: true };
         return { result: JSON.stringify(issue) };
       } catch (err: unknown) {
@@ -2032,7 +2042,12 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         return { result: "add_note requires a text entry of 1-5000 characters", error: true };
       }
       try {
-        const issue = await storage.addIssueNote(idNum, text, "agent");
+        const { requireCurrentPrincipal } = await import("./principal-context");
+        const { principalHasPermission } = await import("./permissions");
+        const principal = requireCurrentPrincipal();
+        const issue = principalHasPermission(principal, "system:write")
+          ? await storage.addIssueNoteForAdmin(principal, idNum, text, "agent")
+          : await storage.addIssueNote(idNum, text, "agent");
         if (!issue) return { result: `Issue ${idNum} not found`, error: true };
         return { result: JSON.stringify(issue) };
       } catch (err: unknown) {
