@@ -304,9 +304,7 @@ export function ActivityDetailView({
           </div>
         </div>
 
-        {/* Trends & History */}
         <div className="p-4">
-          <h4 className="text-sm font-medium mb-2">Trends & History</h4>
           <ActivityDetailPanel
             activityId={activity.id}
             category={activity.category}

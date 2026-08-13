@@ -130,14 +130,13 @@ export function WindowEditor({ activityId, category, windowStart, windowEnd, inW
 
   if (!hasWindow) {
     return (
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-muted-foreground/50 italic">Not set</span>
+      <div className="flex items-center justify-end gap-2">
         <button
           onClick={handleSetDefault}
           disabled={saveMutation.isPending}
           className="min-h-11 whitespace-nowrap text-sm text-cta hover:text-active disabled:opacity-50"
         >
-          {saveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Set window"}
+          {saveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Set"}
         </button>
       </div>
     );
