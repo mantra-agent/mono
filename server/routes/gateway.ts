@@ -746,8 +746,8 @@ export async function registerGatewayRoutes(app: Express) {
       if (!conv) {
         return res.status(404).json({ error: "Session not found" });
       }
+      // Mark-read clears only unread. errorSeverity stays until notice dismiss.
       await chatFileStorage.setHasUnreadResult(sessionId, false);
-      await chatFileStorage.setErrorSeverity(sessionId, null);
       res.json({ message: "Marked as read" });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

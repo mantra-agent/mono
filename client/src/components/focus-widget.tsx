@@ -534,11 +534,13 @@ function FocusWidgetPanel({ contained }: FocusWidgetPanelProps) {
 
   const selectSession = useCallback((id: string) => {
     const targetSession = sessions.find((session) => session.id === id);
-    const needsMarkRead = targetSession?.hasUnreadResult || targetSession?.errorSeverity;
+    // Opening a session clears unread only. errorSeverity / REVIEW stay until
+    // the human dismisses the error/warning notice in the transcript.
+    const needsMarkRead = !!targetSession?.hasUnreadResult;
     if (needsMarkRead) {
       queryClient.setQueryData<Session[]>(["/api/sessions"], (old) =>
         old?.map((session) => session.id === id
-          ? { ...session, hasUnreadResult: false, errorSeverity: undefined }
+          ? { ...session, hasUnreadResult: false }
           : session)
       );
       apiRequest("PATCH", `/api/sessions/${id}/read`).catch(() => {});

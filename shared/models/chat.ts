@@ -204,6 +204,8 @@ export interface SystemNotice {
   iterationsUsed?: number;
   durationMs?: number;
   toolCallCount?: number;
+  /** Set when the human dismisses the notice; dismissed notices leave REVIEW and hide in the transcript. */
+  dismissedAt?: string;
 }
 
 export interface ChildSessionBlockMeta {
@@ -1080,7 +1082,14 @@ export interface SessionAgenda {
   items: SessionAgendaItem[];
 }
 
-export type SessionReviewKind = "question" | "plan_review" | "email_draft" | "email_reply" | "meeting_recap";
+export type SessionReviewKind =
+  | "question"
+  | "plan_review"
+  | "email_draft"
+  | "email_reply"
+  | "meeting_recap"
+  | "error"
+  | "warning";
 
 export interface ChatSession {
   id: string;
