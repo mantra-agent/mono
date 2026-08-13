@@ -13,6 +13,8 @@ import type { PendingChatTurn } from "@/hooks/use-chat-send";
 
 const STORAGE_KEY = "xyz_focus_sessions_by_route_v1";
 const ACTIVE_SESSION_STORAGE_KEY = "xyz_focus_active_session_v1";
+/** Match FocusWidget desktop breakpoint — session menu defaults open on desktop only. */
+const DESKTOP_BREAKPOINT_PX = 768;
 
 function loadFromStorage(): Record<string, string> {
   try {
@@ -86,8 +88,12 @@ const FocusSessionContext = createContext<FocusSessionContextValue | null>(null)
 export function FocusSessionProvider({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const route = useMemo(() => normalizeRoute(location), [location]);
-  // Default: session menu collapsed; user toggles it open
-  const [widgetOpen, setWidgetOpen] = useState(false);
+  // Desktop: session menu open by default (parity with always-available left chrome).
+  // Mobile: closed — widgetOpen mounts the full-screen session overlay.
+  const [widgetOpen, setWidgetOpen] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.innerWidth >= DESKTOP_BREAKPOINT_PX;
+  });
   const [sessionMenuResetKey, setSessionMenuResetKey] = useState(0);
   const [bottomBarFocusRequestKey, setBottomBarFocusRequestKey] = useState(0);
   const [sessionByRoute, setSessionByRoute] = useState<Record<string, string>>(() => loadFromStorage());
