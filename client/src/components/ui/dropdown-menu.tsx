@@ -56,6 +56,25 @@ function findChild(
   return flattenChildren(children).find((c) => isType(c, type))
 }
 
+/**
+ * Locate a declared DropdownMenuTrigger even when call sites wrap it in
+ * presentation chrome such as Tooltip. MobileDropdownRoot only mounts the
+ * trigger it finds; a nested Trigger must still resolve or the control vanishes.
+ */
+function findDescendant(
+  children: React.ReactNode,
+  type: unknown,
+): React.ReactElement | undefined {
+  for (const child of flattenChildren(children)) {
+    if (isType(child, type)) return child
+    const nested = (child.props as { children?: React.ReactNode } | undefined)?.children
+    if (nested == null) continue
+    const found = findDescendant(nested, type)
+    if (found) return found
+  }
+  return undefined
+}
+
 interface MobileLevel {
   title: React.ReactNode
   nodes: React.ReactElement[]
@@ -289,7 +308,10 @@ function MobileDropdownRoot({
     [controlledOpen, onOpenChange],
   )
 
-  const trigger = findChild(children, DropdownMenuTrigger)
+  // Direct child first (common path); descend for Tooltip-wrapped triggers.
+  const trigger =
+    findChild(children, DropdownMenuTrigger) ??
+    findDescendant(children, DropdownMenuTrigger)
   const content = findChild(children, DropdownMenuContent)
 
   const ctx = React.useMemo<MobileRowContext>(
@@ -300,8 +322,20 @@ function MobileDropdownRoot({
     [setOpen],
   )
 
-  const triggerProps = (trigger?.props ?? {}) as { children?: React.ReactNode }
+  const triggerProps = (trigger?.props ?? {}) as {
+    asChild?: boolean
+    children?: React.ReactNode
+    className?: string
+    onClick?: (event: React.MouseEvent<HTMLElement>) => void
+  }
   const contentChildren = (content?.props as { children?: React.ReactNode } | undefined)?.children
+  const asChildTrigger = Boolean(triggerProps.asChild)
+  const childTrigger = asChildTrigger && React.isValidElement(triggerProps.children)
+    ? (triggerProps.children as React.ReactElement<{
+        className?: string
+        onClick?: (event: React.MouseEvent<HTMLElement>) => void
+      }>)
+    : null
 
   const placePanel = React.useCallback(() => {
     const element = triggerRef.current
@@ -361,18 +395,37 @@ function MobileDropdownRoot({
     }
   }, [open, setOpen])
 
-  const triggerElement = React.isValidElement(triggerProps.children)
-    ? React.cloneElement(triggerProps.children as React.ReactElement<{ onClick?: (event: React.MouseEvent<HTMLElement>) => void }>, {
-        ref: (node: HTMLElement | null) => { triggerRef.current = node },
-        "aria-expanded": open,
-        "aria-haspopup": "menu",
-        onClick: (event: React.MouseEvent<HTMLElement>) => {
-          const original = (triggerProps.children as React.ReactElement<{ onClick?: (event: React.MouseEvent<HTMLElement>) => void }>).props.onClick
-          original?.(event)
-          if (!event.defaultPrevented) setOpen(!open)
-        },
-      } as React.HTMLAttributes<HTMLElement>)
-    : null
+  const bindTrigger = <P extends {
+    className?: string
+    onClick?: (event: React.MouseEvent<HTMLElement>) => void
+  }>(
+    element: React.ReactElement<P>,
+    originalOnClick?: (event: React.MouseEvent<HTMLElement>) => void,
+  ) =>
+    React.cloneElement(element, {
+      ref: (node: HTMLElement | null) => {
+        triggerRef.current = node
+      },
+      "aria-expanded": open,
+      "aria-haspopup": "menu",
+      onClick: (event: React.MouseEvent<HTMLElement>) => {
+        originalOnClick?.(event)
+        if (!event.defaultPrevented) setOpen(!open)
+      },
+    } as Partial<P> & React.HTMLAttributes<HTMLElement>)
+
+  // Prefer the asChild control element; otherwise render a button using Trigger props.
+  const triggerElement = childTrigger
+    ? bindTrigger(childTrigger, childTrigger.props.onClick)
+    : trigger
+      ? bindTrigger(
+          <button
+            type="button"
+            className={triggerProps.className}
+          />,
+          triggerProps.onClick,
+        )
+      : null
 
   return (
     <>
