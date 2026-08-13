@@ -38,43 +38,66 @@ const vnextClaimScopeColumns = {
   scope: memoryVnextClaims.scope,
   ownerUserId: memoryVnextClaims.ownerUserId,
   accountId: memoryVnextClaims.accountId,
+  instanceId: memoryVnextClaims.instanceId,
 };
 
 const bridgeClaimScopeColumns = {
   scope: sql`c.scope`,
   ownerUserId: sql`c.owner_user_id`,
   accountId: sql`c.account_id`,
+  instanceId: sql`c.instance_id`,
 };
 
 const duplicateClaimScopeColumns = {
   scope: sql`duplicates.scope`,
   ownerUserId: sql`duplicates.owner_user_id`,
   accountId: sql`duplicates.account_id`,
+  instanceId: sql`duplicates.instance_id`,
 };
 
 const vnextSourceScopeColumns = {
   scope: memoryVnextSourceRefs.scope,
   ownerUserId: memoryVnextSourceRefs.ownerUserId,
   accountId: memoryVnextSourceRefs.accountId,
+  instanceId: memoryVnextSourceRefs.instanceId,
 };
 
 const vnextEntityScopeColumns = {
   scope: memoryVnextEntityLinks.scope,
   ownerUserId: memoryVnextEntityLinks.ownerUserId,
   accountId: memoryVnextEntityLinks.accountId,
+  instanceId: memoryVnextEntityLinks.instanceId,
 };
 
 const vnextClaimLinkScopeColumns = {
   scope: memoryVnextClaimLinks.scope,
   ownerUserId: memoryVnextClaimLinks.ownerUserId,
   accountId: memoryVnextClaimLinks.accountId,
+  instanceId: memoryVnextClaimLinks.instanceId,
 };
 
 const vnextClaimLinkEvidenceScopeColumns = {
   scope: memoryVnextClaimLinkEvidence.scope,
   ownerUserId: memoryVnextClaimLinkEvidence.ownerUserId,
   accountId: memoryVnextClaimLinkEvidence.accountId,
+  instanceId: memoryVnextClaimLinkEvidence.instanceId,
 };
+
+/** Raw-SQL dual-read: pinned Instance OR (null instance + owner). Never account_id. */
+function rawClaimVisibilitySql(principal: { actorType: string; userId: string | null; instanceId?: string | null }) {
+  if (principal.actorType === "system") return sql``;
+  if (principal.instanceId) {
+    return sql`AND (
+      scope = 'global'
+      OR instance_id = ${principal.instanceId}
+      OR (instance_id IS NULL AND owner_user_id = ${principal.userId})
+    )`;
+  }
+  return sql`AND (
+    scope = 'global'
+    OR (instance_id IS NULL AND owner_user_id = ${principal.userId})
+  )`;
+}
 
 export interface VnextClaimSourceInput {
   sourceType: string;
@@ -417,6 +440,7 @@ function mapRawVnextClaimRow(row: Record<string, unknown>): MemoryVnextClaim {
     scope: String(row.scope ?? "user"),
     ownerUserId: (row.owner_user_id as string | null) ?? null,
     accountId: (row.account_id as string | null) ?? null,
+    instanceId: (row.instance_id as string | null) ?? null,
     createdByUserId: (row.created_by_user_id as string | null) ?? null,
     updatedByUserId: (row.updated_by_user_id as string | null) ?? null,
     metadata: row.metadata ?? {},
@@ -434,13 +458,11 @@ export async function executeVnextClaimSemanticSearch(
 ): Promise<Array<{ row: MemoryVnextClaim; similarity: number }>> {
   const embeddingStr = vectorLiteral(queryEmbedding);
   const principal = requireCurrentUserPrincipal();
-  const visibilityCondition = principal.actorType === "system"
-    ? sql``
-    : sql`AND (scope = 'global' OR owner_user_id = ${principal.userId} OR account_id = ${principal.accountId})`;
+  const visibilityCondition = rawClaimVisibilitySql(principal);
   const results = await db.execute(sql`
     SELECT id, title, content, claim_type, confidence, observed_at, valid_from, valid_until, occurred_at, expected_by, topics, entity_mentions, source_claim_index,
       content_hash, embedding, source_memory_id, source, source_id, lifecycle_stage,
-      lifecycle_stage_updated_at, scope, owner_user_id, account_id, created_by_user_id, updated_by_user_id, metadata, recall_count,
+      lifecycle_stage_updated_at, scope, owner_user_id, account_id, instance_id, created_by_user_id, updated_by_user_id, metadata, recall_count,
       last_recalled_at, active_touched_at, created_at, updated_at,
       1 - (embedding <=> ${embeddingStr}::vector) AS similarity
     FROM memory_vnext_claims
@@ -468,13 +490,11 @@ export async function executeVnextClaimTitleTwinSearch(
 ): Promise<{ row: MemoryVnextClaim; similarity: number } | undefined> {
   const embeddingStr = vectorLiteral(queryEmbedding);
   const principal = requireCurrentUserPrincipal();
-  const visibilityCondition = principal.actorType === "system"
-    ? sql``
-    : sql`AND (scope = 'global' OR owner_user_id = ${principal.userId} OR account_id = ${principal.accountId})`;
+  const visibilityCondition = rawClaimVisibilitySql(principal);
   const results = await db.execute(sql`
     SELECT id, title, content, claim_type, confidence, observed_at, valid_from, valid_until, occurred_at, expected_by, topics, entity_mentions, source_claim_index,
       content_hash, embedding, source_memory_id, source, source_id, lifecycle_stage,
-      lifecycle_stage_updated_at, scope, owner_user_id, account_id, created_by_user_id, updated_by_user_id, metadata, recall_count,
+      lifecycle_stage_updated_at, scope, owner_user_id, account_id, instance_id, created_by_user_id, updated_by_user_id, metadata, recall_count,
       last_recalled_at, active_touched_at, created_at, updated_at,
       1 - (embedding <=> ${embeddingStr}::vector) AS similarity
     FROM memory_vnext_claims

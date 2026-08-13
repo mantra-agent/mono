@@ -9,7 +9,12 @@ import { timerHandlerRouter } from "./timer-handler-router";
 import type { TimerHandlerResult } from "./timer-handlers";
 import { Cron } from "croner";
 import { runWithPrincipal, getCurrentPrincipal } from "./principal-context";
-import { createNamedSystemPrincipal, createUserPrincipalFromUser, type Principal } from "./principal";
+import {
+  createNamedSystemPrincipal,
+  createUserPrincipalFromUser,
+  tryResolveUserIdentityFoundation,
+  type Principal,
+} from "./principal";
 import { getUserEffectivePermissions } from "./permissions";
 import { storage } from "./storage";
 
@@ -1104,7 +1109,12 @@ class TimerScheduler {
     }
     const user = await storage.getUser(timer.ownerUserId);
     if (!user) throw new Error(`Timer owner user missing: ${timer.ownerUserId}`);
-    const principal = createUserPrincipalFromUser(user, timer.accountId);
+    const foundation = await tryResolveUserIdentityFoundation(user.id);
+    const principal = createUserPrincipalFromUser(
+      user,
+      timer.accountId,
+      foundation?.accountId === timer.accountId ? foundation.instanceId : null,
+    );
     principal.permissions = await getUserEffectivePermissions(user.id);
     return principal;
   }

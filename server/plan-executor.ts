@@ -16,7 +16,11 @@ import { accounts, planExecutions, planSteps, users } from "@shared/schema";
 import { requireCurrentPrincipal, runWithPrincipal } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { PLAN_EXECUTION_LEASE_MS, claimPlanExecution, completePlanStepAttempt, createPlanStepAttempt, failInterruptedPlanStep, getLatestPlanStepAttempt, releasePlanExecution, renewPlanExecution, renderPlanProjection, transitionPlanStepStatus, updatePlanStatus as persistPlanStatus, updatePlanStepAttempt, updatePlanStepFields } from "./plan-service";
-import { createNamedSystemPrincipal, createUserPrincipalFromUser } from "./principal";
+import {
+  createNamedSystemPrincipal,
+  createUserPrincipalFromUser,
+  tryResolveUserIdentityFoundation,
+} from "./principal";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
 import { resolvePlanStepPersona } from "./plan-persona";
@@ -1038,8 +1042,13 @@ async function runAsPlanOwner<T>(
   if (!identity) {
     throw new Error(`Plan owner identity is no longer valid for account ${plan.accountId}`);
   }
+  const foundation = await tryResolveUserIdentityFoundation(identity.user.id);
   return runWithPrincipal(
-    createUserPrincipalFromUser(identity.user, plan.accountId),
+    createUserPrincipalFromUser(
+      identity.user,
+      plan.accountId,
+      foundation?.accountId === plan.accountId ? foundation.instanceId : null,
+    ),
     fn,
   );
 }

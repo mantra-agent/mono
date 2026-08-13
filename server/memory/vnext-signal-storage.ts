@@ -25,6 +25,7 @@ const claimScopeColumns = {
   scope: memoryVnextClaims.scope,
   ownerUserId: memoryVnextClaims.ownerUserId,
   accountId: memoryVnextClaims.accountId,
+  instanceId: memoryVnextClaims.instanceId,
 };
 
 const exposureScopeColumns = {

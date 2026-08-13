@@ -9,7 +9,7 @@ The memory subsystem is in staged retirement. vNext claims are the active semant
 | Table | Purpose | Authority |
 |---|---|---|
 | `memory_vnext_source_queue` | Versioned source admission and Runtime projection | Source owner + exact `last_modified_at`; atomic settled-source Runtime binding |
-| `memory_vnext_claims` | Principal-owned semantic claims and lifecycle metadata | `applyObservation()` for ingestion; lifecycle service for stage transitions |
+| `memory_vnext_claims` | Instance-pinned semantic claims (dual-write `instance_id` + acting `owner_user_id`) and lifecycle metadata | `applyObservation()` for ingestion; lifecycle service for stage transitions; visibility is Instance pin OR null+owner, never account alone |
 | `memory_vnext_sources` | Claim provenance and source-to-claim evidence | Written with the claim observation, never as a detached mirror |
 | `memory_vnext_claim_links` | Typed claim relationships and transition evidence | `vnext-transition-graph.ts` |
 | `memory_vnext_entity_links` | Principal-scoped entity associations | vNext entity-resolution/link boundaries |

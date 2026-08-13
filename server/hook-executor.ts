@@ -4,7 +4,12 @@ import { eventBus, isEventVisibleToPrincipal } from "./event-bus";
 import * as hookStorage from "./hook-storage";
 import { createLogger } from "./log";
 import { getUserEffectivePermissions } from "./permissions";
-import { createNamedSystemPrincipal, createUserPrincipalFromUser, type Principal } from "./principal";
+import {
+  createNamedSystemPrincipal,
+  createUserPrincipalFromUser,
+  tryResolveUserIdentityFoundation,
+  type Principal,
+} from "./principal";
 import { runWithPrincipal } from "./principal-context";
 import { storage } from "./storage";
 
@@ -207,7 +212,12 @@ class HookExecutor {
     }
     const user = await storage.getUser(hook.ownerUserId);
     if (!user) throw new Error(`Hook owner user missing: ${hook.ownerUserId}`);
-    const principal = createUserPrincipalFromUser(user, hook.accountId);
+    const foundation = await tryResolveUserIdentityFoundation(user.id);
+    const principal = createUserPrincipalFromUser(
+      user,
+      hook.accountId,
+      foundation?.accountId === hook.accountId ? foundation.instanceId : null,
+    );
     principal.permissions = await getUserEffectivePermissions(user.id);
     return principal;
   }

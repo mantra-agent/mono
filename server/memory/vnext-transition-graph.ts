@@ -38,7 +38,12 @@ const MAX_PATHS = 250;
 const MAX_INSPECT_PATHS = 100;
 const MAX_PROVENANCE_BYTES = 4_096;
 
-const claimScope = { scope: memoryVnextClaims.scope, ownerUserId: memoryVnextClaims.ownerUserId, accountId: memoryVnextClaims.accountId };
+const claimScope = {
+  scope: memoryVnextClaims.scope,
+  ownerUserId: memoryVnextClaims.ownerUserId,
+  accountId: memoryVnextClaims.accountId,
+  instanceId: memoryVnextClaims.instanceId,
+};
 const sourceScope = { scope: memoryVnextSourceRefs.scope, ownerUserId: memoryVnextSourceRefs.ownerUserId, accountId: memoryVnextSourceRefs.accountId };
 const entityScope = { scope: memoryVnextEntityLinks.scope, ownerUserId: memoryVnextEntityLinks.ownerUserId, accountId: memoryVnextEntityLinks.accountId };
 const linkScope = { scope: memoryVnextClaimLinks.scope, ownerUserId: memoryVnextClaimLinks.ownerUserId, accountId: memoryVnextClaimLinks.accountId };

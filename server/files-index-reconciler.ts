@@ -188,7 +188,7 @@ async function loadOwnerPrincipal(run: FileIndexReconciliationRunRow): Promise<P
   if (!user) return null;
   try {
     const foundation = await resolveUserIdentityFoundation(user.id);
-    const principal = createUserPrincipalFromUser(user, foundation.accountId);
+    const principal = createUserPrincipalFromUser(user, foundation.accountId, foundation.instanceId);
     // Pin vault visibility to the run's vault so FilesApi vault gates succeed
     // even if the owner's active layout currently hides it.
     const visible = new Set(foundation.visibleVaultIds);

@@ -45,6 +45,12 @@ export interface Principal {
   visibleVaultIds: string[];
   /** The single vault new data lands in. Null for system/service principals. */
   activeVaultId: string | null;
+  /**
+   * Pinned Agent Instance for this Account (mind / continuity boundary).
+   * Null for system/service principals or when the pin is unresolved.
+   * Memory dual-write/read opts in via ScopeColumns.instanceId.
+   */
+  instanceId: string | null;
   /** Named system job for vault allowlist enforcement. Only set on system principals. */
   jobName?: string;
 }
@@ -91,6 +97,7 @@ export function createServicePrincipal(
     source: "bearer",
     visibleVaultIds: [],
     activeVaultId: null,
+    instanceId: null,
   };
 }
 
@@ -107,6 +114,7 @@ export function createSystemPrincipal(scopes: string[] = ["system:read", "system
     source: "system",
     visibleVaultIds: [],
     activeVaultId: null,
+    instanceId: null,
   };
 }
 
@@ -148,8 +156,13 @@ export function setServiceSessionPrincipal(
 /**
  * Create a user principal for autonomous/background use (timers, skills, hooks).
  * Populates vault fields from the user record so vault-scoped operations work correctly.
+ * Pass the Account-pinned Instance when known so memory dual-write can stamp it.
  */
-export function createUserPrincipalFromUser(user: User, accountId: string): Principal {
+export function createUserPrincipalFromUser(
+  user: User,
+  accountId: string,
+  instanceId: string | null = null,
+): Principal {
   const isAdmin = user.role === "admin";
   return {
     actorType: "user",
@@ -163,6 +176,7 @@ export function createUserPrincipalFromUser(user: User, accountId: string): Prin
     source: "system",
     visibleVaultIds: user.visibleVaultIds ?? [],
     activeVaultId: user.activeVaultId ?? null,
+    instanceId,
   };
 }
 
@@ -194,6 +208,7 @@ export async function createUserSessionPrincipal(user: User): Promise<Principal>
     source: "session",
     visibleVaultIds: foundation.visibleVaultIds,
     activeVaultId: foundation.activeVaultId,
+    instanceId: foundation.instanceId,
   };
 }
 

@@ -31,18 +31,21 @@ const claimScopeColumns = {
   scope: memoryVnextClaims.scope,
   ownerUserId: memoryVnextClaims.ownerUserId,
   accountId: memoryVnextClaims.accountId,
+  instanceId: memoryVnextClaims.instanceId,
 };
 
 const linkScopeColumns = {
   scope: memoryVnextClaimLinks.scope,
   ownerUserId: memoryVnextClaimLinks.ownerUserId,
   accountId: memoryVnextClaimLinks.accountId,
+  instanceId: memoryVnextClaimLinks.instanceId,
 };
 
 const sourceScopeColumns = {
   scope: memoryVnextSourceRefs.scope,
   ownerUserId: memoryVnextSourceRefs.ownerUserId,
   accountId: memoryVnextSourceRefs.accountId,
+  instanceId: memoryVnextSourceRefs.instanceId,
 };
 
 export interface VnextContextCandidate {

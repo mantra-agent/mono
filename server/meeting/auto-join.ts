@@ -53,7 +53,7 @@ async function discoverUserSchedules(
   foundation: UserIdentityFoundation,
   now: Date,
 ): Promise<void> {
-  const principal = createUserPrincipalFromUser(user, foundation.accountId);
+  const principal = createUserPrincipalFromUser(user, foundation.accountId, foundation.instanceId);
 
   await runWithPrincipal(principal, async () => {
     const policy = await getMeetingJoinPolicy(user.id);
@@ -133,7 +133,7 @@ async function processUserDueJoins(
   foundation: UserIdentityFoundation,
   now: Date,
 ): Promise<number> {
-  const principal = createUserPrincipalFromUser(user, foundation.accountId);
+  const principal = createUserPrincipalFromUser(user, foundation.accountId, foundation.instanceId);
 
   return runWithPrincipal(principal, async () => {
     const due = await listDueAgentJoins(now, GRACE_MS, LEAD_MS);

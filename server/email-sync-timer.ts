@@ -141,7 +141,7 @@ async function loadOwnerVaultPrincipals(user: User): Promise<Principal[]> {
   }
 
   return ownedVaults.map(({ id: vaultId }) => {
-    const principal = createUserPrincipalFromUser(user, foundation.accountId);
+    const principal = createUserPrincipalFromUser(user, foundation.accountId, foundation.instanceId);
     principal.visibleVaultIds = [vaultId];
     principal.activeVaultId = vaultId;
     principal.impersonation = {

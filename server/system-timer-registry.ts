@@ -8,7 +8,7 @@ import { db } from "./db";
 import { userProfiles } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import type { Principal } from "./principal";
-import { createUserPrincipalFromUser } from "./principal";
+import { createUserPrincipalFromUser, tryResolveUserIdentityFoundation } from "./principal";
 import { runWithPrincipal } from "./principal-context";
 import { storage } from "./storage";
 import { getUserEffectivePermissions } from "./permissions";
@@ -604,7 +604,12 @@ export class SystemTimerRegistry {
         log.warn(`Managed Timer owner missing userId=${owner.ownerUserId}`);
         continue;
       }
-      const principal = createUserPrincipalFromUser(user, owner.accountId);
+      const foundation = await tryResolveUserIdentityFoundation(user.id);
+      const principal = createUserPrincipalFromUser(
+        user,
+        owner.accountId,
+        foundation?.accountId === owner.accountId ? foundation.instanceId : null,
+      );
       principal.permissions = await getUserEffectivePermissions(user.id);
       const { modLifecycleService } = await import("./mods/mod-lifecycle-service");
       await runWithPrincipal(principal, () => modLifecycleService.ensureWellnessInstalled(principal));
