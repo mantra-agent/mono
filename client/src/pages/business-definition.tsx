@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Building2, ChevronDown, ExternalLink, Loader2, Plus, Shield } from "lucide-react";
+import { createReferenceRef } from "@shared/references";
+import { BookOpen, Building2, ChevronDown, ExternalLink, Loader2, Plus, Shield } from "lucide-react";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -12,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
@@ -20,7 +22,9 @@ import {
   HierarchySectionHeader,
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
-import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
+import { InlineLibraryPageEditor } from "@/components/library/inline-library-page";
+import { ReferencePicker } from "@/components/references/reference-picker";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { useToast } from "@/hooks/use-toast";
 import { useVaults } from "@/hooks/use-vaults";
 import {
@@ -81,6 +85,46 @@ function ScalarField({
   );
 }
 
+function PageAssignControl({
+  label,
+  current,
+  excludeIds,
+  onAssign,
+  asAction = false,
+}: {
+  label: string;
+  current?: NarrativePageRef | null;
+  excludeIds?: string[];
+  onAssign: (pageId: string) => void;
+  asAction?: boolean;
+}) {
+  return (
+    <div
+      className={asAction ? "w-full" : "w-72 p-2"}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {current ? (
+        <p className="mb-2 px-1 text-xs font-medium text-muted-foreground">Change page</p>
+      ) : null}
+      <ReferencePicker
+        value={current ? [{ type: "page", id: current.id, label: current.title }] : []}
+        onChange={(next) => {
+          const selected = next[0];
+          if (selected) onAssign(selected.id);
+        }}
+        types={["page"]}
+        mode="single"
+        variant="compact"
+        placeholder={label}
+        excludeIds={excludeIds}
+        showToken={false}
+        className={asAction ? HIERARCHY_PRIMARY_ACTION_CLASS : undefined}
+        testId={asAction ? "picker-business-narrative-assign" : "picker-business-narrative-change"}
+      />
+    </div>
+  );
+}
+
 function NarrativeSlot({
   business,
   slot,
@@ -93,6 +137,24 @@ function NarrativeSlot({
   page: NarrativePageRef | null;
 }) {
   const { toast } = useToast();
+  const pageField = `${slot}PageId`;
+  const assign = useMutation({
+    mutationFn: async (pageId: string | null) => {
+      const res = await apiRequest("PATCH", `/api/business/definition/${business.id}`, { [pageField]: pageId });
+      return res.json();
+    },
+    onSuccess: (_result, pageId) => {
+      queryClient.invalidateQueries({ queryKey: BUSINESS_QUERY_KEY });
+      toast({ title: pageId ? `${label} page assigned` : `${label} page cleared` });
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: `Failed to update ${label} page`,
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    },
+  });
   const create = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/business/definition/${business.id}/pages`, { slot });
@@ -110,20 +172,64 @@ function NarrativeSlot({
       });
     },
   });
-
-  if (page) return <ExpandableLibraryPage page={page} defaultOpen={false} />;
+  const busy = assign.isPending || create.isPending;
+  const pageRef = page
+    ? createReferenceRef({
+        type: "page",
+        id: page.id,
+        metadata: { label: page.title, href: `/info#library?page=${encodeURIComponent(page.slug)}` },
+      })
+    : null;
 
   return (
-    <button
-      type="button"
-      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
-      onClick={() => create.mutate()}
-      disabled={create.isPending}
-      data-testid={`business-narrative-add-${slot}`}
+    <ProfileTreeRow
+      label={label}
+      icon={<BookOpen className="h-3.5 w-3.5" />}
+      hasValue={Boolean(page)}
+      showEmpty
+      mobileLayout="inline"
+      menuVisibility="hover"
+      testId={`business-narrative-${slot}`}
+      expandedContent={page ? <InlineLibraryPageEditor page={page} /> : undefined}
+      menuContent={
+        <>
+          <PageAssignControl
+            label={page ? "Choose a different page" : "Choose an existing page"}
+            current={page}
+            excludeIds={page ? [page.id] : undefined}
+            onAssign={(pageId) => assign.mutate(pageId)}
+          />
+          {page ? (
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              disabled={busy}
+              onSelect={() => assign.mutate(null)}
+              data-testid={`menu-business-narrative-clear-${slot}`}
+            >
+              Clear
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem
+              disabled={busy}
+              onSelect={() => create.mutate()}
+              data-testid={`menu-business-narrative-create-${slot}`}
+            >
+              {create.isPending ? "Creating…" : `Create ${label} page`}
+            </DropdownMenuItem>
+          )}
+        </>
+      }
     >
-      {create.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-      <span>Add {label}</span>
-    </button>
+      {page && pageRef ? (
+        <ReferenceRenderer refValue={pageRef} surface="simple-chip" />
+      ) : (
+        <PageAssignControl
+          label={`Choose ${label} page`}
+          asAction
+          onAssign={(pageId) => assign.mutate(pageId)}
+        />
+      )}
+    </ProfileTreeRow>
   );
 }
 
