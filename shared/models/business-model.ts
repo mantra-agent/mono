@@ -785,11 +785,7 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     const includedTokenCogs = tokenCost;
     const seatCogs = activeSeats * assumptions.seatInferenceAndSupportCost;
     const activeHires = derivedHires.filter((hire) => hire.startMonth <= month);
-    const keyHireStaffOpex = activeHires.reduce((sum, hire) => {
-      if (hire.costAllocation === "product_cogs") return sum;
-      if (hire.costAllocation === "acquisition_split") return sum + hire.monthlyCost * (1 - hire.acquisitionAllocationPct / 100);
-      return sum + hire.monthlyCost;
-    }, 0);
+    const keyHireStaffOpex = activeHires.reduce((sum, hire) => hire.costAllocation === "product_cogs" ? sum : sum + hire.monthlyCost, 0);
     const keyHireDeliveryCogs = activeHires.filter((hire) => hire.costAllocation === "product_cogs").reduce((sum, hire) => sum + hire.monthlyCost, 0);
     const keyHireAcquisitionSpend = activeHires.filter((hire) => hire.costAllocation === "acquisition_split").reduce((sum, hire) => sum + hire.monthlyCost * hire.acquisitionAllocationPct / 100, 0);
     const keyHireHeadcount = activeHires.reduce((sum, hire) => sum + hire.headcount, 0);
@@ -804,15 +800,14 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     const acquisitionSpend = newAccounts * blendedEntryCac + keyHireAcquisitionSpend;
     const manualOpex = (category: OpexCategory) => assumptions.operatingCosts.filter((cost) => cost.classification === "opex" && (cost.opexCategory ?? "g_and_a") === category && activeCost(cost, month)).reduce((sum, cost) => sum + cost.monthlyAmount, 0);
     const staffOpex = keyHireStaffOpex + manualOpex("staff");
-    const acquisitionOpex = acquisitionSpend;
+    const acquisitionOpex = 0;
     const budgetOpex = canonicalBudgetOpex ?? manualOpex("marketing") + manualOpex("g_and_a");
-    const totalOpex = staffOpex + acquisitionOpex + budgetOpex;
-    // Cash operating expense excludes acquisition, which is subtracted as its own cash line below.
-    const operatingExpense = staffOpex + budgetOpex;
+    const totalOpex = staffOpex + budgetOpex;
+    const operatingExpense = totalOpex;
     const headcount = assumptions.operatingCosts.filter((cost) => activeCost(cost, month)).reduce((sum, cost) => sum + cost.headcount, 0) + keyHireHeadcount;
     const grossProfit = totalCashRevenue - productCogs - consultingCogs;
     const operatingIncome = grossProfit - totalOpex;
-    const netCashChange = totalCashRevenue - productCogs - consultingCogs - acquisitionSpend - operatingExpense - lane.capex;
+    const netCashChange = totalCashRevenue - productCogs - consultingCogs - operatingExpense - lane.capex;
     const financingCash = assumptions.financingEvents.filter((event) => event.month === month).reduce((sum, event) => sum + event.amount, 0);
     endingCash += netCashChange + financingCash;
     const burnWindow = [...months.slice(-(assumptions.trailingBurnMonths - 1)).map((row) => row.netCashChange), netCashChange];
