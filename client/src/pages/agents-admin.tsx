@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { Bot, ChevronRight, Loader2 } from "lucide-react";
+import { Bot, Brain, ChevronRight, Clock, Loader2, Timer } from "lucide-react";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import {
   HIERARCHY_SECTION_HEADER_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
@@ -51,6 +52,7 @@ function AgentRow({
     }
     return refs;
   }, [account, users]);
+  const formatCount = (value: number) => value.toLocaleString();
 
   return (
     <div className="min-w-0" data-testid={`agent-row-${instance.id}`}>
@@ -65,24 +67,41 @@ function AgentRow({
         <span className="shrink-0 text-xs capitalize text-muted-foreground">{instance.status}</span>
       </button>
       {open ? (
-        children.length === 0 ? (
-          <HierarchyTreeRow continues={false} indent="icon" connectorAnchor="first-row-center">
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">No account or members.</div>
-          </HierarchyTreeRow>
-        ) : (
-          children.map((ref, index) => (
-            <HierarchyTreeRow
-              key={ref.canonical}
-              continues={index < children.length - 1}
-              indent="icon"
-              connectorAnchor="first-row-center"
-            >
-              <div className="flex min-h-8 items-center px-1 py-0.5">
-                <ReferenceRenderer refValue={ref} surface="simple-row" className="max-w-full" />
-              </div>
+        <>
+          {children.length === 0 ? (
+            <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">No account or members.</div>
             </HierarchyTreeRow>
-          ))
-        )
+          ) : (
+            children.map((ref) => (
+              <HierarchyTreeRow
+                key={ref.canonical}
+                continues
+                indent="icon"
+                connectorAnchor="first-row-center"
+              >
+                <div className="flex min-h-8 items-center px-1 py-0.5">
+                  <ReferenceRenderer refValue={ref} surface="simple-row" className="max-w-full" />
+                </div>
+              </HierarchyTreeRow>
+            ))
+          )}
+          <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+            <ProfileTreeRow label="# of Managed Timers" icon={<Timer className="h-3.5 w-3.5" />} hasValue showEmpty>
+              <span className="text-foreground">{formatCount(instance.managedTimerCount ?? 0)}</span>
+            </ProfileTreeRow>
+          </HierarchyTreeRow>
+          <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+            <ProfileTreeRow label="# of Claims (in their brain)" icon={<Brain className="h-3.5 w-3.5" />} hasValue showEmpty>
+              <span className="text-foreground">{formatCount(instance.claimCount ?? 0)}</span>
+            </ProfileTreeRow>
+          </HierarchyTreeRow>
+          <HierarchyTreeRow continues={false} indent="icon" connectorAnchor="first-row-center">
+            <ProfileTreeRow label="# of Input Tokens (7 day rolling)" icon={<Clock className="h-3.5 w-3.5" />} hasValue showEmpty>
+              <span className="text-foreground">{formatCount(instance.inputTokens7d ?? 0)}</span>
+            </ProfileTreeRow>
+          </HierarchyTreeRow>
+        </>
       ) : null}
     </div>
   );
