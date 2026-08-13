@@ -167,10 +167,28 @@ function requestPlannedRestart(): void {
   }
 }
 
+async function isWarmStageEnabled(environmentId: number): Promise<boolean> {
+  // Prefer durable lifecycle policy. Railway restart of an old SUCCESS deploy often keeps a
+  // stale process env snapshot, so STAGE_WARM_ENABLED alone is not authoritative.
+  try {
+    const { getEnvironmentBuildLifecycleConfig } = await import("./platforms/build-lifecycle-service");
+    const lifecycle = await getEnvironmentBuildLifecycleConfig(environmentId, { includeDisabled: true });
+    const policy = lifecycle?.config?.deployPolicy && typeof lifecycle.config.deployPolicy === "object" && !Array.isArray(lifecycle.config.deployPolicy)
+      ? lifecycle.config.deployPolicy as Record<string, unknown>
+      : {};
+    if (policy.runtimeMode === "warm_workspace") return true;
+  } catch (error) {
+    log.warn(`stage_sync_warm_policy_read_failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return process.env.STAGE_WARM_ENABLED === "true";
+}
+
 /**
- * Stage-only boot hook. When Live queues STAGE_SYNC_TARGET_SHA and restarts Stage,
- * this downloads the bound-repo commit into /app (lockfile-safe) and requests a
- * planned wrapper restart so tsx/Vite load the new tree. Railway autodeploy stays on.
+ * Stage-only boot hook. Sync Latest writes target SHA to durable stage_sync status
+ * (and best-effort STAGE_SYNC_TARGET_SHA), then restarts Stage. This downloads that
+ * commit into /app (lockfile-safe) and requests a planned wrapper restart so tsx/Vite
+ * load the new tree. Target identity is DB-first because Railway restart often keeps
+ * a stale env snapshot from the prior SUCCESS image.
  */
 export async function maybeApplyPendingStageSync(input: {
   environmentId: number | null;
@@ -180,28 +198,43 @@ export async function maybeApplyPendingStageSync(input: {
   const isLiveRuntime = /(?:^|[._-])(?:live|prod)(?:$|[._-])/i.test(
     `${process.env.RAILWAY_ENVIRONMENT_NAME || ""} ${process.env.RAILWAY_ENVIRONMENT || ""}`,
   );
-  if (process.env.STAGE_WARM_ENABLED !== "true" || isLiveRuntime) {
+  if (isLiveRuntime) {
+    log.info("stage_sync_skip reason=live_runtime");
     return { applied: false, restartRequested: false, status: null };
   }
   if (!input.environmentId || input.environmentId <= 0) {
+    log.info("stage_sync_skip reason=no_environment_id");
     return { applied: false, restartRequested: false, status: null };
   }
-
-  const targetRaw = process.env.STAGE_SYNC_TARGET_SHA?.trim() || "";
-  if (!targetRaw) {
-    const local = await readLocalActiveSyncSha();
-    if (local) {
-      await writeStageSyncStatus(input.environmentId, {
-        activeCommitSha: local,
-        status: "ready",
-        reason: null,
-      });
-    }
+  if (!(await isWarmStageEnabled(input.environmentId))) {
+    log.info(`stage_sync_skip reason=warm_not_enabled environmentId=${input.environmentId}`);
     return { applied: false, restartRequested: false, status: await readStageSyncStatus(input.environmentId) };
   }
 
-  const targetSha = boundedSha(targetRaw);
+  const existing = await readStageSyncStatus(input.environmentId);
+  // DB target is canonical (set before restart). Env is compatibility only.
+  const targetRaw = (existing?.targetCommitSha || process.env.STAGE_SYNC_TARGET_SHA || "").trim();
   const localActive = await readLocalActiveSyncSha();
+  const imageSha = (process.env.RAILWAY_GIT_COMMIT_SHA || "").trim().toLowerCase();
+  const seedActive = localActive
+    || (existing?.activeCommitSha && /^[a-f0-9]{7,64}$/i.test(existing.activeCommitSha) ? existing.activeCommitSha.toLowerCase() : null)
+    || (/^[a-f0-9]{7,64}$/i.test(imageSha) ? imageSha : null);
+
+  if (!targetRaw) {
+    if (seedActive) {
+      const status = await writeStageSyncStatus(input.environmentId, {
+        activeCommitSha: seedActive,
+        status: "ready",
+        reason: null,
+      });
+      log.info(`stage_sync_seeded_active sha=${seedActive.slice(0, 7)} environmentId=${input.environmentId}`);
+      return { applied: false, restartRequested: false, status };
+    }
+    log.info(`stage_sync_skip reason=no_target environmentId=${input.environmentId}`);
+    return { applied: false, restartRequested: false, status: existing };
+  }
+
+  const targetSha = boundedSha(targetRaw);
   if (localActive && localActive === targetSha) {
     const status = await writeStageSyncStatus(input.environmentId, {
       activeCommitSha: localActive,
@@ -209,14 +242,19 @@ export async function maybeApplyPendingStageSync(input: {
       status: "ready",
       reason: null,
     });
+    log.info(`stage_sync_already_active sha=${targetSha.slice(0, 7)} environmentId=${input.environmentId}`);
     return { applied: false, restartRequested: false, status };
   }
 
+  // If durable status says ready at target but local marker is missing (volume/ephemeral),
+  // re-apply once so Active/workspace converge.
   await writeStageSyncStatus(input.environmentId, {
+    activeCommitSha: seedActive,
     targetCommitSha: targetSha,
     status: "applying",
     reason: `Applying ${targetSha.slice(0, 7)} into the warm workspace`,
   });
+  log.info(`stage_sync_applying sha=${targetSha.slice(0, 7)} environmentId=${input.environmentId} priorActive=${(localActive || seedActive || "none").toString().slice(0, 7)}`);
 
   const workRoot = await fs.mkdtemp(path.join(tmpdir(), "stage-sync-"));
   const archivePath = path.join(workRoot, "source.tar.gz");
@@ -230,6 +268,7 @@ export async function maybeApplyPendingStageSync(input: {
     const incomingHash = await hashFile(incomingLock);
     if (currentHash !== incomingHash) {
       const status = await writeStageSyncStatus(input.environmentId, {
+        activeCommitSha: seedActive,
         targetCommitSha: targetSha,
         status: "failed",
         reason: "Full rebuild required — package-lock.json changed. Sync Latest will not install dependencies.",
@@ -252,6 +291,7 @@ export async function maybeApplyPendingStageSync(input: {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const status = await writeStageSyncStatus(input.environmentId, {
+      activeCommitSha: seedActive,
       targetCommitSha: targetSha,
       status: "failed",
       reason: message,
