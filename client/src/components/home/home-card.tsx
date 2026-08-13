@@ -2,13 +2,13 @@ import { useState, type ReactNode } from "react";
 import { ChevronDown, Loader2, MessageSquare, MoreHorizontal } from "lucide-react";
 import type { SimpleFeedItem } from "@shared/models/simple";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
-import { sourceRefsToReferenceRefs } from "@shared/simple-references";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useFocusSession } from "@/hooks/use-focus-session";
+import { buildSimpleDiscussMessage, simpleDiscussTitle } from "@/lib/simple-discuss";
 import { cn } from "@/lib/utils";
 
 type CreatedSession = { id: string };
@@ -28,10 +28,10 @@ export function SimpleCard({ item, meta, children }: SimpleCardProps) {
   const hasDetail = Boolean(children) || hasFallbackSourceRefs || Boolean(item.actions?.length);
   const discussMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/sessions", { title: item.title.slice(0, 80) || "Simple Item" });
+      const res = await apiRequest("POST", "/api/sessions", { title: simpleDiscussTitle(item) });
       const session: CreatedSession = await res.json();
       await apiRequest("POST", `/api/sessions/${session.id}/messages`, {
-        content: [`Let's discuss this Simple item: **${item.title}**`, `Type: ${item.widgetType}`, `Section: ${item.section}`].join("\n"),
+        content: buildSimpleDiscussMessage(item),
       });
       return session;
     },
