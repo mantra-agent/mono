@@ -17,7 +17,10 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
-import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
+import {
+  HIERARCHY_PRIMARY_ACTION_CLASS,
+  HIERARCHY_SECTION_HEADER_CLASS,
+} from "@/components/hierarchy-section-header";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,10 +40,18 @@ import type { BusinessHiringProjection, BusinessHiringSlot } from "@shared/model
 import { currentCalendarMonth } from "@shared/models/business-hiring";
 import type { JobRole, JobTeam } from "@shared/models/job-roles";
 
-const FROZEN_CELL = "sticky left-0 z-10 min-w-[12rem] max-w-[12rem] border-r border-border/20 bg-background px-2 py-1.5 text-left";
-const MONTH_CELL = "min-w-[2.75rem] px-0 py-1 text-center";
+/** Match SessionMenu row geometry: px-2 py-1.5, text-sm, icon + label. */
+const FROZEN_CELL =
+  "sticky left-0 z-10 min-w-[12rem] max-w-[12rem] border-r border-border/20 bg-background px-2 py-1.5 text-left align-middle";
+/** Same vertical padding as SessionMenu rows — no fixed h-8 that stretches past py-1.5. */
+const MONTH_CELL = "min-w-[2.75rem] px-0 py-1.5 text-center align-middle";
 const YEAR_DIVIDER = "border-l-2 border-border/70";
-const MONTH_DIVIDER = "border-l border-border/10";
+/** Thinner than year, brighter than prior /10 so the grid is readable. */
+const MONTH_DIVIDER = "border-l border-border/35";
+const SHEET_HEADER_CLASS = cn(
+  HIERARCHY_SECTION_HEADER_CLASS,
+  "h-auto w-auto justify-center rounded-none px-1 py-1.5",
+);
 
 const TEAM_ICONS: Record<JobTeam, ComponentType<LucideProps>> = {
   Executive: Building2,
@@ -65,7 +76,9 @@ function startMonthOf(slot: BusinessHiringSlot): string {
 
 function monthShort(calendarMonth: string): string {
   const [year, month] = calendarMonth.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, 1)));
+  return new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" })
+    .format(new Date(Date.UTC(year, month - 1, 1)))
+    .toUpperCase();
 }
 
 function isYearStart(calendarMonth: string, index: number): boolean {
@@ -107,14 +120,19 @@ function RoleRow({
   });
   const title = role?.title ?? "Unresolved role";
   return (
-    <tr className="border-t border-border/10">
+    <tr>
       <td className={FROZEN_CELL}>
-        <div className="flex items-center gap-2">
+        <div className="group relative flex w-full items-center gap-2">
           <TeamIcon team={role?.team} />
           <span className="min-w-0 flex-1 truncate text-sm text-foreground" title={role?.team ? `${title} · ${role.team}` : title}>
             {title}
           </span>
-          <button type="button" className="shrink-0 text-muted-foreground hover:text-destructive" aria-label={`Remove ${title}`} onClick={() => setConfirmOpen(true)}>
+          <button
+            type="button"
+            className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none group-hover:opacity-100 group-focus-within:opacity-100"
+            aria-label={`Remove ${title}`}
+            onClick={() => setConfirmOpen(true)}
+          >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -144,7 +162,7 @@ function RoleRow({
               aria-pressed={isStart}
               disabled={update.isPending}
               onClick={() => update.mutate(month.calendarMonth)}
-              className="group relative flex h-8 w-full items-center justify-center"
+              className="group relative flex w-full items-center justify-center"
             >
               {isStart ? (
                 <>
@@ -192,10 +210,10 @@ function AddRoleRow({
     onError: (error: Error) => toast({ title: "Could not add role", description: error.message, variant: "destructive" }),
   });
   return (
-    <tr className="border-t border-border/20">
+    <tr>
       <td className={FROZEN_CELL}>
         <Select value={roleId} onValueChange={setRoleId}>
-          <SelectTrigger className="h-8" aria-label="Job Role"><SelectValue placeholder="Choose a Job Role" /></SelectTrigger>
+          <SelectTrigger className="h-7" aria-label="Job Role"><SelectValue placeholder="Choose a Job Role" /></SelectTrigger>
           <SelectContent>{roles.map((role) => <SelectItem key={role.id} value={role.id}>{role.title}</SelectItem>)}</SelectContent>
         </Select>
       </td>
@@ -206,7 +224,7 @@ function AddRoleRow({
             disabled={!roleId || create.isPending}
             aria-label={`Start selected role in ${monthShort(month.calendarMonth)}`}
             onClick={() => create.mutate(month.calendarMonth)}
-            className="group flex h-8 w-full items-center justify-center disabled:opacity-50"
+            className="group flex w-full items-center justify-center disabled:opacity-50"
           >
             <span className="h-0.5 w-full bg-transparent group-hover:bg-success/50" />
           </button>
@@ -254,24 +272,33 @@ export default function BusinessHiringPage() {
         <div className="px-2 py-1.5 text-sm text-muted-foreground">No Business selected.</div>
       ) : (
         <>
+          {adding ? null : (
+            <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => setAdding(true)} disabled={data.roles.length === 0}>
+              <Plus className="h-3.5 w-3.5" />Add Role
+            </button>
+          )}
+          {data.roles.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">Create a Job Role first in Roles.</div> : null}
           <div className="overflow-x-auto border-y border-border/20">
             <table className="w-max min-w-full border-collapse text-sm tabular-nums">
               <thead>
                 <tr>
-                  <th className={cn(FROZEN_CELL, "z-20 border-b py-2 font-medium text-muted-foreground")}>Role</th>
+                  <th className={cn(FROZEN_CELL, SHEET_HEADER_CLASS, "z-20 justify-start border-b")}>Role</th>
                   {months.map((month, index) => (
                     <th
                       key={month.calendarMonth}
                       className={cn(
                         MONTH_CELL,
-                        "border-b px-1 py-2 font-medium text-muted-foreground",
+                        SHEET_HEADER_CLASS,
+                        "border-b",
                         isYearStart(month.calendarMonth, index) ? YEAR_DIVIDER : MONTH_DIVIDER,
                         month.calendarMonth === currentCalendarMonth() && "text-foreground",
                       )}
                     >
                       <div>{monthShort(month.calendarMonth)}</div>
                       {index === 0 || isYearStart(month.calendarMonth, index) ? (
-                        <div className="text-2xs text-muted-foreground/70">{month.calendarMonth.slice(0, 4)}</div>
+                        <div className="text-2xs font-normal normal-case tracking-normal text-muted-foreground/70">
+                          {month.calendarMonth.slice(0, 4)}
+                        </div>
                       ) : null}
                     </th>
                   ))}
@@ -284,18 +311,12 @@ export default function BusinessHiringPage() {
                 ) : null}
                 {rows.length === 0 && !adding ? (
                   <tr>
-                    <td colSpan={months.length + 1} className="px-3 py-1.5 text-sm text-muted-foreground">{query ? "No matching roles." : "No approved roles yet."}</td>
+                    <td colSpan={months.length + 1} className="px-2 py-1.5 text-sm text-muted-foreground">{query ? "No matching roles." : "No approved roles yet."}</td>
                   </tr>
                 ) : null}
               </tbody>
             </table>
           </div>
-          {adding ? null : (
-            <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => setAdding(true)} disabled={data.roles.length === 0}>
-              <Plus className="h-3.5 w-3.5" />Add Role
-            </button>
-          )}
-          {data.roles.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">Create a Job Role first in Roles.</div> : null}
         </>
       )}
     </div>
