@@ -118,6 +118,88 @@ async function getAdminUserActivity(): Promise<Map<string, string>> {
   return new Map(result.rows.map((row) => [row.user_id, new Date(row.last_active_at).toISOString()]));
 }
 
+async function getAdminUserLastLogin(): Promise<Map<string, string>> {
+  const { db } = await import("./db");
+  const result = await db.execute<{ user_id: string; last_login_at: Date | string }>(sql`
+    SELECT sess->>'userId' AS user_id,
+           MAX((sess->>'createdAt')::timestamptz) AS last_login_at
+    FROM "session"
+    WHERE sess->>'userId' IS NOT NULL
+      AND NULLIF(BTRIM(sess->>'createdAt'), '') IS NOT NULL
+    GROUP BY sess->>'userId'
+  `);
+  return new Map(
+    result.rows
+      .filter((row) => row.user_id && row.last_login_at)
+      .map((row) => [row.user_id, new Date(row.last_login_at).toISOString()]),
+  );
+}
+
+type IdentityInstanceMetrics = {
+  managedTimerCount: number;
+  claimCount: number;
+  inputTokens7d: number;
+};
+
+function rowsToCountMap(
+  rows: Array<{ instance_id: string | null; count: number | string | null }>,
+): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.instance_id) continue;
+    map.set(row.instance_id, Number(row.count ?? 0));
+  }
+  return map;
+}
+
+async function getIdentityInstanceMetrics(): Promise<Map<string, IdentityInstanceMetrics>> {
+  const [timerResult, claimResult, tokenResult] = await Promise.all([
+    db.execute<{ instance_id: string; count: number }>(sql`
+      SELECT m.instance_id, count(*)::int AS count
+      FROM timers t
+      INNER JOIN agent_instance_memberships m
+        ON m.user_id = t.owner_user_id
+       AND m.account_id = t.account_id
+      WHERE t.scope = 'user'
+        AND t.enabled = true
+        AND t.owner_user_id IS NOT NULL
+        AND t.account_id IS NOT NULL
+      GROUP BY m.instance_id
+    `),
+    db.execute<{ instance_id: string; count: number }>(sql`
+      SELECT instance_id, count(*)::int AS count
+      FROM memory_vnext_claims
+      WHERE lifecycle_stage IN ('canonical', 'linked')
+        AND instance_id IS NOT NULL
+      GROUP BY instance_id
+    `),
+    db.execute<{ instance_id: string; count: number }>(sql`
+      SELECT m.instance_id, COALESCE(SUM(c.input_tokens), 0)::int AS count
+      FROM api_calls c
+      INNER JOIN agent_instance_memberships m
+        ON m.user_id = c.owner_user_id
+       AND m.account_id = c.account_id
+      WHERE c.timestamp >= NOW() - INTERVAL '7 days'
+        AND c.owner_user_id IS NOT NULL
+        AND c.account_id IS NOT NULL
+      GROUP BY m.instance_id
+    `),
+  ]);
+  const timers = rowsToCountMap(timerResult.rows ?? []);
+  const claims = rowsToCountMap(claimResult.rows ?? []);
+  const tokens = rowsToCountMap(tokenResult.rows ?? []);
+  const instanceIds = new Set([...timers.keys(), ...claims.keys(), ...tokens.keys()]);
+  const map = new Map<string, IdentityInstanceMetrics>();
+  for (const instanceId of instanceIds) {
+    map.set(instanceId, {
+      managedTimerCount: timers.get(instanceId) ?? 0,
+      claimCount: claims.get(instanceId) ?? 0,
+      inputTokens7d: tokens.get(instanceId) ?? 0,
+    });
+  }
+  return map;
+}
+
 async function getWaitlistApplications(): Promise<WaitlistApplicationRow[]> {
   const { db } = await import("./db");
   try {
@@ -1356,8 +1438,9 @@ export function setupAuth(app: Express) {
     async (_req: Request, res: Response) => {
       try {
         const allUsers = await storage.getUsers();
-        const [lastActiveByUser, waitlist] = await Promise.all([
+        const [lastActiveByUser, lastLoginByUser, waitlist] = await Promise.all([
           getAdminUserActivity(),
+          getAdminUserLastLogin(),
           getWaitlistApplications(),
         ]);
         const rows = await Promise.all(allUsers.map(async (u) => {
@@ -1379,6 +1462,7 @@ export function setupAuth(app: Express) {
             role: u.role,
             createdAt: u.createdAt,
             lastActiveAt: lastActiveByUser.get(u.id) ?? null,
+            lastLoginAt: lastLoginByUser.get(u.id) ?? null,
             hasPendingInvite: !!u.inviteToken,
             permissionOverrides: await listUserPermissionOverrides(u.id),
             permissions: await getUserEffectivePermissions(u.id),
@@ -1408,7 +1492,7 @@ export function setupAuth(app: Express) {
     requirePermission("users:read"),
     async (_req: Request, res: Response) => {
       try {
-        const [accountRows, membershipRows, instanceRows, instanceMembershipRows, userRows] = await Promise.all([
+        const [accountRows, membershipRows, instanceRows, instanceMembershipRows, userRows, instanceMetrics] = await Promise.all([
           db.select({
             id: accounts.id,
             name: accounts.name,
@@ -1444,12 +1528,21 @@ export function setupAuth(app: Express) {
             role: users.role,
             createdAt: users.createdAt,
           }).from(users).orderBy(asc(users.email), asc(users.id)),
+          getIdentityInstanceMetrics(),
         ]);
 
         res.json({
           accounts: accountRows,
           memberships: membershipRows,
-          instances: instanceRows,
+          instances: instanceRows.map((instance) => {
+            const metrics = instanceMetrics.get(instance.id);
+            return {
+              ...instance,
+              managedTimerCount: metrics?.managedTimerCount ?? 0,
+              claimCount: metrics?.claimCount ?? 0,
+              inputTokens7d: metrics?.inputTokens7d ?? 0,
+            };
+          }),
           instanceMemberships: instanceMembershipRows,
           users: userRows,
         });

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronRight, Clock, Copy, Glasses, Globe2, Loader2, Mail, Monitor, MoreHorizontal, Shield, Smartphone, Trash2, User, UserPlus, Users } from "lucide-react";
+import { Check, ChevronRight, Clock, Copy, Glasses, Globe2, Loader2, Mail, Monitor, MoreHorizontal, Shield, Smartphone, Trash2, User, UserPlus, Users } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
@@ -13,7 +13,6 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { usePageLoadActivity } from "@/hooks/use-page-activity";
@@ -21,7 +20,7 @@ import { formatDateTime as formatDateTimeInTimezone, useTimezone } from "@/hooks
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
-import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
+import { HIERARCHY_PRIMARY_ACTION_CLASS, HIERARCHY_TREE_STACK_CLASS } from "@/components/hierarchy-section-header";
 import { matchesIdentityQuery, useIdentityGraph } from "@/lib/identity-graph";
 import { createReferenceRef } from "@shared/references";
 import type { ClientPresenceEntry, ClientPresenceKind } from "@shared/client-presence";
@@ -32,6 +31,7 @@ interface AdminUserRow {
   role: string;
   createdAt: string;
   lastActiveAt: string | null;
+  lastLoginAt: string | null;
   hasPendingInvite: boolean;
   permissions: string[];
   permissionOverrides: string[];
@@ -325,7 +325,7 @@ const WAITLIST_LABELS: Record<string, string> = {
   ready: "Ready now", possible: "Possible if valuable", lower_cost: "Prefers a lower-cost plan", curious: "Mainly curious",
 };
 
-function WaitlistDetail({ application, canWrite, onBack }: { application: WaitlistApplicationRow; canWrite: boolean; onBack: () => void }) {
+function WaitlistDetail({ application, canWrite }: { application: WaitlistApplicationRow; canWrite: boolean }) {
   const { timezone } = useTimezone();
   const { toast } = useToast();
   const mutation = useMutation({
@@ -333,8 +333,7 @@ function WaitlistDetail({ application, canWrite, onBack }: { application: Waitli
     onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["/api/auth/users"] }); toast({ title: "Waitlist status updated" }); },
     onError: (error: Error) => toast({ title: "Could not update status", description: error.message, variant: "destructive" }),
   });
-  return <div className="p-2">
-    <div className="mb-2 flex items-start gap-2 px-2 py-1.5"><Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 @md:hidden" onClick={onBack}><ArrowLeft className="h-4 w-4" /></Button><div className="min-w-0"><h2 className="truncate text-lg font-semibold text-foreground">#{application.position} · {application.email}</h2><p className="text-sm capitalize text-muted-foreground">{application.status}</p></div></div>
+  return (
     <div className="space-y-0">
       <ProfileTreeRow label="Role" icon={<User className="h-3.5 w-3.5" />} hasValue showEmpty><span>{WAITLIST_LABELS[application.role] || application.role}</span></ProfileTreeRow>
       <ProfileTreeRow label="Needs" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty expandedContent={<div className="space-y-1 text-sm text-foreground">{application.needs.map((need) => <div key={need}>{WAITLIST_LABELS[need] || need}</div>)}</div>}><span>{application.needs.length}</span></ProfileTreeRow>
@@ -344,10 +343,10 @@ function WaitlistDetail({ application, canWrite, onBack }: { application: Waitli
       <ProfileTreeRow label="Applied" icon={<Clock className="h-3.5 w-3.5" />} hasValue showEmpty><span>{formatDateTimeInTimezone(application.createdAt, timezone, { year: "numeric" })}</span></ProfileTreeRow>
       <ProfileTreeRow label="Status" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty expandedContent={<div className="flex flex-wrap gap-2">{WAITLIST_STATUS_OPTIONS.map((status) => <Button key={status} size="sm" variant={application.status === status ? "default" : "outline"} disabled={!canWrite || mutation.isPending || application.status === status} onClick={() => mutation.mutate(status)} className="capitalize">{status}</Button>)}</div>}><span className="capitalize">{application.status}</span></ProfileTreeRow>
     </div>
-  </div>;
+  );
 }
 
-function UserDetail({ user, availablePermissions, canWrite, draft, onDraftChange, onBack }: { user: AdminUserRow; availablePermissions: string[]; canWrite: boolean; draft: Set<string>; onDraftChange: (next: Set<string>) => void; onBack: () => void }) {
+function UserDetail({ user, availablePermissions, canWrite, draft, onDraftChange }: { user: AdminUserRow; availablePermissions: string[]; canWrite: boolean; draft: Set<string>; onDraftChange: (next: Set<string>) => void }) {
   const { timezone } = useTimezone();
   const { toast } = useToast();
   const [revokingSid, setRevokingSid] = useState<string | null>(null);
@@ -397,14 +396,12 @@ function UserDetail({ user, availablePermissions, canWrite, draft, onDraftChange
   const created = new Date(user.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   const sessions = sessionsQuery.data?.sessions ?? [];
   return (
-    <div className="p-2" data-testid={`user-detail-${user.id}`}>
-      <div className="mb-2 flex items-start justify-between gap-3 px-2 py-1.5">
-        <div className="flex min-w-0 items-start gap-2">
-          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 @md:hidden" onClick={onBack} aria-label="Back to users"><ArrowLeft className="h-4 w-4" /></Button>
-          <div className="min-w-0"><h2 className="truncate text-lg font-semibold text-foreground">{user.email}</h2><p className="text-sm capitalize text-muted-foreground">{user.role}{user.hasPendingInvite ? " · Invite pending" : ""}</p></div>
+    <div data-testid={`user-detail-${user.id}`}>
+      {dirty ? (
+        <div className="flex justify-end px-2 py-1">
+          <Button size="sm" disabled={!canWrite || mutation.isPending} onClick={() => mutation.mutate(Array.from(draft))}>{mutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}</Button>
         </div>
-        <Button size="sm" disabled={!canWrite || !dirty || mutation.isPending} onClick={() => mutation.mutate(Array.from(draft))}>{mutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}</Button>
-      </div>
+      ) : null}
       <div className="space-y-0">
         <ProfileTreeRow
           label="Account Setup"
@@ -505,13 +502,13 @@ export default function UsersAdminPage() {
   const { data, isLoading } = useQuery<UsersResponse>({ queryKey: ["/api/auth/users"], enabled: canRead, refetchInterval: 15_000 });
   const identityGraph = useIdentityGraph(canRead);
   usePageLoadActivity("page:users", isLoading);
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-  const [selectedWaitlistId, setSelectedWaitlistId] = useState<string | null>(null);
+  const { timezone } = useTimezone();
   const [inviteOpen, setInviteOpen] = useState(false);
   const [deleteUser, setDeleteUser] = useState<AdminUserRow | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Set<string>>>({});
   const [search, setSearch] = useState("");
   const [expandedUserIds, setExpandedUserIds] = useState<Record<string, boolean>>({});
+  const [expandedWaitlistIds, setExpandedWaitlistIds] = useState<Record<string, boolean>>({});
   usePageHeader({ title: "Users" });
   const availablePermissions = data?.availablePermissions ?? [];
   const users = data?.users ?? [];
@@ -549,13 +546,20 @@ export default function UsersAdminPage() {
     });
   }, [accountsById, membershipsByUser, search, users]);
   const activeUsers = useMemo(() => filteredUsers.filter((user) => user.presence.length > 0), [filteredUsers]);
-  const inactiveUsers = useMemo(() => filteredUsers.filter((user) => user.presence.length === 0), [filteredUsers]);
+  const inactiveUsers = useMemo(
+    () => filteredUsers
+      .filter((user) => user.presence.length === 0)
+      .sort((a, b) => {
+        const aTime = a.lastActiveAt ? new Date(a.lastActiveAt).getTime() : 0;
+        const bTime = b.lastActiveAt ? new Date(b.lastActiveAt).getTime() : 0;
+        return bTime - aTime;
+      }),
+    [filteredUsers],
+  );
   const filteredWaitlist = useMemo(
     () => waitlist.filter((application) => matchesIdentityQuery(search, application.email, application.status, application.role)),
     [search, waitlist],
   );
-  const selectedUser = users.find((user) => user.id === selectedUserId) ?? null;
-  const selectedWaitlist = waitlist.find((application) => application.id === selectedWaitlistId) ?? null;
   const draftFor = useCallback((user: AdminUserRow) => drafts[user.id] ?? new Set(user.permissionOverrides), [drafts]);
   if (!canRead) return <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">Users administration requires users:read.</div>;
   if (isLoading) return null;
@@ -586,59 +590,99 @@ export default function UsersAdminPage() {
     return refs;
   };
 
+  const renderWaitlistRow = (application: WaitlistApplicationRow) => {
+    const expanded = expandedWaitlistIds[application.id] ?? Boolean(search.trim());
+    return (
+      <div key={application.id} className="min-w-0" data-testid={`waitlist-row-${application.id}`}>
+        <button
+          type="button"
+          className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/70"
+          onClick={() => setExpandedWaitlistIds((current) => ({ ...current, [application.id]: !expanded }))}
+        >
+          <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", expanded && "rotate-90")} />
+          <span className="w-7 shrink-0 text-right text-xs tabular-nums">#{application.position}</span>
+          <span className="min-w-0 flex-1 truncate">{application.email}</span>
+        </button>
+        {expanded ? (
+          <HierarchyTreeRow continues={false} indent="icon" connectorAnchor="first-row-center">
+            <WaitlistDetail application={application} canWrite={canWrite} />
+          </HierarchyTreeRow>
+        ) : null}
+      </div>
+    );
+  };
+
   const renderUserRow = (user: AdminUserRow) => {
-    const selected = selectedUserId === user.id;
     const expanded = expandedUserIds[user.id] ?? Boolean(search.trim());
     const children = identityChildrenFor(user.id);
     return (
       <div key={user.id} className="min-w-0" data-testid={`user-row-${user.id}`}>
-        <div className={cn("group relative flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm transition-colors", selected ? "bg-accent" : "hover:bg-accent/70")}>
+        <div className="group relative flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/70">
           <button
             type="button"
             className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
             aria-label={expanded ? `Collapse ${user.email}` : `Expand ${user.email}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              setExpandedUserIds((current) => ({ ...current, [user.id]: !expanded }));
-            }}
+            onClick={() => setExpandedUserIds((current) => ({ ...current, [user.id]: !expanded }))}
           >
             <ChevronRight className={cn("h-3 w-3 transition-transform", expanded && "rotate-90")} />
           </button>
-          <button type="button" onClick={() => { setSelectedUserId(user.id); setSelectedWaitlistId(null); }} className="absolute inset-0" aria-label={`View ${user.email}`} />
-          <User className={cn("pointer-events-none h-3.5 w-3.5 shrink-0", selected ? "text-foreground" : "text-muted-foreground")} />
-          <span className={cn("pointer-events-none min-w-0 flex-1 truncate pr-6", selected ? "text-foreground" : "text-muted-foreground")}>{user.email}</span>
-          {user.identityIncomplete ? <span className="pointer-events-none shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive" title="Identity foundation incomplete — this account is missing its personal workspace and cannot fully sign in">Setup incomplete</span> : null}
-          {user.presence.length > 0 ? <div className="pointer-events-none"><UserPresence presence={user.presence} /></div> : null}
+          <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate pr-6 text-muted-foreground">{user.email}</span>
+          {user.identityIncomplete ? <span className="shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive" title="Identity foundation incomplete — this account is missing its personal workspace and cannot fully sign in">Setup incomplete</span> : null}
+          {user.presence.length > 0 ? <UserPresence presence={user.presence} /> : null}
           {canWrite && currentUser?.id !== user.id ? <DropdownMenu modal={false}><DropdownMenuTrigger asChild><button type="button" className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100" aria-label={`More actions for ${user.email}`} onClick={(event) => event.stopPropagation()}><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteUser(user)}><Trash2 className="mr-2 h-4 w-4" />Delete user</DropdownMenuItem></DropdownMenuContent></DropdownMenu> : null}
         </div>
         {expanded ? (
-          children.length === 0 ? (
-            <HierarchyTreeRow continues={false} indent="icon" connectorAnchor="first-row-center">
-              <div className="px-2 py-1.5 text-sm text-muted-foreground">No accounts.</div>
-            </HierarchyTreeRow>
-          ) : (
-            children.map((ref, index) => (
-              <HierarchyTreeRow
-                key={ref.canonical}
-                continues={index < children.length - 1}
-                indent="icon"
-                connectorAnchor="first-row-center"
-              >
-                <div className="flex min-h-8 items-center px-1 py-0.5">
-                  <ReferenceRenderer refValue={ref} surface="simple-row" className="max-w-full" />
-                </div>
+          <>
+            {children.length === 0 ? (
+              <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+                <div className="px-2 py-1.5 text-sm text-muted-foreground">No accounts.</div>
               </HierarchyTreeRow>
-            ))
-          )
+            ) : (
+              children.map((ref) => (
+                <HierarchyTreeRow
+                  key={ref.canonical}
+                  continues
+                  indent="icon"
+                  connectorAnchor="first-row-center"
+                >
+                  <div className="flex min-h-8 items-center px-1 py-0.5">
+                    <ReferenceRenderer refValue={ref} surface="simple-row" className="max-w-full" />
+                  </div>
+                </HierarchyTreeRow>
+              ))
+            )}
+            <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+              <ProfileTreeRow
+                label="Last Login"
+                icon={<Clock className="h-3.5 w-3.5" />}
+                hasValue={!!user.lastLoginAt}
+                showEmpty
+              >
+                <span className={user.lastLoginAt ? "text-foreground" : "text-muted-foreground"}>
+                  {user.lastLoginAt ? formatDateTimeInTimezone(user.lastLoginAt, timezone, { year: "numeric" }) : "No login yet"}
+                </span>
+              </ProfileTreeRow>
+            </HierarchyTreeRow>
+            <HierarchyTreeRow continues={false} indent="icon" connectorAnchor="first-row-center">
+              <UserDetail
+                user={user}
+                availablePermissions={availablePermissions}
+                canWrite={canWrite}
+                draft={draftFor(user)}
+                onDraftChange={(next) => setDrafts((current) => ({ ...current, [user.id]: next }))}
+              />
+            </HierarchyTreeRow>
+          </>
         ) : null}
       </div>
     );
   };
 
   return (
-    <div className="flex h-full bg-black" data-testid="users-page">
-      <div className={cn("w-full shrink-0 flex-col bg-black @md:flex @md:w-80", selectedUser || selectedWaitlist ? "hidden" : "flex")}>
-        <ScrollArea className="flex-1"><div className="space-y-1 p-2">
+    <div className="flex h-full w-full flex-col bg-background" data-testid="users-page">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className={HIERARCHY_TREE_STACK_CLASS}>
           <HierarchySearchInput
             value={search}
             onChange={setSearch}
@@ -647,14 +691,13 @@ export default function UsersAdminPage() {
             ariaLabel="Search users"
           />
           {canWrite ? <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => setInviteOpen(true)} data-testid="button-invite-user"><UserPlus className="h-3.5 w-3.5" />Invite user</button> : null}
-          <UserGroupSection label="Waitlist" count={filteredWaitlist.length} defaultOpen={false} storageKey="users:list:waitlist:open">{filteredWaitlist.length > 0 ? filteredWaitlist.map((application) => <button type="button" key={application.id} onClick={() => { setSelectedWaitlistId(application.id); setSelectedUserId(null); }} className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm", selectedWaitlistId === application.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70")}><span className="w-7 shrink-0 text-right text-xs tabular-nums">#{application.position}</span><span className="min-w-0 flex-1 truncate">{application.email}</span></button>) : <div className="px-7 py-1.5 text-sm text-muted-foreground">No one is waiting.</div>}</UserGroupSection>
-          <UserGroupSection label="Active" count={activeUsers.length} defaultOpen storageKey="users:list:active:open">{activeUsers.length > 0 ? activeUsers.map(renderUserRow) : <div className="px-7 py-1.5 text-sm text-muted-foreground">No active users.</div>}</UserGroupSection>
-          <UserGroupSection label="Inactive" count={inactiveUsers.length} defaultOpen={false} storageKey="users:list:inactive:open">{inactiveUsers.map(renderUserRow)}</UserGroupSection>
-        </div></ScrollArea>
+          <UserGroupSection label="Waitlist" count={filteredWaitlist.length} defaultOpen={false} storageKey="users:list:waitlist:open">{filteredWaitlist.length > 0 ? filteredWaitlist.map(renderWaitlistRow) : <div className="px-2 py-1.5 text-sm text-muted-foreground">No one is waiting.</div>}</UserGroupSection>
+          <UserGroupSection label="Active" count={activeUsers.length} defaultOpen storageKey="users:list:active:open">{activeUsers.length > 0 ? activeUsers.map(renderUserRow) : <div className="px-2 py-1.5 text-sm text-muted-foreground">No active users.</div>}</UserGroupSection>
+          <UserGroupSection label="Inactive" count={inactiveUsers.length} defaultOpen={false} storageKey="users:list:inactive:open">{inactiveUsers.length > 0 ? inactiveUsers.map(renderUserRow) : <div className="px-2 py-1.5 text-sm text-muted-foreground">No inactive users.</div>}</UserGroupSection>
+        </div>
       </div>
-      <div className={cn("min-w-0 flex-1 flex-col", selectedUser || selectedWaitlist ? "flex" : "hidden @md:flex")}>{selectedWaitlist ? <div className="flex-1 overflow-y-auto scrollbar-thin"><WaitlistDetail application={selectedWaitlist} canWrite={canWrite} onBack={() => setSelectedWaitlistId(null)} /></div> : selectedUser ? <div className="flex-1 overflow-y-auto scrollbar-thin"><UserDetail user={selectedUser} availablePermissions={availablePermissions} canWrite={canWrite} draft={draftFor(selectedUser)} onDraftChange={(next) => setDrafts((current) => ({ ...current, [selectedUser.id]: next }))} onBack={() => setSelectedUserId(null)} /></div> : <div className="flex h-full items-center justify-center"><p className="text-sm text-muted-foreground">Select a user or waitlist application.</p></div>}</div>
       <InviteUserDialog open={inviteOpen} onOpenChange={setInviteOpen} />
-      <DeleteUserDialog user={deleteUser} open={!!deleteUser} onOpenChange={(open) => { if (!open) setDeleteUser(null); }} onDeleted={() => setSelectedUserId(null)} />
+      <DeleteUserDialog user={deleteUser} open={!!deleteUser} onOpenChange={(open) => { if (!open) setDeleteUser(null); }} onDeleted={() => undefined} />
     </div>
   );
 }
