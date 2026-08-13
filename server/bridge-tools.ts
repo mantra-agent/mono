@@ -1934,6 +1934,48 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
     }
 
+    if (action === "list_reported") {
+      const allowedStatuses = new Set(["open", "in_progress", "in_review", "resolved"]);
+      const status = typeof args.status === "string" && args.status.trim()
+        ? args.status.trim()
+        : undefined;
+      const excludeStatus = typeof args.excludeStatus === "string" && args.excludeStatus.trim()
+        ? args.excludeStatus.trim()
+        : undefined;
+      if (status && !allowedStatuses.has(status)) {
+        return { result: `Invalid Issue status '${status}'`, error: true };
+      }
+      if (excludeStatus && !allowedStatuses.has(excludeStatus)) {
+        return { result: `Invalid excluded Issue status '${excludeStatus}'`, error: true };
+      }
+      const limit = Math.max(1, Math.min(Number(args.limit) || 100, 500));
+      const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+      try {
+        const { requireCurrentPrincipal } = await import("./principal-context");
+        const { principalHasPermission } = await import("./permissions");
+        const principal = requireCurrentPrincipal();
+        if (!principalHasPermission(principal, "system:read")) {
+          return { result: "Permission required: system:read", error: true };
+        }
+        const issues = await storage.getIssuesForAdmin(principal, { status, excludeStatus, lightweight: true });
+        const reportedIssues = issues.filter((issue) => issue.kind === "reported");
+        const page = reportedIssues.slice(offset, offset + limit);
+        const nextOffset = offset + page.length;
+        return {
+          result: JSON.stringify({
+            issues: page,
+            offset,
+            nextOffset: nextOffset < reportedIssues.length ? nextOffset : null,
+            hasMore: nextOffset < reportedIssues.length,
+            total: reportedIssues.length,
+          }),
+        };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { result: `Failed to list reported Issues: ${message}`, error: true };
+      }
+    }
+
     if (action === "get" || action === "resolve") {
       const rawId = args.id;
       if (rawId === undefined || rawId === null || rawId === "") {
@@ -2056,7 +2098,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
     }
 
-    return { result: `Unknown issues action: ${action}. Available: create, list, get, resolve, add_note`, error: true };
+    return { result: `Unknown issues action: ${action}. Available: create, list, list_reported, get, resolve, add_note, list_errors, dismiss_error`, error: true };
   },
 
   async goals(args) {

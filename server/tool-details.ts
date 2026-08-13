@@ -250,12 +250,13 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     },
   },
   issues: {
-    description: "Track product Issues — create, page unresolved Issues, fetch one by ID, or resolve one with affirmative evidence. Part of the Build product area. Actions: create, list, get, resolve.",
-    whenToUse: "When creating a bug or improvement issue, paging unresolved issues, fetching an existing issue by numeric ID, or resolving one with affirmative evidence.",
-    example: 'Create: { "action": "create", "title": "Login bug", "description": "..." }\nList: { "action": "list", "status": "open" }\nGet: { "action": "get", "id": "123" }\nResolve: { "action": "resolve", "id": "123", "evidence": "Reproduced in stage; fix confirmed via @pr:repo/456 merge and a passing screenshot." }',
+    description: "Track product Issues — create, page unresolved tracked Issues, page the admin Reported queue, fetch one by ID, or resolve one with affirmative evidence. Part of the Build product area. Actions: create, list, list_reported, get, resolve.",
+    whenToUse: "When creating a bug or improvement issue, paging unresolved tracked issues, paging the admin Reported queue, fetching an existing issue by numeric ID, or resolving one with affirmative evidence.",
+    example: 'Create: { "action": "create", "title": "Login bug", "description": "..." }\nList: { "action": "list", "status": "open" }\nReported: { "action": "list_reported" }\nGet: { "action": "get", "id": "123" }\nResolve: { "action": "resolve", "id": "123", "evidence": "Reproduced in stage; fix confirmed via @pr:repo/456 merge and a passing screenshot." }',
     actions: {
       create: { description: "Create a new issue to track a bug or improvement.", requiredParams: ["title"], optionalParams: ["description"] },
-      list: { description: "Page unresolved (or filtered) Issues.", optionalParams: ["status", "excludeStatus", "offset", "limit"] },
+      list: { description: "Page unresolved (or filtered) tracked Issues. Never includes kind=reported.", optionalParams: ["status", "excludeStatus", "offset", "limit"] },
+      list_reported: { description: "Page the admin Reported queue. Requires system:read and returns only kind=reported Issues.", optionalParams: ["status", "excludeStatus", "offset", "limit"] },
       get: { description: "Fetch a single issue by numeric ID.", requiredParams: ["id"] },
       resolve: { description: "Resolve an issue with a concise affirmative evidence note (1-2000 characters).", requiredParams: ["id", "evidence"] },
     },
