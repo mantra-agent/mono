@@ -443,8 +443,16 @@ export class FileIssueStorage {
       const { products } = await import("@shared/models/platforms");
       const { combineWithVisibleScope } = await import("../scoped-storage");
       const principal = requireCurrentPrincipal();
-      const [web] = await db.select({ id: products.id }).from(products).where(combineWithVisibleScope(principal, { scope: products.scope, ownerUserId: products.ownerUserId, accountId: products.accountId }, sql`lower(${products.name}) = 'web'`)).limit(1);
-      productId = web?.id ?? null;
+      const webNamePredicate = sql`lower(${products.name}) = 'web'`;
+      // Prefer the reporter's own visible Web product (correct per-account default).
+      const [ownWeb] = await db.select({ id: products.id }).from(products).where(combineWithVisibleScope(principal, { scope: products.scope, ownerUserId: products.ownerUserId, accountId: products.accountId }, webNamePredicate)).orderBy(products.id).limit(1);
+      productId = ownWeb?.id ?? null;
+      // Report Issue is Core feedback available to every authenticated user; a reporter
+      // without their own Web product still files against the canonical Web product by name.
+      if (productId == null) {
+        const [canonicalWeb] = await db.select({ id: products.id }).from(products).where(webNamePredicate).orderBy(products.id).limit(1);
+        productId = canonicalWeb?.id ?? null;
+      }
     }
     if (productId == null) throw new IssueCreateValidationError("Issue productId is required and no canonical Web Product is available");
 
