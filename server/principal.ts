@@ -322,15 +322,7 @@ export async function ensureUserIdentityFoundation(
 
     const accountId = existingAccount?.id ?? (await tx
       .insert(accounts)
-      .values({
-        kind: "personal",
-        name: firstName,
-        ownerUserId: user.id,
-        // Real personal Accounts are entitled to spend; incomplete/orphan shells stay unentitled.
-        entitlement: "entitled",
-        // Entitled personal Accounts may use the platform model stack until Stripe narrows access.
-        modelAccess: { mode: "platform_stack" },
-      })
+      .values({ kind: "personal", name: firstName, ownerUserId: user.id })
       .onConflictDoUpdate({
         target: [accounts.kind, accounts.ownerUserId],
         set: { updatedAt: sql`CURRENT_TIMESTAMP` },

@@ -12,7 +12,6 @@ import { runWithPrincipal, getCurrentPrincipal } from "./principal-context";
 import { createNamedSystemPrincipal, createUserPrincipalFromUser, type Principal } from "./principal";
 import { getUserEffectivePermissions } from "./permissions";
 import { storage } from "./storage";
-import { assertSpendAllowed, isSpendAuthorityError } from "./spend-authority";
 
 const log = createLogger("TimerScheduler");
 
@@ -1008,27 +1007,6 @@ class TimerScheduler {
     };
 
     const executionPrincipal = await this.resolveExecutionPrincipal(timer);
-    // Account + pinned Instance authorize Timer spend; quarantined/unentitled fail closed.
-    try {
-      await runWithPrincipal(executionPrincipal, async () =>
-        assertSpendAllowed({
-          purpose: "timer",
-          principal: executionPrincipal,
-          accountId: timer.accountId,
-          userId: timer.ownerUserId,
-        }),
-      );
-    } catch (error) {
-      if (isSpendAuthorityError(error)) {
-        log.warn(
-          `skipping timer "${timer.name}" — spend denied reason=${error.reason} ` +
-            `accountId=${error.accountId ?? timer.accountId ?? "n/a"} ` +
-            `instanceId=${error.instanceId ?? "n/a"}`,
-        );
-        return null;
-      }
-      throw error;
-    }
     // Claim is the insert. Lost races return false and must not run the handler.
     const claimed = await runWithPrincipal(executionPrincipal, async () =>
       withQueryAttributionAsync("timer-scheduler", () =>
