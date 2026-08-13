@@ -110,11 +110,13 @@ export const coreDefinition: CoreDefinition = {
       // Admin
       nav("core.nav.audiences", "Admin", "Audiences", "Users", "navigation.audiences.open", "core.route.audiences", 1, { requiredPermissions: ["system:read"] }),
       nav("core.nav.campaigns", "Admin", "Campaigns", "Megaphone", "navigation.campaigns.open", "core.route.campaigns", 2, { requiredPermissions: ["system:read"] }),
-      nav("core.nav.users", "Admin", "Users", "Users", "navigation.users.open", "core.route.system", 3, { requiredPermissions: ["system:read"] }),
-      nav("core.nav.vaults", "Admin", "Vaults", "Vault", "navigation.vaults.open", "core.route.vaults", 4),
-      nav("core.nav.teams", "Admin", "Teams", "Users", "navigation.teams.open", "core.route.teams", 5),
-      nav("core.nav.integrations", "Admin", "Integrations", "Plug", "navigation.integrations.open", "core.route.integrations", 6),
-      nav("core.nav.account", "Admin", "Account", "Settings", "navigation.account.open", "core.route.account", 7),
+      nav("core.nav.accounts", "Admin", "Accounts", "Building2", "navigation.accounts.open", "core.route.system", 3, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.agents", "Admin", "Agents", "Bot", "navigation.agents.open", "core.route.system", 4, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.users", "Admin", "Users", "Users", "navigation.users.open", "core.route.system", 5, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.vaults", "Admin", "Vaults", "Vault", "navigation.vaults.open", "core.route.vaults", 6),
+      nav("core.nav.teams", "Admin", "Teams", "Users", "navigation.teams.open", "core.route.teams", 7),
+      nav("core.nav.integrations", "Admin", "Integrations", "Plug", "navigation.integrations.open", "core.route.integrations", 8),
+      nav("core.nav.account", "Admin", "Account", "Settings", "navigation.account.open", "core.route.account", 9),
     ],
     widgets: [
       widget("core.widget.state", "home.primary", "state", "state", 1),

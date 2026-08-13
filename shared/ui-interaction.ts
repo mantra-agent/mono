@@ -57,6 +57,8 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.cost.open": { href: "/system?tab=cost", permission: "system:read" },
   "navigation.audiences.open": { href: "/audiences", permission: "system:read" },
   "navigation.campaigns.open": { href: "/campaigns", permission: "system:read" },
+  "navigation.accounts.open": { href: "/system?tab=accounts", permission: "system:read" },
+  "navigation.agents.open": { href: "/system?tab=agents", permission: "system:read" },
   "navigation.users.open": { href: "/system?tab=users", permission: "system:read" },
   "navigation.secrets.open": { href: "/system?tab=secrets", permission: "system:read" },
   "navigation.vaults.open": { href: "/vaults" },
