@@ -129,6 +129,10 @@ try {
 
 import "./autonomous-skill-runner";
 
+// Declared before the early installGracefulShutdown() call. Under Warm Stage
+// (tsx server/index.ts) a later `let` would TDZ and abort boot before listen.
+let shutdownInstalled = false;
+
 const app = express();
 const httpServer = createServer(app);
 installGracefulShutdown();
@@ -987,7 +991,6 @@ app.use((req, res, next) => {
 });
 
 const SHUTDOWN_TIMEOUT_MS = Math.max(1_000, parseInt(process.env.APP_SHUTDOWN_TIMEOUT_MS || "8000", 10));
-let shutdownInstalled = false;
 let shutdownPromise: Promise<void> | null = null;
 
 function closeHttpServer(): Promise<void> {
