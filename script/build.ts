@@ -644,10 +644,7 @@ async function buildAll() {
 
   const backupFate = await validateBackupFateDisposition(process.cwd());
   console.log(
-    `backup fate disposition valid: ${backupFate.declaredRelations} declared relations fated (${backupFate.fatedRelations} disposition names); derived producers: ${backupFate.producerCount}` +
-      (backupFate.includedWithoutExporter.length
-        ? `; residual included-without-producer: ${backupFate.includedWithoutExporter.length}`
-        : "; include implies export"),
+    `backup fate disposition valid: ${backupFate.declaredRelations} declared relations; membership ${backupFate.membershipRelations} (schema is membership); security denylist ${backupFate.denylistRelations}; drizzle producers ${backupFate.producerCount}`,
   );
 
   if (DEV_MODE) {

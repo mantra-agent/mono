@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import type { ClientBase } from "pg";
 
-export const BACKUP_DISPOSITION_MANIFEST_VERSION = 6;
+export const BACKUP_DISPOSITION_MANIFEST_VERSION = 7;
 
 export type BackupClassification = "authoritative" | "control" | "projection" | "transient" | "retired" | "secret";
 export type BackupSensitivity = "S0" | "S1" | "S2" | "S3";
@@ -15,72 +15,146 @@ export type BackupDisposition = {
   recovery: string;
 };
 
-export const EXCLUSIONS: Record<string, Omit<BackupDisposition, "relation" | "action">> = {
-  app_secrets: { classification: "secret", owner: "Security", reason: "Credential material requires separately envelope-encrypted recovery and must not enter Brain artifacts.", sensitivity: "S3", recovery: "Reprovision or rotate through the secret owner; never restore from Brain." },
-  github_credentials: { classification: "secret", owner: "Security", reason: "Repository credentials must not be copied into the ordinary logical backup blast radius.", sensitivity: "S3", recovery: "Reprovision or rotate through the provider connection owner." },
-  session: { classification: "transient", owner: "Authentication", reason: "Restoring browser sessions can resurrect authentication authority.", sensitivity: "S3", recovery: "Start empty and require reauthentication." },
-  google_oauth_transactions: { classification: "transient", owner: "Integrations", reason: "Expiring PKCE/replay state is invalid and unsafe after recovery.", sensitivity: "S3", recovery: "Start empty; users restart authorization." },
-  subscription_oauth_transactions: { classification: "transient", owner: "Integrations", reason: "Expiring OAuth transaction state is invalid after recovery.", sensitivity: "S3", recovery: "Start empty; users restart authorization." },
-  voice_session_active: { classification: "transient", owner: "Voice", reason: "Active call leases are process/provider-time bound and restoring them blocks or resurrects calls.", sensitivity: "S3", recovery: "Start empty and establish fresh leases." },
-  session_search_segments: { classification: "projection", owner: "Conversations", reason: "Bounded search projection is rebuilt from canonical session state.", sensitivity: "S2", recovery: "Run the canonical projection worker after restore." },
-  reference_occurrence_sources: { classification: "projection", owner: "Life Addressing", reason: "Reference occurrence source state is replayable from canonical authored objects.", sensitivity: "S2", recovery: "Run the canonical Life Addressing replay." },
-  reference_occurrences: { classification: "projection", owner: "Life Addressing", reason: "Reference occurrences are a rebuildable projection.", sensitivity: "S2", recovery: "Run the canonical Life Addressing replay." },
-  indexed_file_sources: { classification: "projection", owner: "Files", reason: "Semantic file index rows are provider/object-derived projection state.", sensitivity: "S2", recovery: "Run the canonical file reconciliation/index pipeline." },
-  railway_provider_deployment_state: { classification: "projection", owner: "Platforms", reason: "Provider observation snapshot must be rehydrated from Railway.", sensitivity: "S1", recovery: "Start empty and refresh through the bounded observer." },
-  railway_provider_quota_governors: { classification: "transient", owner: "Platforms", reason: "Rate-limit/cooldown state is time-bound and unsafe to revive.", sensitivity: "S1", recovery: "Start empty and rebuild from provider responses." },
-  browser_performance_telemetry: { classification: "projection", owner: "Reliability", reason: "Retention-owned experience telemetry is not recovery authority.", sensitivity: "S2", recovery: "Start empty." },
-  mobile_startup_telemetry: { classification: "projection", owner: "Reliability", reason: "Retention-owned experience telemetry is not recovery authority.", sensitivity: "S2", recovery: "Start empty." },
-  application_error_deliveries: { classification: "projection", owner: "Reliability", reason: "Delivery diagnostics are replay/retention state, not canonical errors.", sensitivity: "S1", recovery: "Start empty." },
-  signal_source_scan_diagnostics: { classification: "projection", owner: "News", reason: "Scan diagnostics are non-authoritative telemetry.", sensitivity: "S1", recovery: "Start empty." },
-  recall_webhook_delivery_diagnostics: { classification: "projection", owner: "Meetings", reason: "Webhook diagnostics are retention-owned telemetry.", sensitivity: "S2", recovery: "Start empty." },
-  calendar_event_tasks: { classification: "retired", owner: "Calendar", reason: "Legacy Calendar-to-Task join retained only in migration history; current Calendar metadata and Task storage no longer read or write it.", sensitivity: "S2", recovery: "Start empty; canonical Calendar metadata and Tasks restore independently." },
-  capability_cache: { classification: "retired", owner: "Core Capabilities", reason: "Legacy capability cache has no current schema producer or runtime consumer; capability state derives from current tools, Skills, code graph, and reports.", sensitivity: "S1", recovery: "Start empty and derive current capability state from canonical producers." },
-  glasses_device_tokens: { classification: "secret", owner: "Glasses", reason: "Bearer device tokens authenticate a user and must not be copied into or revived from an ordinary Brain artifact.", sensitivity: "S3", recovery: "Start empty and pair devices again to mint fresh tokens." },
-  historical_continuity_rollup_leases: { classification: "transient", owner: "Historical Continuity", reason: "Legacy rollup claim leases are worker-time-bound and the current Timer to Runtime to Skill flow no longer uses this relation.", sensitivity: "S2", recovery: "Start empty; Runtime establishes fresh fenced attempts from durable continuity entries." },
-  library_corpus_migration_items: { classification: "retired", owner: "Library", reason: "Library2 corpus migration is retired and has no runtime reader or writer; restoring item proposals could imply obsolete placement authority.", sensitivity: "S2", recovery: "Start empty; canonical Library pages and Vault hierarchy remain authoritative." },
-  library_corpus_migration_runs: { classification: "retired", owner: "Library", reason: "Library2 corpus migration is retired and has no runtime reader or writer; run receipts are not required by current Library recovery.", sensitivity: "S2", recovery: "Start empty; do not reactivate retired corpus migration after restore." },
-  system_events: { classification: "retired", owner: "Core EventBus", reason: "EventBus is process-local; PostgreSQL rows are legacy telemetry read only by bounded retention cleanup.", sensitivity: "S2", recovery: "Start empty; live events and replay buffers begin with the new process boot." },
-  workspace_backup_files: { classification: "retired", owner: "Core Recovery", reason: "Legacy PostgreSQL backup payload copies were retired in favor of object storage plus backup_jobs and should not re-enter recursive Brain artifacts.", sensitivity: "S3", recovery: "Recover backup artifacts from object storage and provenance from backup_jobs." },
-  regression_runs: { classification: "retired", owner: "Build Regression", reason: "Retired post-deploy regression run store (migration 0107) with no current Drizzle declaration, runtime reader, or writer; post-build regression is now an ordinary Skill pipeline whose outcomes live in principal-scoped documents.", sensitivity: "S2", recovery: "Start empty; regression outcomes derive from the current Skill report path." },
-  issue_regression_contracts: { classification: "retired", owner: "Build Regression", reason: "Retired post-deploy regression contract store (migration 0107) with no current Drizzle declaration or runtime reader/writer.", sensitivity: "S2", recovery: "Start empty; the current Regression Skill owns outcome authority." },
-  issue_regression_results: { classification: "retired", owner: "Build Regression", reason: "Retired post-deploy regression result store (migration 0107) with no current Drizzle declaration or runtime reader/writer.", sensitivity: "S2", recovery: "Start empty; the current Regression Skill owns outcome authority." },
-  intention_attempts: { classification: "retired", owner: "Autonomy", reason: "Retired legacy intention-attempt store with no current Drizzle declaration or runtime reader/writer; the autonomy stack now records attempts through Runtime runs/attempts.", sensitivity: "S2", recovery: "Start empty; Runtime owns attempt lineage." },
+/**
+ * Security denylist — the only authored membership surface.
+ * Schema is membership: every declared/live relation exports unless listed here.
+ * Retired, projection, and telemetry tables are NOT denylisted; they export if they exist.
+ * These relations must never enter Brain restore (secrets, auth sessions, OAuth leases, active voice leases, device tokens).
+ */
+export type SecurityDenylistEntry = {
+  owner: string;
+  reason: string;
+  classification: "secret" | "transient";
+  sensitivity: BackupSensitivity;
+  recovery: string;
 };
 
-export const INCLUSIONS: Record<string, Omit<BackupDisposition, "relation" | "action">> = {
-  products: { classification: "authoritative", owner: "Build Products", reason: "Principal/account-scoped Product intent authority; platform_products is only runtime compatibility and must not replace it.", sensitivity: "S2", recovery: "Restore after account and Platform roots; preserve Product IDs for backlog and association references." },
-  product_backlogs: { classification: "authoritative", owner: "Build Products", reason: "Canonical one-to-one Product backlog state owned structurally by products.", sensitivity: "S2", recovery: "Restore after products and before feature_requests; preserve the unique product relationship." },
-  product_platform_associations: { classification: "control", owner: "Build Products", reason: "Durable Product-to-Platform bridge; it does not grant Product-to-Environment deployment ownership.", sensitivity: "S2", recovery: "Restore after products and platforms; revalidate parent visibility before runtime use." },
-  product_context_artifacts: { classification: "authoritative", owner: "Build Products", reason: "Product-owned typed Library-page context; Library pages remain content authority.", sensitivity: "S2", recovery: "Restore after products and library_pages; preserve product/kind/page uniqueness." },
-  feature_requests: { classification: "authoritative", owner: "Build Products", reason: "Canonical feature-request state owned by product_backlogs; requests never create Tasks.", sensitivity: "S2", recovery: "Restore after product_backlogs; preserve backlog references and statuses." },
-  business_hiring_slots: { classification: "authoritative", owner: "Business Hiring", reason: "Authoritative Business hiring-plan state owned by businesses and job_roles; Forecast/Hiring UI projects from these rows and must not treat financial-model keyHires as the live plan.", sensitivity: "S2", recovery: "Restore after businesses and job_roles; preserve slot IDs, role references, approval/start months, and approved/canceled status. Do not seed slots." },
-  phone_call_records: { classification: "control", owner: "Phone / Voice", reason: "Canonical call SID to Session and VoiceSession correlation plus terminal People-interaction receipt.", sensitivity: "S3", recovery: "Restore after its owner identity and Session dependencies; terminal rows preserve replay and interaction deduplication." },
-  slack_installations: { classification: "authoritative", owner: "Slack Mod", reason: "Environment, provider, tenant, account, Vault, and kill-switch authority for the Slack pilot.", sensitivity: "S3", recovery: "Restore disabled first; revalidate provider credentials, environment identity, and Mod state before enabling." },
-  slack_principal_mappings: { classification: "authoritative", owner: "Slack Mod", reason: "Exact Slack User to Mantra User, Account, and Vault authority mapping.", sensitivity: "S3", recovery: "Restore only with installations and revalidate live account membership and Vault visibility before use." },
-  slack_session_bindings: { classification: "control", owner: "Slack Mod", reason: "Replay-safe external conversation to canonical Mantra Session binding.", sensitivity: "S2", recovery: "Restore after canonical Sessions and mappings so external retries converge on the same Session." },
-  slack_events: { classification: "control", owner: "Slack Mod", reason: "Durable dedupe, claim, delivery, and failure receipts; accepted raw transport bodies are nulled.", sensitivity: "S2", recovery: "Restore unsettled receipts disabled, then revalidate every authority and provider gate before bounded recovery." },
-  twilio_number_bindings: { classification: "authoritative", owner: "Phone / Voice", reason: "Canonical inbound phone number to user, account, and Vault authority binding.", sensitivity: "S3", recovery: "Restore the binding before accepting signed inbound provider callbacks." },
-  upload_resource_sources: { classification: "control", owner: "Files", reason: "Durable provenance linking canonical uploaded drive resources to their source Session and message.", sensitivity: "S2", recovery: "Restore after drive_resources; the catalog FK supplies dependency order." },
-  vault_r2_migration_states: { classification: "control", owner: "Object Storage / Vaults", reason: "Durable fingerprint, progress, and completion receipt for the replay-safe legacy-private to Vault object migration.", sensitivity: "S2", recovery: "Restore with Vault authority; any resumed migration must revalidate the live object inventory fingerprint before copying." },
+export const SECURITY_DENYLIST: Record<string, SecurityDenylistEntry> = {
+  app_secrets: {
+    owner: "Security",
+    reason: "Credential material requires separately envelope-encrypted recovery and must not enter Brain artifacts.",
+    classification: "secret",
+    sensitivity: "S3",
+    recovery: "Reprovision or rotate through the secret owner; never restore from Brain.",
+  },
+  github_credentials: {
+    owner: "Security",
+    reason: "Repository credentials must not be copied into the ordinary logical backup blast radius.",
+    classification: "secret",
+    sensitivity: "S3",
+    recovery: "Reprovision or rotate through the provider connection owner.",
+  },
+  glasses_device_tokens: {
+    owner: "Glasses",
+    reason: "Bearer device tokens authenticate a user and must not be copied into or revived from an ordinary Brain artifact.",
+    classification: "secret",
+    sensitivity: "S3",
+    recovery: "Start empty and pair devices again to mint fresh tokens.",
+  },
+  session: {
+    owner: "Authentication",
+    reason: "Restoring browser sessions can resurrect authentication authority (connect-pg-simple).",
+    classification: "transient",
+    sensitivity: "S3",
+    recovery: "Start empty and require reauthentication.",
+  },
+  google_oauth_transactions: {
+    owner: "Integrations",
+    reason: "Expiring PKCE/replay state is invalid and unsafe after recovery.",
+    classification: "transient",
+    sensitivity: "S3",
+    recovery: "Start empty; users restart authorization.",
+  },
+  subscription_oauth_transactions: {
+    owner: "Integrations",
+    reason: "Expiring OAuth transaction state is invalid after recovery.",
+    classification: "transient",
+    sensitivity: "S3",
+    recovery: "Start empty; users restart authorization.",
+  },
+  voice_session_active: {
+    owner: "Voice",
+    reason: "Active call leases are process/provider-time bound and restoring them blocks or resurrects calls.",
+    classification: "transient",
+    sensitivity: "S3",
+    recovery: "Start empty and establish fresh leases.",
+  },
 };
 
-// Include implies export. Former TABLE_REGISTRY keys are fate includes here;
-// producers derive from Drizzle + BRAIN_EXPORT_EXCEPTIONS, not a second inventory.
-export const SOURCE_VERIFIED_INCLUDES = new Set(`accounts address_links agenda_definitions agent_instance_memberships agent_instances agent_profiles api_calls app_migrations application_error_aggregates backup_jobs budget_entries budget_income_override budget_monthly_overrides build_deployment_home_projections business_budgets business_hiring_slots business_plans business_vault_memberships businesses calendar_event_artifacts calendar_event_metadata calendar_event_people captures code_embeddings communication_audiences compaction_operations companies company_identity_keys connected_accounts content_queue conversation_messages conversation_revisions debt_payments decision_links decision_updates decisions document_artifacts document_store_cutover_state document_store_documents document_store_migration_conflicts document_store_migration_runs drive_resources email_campaigns email_dismissals email_drafts email_enrichments email_messages email_sync_cursors email_sync_log email_triage_log emotional_states environment_build_lifecycle_configs environment_capability_bindings environment_context_artifacts environment_hosting_bindings environment_promotion_releases environment_runtime_variables environment_source_bindings exec_education exec_experience exec_metrics exec_passions exec_skills expense_categories experience_skills export_jobs feature_requests file_index_policies file_index_reconciliation_runs financed_assets financial_goals financial_models future_cash_events gratitude_entries health_metrics historical_continuity_entries hours_used_intervals hours_used_rollups income_deductions income_deposits income_sources indexed_content inference_payload_captures info_notes intentions invited_subjects job_roles kpis learning_entries legacy_memory_quarantine_state library_annotations library_page_links library_page_pins library_page_trash library_page_views library_pages library_placements library_vault_identity_migrations magic_demo_session_events magic_demo_sessions magic_demo_vision_frames manual_401k_accounts manual_assets manual_liabilities media_items meeting_audio_evaluations meeting_audio_samples meeting_drafts meeting_recap_distributions meeting_turn_enrollments meeting_turns memberships memory_content_blocks memory_entity_links memory_entries memory_events memory_links memory_sources memory_transitions memory_vnext_causal_path_reviews memory_vnext_claim_link_evidence memory_vnext_claim_links memory_vnext_claims memory_vnext_entity_links memory_vnext_exposures memory_vnext_prediction_evaluation_runs memory_vnext_prediction_resolutions memory_vnext_prediction_runs memory_vnext_predictions memory_vnext_relationship_certainty_events memory_vnext_retrieval_activation_events memory_vnext_retrieval_controls memory_vnext_retrieval_evaluation_runs memory_vnext_retrieval_labels memory_vnext_source_links memory_vnext_source_queue memory_vnext_sources memory_vnext_strength_events memory_vnext_transition_edges memory_vnext_transition_members memory_vnext_transition_paths merchant_category_overrides messages metric_samples metrics milestones mod_entitlements mod_installation_resources mod_installations object_acls object_grants opportunities opportunity_artifacts opportunity_interactions opportunity_skills organization_members organizations parked_ideas people_import_batches people_import_candidates people_import_decisions person_emails person_merge_aliases person_vault_memberships persona_preferences persona_revisions personas persons plaid_accounts plaid_holdings plaid_liabilities plaid_securities plaid_sync_cursors plaid_transactions plan_executions plan_session_links plan_step_attempts plan_step_reviews plan_steps platform_deployment_observations platform_product_environments platform_products platform_vault_memberships platforms principle_revisions principles privileged_access_audit product_backlogs product_platform_associations products project_vault_memberships projects prompt_module_versions prompt_modules provider_connections railway_api_call_receipts recurring_expenses reflection_entries render_jobs responsibility_runs runtime_attempts runtime_capacity_policies runtime_run_events runtime_runs scan_runs session_artifacts session_output_buffer session_tree sessions signal_items signal_sources simple_people_surface_state skill_failure_dismissals skill_persona_preferences skill_references skill_runs skill_scores skills strategy_actors strategy_artifacts strategy_assumption_links strategy_assumptions strategy_context_entries strategy_end_conditions strategy_goals strategy_move_definitions strategy_move_end_condition_effects strategy_move_instances strategy_simulation_runs strategy_states system_hook_executions system_hooks system_settings tag_aliases tag_assignments tag_migrations tags tasks team_members teams theses thesis_evidence thesis_predictions thoughts timers tool_output_admissions transaction_amortizations transactional_outbox transfer_pair_overrides user_permissions user_profiles users vaults waitlist_applications wellness_activities wellness_logs workflow_artifacts workflow_gates workflow_runs workflow_sessions workflow_stage_attempts workflow_templates workflow_transitions workspace_documents`.split(/\s+/));
+export function isSecurityDenied(relation: string): boolean {
+  return Object.prototype.hasOwnProperty.call(SECURITY_DENYLIST, relation);
+}
+
+export function listSecurityDenylistNames(): string[] {
+  return Object.keys(SECURITY_DENYLIST).sort();
+}
 
 export type CatalogForeignKey = { name: string; parent: string; deferrable: boolean };
-export type CatalogRelation = { name: string; oid: number; relkind: string; identityColumns: string[]; sequenceColumns: Array<{ column: string; sequence: string }>; foreignKeys: CatalogForeignKey[] };
-export type BackupRestoreStrategy = { id: "library-parent-reconciliation-v1" | "principle-current-revision-v1" | "runtime-reference-reconciliation-v1"; relations: string[]; insertOrder: string[]; deferredConstraints: string[]; reconciledReferences: string[] };
-export type BackupCoverage = { version: number; discovered: CatalogRelation[]; included: BackupDisposition[]; excluded: BackupDisposition[]; insertOrder: string[]; restoreStrategies: BackupRestoreStrategy[]; schemaFingerprint: string; manifestFingerprint: string };
+export type CatalogRelation = {
+  name: string;
+  oid: number;
+  relkind: string;
+  identityColumns: string[];
+  sequenceColumns: Array<{ column: string; sequence: string }>;
+  foreignKeys: CatalogForeignKey[];
+};
+export type BackupRestoreStrategy = {
+  id:
+    | "library-parent-reconciliation-v1"
+    | "principle-current-revision-v1"
+    | "runtime-reference-reconciliation-v1";
+  relations: string[];
+  insertOrder: string[];
+  deferredConstraints: string[];
+  reconciledReferences: string[];
+};
+export type BackupCoverage = {
+  version: number;
+  discovered: CatalogRelation[];
+  included: BackupDisposition[];
+  excluded: BackupDisposition[];
+  insertOrder: string[];
+  restoreStrategies: BackupRestoreStrategy[];
+  schemaFingerprint: string;
+  manifestFingerprint: string;
+};
 
 const stableHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-function includeDisposition(relation: string, registered: boolean): BackupDisposition {
-  return { relation, action: "include", classification: registered ? "authoritative" : "control", owner: registered ? "Registered domain owner" : "Core Recovery", reason: registered ? "Existing recovery-required Brain relation." : "Source audit verified this live relation is required for complete recovery.", sensitivity: "S2", recovery: "Restore rows and catalog-derived identity/sequence state." };
+/** Schema is membership: non-denylisted relations export because they exist. */
+function membershipDisposition(relation: string, leftover: boolean): BackupDisposition {
+  return {
+    relation,
+    action: "include",
+    classification: leftover ? "control" : "authoritative",
+    owner: leftover ? "Core Recovery" : "Schema membership",
+    reason: leftover
+      ? "Live leftover not declared in source; exported via raw SQL under inverted default (schema is membership)."
+      : "Schema is membership; relation exports because it exists.",
+    sensitivity: "S2",
+    recovery: "Restore rows and catalog-derived identity/sequence state.",
+  };
 }
 
-export async function inspectBackupCoverage(client: ClientBase, registeredRelations: string[]): Promise<BackupCoverage> {
-  const result = await client.query<CatalogRelation & { identity_columns: string[] | null; sequence_columns: Array<{ column: string; sequence: string }> | null; foreign_keys: CatalogForeignKey[] | null }>(`
+/**
+ * Reconcile live pg_catalog against the security denylist.
+ * Membership = every ordinary relation minus SECURITY_DENYLIST.
+ * Unexplained Live leftovers export (raw SQL at the producer layer) instead of failing for missing disposition.
+ * Fail closed only for unsupported SCC / restore-contract drift (and caller-side denylist/producer checks).
+ *
+ * @param knownSourceRelations optional declared/source names used only to label leftovers in the manifest
+ */
+export async function inspectBackupCoverage(
+  client: ClientBase,
+  knownSourceRelations: string[] = [],
+): Promise<BackupCoverage> {
+  const result = await client.query<
+    CatalogRelation & {
+      identity_columns: string[] | null;
+      sequence_columns: Array<{ column: string; sequence: string }> | null;
+      foreign_keys: CatalogForeignKey[] | null;
+    }
+  >(`
     SELECT c.oid::int AS oid, c.relname AS name, c.relkind,
       COALESCE((SELECT jsonb_agg(a.attname ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND NOT a.attisdropped AND a.attidentity <> ''), '[]') AS identity_columns,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('column', a.attname, 'sequence', pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname)) ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND NOT a.attisdropped AND pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname) IS NOT NULL), '[]') AS sequence_columns,
@@ -88,37 +162,214 @@ export async function inspectBackupCoverage(client: ClientBase, registeredRelati
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname=current_schema() AND c.relkind IN ('r','p') AND NOT c.relispartition
     ORDER BY c.relname`);
-  const registered = new Set(registeredRelations);
-  const discovered = result.rows.map(row => ({ name: row.name, oid: row.oid, relkind: row.relkind, identityColumns: row.identity_columns ?? [], sequenceColumns: row.sequence_columns ?? [], foreignKeys: row.foreign_keys ?? [] }));
-  const dispositions = discovered.map(rel => EXCLUSIONS[rel.name]
-    ? ({ relation: rel.name, action: "exclude", ...EXCLUSIONS[rel.name] } as BackupDisposition)
-    : INCLUSIONS[rel.name]
-      ? ({ relation: rel.name, action: "include", ...INCLUSIONS[rel.name] } as BackupDisposition)
-      : registered.has(rel.name) || SOURCE_VERIFIED_INCLUDES.has(rel.name)
-        ? includeDisposition(rel.name, registered.has(rel.name))
-        : null);
-  const unexplained = discovered.filter((_, index) => dispositions[index] === null).map(rel => rel.name);
-  if (unexplained.length) throw new Error(`Backup completeness preflight failed: ${unexplained.length} unexplained relation(s): ${unexplained.join(", ")}`);
-  const included = dispositions.filter((d): d is BackupDisposition => d?.action === "include");
-  const excluded = dispositions.filter((d): d is BackupDisposition => d?.action === "exclude");
-  const includedNames = new Set(included.map(d => d.relation));
-  const graph = new Map([...includedNames].map(name => [name, [] as string[]]));
-  for (const rel of discovered.filter(r => includedNames.has(r.name))) for (const fk of rel.foreignKeys) if (includedNames.has(fk.parent)) graph.get(rel.name)!.push(fk.parent);
+  const known = new Set(knownSourceRelations);
+  const discovered = result.rows.map((row) => ({
+    name: row.name,
+    oid: row.oid,
+    relkind: row.relkind,
+    identityColumns: row.identity_columns ?? [],
+    sequenceColumns: row.sequence_columns ?? [],
+    foreignKeys: row.foreign_keys ?? [],
+  }));
+
+  const dispositions: BackupDisposition[] = discovered.map((rel) => {
+    const denied = SECURITY_DENYLIST[rel.name];
+    if (denied) {
+      return {
+        relation: rel.name,
+        action: "exclude",
+        classification: denied.classification,
+        owner: denied.owner,
+        reason: denied.reason,
+        sensitivity: denied.sensitivity,
+        recovery: denied.recovery,
+      };
+    }
+    return membershipDisposition(rel.name, known.size > 0 ? !known.has(rel.name) : false);
+  });
+
+  // Denylist violation: a denylisted live relation must never be classified include.
+  const denylistViolations = dispositions
+    .filter((d) => d.action === "include" && isSecurityDenied(d.relation))
+    .map((d) => d.relation);
+  if (denylistViolations.length) {
+    throw new Error(
+      `Backup completeness preflight failed: security denylist violation — denylisted relation(s) would enter Brain: ${denylistViolations.join(", ")}`,
+    );
+  }
+
+  const included = dispositions.filter((d) => d.action === "include");
+  const excluded = dispositions.filter((d) => d.action === "exclude");
+  const includedNames = new Set(included.map((d) => d.relation));
+  const graph = new Map([...includedNames].map((name) => [name, [] as string[]]));
+  for (const rel of discovered.filter((r) => includedNames.has(r.name))) {
+    for (const fk of rel.foreignKeys) {
+      if (includedNames.has(fk.parent)) graph.get(rel.name)!.push(fk.parent);
+    }
+  }
   const components = stronglyConnectedComponents(graph);
   const restoreStrategies = validateRestoreComponents(components, discovered);
-  const componentByRelation = new Map(components.flatMap((component, index) => component.map(name => [name, index] as const)));
+  const componentByRelation = new Map(
+    components.flatMap((component, index) => component.map((name) => [name, index] as const)),
+  );
   const indegree = new Map(components.map((_, index) => [index, 0]));
   const children = new Map<number, Set<number>>();
-  for (const [child, parents] of graph) for (const parent of parents) { const childIndex=componentByRelation.get(child)!; const parentIndex=componentByRelation.get(parent)!; if(childIndex===parentIndex) continue; const next=children.get(parentIndex) ?? new Set<number>(); if(!next.has(childIndex)) indegree.set(childIndex,indegree.get(childIndex)!+1); next.add(childIndex); children.set(parentIndex,next); }
-  const queue = [...indegree].filter(([, n]) => n === 0).map(([index]) => index).sort((a,b)=>components[a][0].localeCompare(components[b][0]));
+  for (const [child, parents] of graph) {
+    for (const parent of parents) {
+      const childIndex = componentByRelation.get(child)!;
+      const parentIndex = componentByRelation.get(parent)!;
+      if (childIndex === parentIndex) continue;
+      const next = children.get(parentIndex) ?? new Set<number>();
+      if (!next.has(childIndex)) indegree.set(childIndex, indegree.get(childIndex)! + 1);
+      next.add(childIndex);
+      children.set(parentIndex, next);
+    }
+  }
+  const queue = [...indegree]
+    .filter(([, n]) => n === 0)
+    .map(([index]) => index)
+    .sort((a, b) => components[a][0].localeCompare(components[b][0]));
   const insertOrder: string[] = [];
-  while(queue.length){const index=queue.shift()!; const strategy=restoreStrategies.find(s=>s.relations.includes(components[index][0])); insertOrder.push(...(strategy?.insertOrder??components[index])); for(const child of children.get(index)??[]){const next=indegree.get(child)!-1; indegree.set(child,next); if(next===0)queue.push(child);} queue.sort((a,b)=>components[a][0].localeCompare(components[b][0]));}
-  const schemaShape = discovered.map(r => ({ name:r.name, relkind:r.relkind, identityColumns:r.identityColumns, sequenceColumns:r.sequenceColumns, foreignKeys:r.foreignKeys }));
-  const manifestShape = [...included, ...excluded].sort((a,b)=>a.relation.localeCompare(b.relation));
-  return { version: BACKUP_DISPOSITION_MANIFEST_VERSION, discovered, included, excluded, insertOrder, restoreStrategies, schemaFingerprint: stableHash(schemaShape), manifestFingerprint: stableHash({ manifestShape, restoreStrategies }) };
+  while (queue.length) {
+    const index = queue.shift()!;
+    const strategy = restoreStrategies.find((s) => s.relations.includes(components[index][0]));
+    insertOrder.push(...(strategy?.insertOrder ?? components[index]));
+    for (const child of children.get(index) ?? []) {
+      const next = indegree.get(child)! - 1;
+      indegree.set(child, next);
+      if (next === 0) queue.push(child);
+    }
+    queue.sort((a, b) => components[a][0].localeCompare(components[b][0]));
+  }
+  const schemaShape = discovered.map((r) => ({
+    name: r.name,
+    relkind: r.relkind,
+    identityColumns: r.identityColumns,
+    sequenceColumns: r.sequenceColumns,
+    foreignKeys: r.foreignKeys,
+  }));
+  const manifestShape = [...included, ...excluded].sort((a, b) => a.relation.localeCompare(b.relation));
+  return {
+    version: BACKUP_DISPOSITION_MANIFEST_VERSION,
+    discovered,
+    included,
+    excluded,
+    insertOrder,
+    restoreStrategies,
+    schemaFingerprint: stableHash(schemaShape),
+    manifestFingerprint: stableHash({ manifestShape, restoreStrategies }),
+  };
 }
 
-function stronglyConnectedComponents(graph: Map<string,string[]>): string[][] { let i=0; const indexes=new Map<string,number>(), low=new Map<string,number>(), stack:string[]=[], active=new Set<string>(), out:string[][]=[]; const visit=(name:string)=>{indexes.set(name,i);low.set(name,i++);stack.push(name);active.add(name);for(const parent of graph.get(name)??[]){if(!indexes.has(parent)){visit(parent);low.set(name,Math.min(low.get(name)!,low.get(parent)!));}else if(active.has(parent))low.set(name,Math.min(low.get(name)!,indexes.get(parent)!));}if(low.get(name)!==indexes.get(name))return;const part:string[]=[];let member:string;do{member=stack.pop()!;active.delete(member);part.push(member);}while(member!==name);out.push(part.sort());};for(const name of [...graph.keys()].sort())if(!indexes.has(name))visit(name);return out; }
+function stronglyConnectedComponents(graph: Map<string, string[]>): string[][] {
+  let i = 0;
+  const indexes = new Map<string, number>();
+  const low = new Map<string, number>();
+  const stack: string[] = [];
+  const active = new Set<string>();
+  const out: string[][] = [];
+  const visit = (name: string) => {
+    indexes.set(name, i);
+    low.set(name, i++);
+    stack.push(name);
+    active.add(name);
+    for (const parent of graph.get(name) ?? []) {
+      if (!indexes.has(parent)) {
+        visit(parent);
+        low.set(name, Math.min(low.get(name)!, low.get(parent)!));
+      } else if (active.has(parent)) {
+        low.set(name, Math.min(low.get(name)!, indexes.get(parent)!));
+      }
+    }
+    if (low.get(name) !== indexes.get(name)) return;
+    const part: string[] = [];
+    let member: string;
+    do {
+      member = stack.pop()!;
+      active.delete(member);
+      part.push(member);
+    } while (member !== name);
+    out.push(part.sort());
+  };
+  for (const name of [...graph.keys()].sort()) if (!indexes.has(name)) visit(name);
+  return out;
+}
 
-function validateRestoreComponents(components:string[][], discovered:CatalogRelation[]):BackupRestoreStrategy[]{const byName=new Map(discovered.map(r=>[r.name,r]));const out:BackupRestoreStrategy[]=[];for(const component of components){const self=component.flatMap(name=>(byName.get(name)?.foreignKeys??[]).filter(f=>f.parent===name));if(component.length===1&&self.length===0)continue;const signature=component.join(",");if(signature==="library_pages"){if(self.length!==1||self[0].deferrable)throw new Error("Backup completeness preflight failed: library_pages parent self-reference restore contract drifted");out.push({id:"library-parent-reconciliation-v1",relations:component,insertOrder:["library_pages"],deferredConstraints:[],reconciledReferences:["library_pages.parent_id"]});continue;}if(signature==="principle_revisions,principles"){out.push({id:"principle-current-revision-v1",relations:component,insertOrder:["principles","principle_revisions"],deferredConstraints:requireDeferrable(byName,"principles","principle_revisions"),reconciledReferences:[]});continue;}if(signature==="runtime_attempts,runtime_run_events,runtime_runs"){const causal=(byName.get("runtime_runs")?.foreignKeys??[]).filter(f=>f.parent==="runtime_runs"&&!f.deferrable);if(causal.length!==1)throw new Error("Backup completeness preflight failed: runtime self-reference restore contract drifted");out.push({id:"runtime-reference-reconciliation-v1",relations:component,insertOrder:["runtime_runs","runtime_attempts","runtime_run_events"],deferredConstraints:[...requireDeferrable(byName,"runtime_runs","runtime_attempts"),...requireDeferrable(byName,"runtime_runs","runtime_run_events")].sort(),reconciledReferences:["runtime_runs.causal_parent_run_id"]});continue;}throw new Error(`Backup completeness preflight failed: unsupported FK strongly connected component: ${component.join(" <-> ")}`);}return out.sort((a,b)=>a.id.localeCompare(b.id));}
-function requireDeferrable(byName:Map<string,CatalogRelation>,child:string,parent:string):string[]{const matches=(byName.get(child)?.foreignKeys??[]).filter(f=>f.parent===parent);if(!matches.length||matches.some(f=>!f.deferrable))throw new Error(`Backup completeness preflight failed: ${child}->${parent} must be deferrable for its declared restore strategy`);return matches.map(f=>`${child}.${f.name}`);}
+function validateRestoreComponents(
+  components: string[][],
+  discovered: CatalogRelation[],
+): BackupRestoreStrategy[] {
+  const byName = new Map(discovered.map((r) => [r.name, r]));
+  const out: BackupRestoreStrategy[] = [];
+  for (const component of components) {
+    const self = component.flatMap((name) =>
+      (byName.get(name)?.foreignKeys ?? []).filter((f) => f.parent === name),
+    );
+    if (component.length === 1 && self.length === 0) continue;
+    const signature = component.join(",");
+    if (signature === "library_pages") {
+      if (self.length !== 1 || self[0].deferrable) {
+        throw new Error(
+          "Backup completeness preflight failed: library_pages parent self-reference restore contract drifted",
+        );
+      }
+      out.push({
+        id: "library-parent-reconciliation-v1",
+        relations: component,
+        insertOrder: ["library_pages"],
+        deferredConstraints: [],
+        reconciledReferences: ["library_pages.parent_id"],
+      });
+      continue;
+    }
+    if (signature === "principle_revisions,principles") {
+      out.push({
+        id: "principle-current-revision-v1",
+        relations: component,
+        insertOrder: ["principles", "principle_revisions"],
+        deferredConstraints: requireDeferrable(byName, "principles", "principle_revisions"),
+        reconciledReferences: [],
+      });
+      continue;
+    }
+    if (signature === "runtime_attempts,runtime_run_events,runtime_runs") {
+      const causal = (byName.get("runtime_runs")?.foreignKeys ?? []).filter(
+        (f) => f.parent === "runtime_runs" && !f.deferrable,
+      );
+      if (causal.length !== 1) {
+        throw new Error(
+          "Backup completeness preflight failed: runtime self-reference restore contract drifted",
+        );
+      }
+      out.push({
+        id: "runtime-reference-reconciliation-v1",
+        relations: component,
+        insertOrder: ["runtime_runs", "runtime_attempts", "runtime_run_events"],
+        deferredConstraints: [
+          ...requireDeferrable(byName, "runtime_runs", "runtime_attempts"),
+          ...requireDeferrable(byName, "runtime_runs", "runtime_run_events"),
+        ].sort(),
+        reconciledReferences: ["runtime_runs.causal_parent_run_id"],
+      });
+      continue;
+    }
+    throw new Error(
+      `Backup completeness preflight failed: unsupported FK strongly connected component: ${component.join(" <-> ")}`,
+    );
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function requireDeferrable(
+  byName: Map<string, CatalogRelation>,
+  child: string,
+  parent: string,
+): string[] {
+  const matches = (byName.get(child)?.foreignKeys ?? []).filter((f) => f.parent === parent);
+  if (!matches.length || matches.some((f) => !f.deferrable)) {
+    throw new Error(
+      `Backup completeness preflight failed: ${child}->${parent} must be deferrable for its declared restore strategy`,
+    );
+  }
+  return matches.map((f) => `${child}.${f.name}`);
+}
