@@ -30,7 +30,6 @@ import { captureInferencePayload } from "./inference-payload-capture";
 import { beginProviderAttempt, createProviderAttemptTracker, settleRetryingProviderAttempt, type ProviderAttemptTracker } from "./provider-attempt";
 import { buildContinuationMessages, normalizeContinuationDelta } from "./provider-continuation";
 import { redactSensitiveText } from "./sensitive-data-redaction";
-import { assertSpendAllowed } from "./spend-authority";
 
 let _openaiClient: OpenAI | null = null;
 let _anthropicClient: Anthropic | null = null;
@@ -823,8 +822,6 @@ function latencyEligibleCandidates(
 }
 
 export async function chatCompletion(options: ChatCompletionOptions): Promise<ChatCompletionResult> {
-  // Account + pinned Instance authorize spend; owner_user_id never does.
-  await assertSpendAllowed({ purpose: "inference" });
   const activity = options.activity || options.metadata?.activity || ACTIVITY_FRAMING;
   const sessionTierOverride = !options.model && !options.routingDecision && !options.semanticTierOverride
     ? await resolveSessionModelTierOverride(options.metadata)
@@ -2430,8 +2427,6 @@ export type StreamEvent =
   | { type: "headers_received"; metadata?: Record<string, unknown> };
 
 export async function* chatCompletionStream(options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
-  // Account + pinned Instance authorize spend; owner_user_id never does.
-  await assertSpendAllowed({ purpose: "inference" });
   const activity = options.activity || options.metadata?.activity || ACTIVITY_CHAT;
   const sessionTierOverride = !options.model && !options.routingDecision && !options.semanticTierOverride
     ? await resolveSessionModelTierOverride(options.metadata)

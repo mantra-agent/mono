@@ -48,11 +48,6 @@ import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
 import { getClientPresenceSnapshot } from "./client-presence";
 import { normalizeEmailAddress } from "./email-normalization";
 import { db, acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, runWithDatabaseTransaction } from "./db";
-import {
-  IdentityQuarantineError,
-  setAccountQuarantine,
-  setInstanceQuarantine,
-} from "./identity-quarantine";
 import { claimInvitedSubjectInTransaction } from "./invited-subject-service";
 
 const setupSchema = z.object({
@@ -1388,7 +1383,6 @@ export function setupAuth(app: Express) {
             name: accounts.name,
             kind: accounts.kind,
             ownerUserId: accounts.ownerUserId,
-            entitlement: accounts.entitlement,
             createdAt: accounts.createdAt,
             updatedAt: accounts.updatedAt,
           }).from(accounts).orderBy(asc(accounts.name), asc(accounts.id)),
@@ -1434,66 +1428,6 @@ export function setupAuth(app: Express) {
           stack: err instanceof Error ? err.stack : undefined,
         });
         res.status(500).json({ error: "Failed to fetch identity graph" });
-      }
-    },
-  );
-
-  app.post(
-    "/api/auth/accounts/:id/quarantine",
-    requireAuth,
-    requirePermission("users:write"),
-    async (req: Request, res: Response) => {
-      try {
-        const principal = getPrincipal(req);
-        if (!principal) return res.status(401).json({ error: "Authentication required" });
-        const action = req.body?.action === "restore" ? "restore" : "quarantine";
-        const reason = typeof req.body?.reason === "string" ? req.body.reason : null;
-        const result = await setAccountQuarantine({
-          principal,
-          accountId: String(req.params.id),
-          action,
-          reason,
-        });
-        res.json(result);
-      } catch (error) {
-        if (error instanceof IdentityQuarantineError) {
-          return res.status(error.status).json({ error: error.message, code: error.code });
-        }
-        log.error("Failed to mutate account quarantine", {
-          accountId: req.params.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        res.status(500).json({ error: "Failed to update account quarantine" });
-      }
-    },
-  );
-
-  app.post(
-    "/api/auth/instances/:id/quarantine",
-    requireAuth,
-    requirePermission("users:write"),
-    async (req: Request, res: Response) => {
-      try {
-        const principal = getPrincipal(req);
-        if (!principal) return res.status(401).json({ error: "Authentication required" });
-        const action = req.body?.action === "restore" ? "restore" : "quarantine";
-        const reason = typeof req.body?.reason === "string" ? req.body.reason : null;
-        const result = await setInstanceQuarantine({
-          principal,
-          instanceId: String(req.params.id),
-          action,
-          reason,
-        });
-        res.json(result);
-      } catch (error) {
-        if (error instanceof IdentityQuarantineError) {
-          return res.status(error.status).json({ error: error.message, code: error.code });
-        }
-        log.error("Failed to mutate instance quarantine", {
-          instanceId: req.params.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        res.status(500).json({ error: "Failed to update instance quarantine" });
       }
     },
   );
