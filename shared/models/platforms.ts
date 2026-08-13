@@ -84,6 +84,34 @@ export const featureRequests = pgTable("feature_requests", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [index("idx_feature_requests_backlog_status").on(table.backlogId, table.status)]);
 
+export const PRODUCT_CONTEXT_KINDS = [
+  "coding_process",
+  "design_system",
+  "planning_process",
+  "product_definition",
+  "library_process",
+] as const;
+
+export const productContextKindSchema = z.enum(PRODUCT_CONTEXT_KINDS);
+
+/** Product-owned context. Library pages stay content authority; this is the typed selection edge. */
+export const productContextArtifacts = pgTable("product_context_artifacts", {
+  id: serial("id").primaryKey(),
+  productId: integer("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  libraryPageId: text("library_page_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  uniqueIndex("product_context_artifacts_unique").on(table.productId, table.kind, table.libraryPageId),
+  index("idx_product_context_artifacts_product_kind").on(table.productId, table.kind),
+]);
+
+export const insertProductContextSchema = z.object({
+  kind: productContextKindSchema,
+  libraryPageId: z.string().trim().min(1),
+});
+
 export const platformProducts = pgTable(
   "platform_products",
   {
@@ -312,6 +340,9 @@ export type Product = typeof products.$inferSelect;
 export type InsertProduct = z.infer<typeof insertProductSchema>;
 export type ProductBacklog = typeof productBacklogs.$inferSelect;
 export type FeatureRequest = typeof featureRequests.$inferSelect;
+export type ProductContextArtifact = typeof productContextArtifacts.$inferSelect;
+export type InsertProductContext = z.infer<typeof insertProductContextSchema>;
+export type ProductContextKind = z.infer<typeof productContextKindSchema>;
 export type PlatformProductEnvironment = typeof platformProductEnvironments.$inferSelect;
 export type InsertPlatformProductEnvironment = z.infer<typeof insertPlatformProductEnvironmentSchema>;
 
