@@ -60,6 +60,10 @@ Use the smallest set of patterns that expresses the system truthfully, and reuse
 
 Every abstraction, state, dependency, asynchronous hop, fallback, and configuration option increases failure probability and recovery cost. Prefer deleting states and failure modes over documenting them.
 
+**Don't Invent the Process**
+
+Every added step — volume, seed, flag, supervisor — is another way to fail. If the sequence is technical and automatable, it was optional. Prefer the design that needs fewer things to be true. Do not automate a process you should have deleted.
+
 **One Discriminant Per Decision**
 
 When an operation can end in multiple outcomes, represent the outcome as a single discriminated field computed at the source. Diagnostic detail lives alongside the discriminant but never replaces it.
