@@ -167,20 +167,40 @@ function requestPlannedRestart(): void {
   }
 }
 
-async function isWarmStageEnabled(environmentId: number): Promise<boolean> {
-  // Prefer durable lifecycle policy. Railway restart of an old SUCCESS deploy often keeps a
-  // stale process env snapshot, so STAGE_WARM_ENABLED alone is not authoritative.
+/**
+ * Boot-time warm check must not call principal-scoped lifecycle APIs.
+ * getEnvironmentBuildLifecycleConfig → getVisibleEnvironment → requireCurrentPrincipal throws
+ * on the post-listen boot hook and used to leave only a warn + env fallback — with no
+ * stage_sync_* breadcrumb when the env snapshot was also stale.
+ */
+async function isWarmStageEnabled(environmentId: number): Promise<{ enabled: boolean; source: string }> {
+  const envFlag = process.env.STAGE_WARM_ENABLED === "true";
   try {
-    const { getEnvironmentBuildLifecycleConfig } = await import("./platforms/build-lifecycle-service");
-    const lifecycle = await getEnvironmentBuildLifecycleConfig(environmentId, { includeDisabled: true });
-    const policy = lifecycle?.config?.deployPolicy && typeof lifecycle.config.deployPolicy === "object" && !Array.isArray(lifecycle.config.deployPolicy)
-      ? lifecycle.config.deployPolicy as Record<string, unknown>
+    const { environmentBuildLifecycleConfigs } = await import("@shared/models/platforms");
+    const { desc, eq } = await import("drizzle-orm");
+    const { db } = await import("./db");
+    const [row] = await db
+      .select({
+        deployPolicy: environmentBuildLifecycleConfigs.deployPolicy,
+        enabled: environmentBuildLifecycleConfigs.enabled,
+      })
+      .from(environmentBuildLifecycleConfigs)
+      .where(eq(environmentBuildLifecycleConfigs.environmentId, environmentId))
+      .orderBy(desc(environmentBuildLifecycleConfigs.enabled), desc(environmentBuildLifecycleConfigs.updatedAt))
+      .limit(1);
+    const policy = row?.deployPolicy && typeof row.deployPolicy === "object" && !Array.isArray(row.deployPolicy)
+      ? row.deployPolicy as Record<string, unknown>
       : {};
-    if (policy.runtimeMode === "warm_workspace") return true;
+    if (policy.runtimeMode === "warm_workspace") {
+      return { enabled: true, source: "lifecycle_policy" };
+    }
+    if (row) {
+      return { enabled: envFlag, source: envFlag ? "env_flag_policy_cold" : "lifecycle_policy_cold" };
+    }
   } catch (error) {
     log.warn(`stage_sync_warm_policy_read_failed: ${error instanceof Error ? error.message : String(error)}`);
   }
-  return process.env.STAGE_WARM_ENABLED === "true";
+  return { enabled: envFlag, source: envFlag ? "env_flag" : "disabled" };
 }
 
 /**
@@ -198,6 +218,13 @@ export async function maybeApplyPendingStageSync(input: {
   const isLiveRuntime = /(?:^|[._-])(?:live|prod)(?:$|[._-])/i.test(
     `${process.env.RAILWAY_ENVIRONMENT_NAME || ""} ${process.env.RAILWAY_ENVIRONMENT || ""}`,
   );
+  const envTarget = (process.env.STAGE_SYNC_TARGET_SHA || "").trim();
+  const envWarm = process.env.STAGE_WARM_ENABLED === "true";
+  log.info(
+    `stage_sync_boot_enter environmentId=${input.environmentId ?? "null"} owner=${input.owner} repo=${input.repo} `
+    + `envWarm=${envWarm} envTarget=${envTarget ? envTarget.slice(0, 7) : "none"} `
+    + `railwayEnv=${process.env.RAILWAY_ENVIRONMENT_NAME || "unset"}`,
+  );
   if (isLiveRuntime) {
     log.info("stage_sync_skip reason=live_runtime");
     return { applied: false, restartRequested: false, status: null };
@@ -206,19 +233,28 @@ export async function maybeApplyPendingStageSync(input: {
     log.info("stage_sync_skip reason=no_environment_id");
     return { applied: false, restartRequested: false, status: null };
   }
-  if (!(await isWarmStageEnabled(input.environmentId))) {
-    log.info(`stage_sync_skip reason=warm_not_enabled environmentId=${input.environmentId}`);
+  const warm = await isWarmStageEnabled(input.environmentId);
+  if (!warm.enabled) {
+    log.info(`stage_sync_skip reason=warm_not_enabled source=${warm.source} environmentId=${input.environmentId}`);
     return { applied: false, restartRequested: false, status: await readStageSyncStatus(input.environmentId) };
   }
+  log.info(`stage_sync_warm_ok source=${warm.source} environmentId=${input.environmentId}`);
 
   const existing = await readStageSyncStatus(input.environmentId);
-  // DB target is canonical (set before restart). Env is compatibility only.
-  const targetRaw = (existing?.targetCommitSha || process.env.STAGE_SYNC_TARGET_SHA || "").trim();
+  // DB target is canonical (written before restart). Env is best-effort — Railway
+  // restart of an older SUCCESS image often keeps a stale variable snapshot.
+  const targetRaw = (existing?.targetCommitSha || envTarget || "").trim();
   const localActive = await readLocalActiveSyncSha();
   const imageSha = (process.env.RAILWAY_GIT_COMMIT_SHA || "").trim().toLowerCase();
   const seedActive = localActive
     || (existing?.activeCommitSha && /^[a-f0-9]{7,64}$/i.test(existing.activeCommitSha) ? existing.activeCommitSha.toLowerCase() : null)
     || (/^[a-f0-9]{7,64}$/i.test(imageSha) ? imageSha : null);
+  log.info(
+    `stage_sync_targets dbTarget=${existing?.targetCommitSha ? existing.targetCommitSha.slice(0, 7) : "none"} `
+    + `dbStatus=${existing?.status ?? "none"} dbActive=${existing?.activeCommitSha ? existing.activeCommitSha.slice(0, 7) : "none"} `
+    + `envTarget=${envTarget ? envTarget.slice(0, 7) : "none"} localActive=${localActive ? localActive.slice(0, 7) : "none"} `
+    + `imageSha=${imageSha ? imageSha.slice(0, 7) : "none"} chosen=${targetRaw ? targetRaw.slice(0, 7) : "none"}`,
+  );
 
   if (!targetRaw) {
     if (seedActive) {
