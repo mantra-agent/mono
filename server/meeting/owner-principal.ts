@@ -4,6 +4,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   createUserPrincipalFromUser,
+  tryResolveUserIdentityFoundation,
   type Principal,
 } from "../principal";
 import { getCurrentPrincipal, runWithPrincipal } from "../principal-context";
@@ -88,7 +89,12 @@ export async function runWithMeetingOwnerIdentity<T>(
 
   const user = await storage.getUser(identity.ownerUserId);
   if (!user) throw new Error(`Meeting owner ${identity.ownerUserId} not found`);
-  const ownerPrincipal = createUserPrincipalFromUser(user, identity.accountId);
+  const foundation = await tryResolveUserIdentityFoundation(user.id);
+  const ownerPrincipal = createUserPrincipalFromUser(
+    user,
+    identity.accountId,
+    foundation?.accountId === identity.accountId ? foundation.instanceId : null,
+  );
   if (identity.vaultId && !ownerPrincipal.visibleVaultIds.includes(identity.vaultId)) {
     throw new Error("Meeting Vault is not visible to its owner");
   }

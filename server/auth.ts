@@ -1020,7 +1020,7 @@ export function setupAuth(app: Express) {
           ...createdUser,
           activeVaultId: foundation.activeVaultId,
           visibleVaultIds: foundation.visibleVaultIds,
-        }, foundation.accountId);
+        }, foundation.accountId, foundation.instanceId);
         const { materializeAuthenticatedRecipientRecap } = await import("./meeting/recipient-materialization");
         const materializedRecap = await runWithPrincipal(
           recipientPrincipal,

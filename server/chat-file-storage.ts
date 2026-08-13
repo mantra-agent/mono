@@ -863,7 +863,7 @@ async function runWithChatDocumentOwner<T>(
     throw new Error(`Chat document vault is not visible to its owner: chat/${docId}`);
   }
   return runWithPrincipal(
-    createUserPrincipalFromUser(user, identity.accountId),
+    createUserPrincipalFromUser(user, identity.accountId, foundation.instanceId),
     operation,
   );
 }

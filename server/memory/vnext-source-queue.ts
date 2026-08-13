@@ -2,6 +2,7 @@ import { and, eq, lt, sql, desc, inArray, isNull, or } from "drizzle-orm";
 import { db, runWithDatabaseTransaction } from "../db";
 import { createLogger } from "../log";
 import type { Principal } from "../principal";
+import { tryResolveUserIdentityFoundation } from "../principal";
 import { runWithPrincipal } from "../principal-context";
 import {
   combineWithVisibleScope,
@@ -28,12 +29,14 @@ const sourceRefScopeColumns = {
   scope: memoryVnextSourceRefs.scope,
   ownerUserId: memoryVnextSourceRefs.ownerUserId,
   accountId: memoryVnextSourceRefs.accountId,
+  instanceId: memoryVnextSourceRefs.instanceId,
 };
 
 const claimScopeColumns = {
   scope: memoryVnextClaims.scope,
   ownerUserId: memoryVnextClaims.ownerUserId,
   accountId: memoryVnextClaims.accountId,
+  instanceId: memoryVnextClaims.instanceId,
 };
 
 async function isAutonomousSessionSource(sourceId: string): Promise<boolean> {
@@ -246,6 +249,7 @@ export async function cleanupAutonomousSessionSources(
       log.warn(`cleanup skipped queueId=${row.id} reason=missing_owner`);
       continue;
     }
+    const foundation = await tryResolveUserIdentityFoundation(row.ownerUserId);
     const principal: Principal = {
       actorType: "user",
       userId: row.ownerUserId,
@@ -259,6 +263,10 @@ export async function cleanupAutonomousSessionSources(
         reason: "vnext autonomous source cleanup",
       },
       source: "system",
+      visibleVaultIds: foundation?.visibleVaultIds ?? [],
+      activeVaultId: foundation?.activeVaultId ?? null,
+      instanceId:
+        foundation?.accountId === row.accountId ? foundation.instanceId : null,
     };
     await runWithPrincipal(principal, async () => {
       if (!await isAutonomousSessionSource(row.sourceId)) return;

@@ -465,6 +465,8 @@ export const memoryVnextClaims = pgTable(
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
+    /** Pinned Agent Instance mind owner. Null = legacy owner-visible only. */
+    instanceId: text("instance_id"),
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
     metadata: jsonb("metadata").default({}),
@@ -493,6 +495,7 @@ export const memoryVnextClaims = pgTable(
     index("idx_memory_vnext_claim_created_at").on(table.createdAt),
     index("idx_memory_vnext_claim_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_memory_vnext_claim_account").on(table.accountId),
+    index("idx_memory_vnext_claim_instance").on(table.instanceId),
   ],
 );
 
@@ -534,6 +537,7 @@ export const memoryVnextSourceRefs = pgTable(
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
+    instanceId: text("instance_id"),
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true, precision: 6 })
@@ -552,6 +556,7 @@ export const memoryVnextSourceRefs = pgTable(
     index("idx_memory_vnext_sources_relationship").on(table.relationship),
     index("idx_memory_vnext_sources_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_memory_vnext_sources_account").on(table.accountId),
+    index("idx_memory_vnext_sources_instance").on(table.instanceId),
   ],
 );
 
@@ -610,6 +615,7 @@ export const memoryVnextEntityLinks = pgTable(
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
+    instanceId: text("instance_id"),
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true, precision: 6 })
@@ -626,6 +632,7 @@ export const memoryVnextEntityLinks = pgTable(
     index("idx_memory_vnext_entity").on(table.entityType, table.entityId),
     index("idx_memory_vnext_entity_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_memory_vnext_entity_account").on(table.accountId),
+    index("idx_memory_vnext_entity_instance").on(table.instanceId),
   ],
 );
 
@@ -663,6 +670,7 @@ export const memoryVnextClaimLinks = pgTable(
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
+    instanceId: text("instance_id"),
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true, precision: 6 })
@@ -685,6 +693,7 @@ export const memoryVnextClaimLinks = pgTable(
     index("idx_memory_vnext_claim_links_class").on(table.relationshipClass, table.relationship),
     index("idx_memory_vnext_claim_links_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_memory_vnext_claim_links_account").on(table.accountId),
+    index("idx_memory_vnext_claim_links_instance").on(table.instanceId),
   ],
 );
 
@@ -723,6 +732,7 @@ export const memoryVnextClaimLinkEvidence = pgTable(
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
+    instanceId: text("instance_id"),
     createdByUserId: text("created_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
@@ -732,6 +742,7 @@ export const memoryVnextClaimLinkEvidence = pgTable(
     index("idx_memory_vnext_claim_link_evidence_source").on(table.sourceRefId),
     index("idx_memory_vnext_claim_link_evidence_owner").on(table.scope, table.ownerUserId),
     index("idx_memory_vnext_claim_link_evidence_account").on(table.accountId),
+    index("idx_memory_vnext_claim_link_evidence_instance").on(table.instanceId),
   ],
 );
 export type MemoryVnextClaimLinkEvidence = typeof memoryVnextClaimLinkEvidence.$inferSelect;

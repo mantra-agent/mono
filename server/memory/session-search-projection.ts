@@ -20,7 +20,12 @@ import {
 } from "../db";
 import { createLogger } from "../log";
 import { getPostgresErrorCode } from "../postgres-errors";
-import { createNamedSystemPrincipal, createUserPrincipalFromUser, type Principal } from "../principal";
+import {
+  createNamedSystemPrincipal,
+  createUserPrincipalFromUser,
+  tryResolveUserIdentityFoundation,
+  type Principal,
+} from "../principal";
 import { getUserEffectivePermissions } from "../permissions";
 import { runWithPrincipal } from "../principal-context";
 import { appendTransactionalOutboxEvent } from "../transactional-outbox";
@@ -437,8 +442,13 @@ async function restoreProjectionPrincipal(ownerUserId: string, accountId: string
     .where(eq(users.id, ownerUserId))
     .limit(1);
   if (!owner?.user) throw new Error("Session search projection owner/account identity is no longer valid");
+  const foundation = await tryResolveUserIdentityFoundation(owner.user.id);
   return {
-    ...createUserPrincipalFromUser(owner.user, accountId),
+    ...createUserPrincipalFromUser(
+      owner.user,
+      accountId,
+      foundation?.accountId === accountId ? foundation.instanceId : null,
+    ),
     permissions: await getUserEffectivePermissions(owner.user.id),
   };
 }

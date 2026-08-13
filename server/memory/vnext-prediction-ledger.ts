@@ -49,7 +49,12 @@ const CONFIRMED_CERTAINTY_DELTA = 0.02;
 const REFUTED_CERTAINTY_DELTA = -0.04;
 const LOG_SCORE_FLOOR = 0.000001;
 
-const claimScope = { scope: memoryVnextClaims.scope, ownerUserId: memoryVnextClaims.ownerUserId, accountId: memoryVnextClaims.accountId };
+const claimScope = {
+  scope: memoryVnextClaims.scope,
+  ownerUserId: memoryVnextClaims.ownerUserId,
+  accountId: memoryVnextClaims.accountId,
+  instanceId: memoryVnextClaims.instanceId,
+};
 const sourceScope = { scope: memoryVnextSourceRefs.scope, ownerUserId: memoryVnextSourceRefs.ownerUserId, accountId: memoryVnextSourceRefs.accountId };
 const linkScope = { scope: memoryVnextClaimLinks.scope, ownerUserId: memoryVnextClaimLinks.ownerUserId, accountId: memoryVnextClaimLinks.accountId };
 const linkEvidenceScope = { scope: memoryVnextClaimLinkEvidence.scope, ownerUserId: memoryVnextClaimLinkEvidence.ownerUserId, accountId: memoryVnextClaimLinkEvidence.accountId };

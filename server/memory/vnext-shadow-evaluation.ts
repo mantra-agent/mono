@@ -53,10 +53,30 @@ const CORRECTED_WEIGHTS = {
 type DimensionName = "integration" | "certainty" | "relationships" | "strength";
 type AblationName = DimensionName | "none";
 
-const claimScope = { scope: memoryVnextClaims.scope, ownerUserId: memoryVnextClaims.ownerUserId, accountId: memoryVnextClaims.accountId };
-const sourceScope = { scope: memoryVnextSourceRefs.scope, ownerUserId: memoryVnextSourceRefs.ownerUserId, accountId: memoryVnextSourceRefs.accountId };
-const entityScope = { scope: memoryVnextEntityLinks.scope, ownerUserId: memoryVnextEntityLinks.ownerUserId, accountId: memoryVnextEntityLinks.accountId };
-const linkScope = { scope: memoryVnextClaimLinks.scope, ownerUserId: memoryVnextClaimLinks.ownerUserId, accountId: memoryVnextClaimLinks.accountId };
+const claimScope = {
+  scope: memoryVnextClaims.scope,
+  ownerUserId: memoryVnextClaims.ownerUserId,
+  accountId: memoryVnextClaims.accountId,
+  instanceId: memoryVnextClaims.instanceId,
+};
+const sourceScope = {
+  scope: memoryVnextSourceRefs.scope,
+  ownerUserId: memoryVnextSourceRefs.ownerUserId,
+  accountId: memoryVnextSourceRefs.accountId,
+  instanceId: memoryVnextSourceRefs.instanceId,
+};
+const entityScope = {
+  scope: memoryVnextEntityLinks.scope,
+  ownerUserId: memoryVnextEntityLinks.ownerUserId,
+  accountId: memoryVnextEntityLinks.accountId,
+  instanceId: memoryVnextEntityLinks.instanceId,
+};
+const linkScope = {
+  scope: memoryVnextClaimLinks.scope,
+  ownerUserId: memoryVnextClaimLinks.ownerUserId,
+  accountId: memoryVnextClaimLinks.accountId,
+  instanceId: memoryVnextClaimLinks.instanceId,
+};
 const controlScope = { scope: memoryVnextRetrievalControls.scope, ownerUserId: memoryVnextRetrievalControls.ownerUserId, accountId: memoryVnextRetrievalControls.accountId };
 const activationScope = { scope: memoryVnextRetrievalActivationEvents.scope, ownerUserId: memoryVnextRetrievalActivationEvents.ownerUserId, accountId: memoryVnextRetrievalActivationEvents.accountId };
 const labelScope = { scope: memoryVnextRetrievalLabels.scope, ownerUserId: memoryVnextRetrievalLabels.ownerUserId, accountId: memoryVnextRetrievalLabels.accountId };

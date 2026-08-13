@@ -12,6 +12,14 @@ export interface ScopeColumns {
   scope?: AnyColumn;
   /** When present, vault filtering is applied via visibleScopePredicate and ownedInsertValues. */
   vaultId?: AnyColumn;
+  /**
+   * Optional Instance ownership column (same opt-in as vaultId).
+   * Only memory claim tables should set this. When present:
+   * - reads match pinned Instance OR (NULL instance + owner_user_id)
+   * - inserts stamp principal.instanceId when set
+   * - account_id is not used for visibility (prevents Business Instance leak)
+   */
+  instanceId?: AnyColumn;
 }
 
 export interface ScopedOwnerValues {
@@ -19,6 +27,7 @@ export interface ScopedOwnerValues {
   accountId?: string;
   ownerUserId?: string;
   isTemplate?: boolean;
+  instanceId?: string;
 }
 
 function hasUser(
@@ -66,6 +75,32 @@ export function templatePredicate(columns: ScopeColumns): SQL | undefined {
   ]);
 }
 
+/**
+ * Instance-aware ownership for tables that opt into ScopeColumns.instanceId.
+ * Visible when: instance_id matches the principal pin, OR instance_id IS NULL
+ * and owner_user_id/user_id is the principal. Never match account_id alone —
+ * that leaks across Business Instances on the same Account.
+ */
+function instanceOwnershipPredicate(
+  principal: Principal,
+  columns: ScopeColumns,
+): SQL | undefined {
+  if (!columns.instanceId) return undefined;
+  const pinned =
+    typeof principal.instanceId === "string" && principal.instanceId.length > 0
+      ? eq(columns.instanceId, principal.instanceId)
+      : undefined;
+  const unpinnedOwner = definedPredicates([
+    hasUser(principal) && columns.userId
+      ? and(sql`${columns.instanceId} IS NULL`, eq(columns.userId, principal.userId))
+      : undefined,
+    hasUser(principal) && columns.ownerUserId
+      ? and(sql`${columns.instanceId} IS NULL`, eq(columns.ownerUserId, principal.userId))
+      : undefined,
+  ]);
+  return definedPredicates([pinned, unpinnedOwner]);
+}
+
 export function visibleScopePredicate(
   principal: Principal,
   columns: ScopeColumns,
@@ -74,18 +109,23 @@ export function visibleScopePredicate(
     if (columns.vaultId) assertSystemVaultAccess(principal, "visibleScopePredicate");
     return sql`TRUE`;
   }
-  const scoped = definedPredicates([
-    hasUser(principal) && columns.userId
-      ? eq(columns.userId, principal.userId)
-      : undefined,
-    hasUser(principal) && columns.ownerUserId
-      ? eq(columns.ownerUserId, principal.userId)
-      : undefined,
-    hasAccount(principal) && columns.accountId
-      ? eq(columns.accountId, principal.accountId)
-      : undefined,
-    templatePredicate(columns),
-  ]);
+  // Instance-opted tables: dual-read Instance pin OR legacy owner-null rows.
+  // Do not OR account_id — Account is not the mind boundary.
+  const instanceScoped = instanceOwnershipPredicate(principal, columns);
+  const scoped = instanceScoped
+    ? definedPredicates([instanceScoped, templatePredicate(columns)])
+    : definedPredicates([
+        hasUser(principal) && columns.userId
+          ? eq(columns.userId, principal.userId)
+          : undefined,
+        hasUser(principal) && columns.ownerUserId
+          ? eq(columns.ownerUserId, principal.userId)
+          : undefined,
+        hasAccount(principal) && columns.accountId
+          ? eq(columns.accountId, principal.accountId)
+          : undefined,
+        templatePredicate(columns),
+      ]);
   const basePredicate = scoped ?? sql`FALSE`;
   // Vault filtering: when the table has a vaultId column and the principal
   // has a non-empty visibleVaultIds set, additionally require vault_id IN (...).
@@ -109,17 +149,21 @@ export function writableScopePredicate(
     if (columns.vaultId) assertSystemVaultAccess(principal, "writableScopePredicate");
     return sql`TRUE`;
   }
-  const scoped = definedPredicates([
-    hasUser(principal) && columns.userId
-      ? eq(columns.userId, principal.userId)
-      : undefined,
-    hasUser(principal) && columns.ownerUserId
-      ? eq(columns.ownerUserId, principal.userId)
-      : undefined,
-    hasAccount(principal) && columns.accountId
-      ? eq(columns.accountId, principal.accountId)
-      : undefined,
-  ]);
+  // Instance-opted tables: same dual-write ownership as reads (no account match).
+  const instanceScoped = instanceOwnershipPredicate(principal, columns);
+  const scoped = instanceScoped
+    ? instanceScoped
+    : definedPredicates([
+        hasUser(principal) && columns.userId
+          ? eq(columns.userId, principal.userId)
+          : undefined,
+        hasUser(principal) && columns.ownerUserId
+          ? eq(columns.ownerUserId, principal.userId)
+          : undefined,
+        hasAccount(principal) && columns.accountId
+          ? eq(columns.accountId, principal.accountId)
+          : undefined,
+      ]);
   const basePredicate = scoped ?? sql`FALSE`;
   // Vault filtering on writes: same logic as reads — restrict to visible vaults.
   if (columns.vaultId && principal.visibleVaultIds && principal.visibleVaultIds.length > 0) {
@@ -156,6 +200,11 @@ export function ownedInsertValues(
   if (columns.vaultId && principal.activeVaultId) {
     (values as Record<string, unknown>).vaultId = principal.activeVaultId;
   }
+  // Optional Instance stamp — only tables that opt into columns.instanceId.
+  // owner_user_id / created_by stay the acting User; Instance is the mind owner.
+  if (columns.instanceId && principal.instanceId) {
+    values.instanceId = principal.instanceId;
+  }
   return values;
 }
 
@@ -165,6 +214,40 @@ export function rowIsTemplate(row: Record<string, unknown>): boolean {
     row.visibility === "template" ||
     row.scope === "global"
     // scope='system' is NOT a template — visible only through ownership match
+  );
+}
+
+function rowInstanceId(row: Record<string, unknown>): string | null {
+  const value = row.instanceId ?? row.instance_id;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/**
+ * Row-level dual-read for Instance-stamped memory rows.
+ * When the row carries instance_id (including null after opt-in tables),
+ * match pin OR (null + owner). Account alone never grants visibility.
+ */
+function rowMatchesInstanceOwnership(
+  principal: Principal,
+  row: Record<string, unknown>,
+): boolean | null {
+  // Only apply when the row shape includes the instance column key.
+  if (!("instanceId" in row) && !("instance_id" in row)) return null;
+  const rowInstance = rowInstanceId(row);
+  if (rowInstance) {
+    return (
+      typeof principal.instanceId === "string" &&
+      principal.instanceId.length > 0 &&
+      rowInstance === principal.instanceId
+    );
+  }
+  // Unpinned legacy row: owner_user_id / user_id only.
+  return !!(
+    principal.userId &&
+    (row.userId === principal.userId ||
+      row.user_id === principal.userId ||
+      row.ownerUserId === principal.userId ||
+      row.owner_user_id === principal.userId)
   );
 }
 
@@ -179,15 +262,18 @@ export function rowVisibleToPrincipal(
     return true;
   }
   if (rowIsTemplate(row)) return true;
+  const instanceMatch = rowMatchesInstanceOwnership(principal, row);
   const ownerMatch =
-    (principal.userId &&
-      (row.userId === principal.userId ||
-        row.user_id === principal.userId ||
-        row.ownerUserId === principal.userId ||
-        row.owner_user_id === principal.userId)) ||
-    (principal.accountId &&
-      (row.accountId === principal.accountId ||
-        row.account_id === principal.accountId));
+    instanceMatch !== null
+      ? instanceMatch
+      : (principal.userId &&
+          (row.userId === principal.userId ||
+            row.user_id === principal.userId ||
+            row.ownerUserId === principal.userId ||
+            row.owner_user_id === principal.userId)) ||
+        (principal.accountId &&
+          (row.accountId === principal.accountId ||
+            row.account_id === principal.accountId));
   if (!ownerMatch) return false;
   // Vault filter: if principal has visible vaults and row has a vault_id, check membership.
   // Null vault_id rows pass through (backwards compat).
@@ -207,15 +293,18 @@ export function rowWritableByPrincipal(
     if (rowVault) assertSystemVaultAccess(principal, "rowWritableByPrincipal");
     return true;
   }
+  const instanceMatch = rowMatchesInstanceOwnership(principal, row);
   const ownerMatch =
-    (principal.userId &&
-      (row.userId === principal.userId ||
-        row.user_id === principal.userId ||
-        row.ownerUserId === principal.userId ||
-        row.owner_user_id === principal.userId)) ||
-    (principal.accountId &&
-      (row.accountId === principal.accountId ||
-        row.account_id === principal.accountId));
+    instanceMatch !== null
+      ? instanceMatch
+      : (principal.userId &&
+          (row.userId === principal.userId ||
+            row.user_id === principal.userId ||
+            row.ownerUserId === principal.userId ||
+            row.owner_user_id === principal.userId)) ||
+        (principal.accountId &&
+          (row.accountId === principal.accountId ||
+            row.account_id === principal.accountId));
   if (!ownerMatch) return false;
   // Vault filter on writes: same as reads.
   const rowVault = row.vaultId ?? row.vault_id;

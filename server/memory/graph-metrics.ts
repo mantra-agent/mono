@@ -9,18 +9,21 @@ const claimAliasScopeColumns = {
   scope: sql`c.scope`,
   ownerUserId: sql`c.owner_user_id`,
   accountId: sql`c.account_id`,
+  instanceId: sql`c.instance_id`,
 };
 
 const linkAliasScopeColumns = {
   scope: sql`l.scope`,
   ownerUserId: sql`l.owner_user_id`,
   accountId: sql`l.account_id`,
+  instanceId: sql`l.instance_id`,
 };
 
 const plainClaimScopeColumns = {
   scope: sql`memory_vnext_claims.scope`,
   ownerUserId: sql`memory_vnext_claims.owner_user_id`,
   accountId: sql`memory_vnext_claims.account_id`,
+  instanceId: sql`memory_vnext_claims.instance_id`,
 };
 
 const log = createLogger("GraphMetrics");

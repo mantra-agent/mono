@@ -210,11 +210,13 @@ export async function assemblePersonalGraph(
     scope: memoryVnextClaims.scope,
     ownerUserId: memoryVnextClaims.ownerUserId,
     accountId: memoryVnextClaims.accountId,
+    instanceId: memoryVnextClaims.instanceId,
   };
   const entityLinkScopeColumns = {
     scope: memoryVnextEntityLinks.scope,
     ownerUserId: memoryVnextEntityLinks.ownerUserId,
     accountId: memoryVnextEntityLinks.accountId,
+    instanceId: memoryVnextEntityLinks.instanceId,
   };
   const sourceLinkScopeColumns = {
     scope: memoryVnextSourceLinks.scope,
@@ -225,11 +227,13 @@ export async function assemblePersonalGraph(
     scope: memoryVnextSourceRefs.scope,
     ownerUserId: memoryVnextSourceRefs.ownerUserId,
     accountId: memoryVnextSourceRefs.accountId,
+    instanceId: memoryVnextSourceRefs.instanceId,
   };
   const claimLinkScopeColumns = {
     scope: memoryVnextClaimLinks.scope,
     ownerUserId: memoryVnextClaimLinks.ownerUserId,
     accountId: memoryVnextClaimLinks.accountId,
+    instanceId: memoryVnextClaimLinks.instanceId,
   };
   const pageScope = {
     ownerUserId: libraryPages.ownerUserId,

@@ -87,7 +87,7 @@ async function processOwnerMeetings(
   now: Date,
 ): Promise<Omit<MeetingWatchdogResult, "ownersScanned">> {
   const foundation = await resolveUserIdentityFoundation(user.id);
-  const principal = createUserPrincipalFromUser(user, foundation.accountId);
+  const principal = createUserPrincipalFromUser(user, foundation.accountId, foundation.instanceId);
 
   return runWithPrincipal(principal, async () => {
     const { admissionController } = await import("../run-admission");

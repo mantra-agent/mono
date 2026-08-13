@@ -402,21 +402,25 @@ async function handleGetVnextGraphLegacy(_req: Request, res: Response): Promise<
       scope: memoryVnextClaims.scope,
       ownerUserId: memoryVnextClaims.ownerUserId,
       accountId: memoryVnextClaims.accountId,
+      instanceId: memoryVnextClaims.instanceId,
     };
     const entityLinkScopeColumns = {
       scope: memoryVnextEntityLinks.scope,
       ownerUserId: memoryVnextEntityLinks.ownerUserId,
       accountId: memoryVnextEntityLinks.accountId,
+      instanceId: memoryVnextEntityLinks.instanceId,
     };
     const sourceRefScopeColumns = {
       scope: memoryVnextSourceRefs.scope,
       ownerUserId: memoryVnextSourceRefs.ownerUserId,
       accountId: memoryVnextSourceRefs.accountId,
+      instanceId: memoryVnextSourceRefs.instanceId,
     };
     const claimLinkScopeColumns = {
       scope: memoryVnextClaimLinks.scope,
       ownerUserId: memoryVnextClaimLinks.ownerUserId,
       accountId: memoryVnextClaimLinks.accountId,
+      instanceId: memoryVnextClaimLinks.instanceId,
     };
 
     const [claims, currentGoalIndex, currentProjects, meetingRecords] = await Promise.all([

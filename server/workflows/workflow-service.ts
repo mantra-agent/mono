@@ -55,7 +55,11 @@ import { getArtifactsBySession } from "../session-artifacts";
 import { canonicalExecutionArtifactAddress } from "../execution-provenance-address";
 import { linkWorkflowArtifactProduced } from "../execution-provenance-links";
 import { requireModWorkflowAccess } from "../mods/mod-access";
-import { createNamedSystemPrincipal, createUserPrincipalFromUser } from "../principal";
+import {
+  createNamedSystemPrincipal,
+  createUserPrincipalFromUser,
+  tryResolveUserIdentityFoundation,
+} from "../principal";
 
 const log = createLogger("WorkflowService");
 
@@ -947,7 +951,15 @@ async function runAsWorkflowOwner<T>(
     .where(eq(users.id, run.ownerUserId))
     .limit(1);
   if (!identity) throw new Error(`Workflow owner identity is no longer valid for account ${run.accountId}`);
-  return runWithPrincipal(createUserPrincipalFromUser(identity.user, run.accountId), fn);
+  const foundation = await tryResolveUserIdentityFoundation(identity.user.id);
+  return runWithPrincipal(
+    createUserPrincipalFromUser(
+      identity.user,
+      run.accountId,
+      foundation?.accountId === run.accountId ? foundation.instanceId : null,
+    ),
+    fn,
+  );
 }
 
 async function recoverWorkflowAttempt(

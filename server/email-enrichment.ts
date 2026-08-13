@@ -206,7 +206,11 @@ export async function runEnrichment(): Promise<{ dismissed: number; runStatus: E
       ) {
         throw new Error(`Email vault ${identity.vaultId} is not visible to owner ${identity.ownerUserId}`);
       }
-      const principal = createUserPrincipalFromUser(user, identity.accountId);
+      const principal = createUserPrincipalFromUser(
+        user,
+        identity.accountId,
+        foundation.instanceId,
+      );
       if (identity.vaultId) {
         principal.activeVaultId = identity.vaultId;
         principal.visibleVaultIds = [identity.vaultId];
