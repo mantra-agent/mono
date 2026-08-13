@@ -3,7 +3,11 @@ import type { Express } from "express";
 import { db, APP_NAME } from "../db";
 import type { ClientConfig } from "pg";
 import { createDedicatedDatabaseClient } from "../database-adapters";
-import { inspectBackupCoverage, type BackupCoverage } from "../backup-completeness";
+import {
+  inspectBackupCoverage,
+  type BackupCoverage,
+  type BackupSelfReference,
+} from "../backup-completeness";
 import { pathExists } from "./shared";
 import { WORKSPACE_DIR } from "../paths";
 import { documentStorage } from "../memory";
@@ -497,8 +501,9 @@ function columnsForMode(key: string, mode: ExportMode): ColumnProjection | null 
 
 export async function exportBrain(options: ExportBrainOptions): Promise<ExportBrainResult> {
   const { mode } = options;
-  // Establish completeness before creating staging state. Unknown relations or
-  // unsafe cycles therefore cannot yield an artifact later reported complete.
+  // Establish membership before creating staging state. Denylist or missing
+  // producers cannot yield an artifact later reported complete. Cycle shape
+  // is restore evidence and does not veto the snapshot.
   const coverage = await loadBackupCoverage();
   // Catalog FKs own insert order. Derive producers (Drizzle or auto raw SQL).
   // missingProducers should only surface denylist violations that slipped into insertOrder.
@@ -713,7 +718,7 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
       included: coverage.included,
       excluded: coverage.excluded,
       insertOrder: coverage.insertOrder,
-      restoreStrategies: coverage.restoreStrategies,
+      cycles: coverage.cycles,
       schemaFingerprint: coverage.schemaFingerprint,
       manifestFingerprint: coverage.manifestFingerprint,
       relations: coverage.discovered,
@@ -930,6 +935,70 @@ async function importTableStreaming(
   return totalImported;
 }
 
+function collectRestoreSelfReferences(coverage: any): BackupSelfReference[] {
+  if (Array.isArray(coverage?.cycles)) {
+    return coverage.cycles.flatMap((cycle: any) =>
+      Array.isArray(cycle?.selfReferences) ? cycle.selfReferences : [],
+    ).filter((ref: BackupSelfReference) => ref?.relation && ref?.column);
+  }
+  if (!Array.isArray(coverage?.restoreStrategies)) return [];
+  const out: BackupSelfReference[] = [];
+  for (const strategy of coverage.restoreStrategies) {
+    for (const ref of strategy?.reconciledReferences ?? []) {
+      const [relation, column] = String(ref).split(".");
+      if (relation && column) {
+        out.push({ relation, constraint: "", column, deferrable: false, nullable: true });
+      }
+    }
+  }
+  return out;
+}
+
+function assertRestorableCycles(coverage: any): void {
+  const cycles = Array.isArray(coverage?.cycles) ? coverage.cycles : [];
+  const blocked: string[] = [];
+  for (const cycle of cycles) {
+    for (const ref of cycle?.selfReferences ?? []) {
+      if (ref?.nullable || ref?.deferrable) continue;
+      blocked.push(`${ref.relation}.${ref.column || ref.constraint} (non-nullable non-deferrable self-FK)`);
+    }
+    for (const edge of cycle?.intraConstraints ?? []) {
+      if (edge?.deferrable) continue;
+      blocked.push(`${edge.child}.${edge.constraint}->${edge.parent} (non-deferrable cycle)`);
+    }
+  }
+  if (blocked.length) {
+    throw new Error(`Restore cannot replay catalog cycle: ${blocked.join(", ")}`);
+  }
+}
+
+function sqlColumnToJsKey(table: PgTable | undefined, sqlName: string): string {
+  if (!table) return sqlName;
+  const cols = getTableColumns(table) as Record<string, { name: string }>;
+  for (const [jsKey, col] of Object.entries(cols)) {
+    if (col.name === sqlName) return jsKey;
+  }
+  return sqlName.replace(/_([a-z])/g, (_, ch: string) => ch.toUpperCase());
+}
+
+function selfRefsForRelation(refs: BackupSelfReference[], relation: string): BackupSelfReference[] {
+  const seen = new Set<string>();
+  const out: BackupSelfReference[] = [];
+  for (const ref of refs) {
+    if (ref.relation !== relation || !ref.column || seen.has(ref.column)) continue;
+    seen.add(ref.column);
+    out.push(ref);
+  }
+  if (out.length) return out;
+  if (relation === "library_pages") {
+    return [{ relation, constraint: "", column: "parent_id", deferrable: false, nullable: true }];
+  }
+  if (relation === "runtime_runs") {
+    return [{ relation, constraint: "", column: "causal_parent_run_id", deferrable: false, nullable: true }];
+  }
+  return [];
+}
+
 export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
   const imported: Record<string, number> = {};
   const expected: Record<string, number> = {};
@@ -939,10 +1008,12 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
   // Prefer catalog insertOrder from the archive manifest when present.
   // Fall back to present JSON files against the derived producer map.
   let insertEntries: BrainExportEntry[] = [];
+  let restoreSelfRefs: BackupSelfReference[] = [];
   const manifestPath = join(dbDir, "..", "manifest.json");
   if (await pathExists(manifestPath)) {
     try {
       const manifest = JSON.parse(await readFile(manifestPath, "utf-8"));
+      restoreSelfRefs = collectRestoreSelfReferences(manifest?.coverage);
       const order: string[] | undefined = manifest?.coverage?.insertOrder;
       if (Array.isArray(order) && order.length > 0) {
         const built = buildExportEntriesFromOrder(order);
@@ -980,9 +1051,16 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
   // delete-then-insert sequence back instead of leaving a partial restore.
   return await db.transaction(async (tx) => {
 
-  // Defer only constraints that the schema deliberately declares deferrable.
-  // Ordinary non-deferrable FKs are satisfied by catalog insertOrder; the
-  // catalog preflight rejects any SCC without an exact replay strategy.
+  // Defer only constraints the schema declares deferrable.
+  // Catalog insertOrder satisfies ordinary FKs. Nullable self-FKs replay
+  // two-phase. Non-nullable non-deferrable cycles fail here, not at export.
+  if (await pathExists(manifestPath)) {
+    try {
+      assertRestorableCycles(JSON.parse(await readFile(manifestPath, "utf-8"))?.coverage);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("Restore cannot replay")) throw err;
+    }
+  }
   await tx.execute(sql.raw("SET CONSTRAINTS ALL DEFERRED"));
   await tx.execute(sql.raw("SET LOCAL statement_timeout = 0"));
 
@@ -1067,7 +1145,9 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
       // the buffered path.
       const fileStat = await stat(filePath);
       const fileSizeMB = (fileStat.size / (1024 * 1024)).toFixed(1);
-      const needsSpecialHandling = key === "library_pages" || key === "library_page_views" || key === "messages" || key === "runtime_runs";
+      const twoPhaseRefs = selfRefsForRelation(restoreSelfRefs, key);
+      const needsSpecialHandling =
+        twoPhaseRefs.length > 0 || key === "library_page_views" || key === "messages";
       const useStreaming = fileStat.size > STREAM_THRESHOLD_BYTES && !needsSpecialHandling;
 
       // Build ON CONFLICT clause (shared by both paths). Tables with a
@@ -1153,13 +1233,19 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
       expected[key] = rows.length;
 
       const hydratedRows = rows.map((row: any) => hydrateRow({ ...row }));
-      const runtimeParentBackfill: Array<{ id: string; parentId: string }> = [];
-      if (key === "runtime_runs") {
+      const twoPhaseBackfill: Array<{ id: unknown; column: string; value: unknown }> = [];
+      const pkJsKey = pk?.jsKey ?? "id";
+      for (const ref of twoPhaseRefs) {
+        const jsKey = sqlColumnToJsKey(table, ref.column);
+        const ids = new Set(hydratedRows.map((r: any) => r[pkJsKey]));
         for (const row of hydratedRows) {
-          if (row.causalParentRunId) {
-            runtimeParentBackfill.push({ id: row.id, parentId: row.causalParentRunId });
-            row.causalParentRunId = null;
+          const value = row[jsKey];
+          if (value == null || value === "") continue;
+          if (!ids.has(value)) {
+            throw new Error(`${key} restore rejected ${ref.column} outside restored set: ${row[pkJsKey]}`);
           }
+          twoPhaseBackfill.push({ id: row[pkJsKey], column: ref.column, value });
+          row[jsKey] = null;
         }
       }
 
@@ -1170,13 +1256,12 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
       // accumulated over time on the source side). Those still get
       // rejected at commit time and abort the whole batch (0/N).
       //
-      // We pre-scrub known offenders here:
-      //   • library_pages.parent_id — self-FK, NULLABLE → null orphans
+      // Cross-table orphans still need a pre-scrub:
       //   • library_page_views.page_id — FK → library_pages, NOT NULL → drop
       //   • messages.conversation_id — FK → sessions, NOT NULL → drop
-      // Library hierarchy is recovery authority and fails closed on an
-      // unexported parent. Orphan view rows are analytics records, while
-      // orphan legacy messages cannot render without their parent session.
+      // Recorded self-FKs (Library parent, Runtime causal parent, any later
+      // nullable self-reference) insert null then reconcile. An unexported
+      // self-parent fails closed. Orphan view/message rows drop.
       let workingRows = hydratedRows;
       let orphanNulled = 0;
       let orphanDropped = 0;
@@ -1185,26 +1270,7 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
       // alias columns to JS keys (see buildAliasedSelectSQL). So we
       // check `parentId` / `pageId`, not `parent_id` / `page_id`.
       //
-      // For `library_pages` we ALSO stash original parentId values and
-      // null them out for the bulk insert. We re-apply the parents in
-      // a second-pass UPDATE inside the same transaction, after every
-      // row exists. This sidesteps the entire DEFERRABLE question:
-      // child-before-parent ordering inside the batched insert can no
-      // longer trigger fk_library_pages_parent because every row is
-      // inserted with parent_id = NULL.
-      const parentBackfill: Array<{ id: string; parentId: string }> = [];
-      if (key === "library_pages") {
-        const pageIds = new Set(hydratedRows.map((r: any) => r.id));
-        for (const r of hydratedRows) {
-          if (r.parentId && !pageIds.has(r.parentId)) {
-            throw new Error(`library_pages restore rejected parent outside restored set: ${r.id}`);
-          }
-          if (r.parentId) {
-            parentBackfill.push({ id: r.id, parentId: r.parentId });
-            r.parentId = null;
-          }
-        }
-      } else if (key === "library_page_views") {
+      if (key === "library_page_views") {
         const parentPath = join(dbDir, "library_pages.json");
         if (await pathExists(parentPath)) {
           try {
@@ -1262,39 +1328,35 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
           }
         }
 
-        if (runtimeParentBackfill.length > 0) {
-          const tuples = runtimeParentBackfill.map(parent => sql`(${parent.id}::uuid, ${parent.parentId}::uuid)`);
-          await sp.execute(sql`
-            UPDATE runtime_runs AS run
-            SET causal_parent_run_id = parent.parent_id
-            FROM (VALUES ${sql.join(tuples, sql`, `)}) AS parent(id, parent_id)
-            WHERE run.id = parent.id
-          `);
-        }
-
-        // Second-pass parentId backfill for library_pages.
-        if (parentBackfill.length > 0) {
+        if (twoPhaseBackfill.length > 0) {
+          const pkSql = pk?.col?.name ?? "id";
+          const byColumn = new Map<string, Array<{ id: unknown; value: unknown }>>();
+          for (const item of twoPhaseBackfill) {
+            const list = byColumn.get(item.column) ?? [];
+            list.push({ id: item.id, value: item.value });
+            byColumn.set(item.column, list);
+          }
           const updateBatch = 200;
-          for (let i = 0; i < parentBackfill.length; i += updateBatch) {
-            const chunk = parentBackfill.slice(i, i + updateBatch);
-            const tuples = chunk.map(
-              (p) => sql`(${p.id}::text, ${p.parentId}::text)`,
-            );
-            const reconciled = await sp.execute(sql`
-              UPDATE library_pages AS lp
-              SET parent_id = v.parent_id
-              FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, parent_id)
-              WHERE lp.id = v.id
-              RETURNING lp.id
-            `);
-            const reconciledCount = Array.isArray(reconciled)
-              ? reconciled.length
-              : Number((reconciled as any).rowCount ?? (reconciled as any).rows?.length ?? 0);
-            if (reconciledCount !== chunk.length) {
-              throw new Error(`library_pages parent reconciliation mismatch: expected ${chunk.length}, updated ${reconciledCount}`);
+          for (const [column, items] of byColumn) {
+            for (let i = 0; i < items.length; i += updateBatch) {
+              const chunk = items.slice(i, i + updateBatch);
+              const tuples = chunk.map((p) => sql`(${p.id}, ${p.value})`);
+              const reconciled = await sp.execute(sql`
+                UPDATE ${sql.raw(quoteIdent(key))} AS t
+                SET ${sql.raw(quoteIdent(column))} = v.parent_id
+                FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, parent_id)
+                WHERE t.${sql.raw(quoteIdent(pkSql))} = v.id
+                RETURNING t.${sql.raw(quoteIdent(pkSql))}
+              `);
+              const reconciledCount = Array.isArray(reconciled)
+                ? reconciled.length
+                : Number((reconciled as any).rowCount ?? (reconciled as any).rows?.length ?? 0);
+              if (reconciledCount !== chunk.length) {
+                throw new Error(`${key}.${column} reconciliation mismatch: expected ${chunk.length}, updated ${reconciledCount}`);
+              }
             }
           }
-          log.debug(`${key}: backfilled ${parentBackfill.length} parent_id refs in second pass`);
+          log.debug(`${key}: backfilled ${twoPhaseBackfill.length} self-FK refs in second pass`);
         }
       });
 

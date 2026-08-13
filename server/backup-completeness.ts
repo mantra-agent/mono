@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import type { ClientBase } from "pg";
 
-export const BACKUP_DISPOSITION_MANIFEST_VERSION = 7;
+export const BACKUP_DISPOSITION_MANIFEST_VERSION = 8;
 
 export type BackupClassification = "authoritative" | "control" | "projection" | "transient" | "retired" | "secret";
 export type BackupSensitivity = "S0" | "S1" | "S2" | "S3";
@@ -89,7 +89,13 @@ export function listSecurityDenylistNames(): string[] {
   return Object.keys(SECURITY_DENYLIST).sort();
 }
 
-export type CatalogForeignKey = { name: string; parent: string; deferrable: boolean };
+export type CatalogForeignKey = {
+  name: string;
+  parent: string;
+  deferrable: boolean;
+  column?: string;
+  nullable?: boolean;
+};
 export type CatalogRelation = {
   name: string;
   oid: number;
@@ -98,15 +104,24 @@ export type CatalogRelation = {
   sequenceColumns: Array<{ column: string; sequence: string }>;
   foreignKeys: CatalogForeignKey[];
 };
-export type BackupRestoreStrategy = {
-  id:
-    | "library-parent-reconciliation-v1"
-    | "principle-current-revision-v1"
-    | "runtime-reference-reconciliation-v1";
+export type BackupSelfReference = {
+  relation: string;
+  constraint: string;
+  column: string;
+  deferrable: boolean;
+  nullable: boolean;
+};
+export type BackupIntraConstraint = {
+  child: string;
+  parent: string;
+  constraint: string;
+  deferrable: boolean;
+};
+/** Catalog evidence for an SCC. Never an export veto. */
+export type BackupCycle = {
   relations: string[];
-  insertOrder: string[];
-  deferredConstraints: string[];
-  reconciledReferences: string[];
+  selfReferences: BackupSelfReference[];
+  intraConstraints: BackupIntraConstraint[];
 };
 export type BackupCoverage = {
   version: number;
@@ -114,7 +129,7 @@ export type BackupCoverage = {
   included: BackupDisposition[];
   excluded: BackupDisposition[];
   insertOrder: string[];
-  restoreStrategies: BackupRestoreStrategy[];
+  cycles: BackupCycle[];
   schemaFingerprint: string;
   manifestFingerprint: string;
 };
@@ -140,7 +155,8 @@ function membershipDisposition(relation: string, leftover: boolean): BackupDispo
  * Reconcile live pg_catalog against the security denylist.
  * Membership = every ordinary relation minus SECURITY_DENYLIST.
  * Unexplained Live leftovers export (raw SQL at the producer layer) instead of failing for missing disposition.
- * Fail closed only for unsupported SCC / restore-contract drift (and caller-side denylist/producer checks).
+ * Fail closed only when a denylisted relation would enter Brain (and caller-side producer checks).
+ * SCC / self-FK shape is restore evidence, not an export veto.
  *
  * @param knownSourceRelations optional declared/source names used only to label leftovers in the manifest
  */
@@ -158,7 +174,18 @@ export async function inspectBackupCoverage(
     SELECT c.oid::int AS oid, c.relname AS name, c.relkind,
       COALESCE((SELECT jsonb_agg(a.attname ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND NOT a.attisdropped AND a.attidentity <> ''), '[]') AS identity_columns,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('column', a.attname, 'sequence', pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname)) ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND NOT a.attisdropped AND pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname) IS NOT NULL), '[]') AS sequence_columns,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('name', con.conname, 'parent', pc.relname, 'deferrable', con.condeferrable) ORDER BY con.conname) FROM pg_constraint con JOIN pg_class pc ON pc.oid=con.confrelid WHERE con.conrelid=c.oid AND con.contype='f'), '[]') AS foreign_keys
+      COALESCE((SELECT jsonb_agg(jsonb_build_object(
+        'name', con.conname,
+        'parent', pc.relname,
+        'deferrable', con.condeferrable,
+        'column', a.attname,
+        'nullable', NOT a.attnotnull
+      ) ORDER BY con.conname, a.attnum)
+      FROM pg_constraint con
+      JOIN pg_class pc ON pc.oid=con.confrelid
+      JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS ck(attnum, ord) ON true
+      JOIN pg_attribute a ON a.attrelid=con.conrelid AND a.attnum=ck.attnum
+      WHERE con.conrelid=c.oid AND con.contype='f'), '[]') AS foreign_keys
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname=current_schema() AND c.relkind IN ('r','p') AND NOT c.relispartition
     ORDER BY c.relname`);
@@ -208,7 +235,7 @@ export async function inspectBackupCoverage(
     }
   }
   const components = stronglyConnectedComponents(graph);
-  const restoreStrategies = validateRestoreComponents(components, discovered);
+  const cycles = recordRestoreCycles(components, discovered);
   const componentByRelation = new Map(
     components.flatMap((component, index) => component.map((name) => [name, index] as const)),
   );
@@ -232,8 +259,7 @@ export async function inspectBackupCoverage(
   const insertOrder: string[] = [];
   while (queue.length) {
     const index = queue.shift()!;
-    const strategy = restoreStrategies.find((s) => s.relations.includes(components[index][0]));
-    insertOrder.push(...(strategy?.insertOrder ?? components[index]));
+    insertOrder.push(...components[index]);
     for (const child of children.get(index) ?? []) {
       const next = indegree.get(child)! - 1;
       indegree.set(child, next);
@@ -255,9 +281,9 @@ export async function inspectBackupCoverage(
     included,
     excluded,
     insertOrder,
-    restoreStrategies,
+    cycles,
     schemaFingerprint: stableHash(schemaShape),
-    manifestFingerprint: stableHash({ manifestShape, restoreStrategies }),
+    manifestFingerprint: stableHash({ manifestShape, cycles }),
   };
 }
 
@@ -295,81 +321,47 @@ function stronglyConnectedComponents(graph: Map<string, string[]>): string[][] {
   return out;
 }
 
-function validateRestoreComponents(
+function recordRestoreCycles(
   components: string[][],
   discovered: CatalogRelation[],
-): BackupRestoreStrategy[] {
+): BackupCycle[] {
   const byName = new Map(discovered.map((r) => [r.name, r]));
-  const out: BackupRestoreStrategy[] = [];
+  const out: BackupCycle[] = [];
   for (const component of components) {
-    const self = component.flatMap((name) =>
-      (byName.get(name)?.foreignKeys ?? []).filter((f) => f.parent === name),
-    );
-    if (component.length === 1 && self.length === 0) continue;
-    const signature = component.join(",");
-    if (signature === "library_pages") {
-      if (self.length !== 1 || self[0].deferrable) {
-        throw new Error(
-          "Backup completeness preflight failed: library_pages parent self-reference restore contract drifted",
-        );
+    const names = new Set(component);
+    const selfReferences: BackupSelfReference[] = [];
+    const intraConstraints: BackupIntraConstraint[] = [];
+    for (const name of component) {
+      for (const fk of byName.get(name)?.foreignKeys ?? []) {
+        if (!names.has(fk.parent)) continue;
+        if (fk.parent === name) {
+          selfReferences.push({
+            relation: name,
+            constraint: fk.name,
+            column: fk.column ?? "",
+            deferrable: fk.deferrable,
+            nullable: fk.nullable === true,
+          });
+          continue;
+        }
+        intraConstraints.push({
+          child: name,
+          parent: fk.parent,
+          constraint: fk.name,
+          deferrable: fk.deferrable,
+        });
       }
-      out.push({
-        id: "library-parent-reconciliation-v1",
-        relations: component,
-        insertOrder: ["library_pages"],
-        deferredConstraints: [],
-        reconciledReferences: ["library_pages.parent_id"],
-      });
-      continue;
     }
-    if (signature === "principle_revisions,principles") {
-      out.push({
-        id: "principle-current-revision-v1",
-        relations: component,
-        insertOrder: ["principles", "principle_revisions"],
-        deferredConstraints: requireDeferrable(byName, "principles", "principle_revisions"),
-        reconciledReferences: [],
-      });
-      continue;
-    }
-    if (signature === "runtime_attempts,runtime_run_events,runtime_runs") {
-      const causal = (byName.get("runtime_runs")?.foreignKeys ?? []).filter(
-        (f) => f.parent === "runtime_runs" && !f.deferrable,
-      );
-      if (causal.length !== 1) {
-        throw new Error(
-          "Backup completeness preflight failed: runtime self-reference restore contract drifted",
-        );
-      }
-      out.push({
-        id: "runtime-reference-reconciliation-v1",
-        relations: component,
-        insertOrder: ["runtime_runs", "runtime_attempts", "runtime_run_events"],
-        deferredConstraints: [
-          ...requireDeferrable(byName, "runtime_runs", "runtime_attempts"),
-          ...requireDeferrable(byName, "runtime_runs", "runtime_run_events"),
-        ].sort(),
-        reconciledReferences: ["runtime_runs.causal_parent_run_id"],
-      });
-      continue;
-    }
-    throw new Error(
-      `Backup completeness preflight failed: unsupported FK strongly connected component: ${component.join(" <-> ")}`,
-    );
+    if (component.length === 1 && selfReferences.length === 0) continue;
+    out.push({
+      relations: component,
+      selfReferences: selfReferences.sort((a, b) =>
+        `${a.relation}.${a.column}`.localeCompare(`${b.relation}.${b.column}`),
+      ),
+      intraConstraints: intraConstraints.sort((a, b) =>
+        `${a.child}.${a.constraint}`.localeCompare(`${b.child}.${b.constraint}`),
+      ),
+    });
   }
-  return out.sort((a, b) => a.id.localeCompare(b.id));
-}
-
-function requireDeferrable(
-  byName: Map<string, CatalogRelation>,
-  child: string,
-  parent: string,
-): string[] {
-  const matches = (byName.get(child)?.foreignKeys ?? []).filter((f) => f.parent === parent);
-  if (!matches.length || matches.some((f) => !f.deferrable)) {
-    throw new Error(
-      `Backup completeness preflight failed: ${child}->${parent} must be deferrable for its declared restore strategy`,
-    );
-  }
-  return matches.map((f) => `${child}.${f.name}`);
+  return out.sort((a, b) => a.relations.join(",").localeCompare(b.relations.join(",")));
 }
