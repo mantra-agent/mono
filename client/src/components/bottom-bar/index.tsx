@@ -216,7 +216,7 @@ function BottomBarMenu({
 
   const toggleAttention = useMutation({
     mutationFn: async ({ id, isPinned }: { id: string; isPinned: boolean }) => {
-      await apiRequest("PATCH", `/api/gateway/conversations/${id}/attention`, { isPinned });
+      await apiRequest("PATCH", `/api/sessions/${id}/attention`, { isPinned });
     },
     onMutate: async ({ id, isPinned }) => {
       await queryClient.cancelQueries({ queryKey: ["/api/sessions"] });
