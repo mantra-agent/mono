@@ -3,6 +3,9 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Check, ChevronRight, Clock, Copy, Glasses, Globe2, Loader2, Mail, Monitor, MoreHorizontal, Shield, Smartphone, Trash2, User, UserPlus, Users } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { HierarchyTreeRow } from "@/components/hierarchy-tree";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -19,6 +22,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
+import { matchesIdentityQuery, useIdentityGraph } from "@/lib/identity-graph";
+import { createReferenceRef } from "@shared/references";
 import type { ClientPresenceEntry, ClientPresenceKind } from "@shared/client-presence";
 
 interface AdminUserRow {
@@ -498,44 +503,151 @@ export default function UsersAdminPage() {
   const canWrite = hasPermission("users:write");
   const canRead = hasPermission("users:read");
   const { data, isLoading } = useQuery<UsersResponse>({ queryKey: ["/api/auth/users"], enabled: canRead, refetchInterval: 15_000 });
+  const identityGraph = useIdentityGraph(canRead);
   usePageLoadActivity("page:users", isLoading);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedWaitlistId, setSelectedWaitlistId] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [deleteUser, setDeleteUser] = useState<AdminUserRow | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Set<string>>>({});
+  const [search, setSearch] = useState("");
+  const [expandedUserIds, setExpandedUserIds] = useState<Record<string, boolean>>({});
   usePageHeader({ title: "Users" });
   const availablePermissions = data?.availablePermissions ?? [];
   const users = data?.users ?? [];
   const waitlist = data?.waitlist ?? [];
-  const activeUsers = useMemo(() => users.filter((user) => user.presence.length > 0), [users]);
-  const inactiveUsers = useMemo(() => users.filter((user) => user.presence.length === 0), [users]);
+  const accountsById = useMemo(
+    () => new Map((identityGraph.data?.accounts ?? []).map((account) => [account.id, account])),
+    [identityGraph.data?.accounts],
+  );
+  const instancesById = useMemo(
+    () => new Map((identityGraph.data?.instances ?? []).map((instance) => [instance.id, instance])),
+    [identityGraph.data?.instances],
+  );
+  const membershipsByUser = useMemo(() => {
+    const map = new Map<string, Array<{ accountId: string; role: string }>>();
+    for (const membership of identityGraph.data?.memberships ?? []) {
+      const list = map.get(membership.userId) ?? [];
+      list.push({ accountId: membership.accountId, role: membership.role });
+      map.set(membership.userId, list);
+    }
+    return map;
+  }, [identityGraph.data?.memberships]);
+  const pinnedInstanceByUserAccount = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const membership of identityGraph.data?.instanceMemberships ?? []) {
+      map.set(`${membership.userId}:${membership.accountId}`, membership.instanceId);
+    }
+    return map;
+  }, [identityGraph.data?.instanceMemberships]);
+  const filteredUsers = useMemo(() => {
+    return users.filter((user) => {
+      const accountNames = (membershipsByUser.get(user.id) ?? [])
+        .map((membership) => accountsById.get(membership.accountId)?.name)
+        .filter(Boolean);
+      return matchesIdentityQuery(search, user.email, user.role, user.id, ...accountNames);
+    });
+  }, [accountsById, membershipsByUser, search, users]);
+  const activeUsers = useMemo(() => filteredUsers.filter((user) => user.presence.length > 0), [filteredUsers]);
+  const inactiveUsers = useMemo(() => filteredUsers.filter((user) => user.presence.length === 0), [filteredUsers]);
+  const filteredWaitlist = useMemo(
+    () => waitlist.filter((application) => matchesIdentityQuery(search, application.email, application.status, application.role)),
+    [search, waitlist],
+  );
   const selectedUser = users.find((user) => user.id === selectedUserId) ?? null;
   const selectedWaitlist = waitlist.find((application) => application.id === selectedWaitlistId) ?? null;
   const draftFor = useCallback((user: AdminUserRow) => drafts[user.id] ?? new Set(user.permissionOverrides), [drafts]);
   if (!canRead) return <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">Users administration requires users:read.</div>;
   if (isLoading) return null;
 
+  const identityChildrenFor = (userId: string) => {
+    const memberships = [...(membershipsByUser.get(userId) ?? [])]
+      .sort((a, b) => (accountsById.get(a.accountId)?.name ?? a.accountId).localeCompare(accountsById.get(b.accountId)?.name ?? b.accountId));
+    const refs = [];
+    for (const membership of memberships) {
+      const account = accountsById.get(membership.accountId);
+      if (account) {
+        refs.push(createReferenceRef({
+          type: "account",
+          id: account.id,
+          metadata: { label: account.name },
+        }));
+      }
+      const pinnedInstanceId = pinnedInstanceByUserAccount.get(`${userId}:${membership.accountId}`);
+      const pinnedInstance = pinnedInstanceId ? instancesById.get(pinnedInstanceId) : null;
+      if (pinnedInstance) {
+        refs.push(createReferenceRef({
+          type: "agent_instance",
+          id: pinnedInstance.id,
+          metadata: { label: pinnedInstance.name },
+        }));
+      }
+    }
+    return refs;
+  };
+
   const renderUserRow = (user: AdminUserRow) => {
     const selected = selectedUserId === user.id;
+    const expanded = expandedUserIds[user.id] ?? Boolean(search.trim());
+    const children = identityChildrenFor(user.id);
     return (
-      <div key={user.id} className={cn("group relative flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm transition-colors", selected ? "bg-accent" : "hover:bg-accent/70")} data-testid={`user-row-${user.id}`}>
-        <button type="button" onClick={() => { setSelectedUserId(user.id); setSelectedWaitlistId(null); }} className="absolute inset-0" aria-label={`View ${user.email}`} />
-        <User className={cn("pointer-events-none h-3.5 w-3.5 shrink-0", selected ? "text-foreground" : "text-muted-foreground")} />
-        <span className={cn("pointer-events-none min-w-0 flex-1 truncate pr-6", selected ? "text-foreground" : "text-muted-foreground")}>{user.email}</span>
-        {user.identityIncomplete ? <span className="pointer-events-none shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive" title="Identity foundation incomplete — this account is missing its personal workspace and cannot fully sign in">Setup incomplete</span> : null}
-        {user.presence.length > 0 ? <div className="pointer-events-none"><UserPresence presence={user.presence} /></div> : null}
-        {canWrite && currentUser?.id !== user.id ? <DropdownMenu modal={false}><DropdownMenuTrigger asChild><button type="button" className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100" aria-label={`More actions for ${user.email}`} onClick={(event) => event.stopPropagation()}><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteUser(user)}><Trash2 className="mr-2 h-4 w-4" />Delete user</DropdownMenuItem></DropdownMenuContent></DropdownMenu> : null}
+      <div key={user.id} className="min-w-0" data-testid={`user-row-${user.id}`}>
+        <div className={cn("group relative flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm transition-colors", selected ? "bg-accent" : "hover:bg-accent/70")}>
+          <button
+            type="button"
+            className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label={expanded ? `Collapse ${user.email}` : `Expand ${user.email}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpandedUserIds((current) => ({ ...current, [user.id]: !expanded }));
+            }}
+          >
+            <ChevronRight className={cn("h-3 w-3 transition-transform", expanded && "rotate-90")} />
+          </button>
+          <button type="button" onClick={() => { setSelectedUserId(user.id); setSelectedWaitlistId(null); }} className="absolute inset-0" aria-label={`View ${user.email}`} />
+          <User className={cn("pointer-events-none h-3.5 w-3.5 shrink-0", selected ? "text-foreground" : "text-muted-foreground")} />
+          <span className={cn("pointer-events-none min-w-0 flex-1 truncate pr-6", selected ? "text-foreground" : "text-muted-foreground")}>{user.email}</span>
+          {user.identityIncomplete ? <span className="pointer-events-none shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive" title="Identity foundation incomplete — this account is missing its personal workspace and cannot fully sign in">Setup incomplete</span> : null}
+          {user.presence.length > 0 ? <div className="pointer-events-none"><UserPresence presence={user.presence} /></div> : null}
+          {canWrite && currentUser?.id !== user.id ? <DropdownMenu modal={false}><DropdownMenuTrigger asChild><button type="button" className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100" aria-label={`More actions for ${user.email}`} onClick={(event) => event.stopPropagation()}><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteUser(user)}><Trash2 className="mr-2 h-4 w-4" />Delete user</DropdownMenuItem></DropdownMenuContent></DropdownMenu> : null}
+        </div>
+        {expanded ? (
+          children.length === 0 ? (
+            <HierarchyTreeRow continues={false} indent="icon" connectorAnchor="first-row-center">
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">No accounts.</div>
+            </HierarchyTreeRow>
+          ) : (
+            children.map((ref, index) => (
+              <HierarchyTreeRow
+                key={ref.canonical}
+                continues={index < children.length - 1}
+                indent="icon"
+                connectorAnchor="first-row-center"
+              >
+                <div className="flex min-h-8 items-center px-1 py-0.5">
+                  <ReferenceRenderer refValue={ref} surface="simple-row" className="max-w-full" />
+                </div>
+              </HierarchyTreeRow>
+            ))
+          )
+        ) : null}
       </div>
     );
   };
 
   return (
     <div className="flex h-full bg-black" data-testid="users-page">
-      <div className={cn("w-full shrink-0 flex-col bg-black @md:flex @md:w-72", selectedUser || selectedWaitlist ? "hidden" : "flex")}>
+      <div className={cn("w-full shrink-0 flex-col bg-black @md:flex @md:w-80", selectedUser || selectedWaitlist ? "hidden" : "flex")}>
         <ScrollArea className="flex-1"><div className="space-y-1 p-2">
+          <HierarchySearchInput
+            value={search}
+            onChange={setSearch}
+            inputTestId="input-search-users"
+            clearTestId="button-clear-user-search"
+            ariaLabel="Search users"
+          />
           {canWrite ? <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => setInviteOpen(true)} data-testid="button-invite-user"><UserPlus className="h-3.5 w-3.5" />Invite user</button> : null}
-          <UserGroupSection label="Waitlist" count={waitlist.length} defaultOpen={false} storageKey="users:list:waitlist:open">{waitlist.length > 0 ? waitlist.map((application) => <button type="button" key={application.id} onClick={() => { setSelectedWaitlistId(application.id); setSelectedUserId(null); }} className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm", selectedWaitlistId === application.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70")}><span className="w-7 shrink-0 text-right text-xs tabular-nums">#{application.position}</span><span className="min-w-0 flex-1 truncate">{application.email}</span></button>) : <div className="px-7 py-1.5 text-sm text-muted-foreground">No one is waiting.</div>}</UserGroupSection>
+          <UserGroupSection label="Waitlist" count={filteredWaitlist.length} defaultOpen={false} storageKey="users:list:waitlist:open">{filteredWaitlist.length > 0 ? filteredWaitlist.map((application) => <button type="button" key={application.id} onClick={() => { setSelectedWaitlistId(application.id); setSelectedUserId(null); }} className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm", selectedWaitlistId === application.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70")}><span className="w-7 shrink-0 text-right text-xs tabular-nums">#{application.position}</span><span className="min-w-0 flex-1 truncate">{application.email}</span></button>) : <div className="px-7 py-1.5 text-sm text-muted-foreground">No one is waiting.</div>}</UserGroupSection>
           <UserGroupSection label="Active" count={activeUsers.length} defaultOpen storageKey="users:list:active:open">{activeUsers.length > 0 ? activeUsers.map(renderUserRow) : <div className="px-7 py-1.5 text-sm text-muted-foreground">No active users.</div>}</UserGroupSection>
           <UserGroupSection label="Inactive" count={inactiveUsers.length} defaultOpen={false} storageKey="users:list:inactive:open">{inactiveUsers.map(renderUserRow)}</UserGroupSection>
         </div></ScrollArea>

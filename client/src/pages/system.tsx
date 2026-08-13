@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useLocation } from "wouter";
-import { ScrollText, DollarSign, Loader2, Wrench, ClipboardCheck, Brain, Zap, GitBranch, Cpu, Gauge, Users, FileText, KeyRound } from "lucide-react";
+import { ScrollText, DollarSign, Loader2, Wrench, ClipboardCheck, Brain, Zap, GitBranch, Cpu, Gauge, Users, FileText, KeyRound, Building2, Bot } from "lucide-react";
 import { ProcessesCard } from "@/components/processes-card";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useAuth } from "@/hooks/use-auth";
@@ -13,6 +13,8 @@ const PromptsContent = lazyWithRetry(() => import("@/pages/prompts"));
 const LogsContent = lazyWithRetry(() => import("@/pages/logs"));
 const PerformanceContent = lazyWithRetry(() => import("@/pages/performance-screen"));
 const UsersContent = lazyWithRetry(() => import("@/pages/users-admin"));
+const AccountsContent = lazyWithRetry(() => import("@/pages/accounts-admin"));
+const AgentsContent = lazyWithRetry(() => import("@/pages/agents-admin"));
 const SecretsContent = lazyWithRetry(() => import("@/pages/secrets-admin"));
 
 const InferenceContent = lazyWithRetry(() => import("@/pages/inference"));
@@ -39,6 +41,8 @@ const systemTabs = [
   { value: "events", label: "Events", icon: <Zap className="h-3.5 w-3.5" />, testId: "tab-system-events" },
   { value: "hooks", label: "Hooks", icon: <GitBranch className="h-3.5 w-3.5" />, testId: "tab-system-hooks" },
   { value: "process", label: "Process", icon: <Cpu className="h-3.5 w-3.5" />, testId: "tab-system-process" },
+  { value: "accounts", label: "Accounts", icon: <Building2 className="h-3.5 w-3.5" />, testId: "tab-system-accounts" },
+  { value: "agents", label: "Agents", icon: <Bot className="h-3.5 w-3.5" />, testId: "tab-system-agents" },
   { value: "users", label: "Users", icon: <Users className="h-3.5 w-3.5" />, testId: "tab-system-users" },
   { value: "secrets", label: "Secrets", icon: <KeyRound className="h-3.5 w-3.5" />, testId: "tab-system-secrets" },
 ];
@@ -71,9 +75,11 @@ export default function SystemPage() {
     setActiveTab(p.tab);
   }, [location, readUrlParams, setLocation]);
 
+  const identityTabs = new Set(["users", "accounts", "agents"]);
+
   const tabs = useMemo(() =>
     systemTabs
-      .filter((t) => (t.value !== "users" || canReadUsers) && (t.value !== "prompts" || canReadPrompts))
+      .filter((t) => (!identityTabs.has(t.value) || canReadUsers) && (t.value !== "prompts" || canReadPrompts))
       .map(t => {
       if (t.value === "logs" && hasUnseenLogErrors) {
         return { ...t, indicatorLevel: "error" as const, tooltip: "Unseen log errors" };
@@ -84,7 +90,7 @@ export default function SystemPage() {
   );
 
   useEffect(() => {
-    if (activeTab === "users" && !canReadUsers) {
+    if (identityTabs.has(activeTab) && !canReadUsers) {
       setActiveTab("resources");
     }
     if (activeTab === "prompts" && !canReadPrompts) {
@@ -93,7 +99,13 @@ export default function SystemPage() {
   }, [activeTab, canReadUsers, canReadPrompts]);
 
   usePageHeader({
-    title: activeTab === "hooks" ? "Hooks" : activeTab === "prompts" ? "Prompts" : "System",
+    title:
+      activeTab === "hooks" ? "Hooks"
+        : activeTab === "prompts" ? "Prompts"
+          : activeTab === "accounts" ? "Accounts"
+            : activeTab === "agents" ? "Agents"
+              : activeTab === "users" ? "Users"
+                : "System",
     tabs,
     activeTab,
     onTabChange: setActiveTab,
@@ -102,6 +114,8 @@ export default function SystemPage() {
   return (
     <div className="flex flex-col h-full min-w-0 overflow-hidden">
       <Suspense fallback={<TabFallback />}>
+        {activeTab === "accounts" && <AccountsContent />}
+        {activeTab === "agents" && <AgentsContent />}
         {activeTab === "users" && <UsersContent />}
         {activeTab === "secrets" && (
           <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin">

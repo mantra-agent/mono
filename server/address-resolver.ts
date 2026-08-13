@@ -12,6 +12,8 @@ import {
   type ReferenceRef,
 } from "@shared/references";
 import {
+  accounts,
+  agentInstances,
   businessPlans,
   companies,
   emailDrafts,
@@ -40,6 +42,7 @@ import {
   strategyStates,
   tasks,
   timers,
+  users,
   workflowRuns,
   workflowGates,
 } from "@shared/schema";
@@ -726,6 +729,67 @@ const adapters: AddressResolverAdapter[] = [
       .where(combineWithVisibleScope(principal, scope, inArray(meetingDrafts.id, refs.map(ref => ref.id))));
     const byId = new Map(rows.map(row => [row.id, row]));
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.summary || "Meeting draft", updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
+  }),
+  // Super-admin identity nouns — users:read is the gate; not ordinary user-owned scope.
+  simpleAdapter("account", async (principal, refs) => {
+    if (!principalHasPermission(principal, "users:read")) return resultMap(refs, "unauthorized");
+    const rows = await db.select({
+      id: accounts.id,
+      name: accounts.name,
+      kind: accounts.kind,
+      updatedAt: accounts.updatedAt,
+    }).from(accounts).where(inArray(accounts.id, refs.map(ref => ref.id)));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => {
+      const row = byId.get(ref.id);
+      return row
+        ? [[requestedAddress(ref), resolved(ref, {
+          label: row.name,
+          summary: row.kind,
+          updatedAt: row.updatedAt,
+        })]]
+        : [];
+    }));
+  }),
+  simpleAdapter("user", async (principal, refs) => {
+    if (!principalHasPermission(principal, "users:read")) return resultMap(refs, "unauthorized");
+    const rows = await db.select({
+      id: users.id,
+      email: users.email,
+      role: users.role,
+      createdAt: users.createdAt,
+    }).from(users).where(inArray(users.id, refs.map(ref => ref.id)));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => {
+      const row = byId.get(ref.id);
+      return row
+        ? [[requestedAddress(ref), resolved(ref, {
+          label: row.email,
+          summary: row.role,
+          updatedAt: row.createdAt,
+        })]]
+        : [];
+    }));
+  }),
+  simpleAdapter("agent_instance", async (principal, refs) => {
+    if (!principalHasPermission(principal, "users:read")) return resultMap(refs, "unauthorized");
+    const rows = await db.select({
+      id: agentInstances.id,
+      name: agentInstances.name,
+      status: agentInstances.status,
+      updatedAt: agentInstances.updatedAt,
+    }).from(agentInstances).where(inArray(agentInstances.id, refs.map(ref => ref.id)));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => {
+      const row = byId.get(ref.id);
+      return row
+        ? [[requestedAddress(ref), resolved(ref, {
+          label: row.name,
+          summary: row.status,
+          updatedAt: row.updatedAt,
+        })]]
+        : [];
+    }));
   }),
 ];
 
