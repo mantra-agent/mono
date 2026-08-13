@@ -1,0 +1,270 @@
+import { createHash } from "node:crypto";
+import { createWriteStream, promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pipeline } from "node:stream/promises";
+import { spawn } from "node:child_process";
+import { createLogger } from "./log";
+import { getSetting, setSetting } from "./system-settings";
+import { resolveGitSource } from "./git-source-resolver";
+import { getBranchHead, type RepoRef } from "./integrations/github-pr";
+
+const log = createLogger("StageSync");
+
+const APP_ROOT = process.env.STAGE_SYNC_APP_ROOT || "/app";
+const ACTIVE_MARKER = path.join(APP_ROOT, ".stage-sync-active-sha");
+const STATUS_KEY_PREFIX = "stage_sync:env:";
+
+const COPY_ENTRIES = [
+  "server",
+  "client",
+  "shared",
+  "script",
+  "scripts",
+  "migrations",
+  "mobile",
+  "package.json",
+  "package-lock.json",
+  "tsconfig.json",
+  "vite.config.ts",
+  "tailwind.config.ts",
+  "postcss.config.js",
+  "components.json",
+  "AGENTS.md",
+  "CODING.md",
+  "SECURITY.md",
+  "DESIGN.md",
+  "GOALS.md",
+  "PLANNING.md",
+] as const;
+
+export type StageSyncStatusRecord = {
+  version: 1;
+  environmentId: number;
+  activeCommitSha: string | null;
+  targetCommitSha: string | null;
+  status: "idle" | "pending" | "applying" | "ready" | "failed";
+  reason: string | null;
+  updatedAt: string;
+};
+
+function statusKey(environmentId: number): string {
+  return `${STATUS_KEY_PREFIX}${environmentId}`;
+}
+
+function boundedSha(value: string): string {
+  const sha = value.trim().toLowerCase();
+  if (!/^[a-f0-9]{7,64}$/.test(sha)) throw new Error("Stage sync commit identity is invalid");
+  return sha;
+}
+
+async function hashFile(filePath: string): Promise<string> {
+  const bytes = await fs.readFile(filePath);
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+export async function readStageSyncStatus(environmentId: number): Promise<StageSyncStatusRecord | null> {
+  const value = await getSetting<StageSyncStatusRecord>(statusKey(environmentId));
+  if (!value || typeof value !== "object" || value.version !== 1) return null;
+  return value;
+}
+
+export async function writeStageSyncStatus(
+  environmentId: number,
+  patch: Partial<Omit<StageSyncStatusRecord, "version" | "environmentId" | "updatedAt">> & {
+    activeCommitSha?: string | null;
+    targetCommitSha?: string | null;
+  },
+): Promise<StageSyncStatusRecord> {
+  const existing = await readStageSyncStatus(environmentId);
+  const next: StageSyncStatusRecord = {
+    version: 1,
+    environmentId,
+    activeCommitSha: patch.activeCommitSha !== undefined ? patch.activeCommitSha : existing?.activeCommitSha ?? null,
+    targetCommitSha: patch.targetCommitSha !== undefined ? patch.targetCommitSha : existing?.targetCommitSha ?? null,
+    status: patch.status ?? existing?.status ?? "idle",
+    reason: patch.reason !== undefined ? patch.reason : existing?.reason ?? null,
+    updatedAt: new Date().toISOString(),
+  };
+  await setSetting(statusKey(environmentId), next);
+  return next;
+}
+
+export async function readLocalActiveSyncSha(): Promise<string | null> {
+  try {
+    const raw = (await fs.readFile(ACTIVE_MARKER, "utf8")).trim().toLowerCase();
+    return /^[a-f0-9]{7,64}$/.test(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeLocalActiveSyncSha(sha: string): Promise<void> {
+  await fs.writeFile(ACTIVE_MARKER, `${boundedSha(sha)}\n`, { mode: 0o644 });
+}
+
+async function run(command: string, args: string[], cwd?: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, { cwd, stdio: ["ignore", "inherit", "inherit"] });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${command} ${args.join(" ")} exited ${code ?? "null"}`));
+    });
+  });
+}
+
+async function downloadCommitTarball(ref: RepoRef, sha: string, destinationFile: string): Promise<void> {
+  const source = await resolveGitSource({
+    repoUrl: `https://github.com/${ref.owner}/${ref.repo}.git`,
+    matchBranch: false,
+  });
+  if (!source?.token) throw new Error(`No GitHub credential for ${ref.owner}/${ref.repo}`);
+  const response = await fetch(
+    `https://api.github.com/repos/${ref.owner}/${ref.repo}/tarball/${encodeURIComponent(sha)}`,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${source.token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "mantra-stage-sync",
+      },
+      redirect: "follow",
+    },
+  );
+  if (!response.ok || !response.body) {
+    throw new Error(`GitHub tarball download failed HTTP ${response.status}`);
+  }
+  await pipeline(response.body as unknown as NodeJS.ReadableStream, createWriteStream(destinationFile));
+}
+
+async function extractTarball(archivePath: string, destinationDir: string): Promise<string> {
+  await fs.mkdir(destinationDir, { recursive: true });
+  await run("tar", ["-xzf", archivePath, "-C", destinationDir]);
+  const entries = await fs.readdir(destinationDir, { withFileTypes: true });
+  const dirs = entries.filter((entry) => entry.isDirectory());
+  if (dirs.length !== 1) throw new Error("GitHub tarball did not contain exactly one root directory");
+  return path.join(destinationDir, dirs[0].name);
+}
+
+async function applyTree(sourceRoot: string): Promise<void> {
+  for (const relative of COPY_ENTRIES) {
+    const from = path.join(sourceRoot, relative);
+    const to = path.join(APP_ROOT, relative);
+    try {
+      await fs.access(from);
+    } catch {
+      continue;
+    }
+    await fs.rm(to, { recursive: true, force: true });
+    await run("cp", ["-a", from, to]);
+  }
+}
+
+function requestPlannedRestart(): void {
+  if (typeof process.send === "function") {
+    process.send({ type: "planned_restart", reason: "stage_sync_apply" });
+  }
+}
+
+/**
+ * Stage-only boot hook. When Live queues STAGE_SYNC_TARGET_SHA and restarts Stage,
+ * this downloads the bound-repo commit into /app (lockfile-safe) and requests a
+ * planned wrapper restart so tsx/Vite load the new tree. Railway autodeploy stays on.
+ */
+export async function maybeApplyPendingStageSync(input: {
+  environmentId: number | null;
+  owner: string;
+  repo: string;
+}): Promise<{ applied: boolean; restartRequested: boolean; status: StageSyncStatusRecord | null }> {
+  const isLiveRuntime = /(?:^|[._-])(?:live|prod)(?:$|[._-])/i.test(
+    `${process.env.RAILWAY_ENVIRONMENT_NAME || ""} ${process.env.RAILWAY_ENVIRONMENT || ""}`,
+  );
+  if (process.env.STAGE_WARM_ENABLED !== "true" || isLiveRuntime) {
+    return { applied: false, restartRequested: false, status: null };
+  }
+  if (!input.environmentId || input.environmentId <= 0) {
+    return { applied: false, restartRequested: false, status: null };
+  }
+
+  const targetRaw = process.env.STAGE_SYNC_TARGET_SHA?.trim() || "";
+  if (!targetRaw) {
+    const local = await readLocalActiveSyncSha();
+    if (local) {
+      await writeStageSyncStatus(input.environmentId, {
+        activeCommitSha: local,
+        status: "ready",
+        reason: null,
+      });
+    }
+    return { applied: false, restartRequested: false, status: await readStageSyncStatus(input.environmentId) };
+  }
+
+  const targetSha = boundedSha(targetRaw);
+  const localActive = await readLocalActiveSyncSha();
+  if (localActive && localActive === targetSha) {
+    const status = await writeStageSyncStatus(input.environmentId, {
+      activeCommitSha: localActive,
+      targetCommitSha: targetSha,
+      status: "ready",
+      reason: null,
+    });
+    return { applied: false, restartRequested: false, status };
+  }
+
+  await writeStageSyncStatus(input.environmentId, {
+    targetCommitSha: targetSha,
+    status: "applying",
+    reason: `Applying ${targetSha.slice(0, 7)} into the warm workspace`,
+  });
+
+  const workRoot = await fs.mkdtemp(path.join(tmpdir(), "stage-sync-"));
+  const archivePath = path.join(workRoot, "source.tar.gz");
+  const extractRoot = path.join(workRoot, "extract");
+  try {
+    await downloadCommitTarball({ owner: input.owner, repo: input.repo }, targetSha, archivePath);
+    const treeRoot = await extractTarball(archivePath, extractRoot);
+    const currentLock = path.join(APP_ROOT, "package-lock.json");
+    const incomingLock = path.join(treeRoot, "package-lock.json");
+    const currentHash = await hashFile(currentLock);
+    const incomingHash = await hashFile(incomingLock);
+    if (currentHash !== incomingHash) {
+      const status = await writeStageSyncStatus(input.environmentId, {
+        targetCommitSha: targetSha,
+        status: "failed",
+        reason: "Full rebuild required — package-lock.json changed. Sync Latest will not install dependencies.",
+      });
+      log.warn(`stage_sync_lockfile_mismatch target=${targetSha.slice(0, 7)}`);
+      return { applied: false, restartRequested: false, status };
+    }
+
+    await applyTree(treeRoot);
+    await writeLocalActiveSyncSha(targetSha);
+    const status = await writeStageSyncStatus(input.environmentId, {
+      activeCommitSha: targetSha,
+      targetCommitSha: targetSha,
+      status: "ready",
+      reason: null,
+    });
+    log.info(`stage_sync_applied sha=${targetSha.slice(0, 7)} environmentId=${input.environmentId}`);
+    requestPlannedRestart();
+    return { applied: true, restartRequested: true, status };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = await writeStageSyncStatus(input.environmentId, {
+      targetCommitSha: targetSha,
+      status: "failed",
+      reason: message,
+    });
+    log.error(`stage_sync_failed sha=${targetSha.slice(0, 7)} error=${message}`);
+    return { applied: false, restartRequested: false, status };
+  } finally {
+    await fs.rm(workRoot, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+export async function resolveBoundBranchHead(ref: RepoRef, branch: string): Promise<{ sha: string; message: string }> {
+  const head = await getBranchHead(ref, branch);
+  if (!head?.sha) throw new Error(`Could not resolve ${ref.owner}/${ref.repo}@${branch}`);
+  return head;
+}

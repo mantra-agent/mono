@@ -161,6 +161,20 @@ export async function enableWarmStageRuntimeVariable(control: RailwayEnvironment
   );
 }
 
+/** Queue a Sync Latest target without triggering Railway auto-deploy (skipDeploys). */
+export async function setStageSyncTargetVariable(
+  control: RailwayEnvironmentControl,
+  targetCommitSha: string,
+): Promise<void> {
+  await upsertServiceVariables(
+    control.projectId,
+    control.railwayEnvironmentId,
+    control.serviceId,
+    { STAGE_SYNC_TARGET_SHA: targetCommitSha },
+    control.token,
+  );
+}
+
 export async function redeployEnvironment(
   control: RailwayEnvironmentControl,
   deploymentId?: string,

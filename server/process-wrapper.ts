@@ -61,6 +61,7 @@ const BOOT_COMPLETE_MARKER = "__BOOT_COMPLETE__";
 const PLANNED_RESTART_REASONS = new Set<string>([
   "stage_document_store_activation",
   "stage_legacy_memory_quarantine",
+  "stage_sync_apply",
 ]);
 const PREV_BOOT_ID_FILE = path.join("/tmp", "watchdog-prev-boot-id");
 const CHILD_PATH = "dist/index.mjs";

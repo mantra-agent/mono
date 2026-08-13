@@ -22,8 +22,10 @@ import {
   resolveRailwayEnvironmentControl,
   restartEnvironment,
   serializeEnvironmentDeployment,
+  setStageSyncTargetVariable,
   verifyRailwayEnvironmentCapability,
 } from "./environment-control";
+import { resolveBoundBranchHead, writeStageSyncStatus } from "../../stage-sync";
 import {
   checkPrereqs,
   getDisplayRun,
@@ -115,6 +117,9 @@ export function registerRailwayRoutes(app: Express) {
   });
   const enableWarmStageBodySchema = z.object({
     confirmation: z.literal("ENABLE_WARM_STAGE"),
+    idempotencyKey: z.string().trim().min(8).max(200),
+  });
+  const syncLatestBodySchema = z.object({
     idempotencyKey: z.string().trim().min(8).max(200),
   });
   const publishContextSchema = z.object({
@@ -340,6 +345,106 @@ export function registerRailwayRoutes(app: Express) {
       res.json({ ok: true, action: "restart_stage", ...(await restartEnvironment(control, parsed.data.deploymentId)) });
     } catch (error) {
       handleError(res, error, "Stage restart failed");
+    }
+  });
+
+  app.post("/api/railway/environments/:platformEnvironmentId/actions/sync-latest", requirePermission("build:write"), async (req, res) => {
+    const control = await parseEnvironment(req, res);
+    if (!control) return;
+    if (!isMantraWebStageIdentity({
+      platformName: control.environment.platformName,
+      productName: control.environment.productName,
+      environmentName: control.environment.platformEnvironmentName,
+    })) {
+      return res.status(409).json({ error: "Sync Latest is available only on Mantra Web Stage" });
+    }
+    const lifecycle = await getEnvironmentBuildLifecycleConfig(control.environment.platformEnvironmentId, { includeDisabled: true });
+    const policy = lifecycle?.config?.deployPolicy && typeof lifecycle.config.deployPolicy === "object" && !Array.isArray(lifecycle.config.deployPolicy)
+      ? lifecycle.config.deployPolicy as Record<string, unknown>
+      : {};
+    const capabilities = deriveStageLifecycleCapabilities(policy, lifecycle?.config?.providerKind || "railway", {
+      platformName: control.environment.platformName,
+      productName: control.environment.productName,
+      environmentName: control.environment.platformEnvironmentName,
+    });
+    if (!capabilities.actions.includes("sync_latest")) {
+      return res.status(409).json({ error: "Sync Latest requires Warm Stage (runtimeMode=warm_workspace)" });
+    }
+    const parsed = syncLatestBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: "Sync Latest requires an idempotencyKey" });
+    const principal = req.principal;
+    if (!principal) return res.status(401).json({ error: "Authentication required" });
+
+    const [source] = await db.select({
+      owner: environmentSourceBindings.owner,
+      repo: environmentSourceBindings.repo,
+      branch: environmentSourceBindings.branch,
+    }).from(environmentSourceBindings)
+      .where(eq(environmentSourceBindings.environmentId, control.environment.platformEnvironmentId))
+      .limit(1);
+    if (!source?.owner || !source.repo || !source.branch) {
+      return res.status(409).json({ error: "Stage has no bound source owner/repo/branch" });
+    }
+
+    const action = "platform_environment.sync_latest";
+    const idempotencyKey = parsed.data.idempotencyKey;
+    const existing = await db.transaction(async (tx) => {
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.MOD_LIFECYCLE, `sync-latest:${control.environment.platformEnvironmentId}:${idempotencyKey}`);
+      const [row] = await tx.select({ id: privilegedAccessAudit.id, metadata: privilegedAccessAudit.metadata })
+        .from(privilegedAccessAudit)
+        .where(and(eq(privilegedAccessAudit.action, action), sql`${privilegedAccessAudit.metadata}->>'idempotencyKey' = ${idempotencyKey}`))
+        .limit(1);
+      if (row) return { ...row, replayed: true };
+      const [created] = await tx.insert(privilegedAccessAudit).values({
+        actorType: principal.actorType,
+        actorUserId: principal.userId,
+        actorAccountId: principal.accountId,
+        action,
+        reason: "Human Sync Latest for Warm Stage workspace",
+        scopes: ["build:write", `platform_environment:${control.environment.platformEnvironmentId}`],
+        metadata: { idempotencyKey, environmentId: control.environment.platformEnvironmentId, status: "started" },
+      }).returning({ id: privilegedAccessAudit.id });
+      return { id: created.id, metadata: { status: "started" }, replayed: false };
+    });
+    const existingMetadata = existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
+      ? existing.metadata as Record<string, unknown>
+      : {};
+    if (existing.replayed && existingMetadata.status === "completed") {
+      return res.json({ ok: true, action: "sync_latest", replayed: true, ...(existingMetadata.result as Record<string, unknown>) });
+    }
+    if (existing.replayed && existingMetadata.status === "started") {
+      return res.status(409).json({ error: "This Sync Latest request is already in progress; use a new idempotencyKey after checking Stage state." });
+    }
+
+    try {
+      const head = await resolveBoundBranchHead({ owner: source.owner, repo: source.repo }, source.branch);
+      await writeStageSyncStatus(control.environment.platformEnvironmentId, {
+        targetCommitSha: head.sha,
+        status: "pending",
+        reason: `Queued ${head.sha.slice(0, 7)} for warm apply`,
+      });
+      await setStageSyncTargetVariable(control, head.sha);
+      const restart = await restartEnvironment(control);
+      const result = {
+        targetCommitSha: head.sha,
+        targetCommitMessage: head.message,
+        deploymentId: restart.deploymentId,
+        restarted: restart.ok,
+      };
+      await db.update(privilegedAccessAudit).set({
+        metadata: {
+          idempotencyKey,
+          environmentId: control.environment.platformEnvironmentId,
+          status: "completed",
+          result,
+        },
+      }).where(eq(privilegedAccessAudit.id, existing.id));
+      res.json({ ok: true, action: "sync_latest", replayed: false, ...result });
+    } catch (error) {
+      await db.update(privilegedAccessAudit).set({
+        metadata: { idempotencyKey, environmentId: control.environment.platformEnvironmentId, status: "failed" },
+      }).where(eq(privilegedAccessAudit.id, existing.id));
+      handleError(res, error, "Stage Sync Latest failed");
     }
   });
 

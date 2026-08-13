@@ -24,7 +24,7 @@ export function deriveStageLifecycleCapabilities(
     dependencyPolicy: "rebuild_on_lockfile_change",
     fullRebuildProvider,
     actions: runtimeMode === "warm_workspace"
-      ? (isStage ? ["restart_stage", "full_rebuild"] : ["full_rebuild"])
+      ? (isStage ? ["sync_latest", "restart_stage", "full_rebuild"] : ["full_rebuild"])
       : (isStage ? ["enable_warm_stage", "full_rebuild"] : ["full_rebuild"]),
   };
 }
