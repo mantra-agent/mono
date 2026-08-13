@@ -259,19 +259,33 @@ export function SessionTranscriptPanel({
   const ownedSessionData = sessionData?.id === activeSession ? sessionData : undefined;
   const persistedMessages = ownedSessionData?.messages || [];
   const historyCatchupBaselineRef = useRef<{ sessionId: string; dataUpdatedAt: number } | null>(null);
+  const lastPaintTraceSessionRef = useRef<string | null>(null);
   if (!activeSession) {
     historyCatchupBaselineRef.current = null;
+    lastPaintTraceSessionRef.current = null;
   } else if (historyCatchupBaselineRef.current?.sessionId !== activeSession) {
     const cachedState = queryClient.getQueryState(["/api/sessions", activeSession]);
-    const cached = cachedState?.data as { id?: string; messages?: unknown[] } | undefined;
+    const cached = cachedState?.data as { id?: string; messages?: unknown[]; durableRevision?: number } | undefined;
     const hasPrefix = cached?.id === activeSession && Array.isArray(cached.messages) && cached.messages.length > 0;
     historyCatchupBaselineRef.current = hasPrefix
       ? { sessionId: activeSession, dataUpdatedAt: cachedState?.dataUpdatedAt ?? 0 }
       : null;
+    lastPaintTraceSessionRef.current = null;
   }
 
   useEffect(() => {
-    if (!activeSession || historyCatchupBaselineRef.current?.sessionId !== activeSession) return;
+    if (!activeSession) return;
+    const cachedState = queryClient.getQueryState(["/api/sessions", activeSession]);
+    const cached = cachedState?.data as { id?: string; messages?: unknown[]; durableRevision?: number } | undefined;
+    const hasPrefix = cached?.id === activeSession && Array.isArray(cached.messages) && cached.messages.length > 0;
+    log.info("SESSION:HANDOFF_SELECT", {
+      sessionId: activeSession,
+      cachedMessageCount: Array.isArray(cached?.messages) ? cached.messages.length : 0,
+      cachedDurableRevision: typeof cached?.durableRevision === "number" ? cached.durableRevision : null,
+      dataUpdatedAt: cachedState?.dataUpdatedAt ?? null,
+      refetchRequested: hasPrefix,
+    });
+    if (historyCatchupBaselineRef.current?.sessionId !== activeSession) return;
     void queryClient.refetchQueries({
       queryKey: ["/api/sessions", activeSession],
       type: "active",
@@ -484,6 +498,26 @@ export function SessionTranscriptPanel({
     !msgsLoading &&
     displayMessages.length > 0 &&
     (selectCatchupPending || revisionCatchingUp);
+
+  useEffect(() => {
+    if (!activeSession) {
+      lastPaintTraceSessionRef.current = null;
+      return;
+    }
+    if (lastPaintTraceSessionRef.current === activeSession) return;
+    if (msgsLoading && displayMessages.length === 0) return;
+    lastPaintTraceSessionRef.current = activeSession;
+    const lastAssistant = [...displayMessages].reverse().find((message) => message.role === "assistant");
+    const lastAssistantPrefix = (lastAssistant?.content || "").replace(/\s+/g, " ").trim().slice(0, 48) || null;
+    log.info("SESSION:HANDOFF_FIRST_PAINT", {
+      sessionId: activeSession,
+      paintedCount: displayMessages.length,
+      lastAssistantPrefix,
+      handoffPhase: sessionSub.handoffPhase,
+      subStatus: sessionSub.status,
+      runActive: sessionSub.runActive,
+    });
+  }, [activeSession, displayMessages, msgsLoading, sessionSub.handoffPhase, sessionSub.runActive, sessionSub.status]);
 
   const questionProjectionTrace = useMemo(() => {
     const persistedCarriers = displayMessages.flatMap((message) =>
