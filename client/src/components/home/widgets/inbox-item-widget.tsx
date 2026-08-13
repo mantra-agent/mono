@@ -34,6 +34,44 @@ function sessionReviewTone(reviewKind: string | null): {
   }
 }
 
+/** "{User} reported {Issue}" */
+function ReportedIssueInline({ item }: { item: SimpleFeedItem }) {
+  const refs = simpleItemReferenceRefs(item);
+  const userRef = refs.find((ref) => ref.type === "user") ?? null;
+  const issueRef = refs.find((ref) => ref.type === "issue") ?? null;
+  const completed = item.status === "completed";
+
+  return (
+    <div
+      className={cn(
+        "mx-1 flex min-w-0 items-center gap-1.5",
+        completed && "opacity-70",
+      )}
+      data-testid={`reported-issue-inbox-${item.id}`}
+    >
+      {userRef ? (
+        <ReferenceRenderer
+          refValue={userRef}
+          surface="simple-row"
+          className={cn("mx-0 max-w-[min(100%,10rem)]", completed && "text-neutral hover:text-neutral")}
+        />
+      ) : (
+        <span className="truncate text-xs font-medium">{stringPayload(item, "reporterLabel") ?? "User"}</span>
+      )}
+      <span className="shrink-0 text-xs text-muted-foreground">reported</span>
+      {issueRef ? (
+        <ReferenceRenderer
+          refValue={issueRef}
+          surface="simple-row"
+          className={cn("mx-0 max-w-[min(100%,14rem)]", completed && "text-neutral hover:text-neutral")}
+        />
+      ) : (
+        <span className="truncate text-xs font-medium">{stringPayload(item, "issueTitle") ?? item.title}</span>
+      )}
+    </div>
+  );
+}
+
 /** "{Session} had an Error" / "has a Question" / "needs an Approval" */
 function SessionReviewInline({ item }: { item: SimpleFeedItem }) {
   const reviewKind = stringPayload(item, "reviewKind");
@@ -86,6 +124,9 @@ function InboxItemInline({ item }: { item: SimpleFeedItem }) {
   if (kind === "session_review") {
     return <SessionReviewInline item={item} />;
   }
+  if (kind === "reported_issue") {
+    return <ReportedIssueInline item={item} />;
+  }
 
   const href = item.actions?.find(a => a.type === "navigate")?.href;
   const completed = item.status === "completed";
@@ -118,6 +159,13 @@ export function InboxItemWidget({ item, inline }: { item: SimpleFeedItem; inline
     return (
       <div className="flex min-h-10 items-center rounded-lg px-3 py-2.5 transition-colors hover:bg-accent/50">
         <SessionReviewInline item={item} />
+      </div>
+    );
+  }
+  if (kind === "reported_issue") {
+    return (
+      <div className="flex min-h-10 items-center rounded-lg px-3 py-2.5 transition-colors hover:bg-accent/50">
+        <ReportedIssueInline item={item} />
       </div>
     );
   }

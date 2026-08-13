@@ -38,6 +38,7 @@ import { queryDistinctInteractionPeopleSeries } from "../interaction-activity";
 import { sensitiveVisiblePredicate } from "../sensitive-scope";
 import { visiblePersonPredicate } from "../person-vault-access";
 import { listBuildDeploymentHomeItems } from "../mods/build-deployment-home";
+import { listReportedIssueHomeItems } from "../mods/reported-issue-home";
 
 const log = createLogger("SimpleCollectors");
 
@@ -1818,6 +1819,65 @@ function itemFromBuildDeployment(
   };
 }
 
+function itemFromReportedIssue(
+  report: Awaited<ReturnType<typeof listReportedIssueHomeItems>>[number],
+  index: number,
+  timezone: string,
+): SimpleFeedItem {
+  const href = `/issues/${encodeURIComponent(String(report.issueId))}`;
+  const sourceRef: SimpleSourceRef = {
+    type: "issue",
+    id: String(report.issueId),
+    label: report.title,
+    href,
+    observedAt: report.createdAt.toISOString(),
+  };
+  return {
+    id: `reported-issue-${report.issueId}`,
+    section: "inbox",
+    widgetType: "inbox_item",
+    title: `${report.reporterLabel} reported ${report.title}`,
+    status: "active",
+    priority: 8 + index,
+    sourceRefs: [sourceRef],
+    references: [report.userReference, report.issueReference],
+    anchorTime: report.createdAt.toISOString(),
+    actionTime: report.createdAt.toISOString(),
+    time: stackTimeOverDate(formatClockTime(report.createdAt, timezone), report.createdAt, timezone),
+    completable: true,
+    payload: {
+      kind: "reported_issue",
+      issueId: report.issueId,
+      reporterUserId: report.reporterUserId,
+      reporterLabel: report.reporterLabel,
+      issueTitle: report.title,
+      reasonKey: report.reasonKey,
+      platformEnvironmentId: report.platformEnvironmentId,
+      inboxAddedAt: report.createdAt.toISOString(),
+    },
+    actions: [
+      {
+        id: `dismiss-reported-issue-${report.issueId}`,
+        label: "Clear report",
+        type: "complete",
+        sourceRef,
+        payload: {
+          kind: "reported_issue",
+          issueId: report.issueId,
+          reasonKey: report.reasonKey,
+        },
+      },
+      {
+        id: `open-reported-issue-${report.issueId}`,
+        label: "Open issue",
+        type: "navigate",
+        href,
+        sourceRef,
+      },
+    ],
+  };
+}
+
 // ─── Main collector ───
 
 export async function collectSimpleContext(): Promise<SimpleContextBundle> {
@@ -2008,6 +2068,8 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     if (principal.actorType === "user") {
       const deployments = await listBuildDeploymentHomeItems(principal);
       deployments.forEach((deployment, index) => items.push(itemFromBuildDeployment(deployment, index, timezone)));
+      const reports = await listReportedIssueHomeItems(principal);
+      reports.forEach((report, index) => items.push(itemFromReportedIssue(report, index, timezone)));
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
