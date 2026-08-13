@@ -67,7 +67,11 @@ const CHILD_PATH = "dist/index.mjs";
 const WRAPPER_ID = `${process.env.RAILWAY_REPLICA_ID || process.env.HOSTNAME || "local"}:${process.pid}:${Date.now().toString(36)}`;
 
 const PORT = parseInt(process.env.PORT || "5000", 10);
-const isDev = process.env.NODE_ENV !== "production";
+const isLiveRuntime = /(?:^|[._-])(?:live|prod)(?:$|[._-])/i.test(
+  `${process.env.RAILWAY_ENVIRONMENT_NAME || ""} ${process.env.RAILWAY_ENVIRONMENT || ""}`,
+);
+const isWarmStageRuntime = process.env.STAGE_WARM_ENABLED === "true" && !isLiveRuntime;
+const isDev = process.env.NODE_ENV !== "production" || isWarmStageRuntime;
 
 let child: ChildProcess | null = null;
 let restartCount = 0;

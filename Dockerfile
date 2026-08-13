@@ -79,10 +79,12 @@ COPY --from=builder /app/migrations ./migrations
 
 # Copy package files + full node_modules (including devDependencies) from the
 # builder stage. DevDeps are needed at runtime for implement skill sessions.
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json tsconfig.json vite.config.ts tailwind.config.ts postcss.config.js components.json ./
 COPY AGENTS.md CODING.md SECURITY.md DESIGN.md GOALS.md PLANNING.md ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/server ./server
+COPY --from=builder /app/client ./client
 RUN chmod +x ./scripts/*.sh
 
 # Install Playwright's bundled Chrome for Testing. System chromium (v150+ on

@@ -7,13 +7,14 @@ import { ADVISORY_LOCK_NS, acquireAdvisoryTransactionLock } from "../../db";
 import { requireAuth, requireAdmin } from "../../auth";
 import { db } from "../../db";
 import { requirePermission } from "../../permissions";
-import { composeStageLifecycleStatus, deriveStageLifecycleCapabilities } from "../../platforms/stage-lifecycle-status";
-import { getEnvironmentBuildLifecycleConfig } from "../../platforms/build-lifecycle-service";
+import { composeStageLifecycleStatus, deriveStageLifecycleCapabilities, isMantraWebStageIdentity } from "../../platforms/stage-lifecycle-status";
+import { getEnvironmentBuildLifecycleConfig, setEnvironmentBuildLifecycleConfig } from "../../platforms/build-lifecycle-service";
 import { createLogger } from "../../log";
 import { RailwayApiError } from "./client";
 import {
   fetchEnvironmentBuildLogs,
   fetchEnvironmentDeployments,
+  enableWarmStageRuntimeVariable,
   fetchEnvironmentRuntimeLogs,
   listEnvironmentVariableNames,
   redeployEnvironment,
@@ -110,6 +111,10 @@ export function registerRailwayRoutes(app: Express) {
   const fullRebuildBodySchema = z.object({
     deploymentId: z.string().min(1).optional(),
     confirmation: z.literal("FULL_REBUILD"),
+    idempotencyKey: z.string().trim().min(8).max(200),
+  });
+  const enableWarmStageBodySchema = z.object({
+    confirmation: z.literal("ENABLE_WARM_STAGE"),
     idempotencyKey: z.string().trim().min(8).max(200),
   });
   const publishContextSchema = z.object({
@@ -225,7 +230,11 @@ export function registerRailwayRoutes(app: Express) {
       const lifecycle = composeStageLifecycleStatus({
         deployments,
         targetCommitSha,
-        capabilities: deriveStageLifecycleCapabilities(deployPolicy, lifecycleConfig?.providerKind || "railway"),
+        capabilities: deriveStageLifecycleCapabilities(deployPolicy, lifecycleConfig?.providerKind || "railway", {
+          platformName: control.environment.platformName,
+          productName: control.environment.productName,
+          environmentName: control.environment.platformEnvironmentName,
+        }),
         providerError: deploymentsResult.status === "rejected"
           ? (deploymentsResult.reason instanceof Error ? deploymentsResult.reason.message : "Railway deployment truth is unavailable.")
           : targetResult.status === "rejected"
@@ -319,7 +328,11 @@ export function registerRailwayRoutes(app: Express) {
     if (!control) return;
     const lifecycle = await getEnvironmentBuildLifecycleConfig(control.environment.platformEnvironmentId, { includeDisabled: true });
     const policy = lifecycle?.config?.deployPolicy && typeof lifecycle.config.deployPolicy === "object" && !Array.isArray(lifecycle.config.deployPolicy) ? lifecycle.config.deployPolicy as Record<string, unknown> : {};
-    const capabilities = deriveStageLifecycleCapabilities(policy, lifecycle?.config?.providerKind || "railway");
+    const capabilities = deriveStageLifecycleCapabilities(policy, lifecycle?.config?.providerKind || "railway", {
+      platformName: control.environment.platformName,
+      productName: control.environment.productName,
+      environmentName: control.environment.platformEnvironmentName,
+    });
     if (!capabilities.actions.includes("restart_stage")) return res.status(409).json({ error: "Restart Stage is not enabled by this environment lifecycle contract" });
     const parsed = deploymentBodySchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json({ error: "Invalid Stage restart request" });
@@ -335,7 +348,11 @@ export function registerRailwayRoutes(app: Express) {
     if (!control) return;
     const lifecycle = await getEnvironmentBuildLifecycleConfig(control.environment.platformEnvironmentId, { includeDisabled: true });
     const policy = lifecycle?.config?.deployPolicy && typeof lifecycle.config.deployPolicy === "object" && !Array.isArray(lifecycle.config.deployPolicy) ? lifecycle.config.deployPolicy as Record<string, unknown> : {};
-    const capabilities = deriveStageLifecycleCapabilities(policy, lifecycle?.config?.providerKind || "railway");
+    const capabilities = deriveStageLifecycleCapabilities(policy, lifecycle?.config?.providerKind || "railway", {
+      platformName: control.environment.platformName,
+      productName: control.environment.productName,
+      environmentName: control.environment.platformEnvironmentName,
+    });
     if (capabilities.fullRebuildProvider !== "railway") return res.status(409).json({ error: "Full Rebuild is not backed by the Railway provider for this environment" });
     const parsed = fullRebuildBodySchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json({ error: "Full Rebuild requires confirmation and an idempotencyKey" });
@@ -374,6 +391,94 @@ export function registerRailwayRoutes(app: Express) {
     } catch (error) {
       await db.update(privilegedAccessAudit).set({ metadata: { idempotencyKey, environmentId: control.environment.platformEnvironmentId, status: "failed" } }).where(eq(privilegedAccessAudit.id, auditId));
       handleError(res, error, "Stage Full Rebuild failed");
+    }
+  });
+
+  app.post("/api/railway/environments/:platformEnvironmentId/actions/enable-warm-stage", requirePermission("build:write"), async (req, res) => {
+    const control = await parseEnvironment(req, res);
+    if (!control) return;
+    if (!isMantraWebStageIdentity({
+      platformName: control.environment.platformName,
+      productName: control.environment.productName,
+      environmentName: control.environment.platformEnvironmentName,
+    })) {
+      return res.status(409).json({ error: "Enable Warm Stage is available only on Mantra Web Stage" });
+    }
+    const lifecycle = await getEnvironmentBuildLifecycleConfig(control.environment.platformEnvironmentId, { includeDisabled: true });
+    const policy = lifecycle?.config?.deployPolicy && typeof lifecycle.config.deployPolicy === "object" && !Array.isArray(lifecycle.config.deployPolicy)
+      ? lifecycle.config.deployPolicy as Record<string, unknown>
+      : {};
+    const capabilities = deriveStageLifecycleCapabilities(policy, lifecycle?.config?.providerKind || "railway", {
+      platformName: control.environment.platformName,
+      productName: control.environment.productName,
+      environmentName: control.environment.platformEnvironmentName,
+    });
+    if (!capabilities.actions.includes("enable_warm_stage")) {
+      return res.status(409).json({ error: "Warm Stage is already enabled for this environment" });
+    }
+    const parsed = enableWarmStageBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: "Enable Warm Stage requires confirmation and an idempotencyKey" });
+    const principal = req.principal;
+    if (!principal) return res.status(401).json({ error: "Authentication required" });
+    const action = "platform_environment.enable_warm_stage";
+    const idempotencyKey = parsed.data.idempotencyKey;
+    const existing = await db.transaction(async (tx) => {
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.MOD_LIFECYCLE, `enable-warm-stage:${control.environment.platformEnvironmentId}:${idempotencyKey}`);
+      const [row] = await tx.select({ id: privilegedAccessAudit.id, metadata: privilegedAccessAudit.metadata })
+        .from(privilegedAccessAudit)
+        .where(and(eq(privilegedAccessAudit.action, action), sql`${privilegedAccessAudit.metadata}->>'idempotencyKey' = ${idempotencyKey}`))
+        .limit(1);
+      if (row) return { ...row, replayed: true };
+      const [created] = await tx.insert(privilegedAccessAudit).values({
+        actorType: principal.actorType,
+        actorUserId: principal.userId,
+        actorAccountId: principal.accountId,
+        action,
+        reason: "Human-confirmed Enable Warm Stage activation",
+        scopes: ["build:write", `platform_environment:${control.environment.platformEnvironmentId}`],
+        metadata: { idempotencyKey, environmentId: control.environment.platformEnvironmentId, status: "started" },
+      }).returning({ id: privilegedAccessAudit.id });
+      return { id: created.id, metadata: { status: "started" }, replayed: false };
+    });
+    const existingMetadata = existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata) ? existing.metadata as Record<string, unknown> : {};
+    if (existing.replayed && existingMetadata.status === "completed") return res.json({ ok: true, action: "enable_warm_stage", replayed: true, ...(existingMetadata.result as Record<string, unknown>) });
+    if (existing.replayed && existingMetadata.status === "started") return res.status(409).json({ error: "This Enable Warm Stage request is already in progress or was interrupted; use a new idempotencyKey after checking Stage state." });
+    try {
+      const nextPolicy = {
+        ...policy,
+        runtimeMode: "warm_workspace",
+        syncOnPush: false,
+        dependencyPolicy: "rebuild_on_lockfile_change",
+        fullRebuildProvider: "railway",
+        requireProductionBuild: false,
+        requireHumanPromotion: false,
+      };
+      await setEnvironmentBuildLifecycleConfig(control.environment.platformEnvironmentId, {
+        ...(lifecycle?.config ? {
+          workflowTemplateId: lifecycle.config.workflowTemplateId,
+          providerKind: lifecycle.config.providerKind,
+          acceptanceTarget: lifecycle.config.acceptanceTarget,
+          authMode: lifecycle.config.authMode,
+          retryPolicy: lifecycle.config.retryPolicy,
+          gatePolicy: lifecycle.config.gatePolicy,
+          evidenceConfig: lifecycle.config.evidenceConfig,
+          docsConfig: lifecycle.config.docsConfig,
+          enabled: lifecycle.config.enabled,
+        } : { providerKind: "railway", enabled: true }),
+        deployPolicy: nextPolicy,
+      });
+      await enableWarmStageRuntimeVariable(control);
+      const restart = await restartEnvironment(control);
+      const result = { deploymentId: restart.deploymentId, restarted: restart.ok };
+      await db.update(privilegedAccessAudit).set({
+        metadata: { idempotencyKey, environmentId: control.environment.platformEnvironmentId, status: "completed", result },
+      }).where(eq(privilegedAccessAudit.id, existing.id));
+      res.json({ ok: true, action: "enable_warm_stage", replayed: false, ...result });
+    } catch (error) {
+      await db.update(privilegedAccessAudit).set({
+        metadata: { idempotencyKey, environmentId: control.environment.platformEnvironmentId, status: "failed" },
+      }).where(eq(privilegedAccessAudit.id, existing.id));
+      handleError(res, error, "Enable Warm Stage failed");
     }
   });
 

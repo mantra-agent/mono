@@ -1,4 +1,4 @@
-import { type Express } from "express";
+import { type Express, type NextFunction, type Request, type Response } from "express";
 import { createServer as createViteServer, createLogger } from "vite";
 import { type Server } from "http";
 import viteConfig from "../vite.config";
@@ -29,11 +29,42 @@ export async function setupVite(server: Server, app: Express) {
     appType: "custom",
   });
 
+  const currentDir = typeof __dirname !== "undefined" ? __dirname : process.cwd();
+  const publicDir = path.resolve(currentDir, "public");
+  const allowUnauthenticatedWarmPath = (req: Request) => {
+    const pathname = req.path || "";
+    return pathname.startsWith("/api/")
+      || pathname === "/api"
+      || pathname === "/favicon.ico"
+      || pathname.startsWith("/assets/");
+  };
+  const hasSession = (req: Request) => Boolean(req.session?.userId || req.session?.servicePrincipal?.actorType === "service");
+  const requireWarmStageSession = (req: Request, res: Response, next: NextFunction) => {
+    if (allowUnauthenticatedWarmPath(req) || hasSession(req)) return next();
+    if (req.path.startsWith("/src/") || req.path.startsWith("/@") || req.path === "/vite-hmr") {
+      return res.status(401).end("Authentication required");
+    }
+    const loginPage = path.resolve(publicDir, "index.html");
+    if (fs.existsSync(loginPage)) {
+      res.setHeader("Cache-Control", "no-cache");
+      return res.sendFile(loginPage);
+    }
+    return res.status(401).end("Authentication required");
+  };
+  app.use(requireWarmStageSession);
   app.use(vite.middlewares);
 
   app.use("/{*path}", async (req, res, next) => {
     if (req.path.startsWith("/api")) {
       return res.status(404).json({ error: "API route not found" });
+    }
+    if (!hasSession(req)) {
+      const loginPage = path.resolve(publicDir, "index.html");
+      if (fs.existsSync(loginPage)) {
+        res.setHeader("Cache-Control", "no-cache");
+        return res.sendFile(loginPage);
+      }
+      return res.status(401).end("Authentication required");
     }
     const url = req.originalUrl;
 

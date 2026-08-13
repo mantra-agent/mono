@@ -156,7 +156,17 @@ export async function registerRoutes(
       if (!handler) { wsLog.warn("Meeting visualizer upgrade handler unavailable"); socket.destroy(); }
       else handler(request, socket, head);
     } else if (pathname === "/vite-hmr") {
-      // Let Vite's HMR handler (registered later) handle this upgrade
+      resolveUserPrincipalForSessionRequest(request)
+        .then((principal) => {
+          if (!principal || principal.actorType !== "user" || !principal.userId) {
+            socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+            socket.destroy();
+          }
+        })
+        .catch(() => {
+          socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+        });
     } else {
       wsLog.warn(`upgrade unknown path=${pathname} — destroying socket`);
       socket.destroy();

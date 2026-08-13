@@ -22,6 +22,10 @@ Slack IDs never grant Mantra authority. Each claim revalidates one admin-created
 
 Secret-backed integration tools are normally withheld from the advertised registry when configuration is provably absent. A tool may opt into `advertiseWhenUnready` only when it owns a bounded, provider-free status action that returns a successful explicit readiness discriminant; every provider-dependent action must still fail closed through its ordinary credential, permission, side-effect, and origin gates. Sentry uses this exception so Reliability Sentinel can record `not_configured` as a coverage gap without converting missing optional telemetry into tool-authority failure.
 
+## Enable Warm Stage boundary
+
+`POST /api/railway/environments/:id/actions/enable-warm-stage` is the sole activation path. It is derived only for Mantra / Web / stage, requires `build:write` plus `ENABLE_WARM_STAGE` confirmation, and writes `runtimeMode: warm_workspace` plus `STAGE_WARM_ENABLED=true` before restarting that bound Stage service. Live names fail closed in the process wrapper and Vite mount. Source modules and `/vite-hmr` require a user session; unauthenticated visitors receive the built login page. Do not add Railway console, volume, start-command, or Cloudflare Access steps as activation. Full Rebuild remains the immutable-artifact parachute.
+
 ## Railway request priority boundary
 
 Service CPU utilization derives its effective denominator locally from Linux cgroup quota, falling back to process CPU affinity only when quota is unlimited or unavailable. Railway API observations may corroborate provider allocation but must never be required for in-process CPU correctness or availability.
