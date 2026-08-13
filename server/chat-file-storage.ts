@@ -3972,20 +3972,23 @@ export const chatFileStorage: IChatFileStorage = {
         );
         return { message: null, durableRevision };
       }
+      const isTerminalWrite =
+        (updates.assistantState !== undefined && updates.assistantState !== "streaming") ||
+        updates.sessionStatus !== undefined;
+      if (!isTerminalWrite) {
+        return {
+          message: msg,
+          durableRevision: normalizeDurableRevision(data.durableRevision),
+        };
+      }
       msg.updatedAt = new Date().toISOString();
       data.updatedAt = msg.updatedAt;
       const durableRevision = await writeConv(data);
-      // Streaming checkpoints update message payload only. Invalidating the
-      // global session metadata cache on every chunk makes each sidebar poll
-      // rescan every chat document and can saturate the DB pool. Creation and
-      // terminal lifecycle transitions still invalidate the cache.
-      if (updates.assistantState !== undefined) {
-        invalidateSessionsCache({
-          action: "updated",
-          sessionId,
-          session: convToMeta(data),
-        });
-      }
+      invalidateSessionsCache({
+        action: "updated",
+        sessionId,
+        session: convToMeta(data),
+      });
       return { message: msg, durableRevision };
     });
   },

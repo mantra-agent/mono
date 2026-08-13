@@ -2258,14 +2258,14 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       ReturnType<typeof chatStorage.createAssistantDraft>
     > = null;
     let assistantDraftMessageId: string | undefined;
-    let assistantDraftCheckpointPending: NodeJS.Timeout | null = null;
-    let assistantDraftCheckpointWrite: Promise<void> = Promise.resolve();
     let settlement: { status: "completed" | "failed"; assistantMessageId?: string; error?: string } | null = null;
     let terminalDurableRevision: number | undefined;
     let terminalPersistenceEndedAt: number | undefined;
+    let executorSettled = false;
+    let persistFailedAfterSuccess = false;
 
-    // This identity began before runtime registration because pre-executor
-    // checkpoints are already durable. The executor and persistence reuse it.
+    // This identity began before runtime registration. The executor and
+    // terminal persist reuse it; streaming progress is SessionManager-only.
     const diagnosticTurnId = `system-turn-${runId}`;
     const turnStartedAt = Date.now();
     // Update the pre-initialized turn step with actual IDs and timing
@@ -2541,43 +2541,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       });
       assistantDraftMessageId = assistantDraft?.id;
       chatRunLifecycle.assertCurrent(lease);
-      let assistantDraftLastCheckpoint = 0;
-
-      const checkpointAssistantDraft = (force = false) => {
-        if (!assistantDraft) return;
-        const now = Date.now();
-        if (!force && now - assistantDraftLastCheckpoint < 1000) {
-          if (!assistantDraftCheckpointPending) {
-            assistantDraftCheckpointPending = setTimeout(() => {
-              assistantDraftCheckpointPending = null;
-              checkpointAssistantDraft(true);
-            }, 1000);
-            if (assistantDraftCheckpointPending.unref)
-              assistantDraftCheckpointPending.unref();
-          }
-          return;
-        }
-        const snapshot = sessionManager.getSnapshot(sessionId);
-        if (!snapshot || snapshot.status !== "streaming") return;
-        assistantDraftLastCheckpoint = now;
-        const projection = projectAssistantDraft(snapshot.streamingContent);
-        const assistantDraftId = assistantDraft.id;
-        assistantDraftCheckpointWrite = assistantDraftCheckpointWrite
-          .then(async () => {
-            await chatStorage.updateAssistantDraft(sessionId, assistantDraftId, {
-              content: projection.content,
-              thinking: projection.thinking,
-              toolCalls: projection.toolCalls,
-              systemSteps: projection.systemSteps,
-              segmentChronology: projection.segmentChronology,
-            });
-          })
-          .catch((err) => {
-            chatLog.warn(
-              `assistant draft checkpoint failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          });
-      };
 
       const contextRootId = `system-context_assembly-${lease.generation}`;
       const contextStartedAt = Date.now();
@@ -2826,17 +2789,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         resolvedRoutingDecision,
         contextPressure,
         (event) => {
-          if (
-            event.type === "delta" ||
-            event.type === "thinking" ||
-            event.type === "thinking_complete" ||
-            event.type === "tool_call" ||
-            event.type === "tool_result" ||
-            event.type === "system_step" ||
-            event.type === "compacting"
-          ) {
-            checkpointAssistantDraft();
-          }
           if (sayAloud && event.type === "tool_call") {
             if (event.toolCallId) visualizerToolCalls.add(event.toolCallId);
             setMeetingVisualizerState(sessionId, "tool", "tool_call");
@@ -2852,37 +2804,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         refreshToolSchema,
         clientId,
       );
-      if (assistantDraftCheckpointPending) {
-        clearTimeout(assistantDraftCheckpointPending);
-        assistantDraftCheckpointPending = null;
-      }
-      await assistantDraftCheckpointWrite;
-      if (assistantDraft) {
-        const snapshot = sessionManager.getSnapshot(sessionId);
-        const projection = snapshot
-          ? projectAssistantDraft(snapshot.streamingContent)
-          : null;
-        if (projection) {
-          await chatStorage
-            .updateAssistantDraft(sessionId, assistantDraft.id, {
-              content: projection.content,
-              thinking: projection.thinking,
-              toolCalls: projection.toolCalls,
-              systemSteps: projection.systemSteps,
-              segmentChronology: projection.segmentChronology,
-            })
-            .catch((err) =>
-              chatLog.warn(
-                `assistant draft final checkpoint failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
-              ),
-            );
-        }
-      }
       chatLog.log(
         `executor DONE sessionId=${sessionId} contentLen=${result.content?.length || 0} terminationReason=${result.terminationReason || "unknown"} abortReason=${result.abortReason || "none"} durationMs=${result.durationMs ?? "?"} iterations=${result.iterations}`,
       );
       chatRunLifecycle.assertCurrent(lease);
       settleDiagnosticTurn("done");
+      executorSettled = true;
 
       const durationStr =
         result.durationMs != null
@@ -3304,7 +3231,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         chatLog.log(
           `${error.reason} before settlement sessionId=${sessionId} generation=${lease.generation}`,
         );
-        if (assistantDraftCheckpointPending) clearTimeout(assistantDraftCheckpointPending);
         if (assistantDraft) {
           await chatStorage.deleteMessage(sessionId, assistantDraft.id).catch((deleteErr) =>
             chatLog.warn(`superseded draft delete failed sessionId=${sessionId}: ${deleteErr instanceof Error ? deleteErr.message : String(deleteErr)}`),
@@ -3313,12 +3239,38 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         settlement = { status: "failed", error: error.reason };
         return;
       }
+      if (executorSettled) {
+        const rawError =
+          (error instanceof Error ? error.message : String(error)) ||
+          "unknown error";
+        chatLog.warn(
+          `persist failed after successful executor sessionId=${sessionId}: ${rawError}`,
+        );
+        const persistNotice: SystemNotice = {
+          severity: "warning",
+          errorType: "persist_failed",
+          description: `The answer is ready, but saving it failed: ${sanitizeErrorForUser(rawError)}`,
+          actionHint: "The live answer is still here. Retry if it disappears after refresh.",
+        };
+        await chatStorage
+          .createMessage(sessionId, "system_notice", JSON.stringify(persistNotice))
+          .catch((saveErr) =>
+            chatLog.warn(
+              `persist warning notice failed sessionId=${sessionId}: ${saveErr instanceof Error ? saveErr.message : String(saveErr)}`,
+            ),
+          );
+        journal("system_notice", {
+          severity: "warning",
+          content: JSON.stringify(persistNotice),
+        });
+        persistFailedAfterSuccess = true;
+        settlement = { status: "completed" };
+        return;
+      }
       settleDiagnosticTurn("error", "processing error");
       chatLog.error(
         `executor error sessionId=${sessionId}: ${(error instanceof Error ? error.message : String(error)) || error}`,
       );
-      // Emit exactly one terminal event so the client never gets stuck on persistence failures.
-      // `error` is itself terminal — do not also emit `done`.
       journal("error", {
         error:
           (error instanceof Error ? error.message : String(error)) ||
@@ -3452,12 +3404,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         clearMeetingVisualizerState(sessionId, "tool");
         clearMeetingVisualizerState(sessionId, "turn");
       }
-      if (assistantDraftCheckpointPending) {
-        clearTimeout(assistantDraftCheckpointPending);
-        assistantDraftCheckpointPending = null;
-      }
-      await assistantDraftCheckpointWrite;
-      if (assistantDraftMessageId) {
+      if (assistantDraftMessageId && !persistFailedAfterSuccess) {
         const terminalState = settlement?.status === "completed"
           ? "complete"
           : lease.invalidatedBy
