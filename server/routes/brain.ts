@@ -22,85 +22,17 @@ import { fingerprintDbUrl, redactDbUrl } from "../lib/db-sync-safety";
 import { convergeDbSyncSchema } from "../schema-convergence";
 import { eq, sql, count, getTableColumns, getTableName } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
-
+import { workspaceDocuments } from "@shared/models/memory";
 import {
-  users as usersTable,
-  accounts,
-  memberships,
-  userPermissions,
-  userProfiles,
-  agentInstances,
-  agentInstanceMemberships,
-  agentProfiles,
-  systemSettings,
-  timers,
-  responsibilityRuns,
-  tasks,
-  projects,
-  principles,
-  principleRevisions,
-  subscriptionOAuthTransactions,
-  toolOutputAdmissions,
-  tagsTable,
-  tagAliasesTable,
-  tagAssignmentsTable,
-  tagMigrationsTable,
-  persons,
-  personMergeAliases,
-  simplePeopleSurfaceState,
-  connectedAccounts,
-  emailTriageLog,
-  emailMessages,
-  personEmails,
-  peopleImportCandidates,
-  emailDrafts,
-  emailDismissals,
-  emailEnrichments,
-  emailSyncCursors,
-  emailSyncLog,
-  calendarEventMetadata,
-  calendarEventPeople,
-  calendarEventArtifacts,
-  sessionTree,
-  sessionOutputBuffer,
-  sessionArtifacts,
-  planExecutions,
-  planSteps,
-  workflowTemplates,
-  workflowRuns,
-  workflowStageAttempts,
-  workflowTransitions,
-  workflowArtifacts,
-  workflowGates,
-  workflowSessions,
-  theses,
-  thesisEvidence,
-  thesisPredictions,
-  businesses,
-  jobRoles,
-  businessHiringSlots,
-} from "@shared/schema";
-import { workspaceDocuments, codeEmbeddings, memoryVnextSourceQueue } from "@shared/models/memory";
-import { runtimeRuns, runtimeAttempts, runtimeRunEvents, runtimeCapacityPolicies } from "@shared/models/runtime";
-import { chatSessions, conversationMessages, conversationRevisions, messages } from "@shared/models/chat";
-import { strategies, strategyActors, strategyMoveDefinitions, strategyMoveInstances, strategyAssumptions, strategyEndConditions, strategyContextEntries, strategyArtifacts, strategySimulationRuns, strategyStates, strategyAssumptionLinks, strategyMoveEndConditionEffects, decisions, decisionUpdates, decisionLinks } from "@shared/models/strategy";
-import { skills, skillReferences, skillRuns, skillFailureDismissals } from "@shared/models/skills";
-import { infoNotes, libraryPages, libraryPageLinks, libraryAnnotations, libraryPageViews } from "@shared/models/info";
-import { thoughts } from "@shared/models/thought";
-import { healthMetrics, wellnessActivities, wellnessLogs, gratitudeEntries, learningEntries } from "@shared/models/health";
-import { emotionalStates, personas } from "@shared/models/cognition";
-import { captures } from "@shared/models/captures";
-import { contentQueue } from "@shared/models/content";
-import { indexedContent } from "@shared/models/indexed-content";
-import { plaidAccounts, plaidTransactions, plaidSecurities, plaidHoldings, plaidLiabilities, plaidSyncCursors, manualAssets, manualLiabilities, financialGoals, recurringExpenses, expenseCategories, merchantCategoryOverrides, budgetEntries, budgetIncomeOverride, budgetMonthlyOverrides, incomeSources, incomeDeductions, incomeDeposits, debtPayments, financedAssets, futureCashEvents, transactionAmortizations, transferPairOverrides, manual401kAccounts } from "@shared/models/finance";
-import { signalSources, signalItems, scanRuns } from "@shared/models/signal";
-import { execSkills, execExperience, execMetrics, execEducation, execPassions, experienceSkills } from "@shared/models/exec";
-import { opportunities, opportunitySkills, opportunityArtifacts } from "@shared/models/opportunities";
-import { platforms, platformVaultMemberships, platformProducts, platformProductEnvironments, products, productBacklogs, productPlatformAssociations, featureRequests, environmentBuildLifecycleConfigs, providerConnections, environmentSourceBindings, environmentHostingBindings, environmentRuntimeVariables, environmentCapabilityBindings } from "@shared/models/platforms";
-import { buildDeploymentHomeProjections, platformDeploymentObservations } from "@shared/models/build-deployments";
-import { promptModules, promptModuleVersions } from "@shared/models/prompt-modules";
-import { systemHooks, systemHookExecutions } from "@shared/models/events";
-import { reflectionEntries } from "@shared/models/health";
+  buildExportEntriesForPresentFiles,
+  buildExportEntriesFromOrder,
+  getBrainExportProducerCount,
+  listAllDrizzleTables,
+  listExportProducerNames,
+  resolveExportProducer,
+  type BrainDomain,
+  type BrainExportEntry,
+} from "../brain-export-map";
 
 
 const log = createLogger("BrainRoutes");
@@ -151,247 +83,25 @@ export const BRAIN_EXPORT_DIR = "/tmp/brain-exports";
 import { getBrainFormatVersion } from "@shared/instance-config";
 export const BRAIN_FORMAT_VERSION = getBrainFormatVersion();
 
-export type BrainDomain = "core" | "memory" | "chat" | "finance" | "strategy" | "skills" | "info" | "health" | "cognition" | "email" | "calendar" | "other";
+// Brain export producers are derived from fate + Drizzle (brain-export-map.ts).
+// TABLE_REGISTRY is no longer a second inventory. Catalog FKs own insert order.
+export type { BrainDomain, BrainExportEntry };
+export type TableRegistryEntry = BrainExportEntry;
 
-export interface TableRegistryEntry {
-  key: string;
-  table: PgTable;
-  domain: BrainDomain;
-  hasSerial: boolean;
-  serialCol?: string;
-  sensitiveFields?: string[];
-  dependsOn?: string[];
+/** Compatibility projection of every resolvable producer (derived, not hand-authored). */
+export const TABLE_REGISTRY: BrainExportEntry[] = listExportProducerNames()
+  .map((name) => resolveExportProducer(name))
+  .filter((entry): entry is BrainExportEntry => entry != null);
+
+/** Derived producer count for DB Sync progress (not a stale hand-list length). */
+export function getDerivedExportTableCount(): number {
+  return getBrainExportProducerCount();
 }
 
-export const TABLE_REGISTRY: TableRegistryEntry[] = [
-  { key: "users", table: usersTable, domain: "core", hasSerial: false, sensitiveFields: ["password", "reset_token"] },
-  { key: "accounts", table: accounts, domain: "core", hasSerial: false },
-  { key: "memberships", table: memberships, domain: "core", hasSerial: true, dependsOn: ["users", "accounts"] },
-  { key: "user_permissions", table: userPermissions, domain: "core", hasSerial: true, dependsOn: ["users"] },
-  { key: "user_profiles", table: userProfiles, domain: "core", hasSerial: false, dependsOn: ["users", "accounts"] },
-  { key: "agent_instances", table: agentInstances, domain: "core", hasSerial: false, dependsOn: ["users", "accounts"] },
-  { key: "agent_instance_memberships", table: agentInstanceMemberships, domain: "core", hasSerial: true, dependsOn: ["agent_instances", "users", "accounts"] },
-  { key: "agent_profiles", table: agentProfiles, domain: "core", hasSerial: false, dependsOn: ["users", "accounts", "agent_instances"] },
-  { key: "system_settings", table: systemSettings, domain: "core", hasSerial: true },
-  { key: "timers", table: timers, domain: "core", hasSerial: false },
-  { key: "connected_accounts", table: connectedAccounts, domain: "core", hasSerial: true, sensitiveFields: ["tokens"] },
-  { key: "responsibility_runs", table: responsibilityRuns, domain: "core", hasSerial: true },
-
-  { key: "tasks", table: tasks, domain: "core", hasSerial: true },
-  { key: "projects", table: projects, domain: "core", hasSerial: true },
-  { key: "principles", table: principles, domain: "core", hasSerial: false },
-  { key: "principle_revisions", table: principleRevisions, domain: "core", hasSerial: false, dependsOn: ["principles"] },
-  { key: "subscription_oauth_transactions", table: subscriptionOAuthTransactions, domain: "core", hasSerial: false, sensitiveFields: ["codeVerifier"] },
-  { key: "tool_output_admissions", table: toolOutputAdmissions, domain: "core", hasSerial: true },
-  { key: "tags", table: tagsTable, domain: "core", hasSerial: false, dependsOn: ["accounts", "users"] },
-  { key: "tag_aliases", table: tagAliasesTable, domain: "core", hasSerial: false, dependsOn: ["tags", "accounts", "users"] },
-  { key: "tag_assignments", table: tagAssignmentsTable, domain: "core", hasSerial: false, dependsOn: ["tags", "accounts", "users"] },
-  { key: "tag_migrations", table: tagMigrationsTable, domain: "core", hasSerial: false, dependsOn: ["accounts"] },
-  { key: "persons", table: persons, domain: "core", hasSerial: false },
-  { key: "person_merge_aliases", table: personMergeAliases, domain: "core", hasSerial: false, dependsOn: ["persons"] },
-  { key: "person_emails", table: personEmails, domain: "core", hasSerial: false, dependsOn: ["persons"] },
-  { key: "simple_people_surface_state", table: simplePeopleSurfaceState, domain: "core", hasSerial: true, dependsOn: ["persons"] },
-  { key: "people_import_candidates", table: peopleImportCandidates, domain: "core", hasSerial: true },
-
-  { key: "expense_categories", table: expenseCategories, domain: "finance", hasSerial: true },
-  { key: "income_sources", table: incomeSources, domain: "finance", hasSerial: true },
-  { key: "plaid_accounts", table: plaidAccounts, domain: "finance", hasSerial: true },
-  { key: "plaid_securities", table: plaidSecurities, domain: "finance", hasSerial: true },
-  { key: "plaid_sync_cursors", table: plaidSyncCursors, domain: "finance", hasSerial: true },
-  { key: "plaid_transactions", table: plaidTransactions, domain: "finance", hasSerial: true },
-  { key: "plaid_holdings", table: plaidHoldings, domain: "finance", hasSerial: true },
-  { key: "plaid_liabilities", table: plaidLiabilities, domain: "finance", hasSerial: true },
-  { key: "manual_assets", table: manualAssets, domain: "finance", hasSerial: true },
-  { key: "manual_liabilities", table: manualLiabilities, domain: "finance", hasSerial: true },
-  { key: "financial_goals", table: financialGoals, domain: "finance", hasSerial: true },
-  { key: "recurring_expenses", table: recurringExpenses, domain: "finance", hasSerial: true },
-  { key: "merchant_category_overrides", table: merchantCategoryOverrides, domain: "finance", hasSerial: true, dependsOn: ["expense_categories"] },
-  { key: "budget_entries", table: budgetEntries, domain: "finance", hasSerial: true },
-  { key: "budget_income_override", table: budgetIncomeOverride, domain: "finance", hasSerial: true },
-  { key: "budget_monthly_overrides", table: budgetMonthlyOverrides, domain: "finance", hasSerial: true },
-  { key: "income_deductions", table: incomeDeductions, domain: "finance", hasSerial: true, dependsOn: ["income_sources"] },
-  { key: "income_deposits", table: incomeDeposits, domain: "finance", hasSerial: true, dependsOn: ["income_sources"] },
-  { key: "debt_payments", table: debtPayments, domain: "finance", hasSerial: true },
-  { key: "financed_assets", table: financedAssets, domain: "finance", hasSerial: true },
-  { key: "future_cash_events", table: futureCashEvents, domain: "finance", hasSerial: true },
-  { key: "transaction_amortizations", table: transactionAmortizations, domain: "finance", hasSerial: true, dependsOn: ["plaid_transactions"] },
-  { key: "transfer_pair_overrides", table: transferPairOverrides, domain: "finance", hasSerial: true },
-  { key: "manual_401k_accounts", table: manual401kAccounts, domain: "finance", hasSerial: true },
-
-  { key: "health_metrics", table: healthMetrics, domain: "health", hasSerial: true },
-  { key: "wellness_activities", table: wellnessActivities, domain: "health", hasSerial: true },
-  { key: "wellness_logs", table: wellnessLogs, domain: "health", hasSerial: true, dependsOn: ["wellness_activities"] },
-  { key: "gratitude_entries", table: gratitudeEntries, domain: "health", hasSerial: true },
-  { key: "learning_entries", table: learningEntries, domain: "health", hasSerial: true },
-  { key: "reflection_entries", table: reflectionEntries, domain: "health", hasSerial: true },
-
-  { key: "thoughts", table: thoughts, domain: "other", hasSerial: false },
-  { key: "email_triage_log", table: emailTriageLog, domain: "other", hasSerial: true },
-  { key: "captures", table: captures, domain: "other", hasSerial: false },
-  { key: "content_queue", table: contentQueue, domain: "other", hasSerial: false },
-  { key: "indexed_content", table: indexedContent, domain: "other", hasSerial: false },
-
-  { key: "system_hooks", table: systemHooks, domain: "other", hasSerial: true },
-  { key: "system_hook_executions", table: systemHookExecutions, domain: "other", hasSerial: true, dependsOn: ["system_hooks"] },
-
-  { key: "signal_sources", table: signalSources, domain: "other", hasSerial: false },
-  { key: "signal_items", table: signalItems, domain: "other", hasSerial: false, dependsOn: ["signal_sources"] },
-  { key: "scan_runs", table: scanRuns, domain: "other", hasSerial: false },
-
-  { key: "prompt_modules", table: promptModules, domain: "other", hasSerial: false },
-  { key: "prompt_module_versions", table: promptModuleVersions, domain: "other", hasSerial: true, dependsOn: ["prompt_modules"] },
-
-  { key: "platforms", table: platforms, domain: "other", hasSerial: true },
-  { key: "platform_vault_memberships", table: platformVaultMemberships, domain: "other", hasSerial: true, dependsOn: ["platforms"] },
-  { key: "platform_products", table: platformProducts, domain: "other", hasSerial: true, dependsOn: ["platforms"] },
-  { key: "platform_product_environments", table: platformProductEnvironments, domain: "other", hasSerial: true, dependsOn: ["platform_products"] },
-  { key: "products", table: products, domain: "other", hasSerial: true, dependsOn: ["accounts", "users"] },
-  { key: "product_backlogs", table: productBacklogs, domain: "other", hasSerial: true, dependsOn: ["products"] },
-  { key: "product_platform_associations", table: productPlatformAssociations, domain: "other", hasSerial: true, dependsOn: ["products", "platforms"] },
-  { key: "feature_requests", table: featureRequests, domain: "other", hasSerial: true, dependsOn: ["product_backlogs"] },
-  { key: "businesses", table: businesses, domain: "other", hasSerial: false, dependsOn: ["accounts", "users"] },
-  { key: "job_roles", table: jobRoles, domain: "other", hasSerial: false, dependsOn: ["accounts", "users"] },
-  { key: "business_hiring_slots", table: businessHiringSlots, domain: "other", hasSerial: false, dependsOn: ["businesses", "job_roles"] },
-  { key: "provider_connections", table: providerConnections, domain: "other", hasSerial: true, sensitiveFields: ["encryptedCredential", "credentialIv", "credentialTag"] },
-  { key: "environment_source_bindings", table: environmentSourceBindings, domain: "other", hasSerial: true, dependsOn: ["platform_product_environments", "provider_connections"] },
-  { key: "environment_hosting_bindings", table: environmentHostingBindings, domain: "other", hasSerial: true, dependsOn: ["platform_product_environments", "provider_connections"] },
-  { key: "environment_runtime_variables", table: environmentRuntimeVariables, domain: "other", hasSerial: true, dependsOn: ["platform_product_environments"] },
-  { key: "environment_capability_bindings", table: environmentCapabilityBindings, domain: "other", hasSerial: true, dependsOn: ["platform_product_environments", "provider_connections"] },
-  { key: "environment_build_lifecycle_configs", table: environmentBuildLifecycleConfigs, domain: "other", hasSerial: true, dependsOn: ["platform_product_environments"] },
-  { key: "platform_deployment_observations", table: platformDeploymentObservations, domain: "other", hasSerial: false, dependsOn: ["platform_product_environments"] },
-  { key: "build_deployment_home_projections", table: buildDeploymentHomeProjections, domain: "other", hasSerial: false, dependsOn: ["platform_deployment_observations", "platform_product_environments"] },
-
-  { key: "exec_skills", table: execSkills, domain: "other", hasSerial: true },
-  { key: "exec_experience", table: execExperience, domain: "other", hasSerial: true },
-  { key: "exec_metrics", table: execMetrics, domain: "other", hasSerial: true, dependsOn: ["exec_experience"] },
-  { key: "exec_education", table: execEducation, domain: "other", hasSerial: true },
-  { key: "exec_passions", table: execPassions, domain: "other", hasSerial: true },
-  { key: "experience_skills", table: experienceSkills, domain: "other", hasSerial: true, dependsOn: ["exec_experience", "exec_skills"] },
-
-  { key: "opportunities", table: opportunities, domain: "other", hasSerial: true },
-  { key: "opportunity_skills", table: opportunitySkills, domain: "other", hasSerial: true, dependsOn: ["opportunities", "exec_skills"] },
-  { key: "opportunity_artifacts", table: opportunityArtifacts, domain: "other", hasSerial: true, dependsOn: ["opportunities", "library_pages"] },
-
-  { key: "skills", table: skills, domain: "skills", hasSerial: false },
-
-  { key: "skill_references", table: skillReferences, domain: "skills", hasSerial: true, dependsOn: ["skills"] },
-  { key: "runtime_capacity_policies", table: runtimeCapacityPolicies, domain: "core", hasSerial: false },
-  { key: "runtime_runs", table: runtimeRuns, domain: "core", hasSerial: false },
-  { key: "runtime_attempts", table: runtimeAttempts, domain: "core", hasSerial: false, dependsOn: ["runtime_runs"] },
-  { key: "runtime_run_events", table: runtimeRunEvents, domain: "core", hasSerial: false, dependsOn: ["runtime_runs", "runtime_attempts"] },
-  { key: "memory_vnext_source_queue", table: memoryVnextSourceQueue, domain: "memory", hasSerial: true, dependsOn: ["runtime_runs", "runtime_attempts"] },
-  { key: "skill_runs", table: skillRuns, domain: "skills", hasSerial: true, dependsOn: ["runtime_runs"] },
-  { key: "skill_failure_dismissals", table: skillFailureDismissals, domain: "skills", hasSerial: true },
-
-  { key: "emotional_states", table: emotionalStates, domain: "cognition", hasSerial: true },
-  { key: "personas", table: personas, domain: "cognition", hasSerial: true },
-
-  { key: "email_messages", table: emailMessages, domain: "email", hasSerial: true },
-  { key: "email_drafts", table: emailDrafts, domain: "email", hasSerial: true, dependsOn: ["email_messages"] },
-  { key: "email_dismissals", table: emailDismissals, domain: "email", hasSerial: true, dependsOn: ["email_messages"] },
-  { key: "email_enrichments", table: emailEnrichments, domain: "email", hasSerial: true, dependsOn: ["email_messages"] },
-  { key: "email_sync_cursors", table: emailSyncCursors, domain: "email", hasSerial: true },
-  { key: "email_sync_log", table: emailSyncLog, domain: "email", hasSerial: true },
-
-  { key: "calendar_event_metadata", table: calendarEventMetadata, domain: "calendar", hasSerial: true },
-  { key: "calendar_event_people", table: calendarEventPeople, domain: "calendar", hasSerial: true, dependsOn: ["calendar_event_metadata"] },
-  { key: "calendar_event_artifacts", table: calendarEventArtifacts, domain: "calendar", hasSerial: true, dependsOn: ["calendar_event_metadata", "library_pages"] },
-
-  { key: "workspace_documents", table: workspaceDocuments, domain: "memory", hasSerial: true },
-  { key: "code_embeddings", table: codeEmbeddings, domain: "memory", hasSerial: true },
-
-  { key: "sessions", table: chatSessions, domain: "chat", hasSerial: true },
-  { key: "conversation_messages", table: conversationMessages, domain: "chat", hasSerial: true, dependsOn: ["sessions"] },
-  { key: "conversation_revisions", table: conversationRevisions, domain: "chat", hasSerial: true, dependsOn: ["sessions"] },
-  { key: "session_tree", table: sessionTree, domain: "chat", hasSerial: true, dependsOn: ["sessions"] },
-  { key: "session_output_buffer", table: sessionOutputBuffer, domain: "chat", hasSerial: true, dependsOn: ["sessions"] },
-  { key: "session_artifacts", table: sessionArtifacts, domain: "chat", hasSerial: true, dependsOn: ["sessions"] },
-  { key: "messages", table: messages, domain: "chat", hasSerial: true, dependsOn: ["sessions"] },
-
-  { key: "plan_executions", table: planExecutions, domain: "chat", hasSerial: false },
-  { key: "plan_steps", table: planSteps, domain: "chat", hasSerial: false, dependsOn: ["plan_executions"] },
-
-  { key: "workflow_templates", table: workflowTemplates, domain: "chat", hasSerial: false },
-  { key: "workflow_runs", table: workflowRuns, domain: "chat", hasSerial: false, dependsOn: ["workflow_templates"] },
-  { key: "workflow_stage_attempts", table: workflowStageAttempts, domain: "chat", hasSerial: true, dependsOn: ["workflow_runs"] },
-  { key: "workflow_transitions", table: workflowTransitions, domain: "chat", hasSerial: true, dependsOn: ["workflow_runs"] },
-  { key: "workflow_artifacts", table: workflowArtifacts, domain: "chat", hasSerial: true, dependsOn: ["workflow_runs", "workflow_stage_attempts"] },
-  { key: "workflow_gates", table: workflowGates, domain: "chat", hasSerial: true, dependsOn: ["workflow_runs"] },
-  { key: "workflow_sessions", table: workflowSessions, domain: "chat", hasSerial: true, dependsOn: ["workflow_runs", "sessions"] },
-
-  { key: "strategy_goals", table: strategies, domain: "strategy", hasSerial: false },
-  { key: "strategy_actors", table: strategyActors, domain: "strategy", hasSerial: false, dependsOn: ["strategy_goals"] },
-  { key: "strategy_move_definitions", table: strategyMoveDefinitions, domain: "strategy", hasSerial: false, dependsOn: ["strategy_goals", "strategy_actors"] },
-  // strategy_states must come BEFORE move_instances even though the
-  // Drizzle schema declares parent_state_id / terminating_state_id as
-  // plain text columns. The actual FKs (parent_state_fkey,
-  // terminating_state_fkey → strategy_states.id) are added at boot by
-  // server/strategy-storage.ts, so the sync registry has to know about
-  // them or the deferred FK check fires at commit and drops every
-  // move_instances row (which then cascades into 0-row imports for
-  // strategy_assumption_links and strategy_move_end_condition_effects).
-  { key: "strategy_move_instances", table: strategyMoveInstances, domain: "strategy", hasSerial: false, dependsOn: ["strategy_goals", "strategy_move_definitions", "strategy_actors", "strategy_states"] },
-  { key: "strategy_assumptions", table: strategyAssumptions, domain: "strategy", hasSerial: false, dependsOn: ["strategy_goals"] },
-  { key: "strategy_end_conditions", table: strategyEndConditions, domain: "strategy", hasSerial: false, dependsOn: ["strategy_goals"] },
-  { key: "strategy_context_entries", table: strategyContextEntries, domain: "strategy", hasSerial: false, dependsOn: ["strategy_goals"] },
-  { key: "strategy_artifacts", table: strategyArtifacts, domain: "strategy", hasSerial: false, dependsOn: ["strategy_goals"] },
-  { key: "strategy_simulation_runs", table: strategySimulationRuns, domain: "strategy", hasSerial: false, dependsOn: ["strategy_goals", "strategy_move_instances"] },
-  { key: "strategy_states", table: strategyStates, domain: "strategy", hasSerial: false, dependsOn: ["strategy_goals"] },
-  { key: "strategy_assumption_links", table: strategyAssumptionLinks, domain: "strategy", hasSerial: false, dependsOn: ["strategy_assumptions", "strategy_move_instances"] },
-  { key: "strategy_move_end_condition_effects", table: strategyMoveEndConditionEffects, domain: "strategy", hasSerial: false, dependsOn: ["strategy_move_instances", "strategy_end_conditions"] },
-  { key: "decisions", table: decisions, domain: "strategy", hasSerial: false },
-  { key: "decision_updates", table: decisionUpdates, domain: "strategy", hasSerial: false, dependsOn: ["decisions"] },
-  { key: "decision_links", table: decisionLinks, domain: "strategy", hasSerial: false, dependsOn: ["decisions"] },
-  { key: "theses", table: theses, domain: "world", hasSerial: false },
-  { key: "thesis_evidence", table: thesisEvidence, domain: "world", hasSerial: false, dependsOn: ["theses"] },
-  { key: "thesis_predictions", table: thesisPredictions, domain: "world", hasSerial: false, dependsOn: ["theses"] },
-
-  { key: "info_notes", table: infoNotes, domain: "info", hasSerial: true, serialCol: "note_id" },
-  { key: "library_pages", table: libraryPages, domain: "info", hasSerial: true, serialCol: "page_id" },
-  { key: "library_page_links", table: libraryPageLinks, domain: "info", hasSerial: true, serialCol: "id", dependsOn: ["library_pages"] },
-  { key: "library_annotations", table: libraryAnnotations, domain: "info", hasSerial: false, dependsOn: ["library_pages"] },
-  { key: "library_page_views", table: libraryPageViews, domain: "info", hasSerial: false, dependsOn: ["library_pages"] },
-];
-
-function topoSortRegistry(entries: TableRegistryEntry[]): TableRegistryEntry[] {
-  const keyMap = new Map<string, TableRegistryEntry>();
-  for (const e of entries) keyMap.set(e.key, e);
-
-  for (const e of entries) {
-    for (const dep of e.dependsOn ?? []) {
-      if (!keyMap.has(dep)) {
-        log.error(`TABLE_REGISTRY error: "${e.key}" depends on unknown key "${dep}"`);
-      }
-    }
-  }
-
-  const visited = new Set<string>();
-  const inStack = new Set<string>();
-  const sorted: TableRegistryEntry[] = [];
-
-  function visit(key: string) {
-    if (visited.has(key)) return;
-    if (inStack.has(key)) {
-      log.error(`TABLE_REGISTRY error: cycle detected involving "${key}"`);
-      return;
-    }
-    inStack.add(key);
-    const entry = keyMap.get(key);
-    if (!entry) return;
-    for (const dep of entry.dependsOn ?? []) {
-      visit(dep);
-    }
-    inStack.delete(key);
-    visited.add(key);
-    sorted.push(entry);
-  }
-
-  for (const e of entries) visit(e.key);
-  return sorted;
-}
-
-export const INSERT_ORDER: TableRegistryEntry[] = topoSortRegistry(TABLE_REGISTRY);
-export const DELETE_ORDER: TableRegistryEntry[] = [...INSERT_ORDER].reverse();
+// Compatibility names used by db-sync progress UI. Length follows the derived set.
+// Runtime export/import order comes from coverage.insertOrder (catalog FKs), not this list.
+export const INSERT_ORDER: BrainExportEntry[] = TABLE_REGISTRY;
+export const DELETE_ORDER: BrainExportEntry[] = [...INSERT_ORDER].reverse();
 
 const EXPORT_BATCH_SIZE = 5000;
 
@@ -760,7 +470,9 @@ async function loadBackupCoverage(): Promise<BackupCoverage> {
     await client.connect();
     await client.query("SET default_transaction_read_only = on");
     await client.query("SET statement_timeout = '30s'");
-    return await inspectBackupCoverage(client, TABLE_REGISTRY.map(entry => getTableName(entry.table)));
+    // Registered relations for disposition classification = every resolvable producer
+    // (Drizzle tables ∪ raw authored exceptions). Fate still decides include/exclude.
+    return await inspectBackupCoverage(client, listExportProducerNames());
   } finally {
     await client.end().catch(() => {});
   }
@@ -787,12 +499,10 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
   // Establish completeness before creating staging state. Unknown relations or
   // unsafe cycles therefore cannot yield an artifact later reported complete.
   const coverage = await loadBackupCoverage();
-  const includedNames = new Set(coverage.included.map(entry => entry.relation));
-  const exportEntries = INSERT_ORDER.filter(entry => includedNames.has(getTableName(entry.table)));
-  const registeredNames = new Set(exportEntries.map(entry => getTableName(entry.table)));
-  const unregisteredIncludes = coverage.included.filter(entry => !registeredNames.has(entry.relation));
-  if (unregisteredIncludes.length > 0) {
-    throw new Error(`Backup completeness preflight found ${unregisteredIncludes.length} recovery-required relation(s) without an exporter mapping: ${unregisteredIncludes.map(entry => entry.relation).join(", ")}`);
+  // Catalog FKs own insert order. Derive producers from fate + Drizzle/raw map.
+  const { entries: exportEntries, missingProducers } = buildExportEntriesFromOrder(coverage.insertOrder);
+  if (missingProducers.length > 0) {
+    throw new Error(`Backup completeness preflight found ${missingProducers.length} recovery-required relation(s) without an exporter mapping: ${missingProducers.join(", ")}`);
   }
   await mkdir(BRAIN_EXPORT_DIR, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -834,8 +544,8 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
       const skipped: string[] = [];
       for (const e of countable) {
         try {
-          const tableName = getTableName(e.table);
-          // tableName comes from the drizzle schema (developer-controlled
+          const tableName = e.key;
+          // tableName is a fate/catalog relation name (developer-controlled
           // identifier list), but we still quote it to defend against
           // future schema changes that introduce reserved-word names.
           const r = await preflightClient.query<{ total: string }>(
@@ -902,6 +612,25 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
           // Skip entirely — write empty array so import wipes the table on
           // the dev side without inserting anything.
           await writeFile(filePath, "[]");
+        } else if (entry.kind === "raw" || !entry.table) {
+          // Includes with no Drizzle declaration: SELECT * as JSON array.
+          // Catalog still owns order; raw path preserves SQL column names.
+          const client = createDedicatedDatabaseClient("brain-export", {
+            connectionString: process.env.DATABASE_URL,
+            application_name: `${APP_NAME}-sync-raw`,
+            keepAlive: true,
+          });
+          try {
+            await client.connect();
+            const r = await client.query(
+              `SELECT row_to_json(t) AS row FROM ${quoteIdent(entry.key)} t`,
+            );
+            const rows = r.rows.map((row: { row: unknown }) => row.row);
+            await writeFile(filePath, JSON.stringify(rows));
+            rowCount = rows.length;
+          } finally {
+            await client.end().catch(() => {});
+          }
         } else {
           const tableProgress = options.onProgress
             ? (rowsInTable: number) =>
@@ -1203,8 +932,36 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
   const failed: string[] = [];
   const failures: ImportTableFailure[] = [];
 
+  // Prefer catalog insertOrder from the archive manifest when present.
+  // Fall back to present JSON files against the derived producer map.
+  let insertEntries: BrainExportEntry[] = [];
+  const manifestPath = join(dbDir, "..", "manifest.json");
+  if (await pathExists(manifestPath)) {
+    try {
+      const manifest = JSON.parse(await readFile(manifestPath, "utf-8"));
+      const order: string[] | undefined = manifest?.coverage?.insertOrder;
+      if (Array.isArray(order) && order.length > 0) {
+        const built = buildExportEntriesFromOrder(order);
+        if (built.missingProducers.length > 0) {
+          throw new Error(
+            `Import found ${built.missingProducers.length} archive relation(s) without a producer: ${built.missingProducers.join(", ")}`,
+          );
+        }
+        insertEntries = built.entries;
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("without a producer")) throw err;
+      log.debug("manifest insertOrder unavailable; deriving from present files", err);
+    }
+  }
+  if (insertEntries.length === 0) {
+    const files = (await readdir(dbDir)).filter((f) => f.endsWith(".json")).map((f) => f.replace(/\.json$/, ""));
+    insertEntries = buildExportEntriesForPresentFiles(files);
+  }
+  const deleteEntries = [...insertEntries].reverse();
+
   log.debug("Running DB Sync schema convergence");
-  await convergeDbSyncSchema(INSERT_ORDER.map((entry) => entry.table));
+  await convergeDbSyncSchema(listAllDrizzleTables());
   log.debug("DB Sync schema convergence complete");
 
   // ── TRANSACTIONAL IMPORT ────────────────────────────────────────
@@ -1220,19 +977,26 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
   return await db.transaction(async (tx) => {
 
   // Defer only constraints that the schema deliberately declares deferrable.
-  // Ordinary non-deferrable FKs are satisfied by INSERT_ORDER; the catalog
-  // preflight rejects any SCC without an exact replay strategy.
+  // Ordinary non-deferrable FKs are satisfied by catalog insertOrder; the
+  // catalog preflight rejects any SCC without an exact replay strategy.
   await tx.execute(sql.raw("SET CONSTRAINTS ALL DEFERRED"));
   await tx.execute(sql.raw("SET LOCAL statement_timeout = 0"));
 
-  log.debug(`Deleting existing data from ${DELETE_ORDER.length} tables`);
-  for (const { key, table } of DELETE_ORDER) {
+  log.debug(`Deleting existing data from ${deleteEntries.length} tables`);
+  for (const entry of deleteEntries) {
+    const { key, table } = entry;
     const filePath = join(dbDir, `${key}.json`);
     if (await pathExists(filePath)) {
       try {
         // Wrap each delete in a savepoint so a failure doesn't abort
         // the outer transaction — the ON CONFLICT fallback still works.
-        await tx.transaction(async (sp) => { await sp.delete(table); });
+        await tx.transaction(async (sp) => {
+          if (entry.kind === "raw" || !table) {
+            await sp.execute(sql.raw(`DELETE FROM ${quoteIdent(key)}`));
+          } else {
+            await sp.delete(table);
+          }
+        });
         log.debug(`Cleared ${key}`);
       } catch (err: any) {
         // Non-fatal here: the per-table import below uses ON CONFLICT
@@ -1244,9 +1008,9 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
     }
   }
 
-  log.debug(`Inserting data into ${INSERT_ORDER.length} tables`);
+  log.debug(`Inserting data into ${insertEntries.length} tables`);
 
-  for (const entry of INSERT_ORDER) {
+  for (const entry of insertEntries) {
     const { key, table } = entry;
     const filePath = join(dbDir, `${key}.json`);
     if (!await pathExists(filePath)) {
@@ -1257,6 +1021,41 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
 
     const tableStart = Date.now();
     try {
+      // Raw producers (no Drizzle table): buffered JSON → INSERT via json_populate_recordset.
+      if (entry.kind === "raw" || !table) {
+        const rows = JSON.parse(await readFile(filePath, "utf-8"));
+        if (!Array.isArray(rows) || rows.length === 0) {
+          imported[key] = 0;
+          expected[key] = 0;
+          continue;
+        }
+        expected[key] = rows.length;
+        await tx.transaction(async (sp: any) => {
+          const batchSize = 100;
+          for (let i = 0; i < rows.length; i += batchSize) {
+            const batch = rows.slice(i, i + batchSize);
+            await sp.execute(sql`
+              INSERT INTO ${sql.raw(quoteIdent(key))}
+              SELECT * FROM json_populate_recordset(NULL::${sql.raw(quoteIdent(key))}, ${JSON.stringify(batch)}::json)
+              ON CONFLICT DO NOTHING
+            `);
+          }
+        });
+        const countResult = await tx.execute(sql.raw(`SELECT count(*)::text AS total FROM ${quoteIdent(key)}`));
+        const actual = Number(Array.isArray(countResult) ? (countResult as any)[0]?.total : (countResult as any).rows?.[0]?.total);
+        const dur = Date.now() - tableStart;
+        if (Number.isFinite(actual) && actual !== rows.length) {
+          imported[key] = actual;
+          failed.push(key);
+          failures.push({ key, expected: rows.length, imported: actual, error: `row-count mismatch: expected ${rows.length}, got ${actual}` });
+          log.error(`${key}: FAILED — row-count mismatch (${dur}ms)`);
+        } else {
+          imported[key] = Number.isFinite(actual) ? actual : rows.length;
+          log.debug(`[Import] ${key}: complete (${imported[key]} rows in ${(dur / 1000).toFixed(1)}s — raw)`);
+        }
+        continue;
+      }
+
       // ── Route by file size ────────────────────────────────────────
       // Tables larger than STREAM_THRESHOLD_BYTES are stream-parsed to
       // keep memory bounded. Small tables and tables with special

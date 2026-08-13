@@ -4,23 +4,31 @@ import { join } from "path";
 import { getTableName, is, Table } from "drizzle-orm";
 import * as schema from "../shared/schema";
 import { EXCLUSIONS, INCLUSIONS, SOURCE_VERIFIED_INCLUDES } from "../server/backup-completeness";
+import {
+  BRAIN_EXPORT_EXCEPTIONS,
+  listExportProducerNames,
+  resolveExportProducer,
+} from "../server/brain-export-map";
 
-// Build-time backup-fate invariant.
+// Build-time backup-fate + producer invariant.
 //
 // A declared relation without an include/exclude disposition is unrepresentable.
 // Every relation the source guarantees can exist in Live — current Drizzle table
 // declarations plus schema-bootstrap / immutable-migration CREATE TABLE names —
-// must resolve to exactly one fate: EXCLUSIONS, INCLUSIONS, SOURCE_VERIFIED_INCLUDES,
-// or a TABLE_REGISTRY exporter key. Missing fate fails the production build with the
-// exact relation names, so a new table can never first surface as an "unexplained
-// relation" in a Live backup preflight. The runtime pg_catalog preflight remains
-// fail-closed only for leftovers source cannot see (a table created by hand).
+// must resolve to exactly one fate: EXCLUSIONS, INCLUSIONS, or SOURCE_VERIFIED_INCLUDES.
+//
+// Include implies export. Every included relation must resolve to a derived
+// producer (Drizzle table or authored raw/table exception). Missing producer
+// fails the production build with the exact names. Fate without a producer is
+// unrepresentable. Default-include remains forbidden.
+//
+// The runtime pg_catalog preflight remains fail-closed only for leftovers
+// source cannot see (a table created by hand).
 
 // Keyword is matched case-sensitively (all DDL in this repo uses uppercase
 // CREATE TABLE) and the relation name is lowercase snake_case only, so the
 // optional-keyword branch can never capture "IF" as a relation name.
 const CREATE_TABLE_RE = /CREATE TABLE(?:\s+IF NOT EXISTS)?\s+"?([a-z_][a-z0-9_]*)"?/g;
-const REGISTRY_KEY_RE = /key:\s*"([a-z_][a-z0-9_]*)"/g;
 
 // The permissive CREATE TABLE regex can capture reserved words that follow the
 // keyword in comments or non-DDL prose. These are proven false positives, not
@@ -31,6 +39,7 @@ export interface BackupFateSummary {
   declaredRelations: number;
   fatedRelations: number;
   includedWithoutExporter: string[];
+  producerCount: number;
 }
 
 function collectDeclaredDrizzleTables(): Set<string> {
@@ -50,6 +59,19 @@ async function collectCreateTableNames(root: string): Promise<Set<string>> {
       if (entry.endsWith(".sql")) sources.push(join(migrationsDir, entry));
     }
   }
+  // Bootstrap-only ensure DDL outside schema-bootstrap also declares live relations.
+  const extraSources = [
+    join(root, "server/backup-storage.ts"),
+    join(root, "server/hours-used.ts"),
+    join(root, "server/historical-continuity.ts"),
+    join(root, "server/error-telemetry.ts"),
+    join(root, "server/integrations/railway/request-attribution.ts"),
+    join(root, "server/memory/legacy-memory-quarantine.ts"),
+    join(root, "server/slack/schema.ts"),
+  ];
+  for (const file of extraSources) {
+    if (existsSync(file)) sources.push(file);
+  }
   for (const file of sources) {
     if (!existsSync(file)) continue;
     const text = await readFile(file, "utf8");
@@ -61,30 +83,19 @@ async function collectCreateTableNames(root: string): Promise<Set<string>> {
   return names;
 }
 
-async function collectRegistryExporterKeys(root: string): Promise<Set<string>> {
-  const text = await readFile(join(root, "server/routes/brain.ts"), "utf8");
-  const start = text.indexOf("export const TABLE_REGISTRY");
-  if (start < 0) throw new Error("backup fate disposition: TABLE_REGISTRY not found in server/routes/brain.ts");
-  const end = text.indexOf("];", start);
-  if (end < 0) throw new Error("backup fate disposition: TABLE_REGISTRY array terminator not found");
-  const block = text.slice(start, end);
-  const keys = new Set<string>();
-  for (const match of block.matchAll(REGISTRY_KEY_RE)) keys.add(match[1]);
-  return keys;
-}
-
 export async function validateBackupFateDisposition(root: string): Promise<BackupFateSummary> {
-  const [created, registryKeys] = await Promise.all([
-    collectCreateTableNames(root),
-    collectRegistryExporterKeys(root),
-  ]);
+  // Touch root so the validator stays path-bound to the build cwd even when
+  // producer resolution is pure module evaluation.
+  if (!existsSync(root)) throw new Error(`backup fate disposition: root not found: ${root}`);
+
+  const created = await collectCreateTableNames(root);
   const drizzle = collectDeclaredDrizzleTables();
+  const producerNames = new Set(listExportProducerNames());
 
   const fated = new Set<string>([
     ...Object.keys(EXCLUSIONS),
     ...Object.keys(INCLUSIONS),
     ...SOURCE_VERIFIED_INCLUDES,
-    ...registryKeys,
   ]);
 
   const declared = new Set<string>([...drizzle, ...created]);
@@ -93,19 +104,35 @@ export async function validateBackupFateDisposition(root: string): Promise<Backu
     throw new Error(
       `backup fate disposition failed (${unfated.length} declared relation(s) without an include/exclude disposition):\n${unfated
         .map((name) => `- ${name}`)
-        .join("\n")}\nAdd each to EXCLUSIONS/INCLUSIONS/SOURCE_VERIFIED_INCLUDES in server/backup-completeness.ts or TABLE_REGISTRY in server/routes/brain.ts before shipping.`,
+        .join("\n")}\nAdd each to EXCLUSIONS/INCLUSIONS/SOURCE_VERIFIED_INCLUDES in server/backup-completeness.ts before shipping. Default-include is forbidden.`,
     );
   }
 
-  // Residual visibility (non-failing in this first cut): included relations that
-  // still lack a TABLE_REGISTRY exporter mapping. This is the pre-existing
-  // exporter-backfill debt tracked under @task:2265; the fate invariant above is
-  // the shippable cut. It is surfaced in build output, not enforced, so a merge
-  // is not blocked on the separate ~100-relation exporter reconciliation.
+  // Include implies export. Every included relation that is declared (or
+  // explicitly authored as a raw exception) must resolve to a producer.
   const included = new Set<string>([...Object.keys(INCLUSIONS), ...SOURCE_VERIFIED_INCLUDES]);
   const includedWithoutExporter = [...included]
-    .filter((name) => declared.has(name) && !registryKeys.has(name))
+    .filter((name) => {
+      // Only enforce producers for relations the source can actually create,
+      // plus any explicitly authored raw exceptions (even if discovery missed them).
+      const mustHaveProducer = declared.has(name) || name in BRAIN_EXPORT_EXCEPTIONS;
+      if (!mustHaveProducer) return false;
+      return resolveExportProducer(name) == null;
+    })
     .sort();
 
-  return { declaredRelations: declared.size, fatedRelations: fated.size, includedWithoutExporter };
+  if (includedWithoutExporter.length) {
+    throw new Error(
+      `backup fate disposition failed (${includedWithoutExporter.length} included relation(s) without a producer):\n${includedWithoutExporter
+        .map((name) => `- ${name}`)
+        .join("\n")}\nInclude implies export. Add a Drizzle pgTable declaration or a BRAIN_EXPORT_EXCEPTIONS raw/table producer in server/brain-export-map.ts.`,
+    );
+  }
+
+  return {
+    declaredRelations: declared.size,
+    fatedRelations: fated.size,
+    includedWithoutExporter: [],
+    producerCount: producerNames.size,
+  };
 }
