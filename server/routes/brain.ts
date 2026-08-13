@@ -83,12 +83,13 @@ export const BRAIN_EXPORT_DIR = "/tmp/brain-exports";
 import { getBrainFormatVersion } from "@shared/instance-config";
 export const BRAIN_FORMAT_VERSION = getBrainFormatVersion();
 
-// Brain export producers are derived from fate + Drizzle (brain-export-map.ts).
-// TABLE_REGISTRY is no longer a second inventory. Catalog FKs own insert order.
+// Schema is membership. Producers derive from Drizzle + auto raw SQL
+// (brain-export-map.ts). SECURITY_DENYLIST is the only authored surface.
+// TABLE_REGISTRY is not a producer inventory. Catalog FKs own insert order.
 export type { BrainDomain, BrainExportEntry };
 export type TableRegistryEntry = BrainExportEntry;
 
-/** Compatibility projection of every resolvable producer (derived, not hand-authored). */
+/** Compatibility projection of known Drizzle producers (not a hand inventory). */
 export const TABLE_REGISTRY: BrainExportEntry[] = listExportProducerNames()
   .map((name) => resolveExportProducer(name))
   .filter((entry): entry is BrainExportEntry => entry != null);
@@ -470,8 +471,8 @@ async function loadBackupCoverage(): Promise<BackupCoverage> {
     await client.connect();
     await client.query("SET default_transaction_read_only = on");
     await client.query("SET statement_timeout = '30s'");
-    // Registered relations for disposition classification = every resolvable producer
-    // (Drizzle tables ∪ raw authored exceptions). Fate still decides include/exclude.
+    // Known source names label leftovers only. Membership = every live relation
+    // minus SECURITY_DENYLIST; leftovers export via auto raw SQL.
     return await inspectBackupCoverage(client, listExportProducerNames());
   } finally {
     await client.end().catch(() => {});
@@ -499,10 +500,13 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
   // Establish completeness before creating staging state. Unknown relations or
   // unsafe cycles therefore cannot yield an artifact later reported complete.
   const coverage = await loadBackupCoverage();
-  // Catalog FKs own insert order. Derive producers from fate + Drizzle/raw map.
+  // Catalog FKs own insert order. Derive producers (Drizzle or auto raw SQL).
+  // missingProducers should only surface denylist violations that slipped into insertOrder.
   const { entries: exportEntries, missingProducers } = buildExportEntriesFromOrder(coverage.insertOrder);
   if (missingProducers.length > 0) {
-    throw new Error(`Backup completeness preflight found ${missingProducers.length} recovery-required relation(s) without an exporter mapping: ${missingProducers.join(", ")}`);
+    throw new Error(
+      `Backup completeness preflight found ${missingProducers.length} relation(s) without a producer (denylist or resolver failure): ${missingProducers.join(", ")}`,
+    );
   }
   await mkdir(BRAIN_EXPORT_DIR, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");

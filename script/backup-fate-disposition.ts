@@ -3,31 +3,32 @@ import { existsSync } from "fs";
 import { join } from "path";
 import { getTableName, is, Table } from "drizzle-orm";
 import * as schema from "../shared/schema";
-import { EXCLUSIONS, INCLUSIONS, SOURCE_VERIFIED_INCLUDES } from "../server/backup-completeness";
+import {
+  isSecurityDenied,
+  listSecurityDenylistNames,
+  SECURITY_DENYLIST,
+} from "../server/backup-completeness";
 import {
   BRAIN_EXPORT_EXCEPTIONS,
-  listExportProducerNames,
   resolveExportProducer,
 } from "../server/brain-export-map";
 
-// Build-time backup-fate + producer invariant.
+// Build-time inverted-default backup invariant.
 //
-// A declared relation without an include/exclude disposition is unrepresentable.
-// Every relation the source guarantees can exist in Live — current Drizzle table
-// declarations plus schema-bootstrap / immutable-migration CREATE TABLE names —
-// must resolve to exactly one fate: EXCLUSIONS, INCLUSIONS, or SOURCE_VERIFIED_INCLUDES.
+// Schema is membership. Every declared relation (Drizzle pgTable + bootstrap /
+// migration / ensure CREATE TABLE) minus SECURITY_DENYLIST is a required
+// export member. There is no include inventory and no unfated state.
 //
-// Include implies export. Every included relation must resolve to a derived
-// producer (Drizzle table or authored raw/table exception). Missing producer
-// fails the production build with the exact names. Fate without a producer is
-// unrepresentable. Default-include remains forbidden.
+// Fail npm run build when:
+// 1. A denylisted relation would resolve as a producer, or
+// 2. A non-denylisted declared relation has no producer.
 //
-// The runtime pg_catalog preflight remains fail-closed only for leftovers
-// source cannot see (a table created by hand).
+// Ordinary tables use Drizzle. Declared relations with no pgTable use raw SQL
+// automatically. BRAIN_EXPORT_EXCEPTIONS is only sensitiveFields / serial overrides.
+//
+// Runtime leftovers (live tables source cannot see) export via raw SQL; they
+// are not a build concern.
 
-// Keyword is matched case-sensitively (all DDL in this repo uses uppercase
-// CREATE TABLE) and the relation name is lowercase snake_case only, so the
-// optional-keyword branch can never capture "IF" as a relation name.
 const CREATE_TABLE_RE = /CREATE TABLE(?:\s+IF NOT EXISTS)?\s+"?([a-z_][a-z0-9_]*)"?/g;
 
 // The permissive CREATE TABLE regex can capture reserved words that follow the
@@ -37,8 +38,8 @@ const PARSER_FALSE_POSITIVES = new Set(["is"]);
 
 export interface BackupFateSummary {
   declaredRelations: number;
-  fatedRelations: number;
-  includedWithoutExporter: string[];
+  membershipRelations: number;
+  denylistRelations: number;
   producerCount: number;
 }
 
@@ -84,55 +85,63 @@ async function collectCreateTableNames(root: string): Promise<Set<string>> {
 }
 
 export async function validateBackupFateDisposition(root: string): Promise<BackupFateSummary> {
-  // Touch root so the validator stays path-bound to the build cwd even when
-  // producer resolution is pure module evaluation.
   if (!existsSync(root)) throw new Error(`backup fate disposition: root not found: ${root}`);
 
   const created = await collectCreateTableNames(root);
   const drizzle = collectDeclaredDrizzleTables();
-  const producerNames = new Set(listExportProducerNames());
-
-  const fated = new Set<string>([
-    ...Object.keys(EXCLUSIONS),
-    ...Object.keys(INCLUSIONS),
-    ...SOURCE_VERIFIED_INCLUDES,
-  ]);
-
   const declared = new Set<string>([...drizzle, ...created]);
-  const unfated = [...declared].filter((name) => !fated.has(name)).sort();
-  if (unfated.length) {
+  const denylist = listSecurityDenylistNames();
+
+  // Denylist entries must carry owner + reason (authored security surface only).
+  for (const name of denylist) {
+    const entry = SECURITY_DENYLIST[name];
+    if (!entry?.owner?.trim() || !entry?.reason?.trim()) {
+      throw new Error(
+        `backup fate disposition failed: SECURITY_DENYLIST.${name} must include non-empty owner and reason`,
+      );
+    }
+  }
+
+  // Denylisted relations must never resolve as producers.
+  const denylistAsProducers = denylist.filter((name) => resolveExportProducer(name) != null);
+  if (denylistAsProducers.length) {
     throw new Error(
-      `backup fate disposition failed (${unfated.length} declared relation(s) without an include/exclude disposition):\n${unfated
+      `backup fate disposition failed (${denylistAsProducers.length} denylisted relation(s) would resolve as a producer):\n${denylistAsProducers
         .map((name) => `- ${name}`)
-        .join("\n")}\nAdd each to EXCLUSIONS/INCLUSIONS/SOURCE_VERIFIED_INCLUDES in server/backup-completeness.ts before shipping. Default-include is forbidden.`,
+        .join("\n")}\nSecurity-denylisted relations must never enter Brain export.`,
     );
   }
 
-  // Include implies export. Every included relation that is declared (or
-  // explicitly authored as a raw exception) must resolve to a producer.
-  const included = new Set<string>([...Object.keys(INCLUSIONS), ...SOURCE_VERIFIED_INCLUDES]);
-  const includedWithoutExporter = [...included]
-    .filter((name) => {
-      // Only enforce producers for relations the source can actually create,
-      // plus any explicitly authored raw exceptions (even if discovery missed them).
-      const mustHaveProducer = declared.has(name) || name in BRAIN_EXPORT_EXCEPTIONS;
-      if (!mustHaveProducer) return false;
-      return resolveExportProducer(name) == null;
-    })
-    .sort();
-
-  if (includedWithoutExporter.length) {
+  // Denylist must not appear in BRAIN_EXPORT_EXCEPTIONS (exceptions are export metadata).
+  const denylistExceptions = denylist.filter((name) => name in BRAIN_EXPORT_EXCEPTIONS);
+  if (denylistExceptions.length) {
     throw new Error(
-      `backup fate disposition failed (${includedWithoutExporter.length} included relation(s) without a producer):\n${includedWithoutExporter
+      `backup fate disposition failed (${denylistExceptions.length} denylisted relation(s) listed in BRAIN_EXPORT_EXCEPTIONS):\n${denylistExceptions
         .map((name) => `- ${name}`)
-        .join("\n")}\nInclude implies export. Add a Drizzle pgTable declaration or a BRAIN_EXPORT_EXCEPTIONS raw/table producer in server/brain-export-map.ts.`,
+        .join("\n")}\nRemove denylisted names from BRAIN_EXPORT_EXCEPTIONS; they never export.`,
     );
   }
+
+  // Membership = declared − denylist. Every member must have a producer.
+  const membership = [...declared].filter((name) => !isSecurityDenied(name)).sort();
+  const missingProducers = membership.filter((name) => resolveExportProducer(name) == null);
+  if (missingProducers.length) {
+    throw new Error(
+      `backup fate disposition failed (${missingProducers.length} membership relation(s) without a producer):\n${missingProducers
+        .map((name) => `- ${name}`)
+        .join(
+          "\n",
+        )}\nSchema is membership. Non-denylisted declared relations must resolve to a Drizzle or auto raw-SQL producer.`,
+    );
+  }
+
+  // Count producers among membership that have Drizzle tables (reporting only).
+  const drizzleProducers = membership.filter((name) => drizzle.has(name)).length;
 
   return {
     declaredRelations: declared.size,
-    fatedRelations: fated.size,
-    includedWithoutExporter: [],
-    producerCount: producerNames.size,
+    membershipRelations: membership.length,
+    denylistRelations: denylist.length,
+    producerCount: drizzleProducers,
   };
 }

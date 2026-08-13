@@ -1,14 +1,16 @@
 import { getTableName, is, Table } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import * as schema from "@shared/schema";
+import { isSecurityDenied } from "./backup-completeness";
 
 // Derived Brain export producers.
 //
-// Include implies export. Every Drizzle pgTable is a potential producer; fate
-// (EXCLUSIONS / INCLUSIONS / SOURCE_VERIFIED_INCLUDES) decides membership.
-// Catalog FKs own insert order and identity/sequence metadata. This module is
-// the single name → producer map plus the tiny authored exception surface.
-// TABLE_REGISTRY is no longer a second inventory.
+// Schema is membership. Every non-denylisted relation exports. Ordinary tables
+// use Drizzle; declared/live relations with no pgTable use raw SQL automatically.
+// Catalog FKs own insert order and identity/sequence metadata.
+// BRAIN_EXPORT_EXCEPTIONS is only for sensitiveFields and serial overrides —
+// not a second membership inventory and not a per-table raw-SQL registry.
+// TABLE_REGISTRY is not a producer list.
 
 export type BrainDomain =
   | "core"
@@ -26,7 +28,7 @@ export type BrainDomain =
 
 export type BrainExportEntry = {
   key: string;
-  /** Drizzle-backed producer, or raw SQL for includes with no pgTable declaration. */
+  /** Drizzle-backed producer, or raw SQL when no pgTable declaration exists. */
   kind: "drizzle" | "raw";
   table?: PgTable;
   domain: BrainDomain;
@@ -35,12 +37,8 @@ export type BrainExportEntry = {
   sensitiveFields?: string[];
 };
 
-/** Authored exceptions only — not a second table inventory. */
+/** Authored exceptions only — sensitiveFields and serial overrides. Not membership. */
 export type BrainExportException = {
-  /** Force raw SQL producer even if a Drizzle table exists. */
-  kind?: "drizzle" | "raw";
-  /** Include with no Drizzle declaration must set kind:"raw" or supply table. */
-  table?: PgTable;
   domain?: BrainDomain;
   sensitiveFields?: string[];
   serialCol?: string;
@@ -51,12 +49,12 @@ export type BrainExportException = {
  * Tiny authored exception map. Keys are relation names.
  * - sensitiveFields: redaction metadata for export summaries
  * - serialCol / hasSerial: restore sequence overrides when catalog evidence is absent
- * - kind:"raw": include has no Drizzle pgTable; export/import use raw SQL SELECT and json_populate_recordset
+ * Do not add raw-SQL rows here; missing Drizzle tables auto-export via raw SQL.
+ * Do not list security-denylisted relations.
  */
 export const BRAIN_EXPORT_EXCEPTIONS: Record<string, BrainExportException> = {
   users: { sensitiveFields: ["password", "reset_token"], domain: "core" },
   connected_accounts: { sensitiveFields: ["tokens"], domain: "core" },
-  subscription_oauth_transactions: { sensitiveFields: ["codeVerifier"], domain: "core" },
   provider_connections: {
     sensitiveFields: ["encryptedCredential", "credentialIv", "credentialTag"],
     domain: "other",
@@ -64,28 +62,6 @@ export const BRAIN_EXPORT_EXCEPTIONS: Record<string, BrainExportException> = {
   info_notes: { hasSerial: true, serialCol: "note_id", domain: "info" },
   library_pages: { hasSerial: true, serialCol: "page_id", domain: "info" },
   library_page_links: { hasSerial: true, serialCol: "id", domain: "info" },
-
-  // Includes with no Drizzle declaration — raw SQL producers (bootstrap / ensure DDL).
-  app_migrations: { kind: "raw", domain: "core" },
-  application_error_aggregates: { kind: "raw", domain: "other" },
-  backup_jobs: { kind: "raw", domain: "core" },
-  document_store_cutover_state: { kind: "raw", domain: "chat" },
-  document_store_migration_conflicts: { kind: "raw", domain: "chat" },
-  document_store_migration_runs: { kind: "raw", domain: "chat" },
-  historical_continuity_entries: { kind: "raw", domain: "chat" },
-  hours_used_intervals: { kind: "raw", domain: "other" },
-  hours_used_rollups: { kind: "raw", domain: "other" },
-  intentions: { kind: "raw", domain: "other" },
-  legacy_memory_quarantine_state: { kind: "raw", domain: "memory" },
-  library_vault_identity_migrations: { kind: "raw", domain: "info" },
-  parked_ideas: { kind: "raw", domain: "other" },
-  railway_api_call_receipts: { kind: "raw", domain: "other" },
-  skill_scores: { kind: "raw", domain: "skills" },
-  slack_events: { kind: "raw", domain: "other" },
-  slack_installations: { kind: "raw", domain: "other" },
-  slack_principal_mappings: { kind: "raw", domain: "other" },
-  slack_session_bindings: { kind: "raw", domain: "other" },
-  waitlist_applications: { kind: "raw", domain: "other" },
 };
 
 let drizzleTableCache: Map<string, PgTable> | null = null;
@@ -108,28 +84,31 @@ export function listDrizzleTableNames(): string[] {
 }
 
 /**
- * Resolve the export/import producer for one included relation.
- * Returns null when the include has neither a Drizzle table nor a raw/table exception.
+ * Resolve the export/import producer for one relation.
+ * Security-denylisted relations never resolve as producers (return null).
+ * Non-denylisted relations always resolve: Drizzle when declared, else raw SQL.
  */
 export function resolveExportProducer(relation: string): BrainExportEntry | null {
+  if (isSecurityDenied(relation)) return null;
+
   const exception = BRAIN_EXPORT_EXCEPTIONS[relation];
-  if (exception?.kind === "raw") {
+  const drizzle = collectDrizzleTables().get(relation);
+  if (drizzle) {
     return {
       key: relation,
-      kind: "raw",
-      domain: exception.domain ?? "other",
-      hasSerial: exception.hasSerial ?? Boolean(exception.serialCol),
-      serialCol: exception.serialCol,
-      sensitiveFields: exception.sensitiveFields,
+      kind: "drizzle",
+      table: drizzle,
+      domain: exception?.domain ?? "other",
+      hasSerial: exception?.hasSerial ?? Boolean(exception?.serialCol),
+      serialCol: exception?.serialCol,
+      sensitiveFields: exception?.sensitiveFields,
     };
   }
-  const drizzle = collectDrizzleTables().get(relation);
-  const table = exception?.table ?? drizzle;
-  if (!table) return null;
+
+  // Auto raw SQL — no per-table exception row required.
   return {
     key: relation,
-    kind: "drizzle",
-    table,
+    kind: "raw",
     domain: exception?.domain ?? "other",
     hasSerial: exception?.hasSerial ?? Boolean(exception?.serialCol),
     serialCol: exception?.serialCol,
@@ -137,13 +116,13 @@ export function resolveExportProducer(relation: string): BrainExportEntry | null
   };
 }
 
-/** Every name that can currently produce an export (Drizzle ∪ raw exceptions ∪ exception tables). */
+/**
+ * Drizzle table names that are eligible producers (non-denylisted).
+ * Used as known-source labels for leftover classification; membership itself
+ * is every live non-denylisted relation.
+ */
 export function listExportProducerNames(): string[] {
-  const names = new Set<string>(collectDrizzleTables().keys());
-  for (const [name, exception] of Object.entries(BRAIN_EXPORT_EXCEPTIONS)) {
-    if (exception.kind === "raw" || exception.table || names.has(name)) names.add(name);
-  }
-  return [...names].sort();
+  return listDrizzleTableNames().filter((name) => !isSecurityDenied(name));
 }
 
 export function getBrainExportProducerCount(): number {
@@ -153,6 +132,7 @@ export function getBrainExportProducerCount(): number {
 /**
  * Build ordered export/import entries from catalog (or manifest) insert order.
  * Missing producers are returned separately so callers can fail closed with exact names.
+ * Under inverted default, only denylisted names yield missing producers.
  */
 export function buildExportEntriesFromOrder(insertOrder: string[]): {
   entries: BrainExportEntry[];
@@ -172,14 +152,13 @@ export function buildExportEntriesFromOrder(insertOrder: string[]): {
 }
 
 /**
- * For import paths without a catalog insertOrder: every producer that has a
- * matching JSON file, stable-sorted. Prefer manifest insertOrder when present.
+ * For import paths without a catalog insertOrder: producers for present JSON
+ * files, stable-sorted. Prefer manifest insertOrder when present.
+ * Denylisted file keys are skipped (no producer).
  */
 export function buildExportEntriesForPresentFiles(fileKeys: string[]): BrainExportEntry[] {
-  const wanted = new Set(fileKeys);
   const entries: BrainExportEntry[] = [];
-  for (const name of listExportProducerNames()) {
-    if (!wanted.has(name)) continue;
+  for (const name of [...fileKeys].sort()) {
     const entry = resolveExportProducer(name);
     if (entry) entries.push(entry);
   }
