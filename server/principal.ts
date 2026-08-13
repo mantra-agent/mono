@@ -328,6 +328,8 @@ export async function ensureUserIdentityFoundation(
         ownerUserId: user.id,
         // Real personal Accounts are entitled to spend; incomplete/orphan shells stay unentitled.
         entitlement: "entitled",
+        // Entitled personal Accounts may use the platform model stack until Stripe narrows access.
+        modelAccess: { mode: "platform_stack" },
       })
       .onConflictDoUpdate({
         target: [accounts.kind, accounts.ownerUserId],

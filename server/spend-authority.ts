@@ -272,6 +272,6 @@ function trimId(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeEntitlement(value: unknown): AccountEntitlement {
+export function normalizeEntitlement(value: unknown): AccountEntitlement {
   return value === "entitled" ? "entitled" : "unentitled";
 }
