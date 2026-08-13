@@ -1819,7 +1819,7 @@ function contextPageReference(artifact: ContextArtifact) {
   });
 }
 
-function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: ContextArtifact[]; environmentId: number }) {
+function unusedContextMutationCardRemoved({ artifacts: _artifacts, environmentId: _environmentId }: { artifacts: ContextArtifact[]; environmentId: number }) {
   const [adding, setAdding] = useState(false);
   const [newKind, setNewKind] = useState("");
   const [selectedPage, setSelectedPage] = useState<{ id: string; title: string } | null>(null);
@@ -2137,8 +2137,24 @@ function EnvironmentDetailsConfigureCard({ details, environmentId }: { details: 
       <EnvironmentSection label="Hosting" defaultOpen={false} storageKey={`platform-environment:${environmentId}:section:hosting`}>
         <HostingBindingCard binding={details.hosting} environmentId={environmentId} />
       </EnvironmentSection>
-      <EnvironmentSection label="Context">
-        <ContextArtifactsCard artifacts={details.contextArtifacts || []} environmentId={environmentId} />
+      <EnvironmentSection label="Context from Product">
+        {(details.contextArtifacts || []).length === 0 ? (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">Inherited from Product. Add Context on the Product.</div>
+        ) : (
+          <div className="space-y-1">
+            {(details.contextArtifacts || []).map((artifact) => {
+              const ref = contextPageReference(artifact);
+              const KindIcon = ARTIFACT_KIND_ICONS[artifact.kind] ?? FileText;
+              const kindLabel = ARTIFACT_KIND_LABELS[artifact.kind] ?? artifact.kind;
+              return (
+                <div key={artifact.id} className="flex min-w-0 items-center gap-2 rounded px-2 py-1 text-xs">
+                  <KindIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label={kindLabel} />
+                  <ReferenceRenderer key={ref.canonical} refValue={ref} surface="simple-row" className="max-w-full" />
+                </div>
+              );
+            })}
+          </div>
+        )}
       </EnvironmentSection>
     </div>
   );

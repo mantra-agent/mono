@@ -47,4 +47,18 @@ export function registerProductRoutes(app: Express): void {
     try { const issue = await productStorage.bridgeFeatureToIssue(idSchema.parse(req.params.id), idSchema.parse(req.params.requestId)); issue ? res.status(201).json(issue) : res.status(404).json({ error: "Feature Request not found" }); }
     catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Issue creation failed" }); }
   });
+  app.get("/api/products/:id/context-artifacts", requirePermission("build:read"), async (req, res) => {
+    const context = await productStorage.listContext(idSchema.parse(req.params.id));
+    context ? res.json(context) : res.status(404).json({ error: "Product not found" });
+  });
+  app.put("/api/products/:id/context-artifacts", requirePermission("build:write"), async (req, res) => {
+    try {
+      const saved = await productStorage.addContext(idSchema.parse(req.params.id), req.body);
+      saved ? res.json(saved) : res.status(404).json({ error: "Product not found" });
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Context save failed" }); }
+  });
+  app.delete("/api/products/:id/context-artifacts/:contextId", requirePermission("build:write"), async (req, res) => {
+    const deleted = await productStorage.removeContext(idSchema.parse(req.params.id), idSchema.parse(req.params.contextId));
+    deleted === undefined ? res.status(404).json({ error: "Product not found" }) : deleted ? res.json({ success: true }) : res.status(404).json({ error: "Context not found" });
+  });
 }

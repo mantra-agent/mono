@@ -1827,6 +1827,31 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_environment_context_artifacts_kind ON environment_context_artifacts(kind)`);
   });
 
+  await heal("product context artifacts", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS product_context_artifacts (
+        id SERIAL PRIMARY KEY,
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        library_page_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS product_context_artifacts_unique ON product_context_artifacts(product_id, kind, library_page_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_product_context_artifacts_product_kind ON product_context_artifacts(product_id, kind)`);
+    await pool.query(`
+      INSERT INTO product_context_artifacts (product_id, kind, library_page_id)
+      SELECT pr.id, eca.kind, eca.library_page_id
+      FROM environment_context_artifacts eca
+      JOIN platform_product_environments ppe ON ppe.id = eca.environment_id
+      JOIN platform_products pp ON pp.id = ppe.product_id
+      JOIN product_platform_associations ppa ON ppa.platform_id = pp.platform_id
+      JOIN products pr ON pr.id = ppa.product_id AND lower(pr.name) = lower(pp.name)
+      ON CONFLICT DO NOTHING
+    `);
+  });
+
   await heal("context artifacts drop unique env+kind constraint", async () => {
     // Allow multiple artifacts per kind per environment (e.g. multiple design_system pages)
     const { rows } = await pool.query(`

@@ -28,6 +28,8 @@ import {
 } from "../platforms/platform-access";
 import { libraryPages } from "@shared/models/info";
 import { requireModRouteGroup } from "../mods/mod-access";
+import { resolveProductIdForEnvironment } from "../platforms/context-artifact-access";
+import { productStorage } from "../product-storage";
 const requireActiveBuild = requireModRouteGroup("build.platforms");
 
 const log = createLogger("PlatformRoutes");
@@ -234,21 +236,35 @@ export function registerPlatformRoutes(app: Express): void {
         log.debug("Binding table query failed; returning unbound environment", { error: err instanceof Error ? err.message : String(err) });
       }
 
-      // Context artifacts in a separate try/catch so binding failures don't silently kill artifact loading
+      // Product-owned context first; Environment links remain fallback during migration.
       try {
-        contextArtifactRows = await db
-          .select({
-            id: environmentContextArtifacts.id,
-            environmentId: environmentContextArtifacts.environmentId,
-            kind: environmentContextArtifacts.kind,
-            libraryPageId: environmentContextArtifacts.libraryPageId,
-            createdAt: environmentContextArtifacts.createdAt,
-            updatedAt: environmentContextArtifacts.updatedAt,
-            pageTitle: libraryPages.title,
-          })
-          .from(environmentContextArtifacts)
-          .leftJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
-          .where(and(eq(environmentContextArtifacts.environmentId, environmentId), visibleLibrary()));
+        const productId = await resolveProductIdForEnvironment(environmentId);
+        const productContext = productId ? await productStorage.listContext(productId) : undefined;
+        if (productContext) {
+          contextArtifactRows = productContext.map((row) => ({
+            id: row.id,
+            environmentId,
+            kind: row.kind,
+            libraryPageId: row.libraryPageId,
+            createdAt: null,
+            updatedAt: null,
+            pageTitle: row.pageTitle,
+          }));
+        } else {
+          contextArtifactRows = await db
+            .select({
+              id: environmentContextArtifacts.id,
+              environmentId: environmentContextArtifacts.environmentId,
+              kind: environmentContextArtifacts.kind,
+              libraryPageId: environmentContextArtifacts.libraryPageId,
+              createdAt: environmentContextArtifacts.createdAt,
+              updatedAt: environmentContextArtifacts.updatedAt,
+              pageTitle: libraryPages.title,
+            })
+            .from(environmentContextArtifacts)
+            .leftJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
+            .where(and(eq(environmentContextArtifacts.environmentId, environmentId), visibleLibrary()));
+        }
       } catch (err) {
         log.warn("Context artifact query failed", { error: err instanceof Error ? err.message : String(err), environmentId });
       }
@@ -1048,6 +1064,11 @@ export function registerPlatformRoutes(app: Express): void {
       if (!(await getVisibleEnvironment(environmentId))) {
         return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "list_context_artifacts" });
       }
+      const productId = await resolveProductIdForEnvironment(environmentId);
+      if (productId) {
+        const rows = await productStorage.listContext(productId) ?? [];
+        return res.json(rows.map((row) => ({ ...row, environmentId, pageTitle: row.pageTitle || "Untitled" })));
+      }
       const rows = await db
         .select({
           id: environmentContextArtifacts.id,
@@ -1085,33 +1106,13 @@ export function registerPlatformRoutes(app: Express): void {
       if (!env) return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "save_context_artifact" });
 
       const parsed = upsertContextArtifactSchema.parse(req.body);
-
-      // Verify library page exists
-      const [page] = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(visibleLibrary(eq(libraryPages.id, parsed.libraryPageId))).limit(1);
-      if (!page) return res.status(404).json({ error: `Library page ${parsed.libraryPageId} not found`, operation: "save_context_artifact" });
-
-      // Prevent duplicate: same environment + kind + libraryPageId
-      const [existingDup] = await db
-        .select({ id: environmentContextArtifacts.id })
-        .from(environmentContextArtifacts)
-        .where(and(
-          eq(environmentContextArtifacts.environmentId, environmentId),
-          eq(environmentContextArtifacts.kind, parsed.kind),
-          eq(environmentContextArtifacts.libraryPageId, parsed.libraryPageId),
-        ))
-        .limit(1);
-
-      if (existingDup) {
-        // Already linked — return existing without error
-        return res.json({ ...existingDup, kind: parsed.kind, libraryPageId: parsed.libraryPageId, pageTitle: page.title || "Untitled", environmentId });
+      const productId = await resolveProductIdForEnvironment(environmentId);
+      if (!productId) {
+        return res.status(409).json({ error: "Context now belongs to Product. Associate this Environment's Platform to exactly one Product, then add Context there.", operation: "save_context_artifact" });
       }
-
-      const [saved] = await db
-        .insert(environmentContextArtifacts)
-        .values({ environmentId, kind: parsed.kind, libraryPageId: parsed.libraryPageId })
-        .returning();
-
-      res.json({ ...saved, pageTitle: page.title || "Untitled" });
+      const saved = await productStorage.addContext(productId, parsed);
+      if (!saved) return res.status(404).json({ error: "Product not found", operation: "save_context_artifact" });
+      res.json({ ...saved, environmentId, pageTitle: saved.pageTitle || "Untitled" });
     } catch (error: unknown) {
       const err = routeError(error, "save_context_artifact");
       res.status(400).json({ error: err.message, operation: err.operation });
@@ -1126,32 +1127,16 @@ export function registerPlatformRoutes(app: Express): void {
       const env = await ensureEnvironmentWritable(environmentId);
       if (!env) return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "delete_context_artifact" });
 
-      // Try numeric ID first
+      const productId = await resolveProductIdForEnvironment(environmentId);
+      if (!productId) {
+        return res.status(409).json({ error: "Context now belongs to Product. Remove it from the Product workspace.", operation: "delete_context_artifact" });
+      }
       const numericId = parseInt(kindOrId, 10);
-      let deleted;
-      if (!isNaN(numericId)) {
-        [deleted] = await db
-          .delete(environmentContextArtifacts)
-          .where(and(
-            eq(environmentContextArtifacts.id, numericId),
-            eq(environmentContextArtifacts.environmentId, environmentId),
-          ))
-          .returning({ id: environmentContextArtifacts.id });
+      if (Number.isNaN(numericId)) {
+        return res.status(400).json({ error: "Context id is required", operation: "delete_context_artifact" });
       }
-
-      // Fallback: delete by kind (backward compat — deletes first match)
-      if (!deleted) {
-        [deleted] = await db
-          .delete(environmentContextArtifacts)
-          .where(and(
-            eq(environmentContextArtifacts.environmentId, environmentId),
-            eq(environmentContextArtifacts.kind, kindOrId),
-          ))
-          .returning({ id: environmentContextArtifacts.id });
-      }
-
+      const deleted = await productStorage.removeContext(productId, numericId);
       if (!deleted) return res.status(404).json({ error: `Context artifact '${kindOrId}' not found for environment ${environmentId}`, operation: "delete_context_artifact" });
-
       res.json({ success: true });
     } catch (error: unknown) {
       const err = routeError(error, "delete_context_artifact");

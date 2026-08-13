@@ -412,7 +412,7 @@ hierarchy-tree:
   panel:
     orientation: "always vertical"
     mobile: "full display"
-    web: "left third of the screen"
+    web: "full-width vertical tree"
   detail:
     expansion: "inline beneath the selected row, indented with a quiet left rail"
     split-view: "never"
@@ -429,7 +429,7 @@ hierarchy-tree:
 - Render canonical references with the shared reference renderer. When a reference has useful Simple-view context, expand that context directly beneath its row rather than opening a detached card.
 - Prefer one compact tree over separate cards, lists, and detail fragments.
 - Selected objects expand inline beneath their row, accordion-style, reusing the object's detail styling inside the expanded body (as in Projects and Simple). Never open a horizontal split-view master-detail panel for a hierarchy tree page.
-- The hierarchy tree panel is always vertical. On mobile it takes the full display. On web it takes the left third of the screen; the remaining canvas stays quiet `bg-background`.
+- The hierarchy tree panel is always vertical. On mobile it takes the full display. On web it is a full-width vertical tree on the canvas. Do not reserve an empty right third that clips row content.
 
 ### Zero states
 

@@ -7085,22 +7085,13 @@ ${refs}` : ""),
 
         const environmentAccess = await getWritableEnvironment(envId);
         if (!environmentAccess) return { result: `Environment ${envId} not found or not writable`, error: true };
-
-        // Verify the linked page is visible to the current principal.
-        const [page] = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(visibleLib(eq(libraryPages.id, libraryPageId))).limit(1);
-        if (!page) return { result: `Library page ${libraryPageId} not found`, error: true };
-
-        // Dedup: same environment + kind + libraryPageId = already linked
-        const [existingDup] = await db.select({ id: environmentContextArtifacts.id }).from(environmentContextArtifacts)
-          .where(and(eq(environmentContextArtifacts.environmentId, envId), eq(environmentContextArtifacts.kind, kind), eq(environmentContextArtifacts.libraryPageId, libraryPageId))).limit(1);
-
-        let saved;
-        if (existingDup) {
-          saved = existingDup;
-        } else {
-          [saved] = await db.insert(environmentContextArtifacts).values({ environmentId: envId, kind, libraryPageId }).returning();
-        }
-        return { result: JSON.stringify({ saved: true, artifact: { id: saved.id, environmentId: saved.environmentId, kind: saved.kind, libraryPageId: saved.libraryPageId, pageTitle: page.title } }, null, 2) };
+        const { resolveProductIdForEnvironment } = await import("./platforms/context-artifact-access");
+        const { productStorage } = await import("./product-storage");
+        const productId = await resolveProductIdForEnvironment(envId);
+        if (!productId) return { result: "Context now belongs to Product. Associate this Environment's Platform to the matching Product, then add Context there.", error: true };
+        const saved = await productStorage.addContext(productId, { kind, libraryPageId });
+        if (!saved) return { result: "Product not found", error: true };
+        return { result: JSON.stringify({ saved: true, artifact: { ...saved, environmentId: envId, pageTitle: saved.pageTitle || "Untitled" } }, null, 2) };
       }
 
       // ── get_context_artifacts ──
@@ -7109,6 +7100,13 @@ ${refs}` : ""),
         if (!envId) return { result: "Missing 'id' (environment ID) for get_context_artifacts", error: true };
 
         if (!(await getVisibleEnvironment(envId))) return { result: `Environment ${envId} not accessible`, error: true };
+        const { resolveProductIdForEnvironment } = await import("./platforms/context-artifact-access");
+        const { productStorage } = await import("./product-storage");
+        const productId = await resolveProductIdForEnvironment(envId);
+        if (productId) {
+          const rows = await productStorage.listContext(productId) ?? [];
+          return { result: JSON.stringify(rows.map((row) => ({ ...row, environmentId: envId, pageTitle: row.pageTitle || "Untitled" })), null, 2) };
+        }
         const rows = await db
           .select({
             id: environmentContextArtifacts.id,
@@ -7134,17 +7132,15 @@ ${refs}` : ""),
 
         const environmentAccess = await getWritableEnvironment(envId);
         if (!environmentAccess) return { result: `Environment ${envId} not found or not writable`, error: true };
-
-        // If libraryPageId provided, remove the specific artifact; otherwise remove all of that kind
-        const conditions = [eq(environmentContextArtifacts.environmentId, envId), eq(environmentContextArtifacts.kind, kind)];
-        if (libraryPageId) conditions.push(eq(environmentContextArtifacts.libraryPageId, libraryPageId));
-
-        const deleted = await db.delete(environmentContextArtifacts)
-          .where(and(...conditions))
-          .returning({ id: environmentContextArtifacts.id });
-
-        if (deleted.length === 0) return { result: `Context artifact kind '${kind}'${libraryPageId ? ` with page ${libraryPageId}` : ""} not found for environment ${envId}`, error: true };
-        return { result: JSON.stringify({ removed: true, kind, count: deleted.length }) };
+        const { resolveProductIdForEnvironment } = await import("./platforms/context-artifact-access");
+        const { productStorage } = await import("./product-storage");
+        const productId = await resolveProductIdForEnvironment(envId);
+        if (!productId) return { result: "Context now belongs to Product. Remove it from the Product workspace.", error: true };
+        const rows = await productStorage.listContext(productId) ?? [];
+        const matches = rows.filter((row) => row.kind === kind && (!libraryPageId || row.libraryPageId === libraryPageId));
+        if (matches.length === 0) return { result: `Context artifact kind '${kind}'${libraryPageId ? ` with page ${libraryPageId}` : ""} not found for environment ${envId}`, error: true };
+        for (const match of matches) await productStorage.removeContext(productId, match.id);
+        return { result: JSON.stringify({ removed: true, kind, count: matches.length }) };
       }
 
       return { result: `Unhandled platforms action: ${action}`, error: true };
