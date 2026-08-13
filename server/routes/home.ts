@@ -9,6 +9,7 @@ import { generateSimpleFeed } from "../simple/generate-feed";
 import { goalsService } from "../goals-service";
 import { dismissPeopleSurface, snoozePeopleSurface } from "../simple/people-surface-state";
 import { dismissBuildDeploymentHomeItem } from "../mods/build-deployment-home";
+import { dismissReportedIssueHomeItem } from "../mods/reported-issue-home";
 import { chatFileStorage } from "../chat-file-storage";
 import { emailDraftStorage } from "../email-draft-storage";
 import { updatePlanStatus } from "../plan-service";
@@ -286,6 +287,32 @@ async function completeBuildDeployment(
   return { ok: true, type: "build_deployment", projectionId };
 }
 
+async function completeReportedIssue(
+  principal: Principal,
+  homeItemId: string | null,
+  payload: Record<string, unknown>,
+) {
+  const issueId = numberValue(payload.issueId);
+  const reasonKey = stringValue(payload.reasonKey);
+  if (!issueId || !reasonKey) {
+    const err = new Error("issueId and reasonKey are required");
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  if (homeItemId && homeItemId !== `reported-issue-${issueId}`) {
+    const err = new Error("Home item identity does not match reported Issue");
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  const dismissed = await dismissReportedIssueHomeItem(principal, issueId, reasonKey);
+  if (!dismissed) {
+    const err = new Error("Reported Issue item is unavailable");
+    (err as any).statusCode = 404;
+    throw err;
+  }
+  return { ok: true, type: "reported_issue", issueId };
+}
+
 /**
  * Home INBOX check-circle clear for Session Menu REVIEW rows.
  * Clears the owning producers so the session leaves REVIEW:
@@ -513,6 +540,12 @@ export function registerHomeRoutes(app: Express) {
           return res.status(400).json({ error: "Home item identity does not match session review" });
         }
       }
+      if (payload.kind === "reported_issue") {
+        const issueId = numberValue(payload.issueId);
+        if (!homeItemId || !issueId || homeItemId !== `reported-issue-${issueId}`) {
+          return res.status(400).json({ error: "Home item identity does not match reported Issue" });
+        }
+      }
       const isBuildDeploymentComplete =
         (sourceType === "build" || sourceType === "artifact")
         && payload.kind === "build_deployment"
@@ -520,6 +553,10 @@ export function registerHomeRoutes(app: Express) {
       const isSessionReviewComplete =
         sourceType === "session"
         && payload.kind === "session_review"
+        && Boolean(req.principal);
+      const isReportedIssueComplete =
+        sourceType === "issue"
+        && payload.kind === "reported_issue"
         && Boolean(req.principal);
       const result = sourceType === "wellness"
         ? await completeWellness(payload)
@@ -531,7 +568,9 @@ export function registerHomeRoutes(app: Express) {
               ? await completeBuildDeployment(req.principal!, payload)
               : isSessionReviewComplete
                 ? await completeSessionReview(req.principal!, homeItemId, payload)
-                : null;
+                : isReportedIssueComplete
+                  ? await completeReportedIssue(req.principal!, homeItemId, payload)
+                  : null;
 
       if (!result) return res.status(400).json({ error: "Unsupported Home completion source" });
       res.json(result);

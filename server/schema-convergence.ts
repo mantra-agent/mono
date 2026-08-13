@@ -55,10 +55,12 @@ export async function convergeBootSchema(): Promise<void> {
         const { ensureLifeAddressingSchema } = await import("./life-addressing-schema");
         const { ensureModPlatformSchema } = await import("./mod-schema");
         const { ensureBuildDeploymentSchema } = await import("./build-deployment-schema");
+        const { ensureReportedIssueHomeSchema } = await import("./reported-issue-home-schema");
         await ensureRuntimeKernelSchema(pool);
         await ensureLifeAddressingSchema(pool);
         await ensureModPlatformSchema(pool);
         await ensureBuildDeploymentSchema(pool);
+        await ensureReportedIssueHomeSchema(pool);
       },
     },
     {
