@@ -503,7 +503,11 @@ app.use((req, res, next) => {
 
   bootTracker.startPhase("server");
   const tStatic0 = Date.now();
-  if (process.env.NODE_ENV === "production") {
+  const isLiveRuntime = /(?:^|[._-])(?:live|prod)(?:$|[._-])/i.test(
+    `${process.env.RAILWAY_ENVIRONMENT_NAME || ""} ${process.env.RAILWAY_ENVIRONMENT || ""}`,
+  );
+  const isWarmStageRuntime = process.env.STAGE_WARM_ENABLED === "true" && !isLiveRuntime;
+  if (process.env.NODE_ENV === "production" && !isWarmStageRuntime) {
     serveStatic(app);
     const staticMs = Date.now() - tStatic0;
     bootPhases.push({ name: "Static Files", durationMs: staticMs });

@@ -10,7 +10,7 @@ export const STAGE_LIFECYCLE_STATES = [
 export type StageLifecycleState = typeof STAGE_LIFECYCLE_STATES[number];
 
 export type EnvironmentRuntimeMode = "immutable_artifact" | "warm_workspace";
-export type StageLifecycleAction = "sync_latest" | "restart_stage" | "full_rebuild";
+export type StageLifecycleAction = "enable_warm_stage" | "sync_latest" | "restart_stage" | "full_rebuild";
 
 export interface StageLifecycleCapabilities {
   runtimeMode: EnvironmentRuntimeMode;

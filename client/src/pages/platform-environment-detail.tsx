@@ -283,13 +283,14 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [rebuildConfirmOpen, setRebuildConfirmOpen] = useState(false);
+  const [enableConfirmOpen, setEnableConfirmOpen] = useState(false);
   const actionMutation = useMutation({
-    mutationFn: async ({ action, confirmation }: { action: "restart" | "full-rebuild"; confirmation?: "FULL_REBUILD" }) => {
+    mutationFn: async ({ action, confirmation }: { action: "restart" | "full-rebuild" | "enable-warm-stage"; confirmation?: "FULL_REBUILD" | "ENABLE_WARM_STAGE" }) => {
       const res = await fetch(`/api/railway/environments/${platformEnvironmentId}/actions/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ ...(confirmation ? { confirmation } : {}), ...(confirmation ? { idempotencyKey: `stage-full-rebuild:${platformEnvironmentId}:${Date.now()}` } : {}) }),
+        body: JSON.stringify({ ...(confirmation ? { confirmation } : {}), ...(confirmation ? { idempotencyKey: `stage-${action}:${platformEnvironmentId}:${Date.now()}` } : {}) }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || "Stage action failed");
@@ -297,8 +298,14 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/railway/environments", platformEnvironmentId, "status"] });
-      toast({ title: result.action === "full_rebuild" ? "Full Rebuild triggered" : "Stage restart triggered", description: result.action === "full_rebuild" ? "Railway is rebuilding the Stage environment." : "The Stage service is restarting." });
+      toast({
+        title: result.action === "enable_warm_stage" ? "Warm Stage enabling" : result.action === "full_rebuild" ? "Full Rebuild triggered" : "Stage restart triggered",
+        description: result.action === "enable_warm_stage"
+          ? "Stage will restart into the warm workspace. Watch Runtime flip to Warm Workspace."
+          : result.action === "full_rebuild" ? "Railway is rebuilding the Stage environment." : "The Stage service is restarting.",
+      });
       setRebuildConfirmOpen(false);
+      setEnableConfirmOpen(false);
     },
     onError: (actionError: Error) => toast({ title: "Stage action failed", description: actionError.message, variant: "destructive" }),
   });
@@ -353,6 +360,7 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
       </ProfileTreeRow>
       <ProfileTreeRow label="Actions" icon={<Waypoints className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
         <div className="flex flex-wrap items-center gap-1">
+          {status.lifecycle.capabilities.actions.includes("enable_warm_stage") && <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setEnableConfirmOpen(true)} disabled={actionMutation.isPending}>Enable Warm Stage</Button>}
           {status.lifecycle.capabilities.actions.includes("restart_stage") && <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => actionMutation.mutate({ action: "restart" })} disabled={actionMutation.isPending}>Restart</Button>}
           {status.lifecycle.capabilities.actions.includes("full_rebuild") && <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-warning" onClick={() => setRebuildConfirmOpen(true)} disabled={actionMutation.isPending}>Full Rebuild</Button>}
         </div>
@@ -366,6 +374,18 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
       <ProfileTreeRow label="Provider" icon={<Server className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" defaultOpen={Boolean(status.lifecycle.reason)} expandedContent={status.lifecycle.reason ? <p className="border-l border-border/30 pl-3 text-sm text-muted-foreground">{status.lifecycle.reason}</p> : undefined}>
         <span>{status.lifecycle.state === "rebuilding" ? "Railway is building the next deployment" : status.lifecycle.providerStatus ? humanize(status.lifecycle.providerStatus) : "Unavailable"}</span>
       </ProfileTreeRow>
+      <AlertDialog open={enableConfirmOpen} onOpenChange={setEnableConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Enable Warm Stage?</AlertDialogTitle>
+            <AlertDialogDescription>This flips Stage onto the warm workspace and restarts it. Live stays on the immutable production artifact. Continue only if you want Stage to stop doing a full production rebuild on every change.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actionMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => actionMutation.mutate({ action: "enable-warm-stage", confirmation: "ENABLE_WARM_STAGE" })} disabled={actionMutation.isPending}>{actionMutation.isPending ? "Enabling…" : "Enable Warm Stage"}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog open={rebuildConfirmOpen} onOpenChange={setRebuildConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

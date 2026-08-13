@@ -11,6 +11,7 @@ import {
   fetchServiceVariables,
   redeployDeployment,
   restartDeployment,
+  upsertServiceVariables,
   type RailwayDeployment,
   type RailwayLogEntry,
 } from "./client";
@@ -148,6 +149,16 @@ export async function listEnvironmentVariableNames(control: RailwayEnvironmentCo
     control.token,
   );
   return Object.keys(variables).sort();
+}
+
+export async function enableWarmStageRuntimeVariable(control: RailwayEnvironmentControl): Promise<void> {
+  await upsertServiceVariables(
+    control.projectId,
+    control.railwayEnvironmentId,
+    control.serviceId,
+    { STAGE_WARM_ENABLED: "true" },
+    control.token,
+  );
 }
 
 export async function redeployEnvironment(

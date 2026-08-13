@@ -2,19 +2,30 @@ import type { RailwayDeployment } from "../integrations/railway/client";
 import { extractDeploymentMeta } from "../integrations/railway/client";
 import type { StageLifecycleCapabilities, StageLifecycleStatus } from "@shared/models/platform-environment-lifecycle";
 
-export function deriveStageLifecycleCapabilities(policy: Record<string, unknown> = {}, providerKind = "railway"): StageLifecycleCapabilities {
+export function isMantraWebStageIdentity(identity?: { platformName?: string | null; productName?: string | null; environmentName?: string | null }): boolean {
+  return identity?.platformName?.trim().toLowerCase() === "mantra"
+    && identity?.productName?.trim().toLowerCase() === "web"
+    && identity?.environmentName?.trim().toLowerCase() === "stage";
+}
+
+export function deriveStageLifecycleCapabilities(
+  policy: Record<string, unknown> = {},
+  providerKind = "railway",
+  identity?: { platformName?: string | null; productName?: string | null; environmentName?: string | null },
+): StageLifecycleCapabilities {
   const runtimeMode = policy.runtimeMode === "warm_workspace" ? "warm_workspace" : "immutable_artifact";
   const fullRebuildProvider = policy.fullRebuildProvider === "eas" || policy.fullRebuildProvider === "cloudflare_pages" || policy.fullRebuildProvider === "manual"
     ? policy.fullRebuildProvider
     : providerKind === "railway" ? "railway" : "manual";
+  const isStage = isMantraWebStageIdentity(identity);
   return {
     runtimeMode,
     syncOnPush: runtimeMode === "warm_workspace" && policy.syncOnPush === true,
     dependencyPolicy: "rebuild_on_lockfile_change",
     fullRebuildProvider,
     actions: runtimeMode === "warm_workspace"
-      ? ["sync_latest", "restart_stage", "full_rebuild"]
-      : ["full_rebuild"],
+      ? (isStage ? ["restart_stage", "full_rebuild"] : ["full_rebuild"])
+      : (isStage ? ["enable_warm_stage", "full_rebuild"] : ["full_rebuild"]),
   };
 }
 
