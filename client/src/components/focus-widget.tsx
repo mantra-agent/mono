@@ -158,7 +158,8 @@ export function FocusWidget({ contained = false }: { contained?: boolean } = {})
 
   // On mobile, the widget is a full-screen overlay gated on widgetOpen.
   // On desktop, the session window is always visible; widgetOpen only controls
-  // the session menu sidebar. So we always mount FocusWidgetPanel on desktop.
+  // the session menu sidebar (defaults open via FocusSessionProvider).
+  // So we always mount FocusWidgetPanel on desktop.
   if (!isDesktop && !widgetOpen) return null;
 
   return <FocusWidgetPanel contained={contained} />;
