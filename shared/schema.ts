@@ -150,12 +150,19 @@ export const accounts = pgTable("accounts", {
   kind: text("kind").notNull().default("personal"),
   name: text("name").notNull(),
   ownerUserId: varchar("owner_user_id").references(() => users.id, { onDelete: "set null" }),
+  /**
+   * Phase 2 spend discriminant owned by Account: entitled | unentitled.
+   * Default unentitled so incomplete/orphan Accounts cannot spend.
+   * Real personal Accounts backfill to entitled. Stripe attaches later — do not invent billing here.
+   */
+  entitlement: text("entitlement").notNull().default("unentitled"),
   metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => ({
   kindIdx: index("idx_accounts_kind").on(table.kind),
   ownerIdx: index("idx_accounts_owner_user").on(table.ownerUserId),
+  entitlementIdx: index("idx_accounts_entitlement").on(table.entitlement),
   kindOwnerUnique: uniqueIndex("idx_accounts_kind_owner_unique").on(table.kind, table.ownerUserId),
 }));
 

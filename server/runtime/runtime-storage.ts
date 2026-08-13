@@ -33,6 +33,7 @@ import { createNamedSystemPrincipal, createUserSessionPrincipal, type Principal 
 import { runWithPrincipal } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { appendTransactionalOutboxEvent } from "../transactional-outbox";
+import { assertSpendAllowed, resolveSpendAuthority } from "../spend-authority";
 import {
   runtimeHandlerRegistry,
   type RuntimeAttemptDecision,
@@ -217,6 +218,13 @@ export async function enqueueRuntimeRun(
   input: EnqueueRuntimeRunInput,
 ): Promise<{ run: RuntimeRunRow; disposition: "created" | "existing" }> {
   requireUserPrincipal(principal);
+  // Account + pinned Instance authorize Runtime capacity; quarantined/unentitled fail closed.
+  await assertSpendAllowed({
+    purpose: "runtime",
+    principal,
+    accountId: principal.accountId,
+    userId: principal.userId,
+  });
   const handler = runtimeHandlerRegistry.require(input.handler.key, input.handler.version);
   if (handler.inputSchemaVersion !== input.inputSchemaVersion) {
     throw Object.assign(new Error("Runtime input schema version does not match the handler contract"), { status: 409 });
@@ -853,6 +861,44 @@ export async function claimNextRuntimeRun(
         runId: terminal.run.id,
         accountId: terminal.run.accountId,
         handler: `${run.handlerKey}@${run.handlerVersion}`,
+        resourcePool,
+      });
+      return null;
+    }
+
+    // Re-check spend at capacity claim so quarantine/unentitled after enqueue cannot take a slot.
+    // Evaluate the run's Account + pinned Instance as the spending subject (not a system exemption).
+    const spend = await resolveSpendAuthority({
+      purpose: "runtime",
+      principal: {
+        actorType: "user",
+        userId: run.ownerUserId,
+        accountId: run.accountId,
+        role: "member",
+        scopes: [],
+        permissions: [],
+        isAdmin: false,
+        impersonation: null,
+        source: "system",
+        visibleVaultIds: [],
+        activeVaultId: null,
+      },
+      accountId: run.accountId,
+      userId: run.ownerUserId,
+    });
+    if (!spend.allowed) {
+      const recoveryPrincipal = createNamedSystemPrincipal("runtime-authority-recovery");
+      const terminal = await terminalizeInTransaction(tx, recoveryPrincipal, run, null, {
+        outcome: "blocked",
+        reasonCode: `spend_${spend.reason}`,
+        attribution: "runtime",
+        outputRefs: [],
+        verificationLevel: "observed",
+      });
+      log.warn("runtime.dispatch.spend_denied", {
+        runId: terminal.run.id,
+        accountId: terminal.run.accountId,
+        reason: spend.reason,
         resourcePool,
       });
       return null;
