@@ -160,6 +160,18 @@ export async function registerSetupRoutes(app: Express) {
       deepgram: !!await getSecret("DEEPGRAM_API_KEY"),
       cartesia: !!(await getSecret("CARTESIA_API_KEY") && await getSecret("CARTESIA_VOICE_ID")),
       sentry: !!(getSecretSync("EXPO_PUBLIC_SENTRY_DSN") && getSecretSync("SENTRY_AUTH_TOKEN") && getSecretSync("SENTRY_ORG") && getSecretSync("SENTRY_PROJECT")),
+      slack: await (async () => {
+        try {
+          const { getCurrentPrincipal } = await import("../principal-context");
+          const principal = getCurrentPrincipal();
+          if (!principal?.userId || !principal.accountId) return false;
+          const { listOwnedInstallations } = await import("../slack/storage");
+          const rows = await listOwnedInstallations(principal);
+          return rows.some((row) => row.enabled);
+        } catch {
+          return false;
+        }
+      })(),
       sendgrid: !!(getSecretSync("SENDGRID_API_KEY") && getSecretSync("SENDGRID_FROM_EMAIL")),
       phone: false,
       meta: !!(await (async () => {
