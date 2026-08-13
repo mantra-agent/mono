@@ -52,6 +52,10 @@ export function monthOffset(start: string, target: string): number {
 export function loadedMonthlyForRole(role: JobRole, multiplier: number): number {
   return ((role.annualSalaryMin + role.annualSalaryMax) / 2) * (1 + role.targetBonusPercent / 100) * multiplier / 12;
 }
+
+/** Hiring page/projection window. Independent of the financial model's Phase 1 horizon. */
+export const HIRING_HORIZON_MONTHS = 60;
+
 export function projectHiringSlots(startCalendarMonth: string, count: number, slots: BusinessHiringSlot[], roles: JobRole[], multiplier: number): HiringMonthProjection[] {
   const roleById = new Map(roles.map((role) => [role.id, role]));
   return Array.from({ length: count }, (_, index) => {
