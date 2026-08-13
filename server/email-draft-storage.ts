@@ -518,7 +518,17 @@ export class EmailDraftStorage {
         );
       }
 
-      let [existing] = await tx
+      // unique_mrd_session_attendee is (account_id, session_id, attendee_email):
+      // one durable distribution identity per attendee per meeting. Always claim
+      // that attendee row (or insert it) rather than rewriting a different
+      // draft's row onto the same email, which 500s on the unique constraint.
+      await acquireAdvisoryTransactionLock(
+        tx,
+        ADVISORY_LOCK_NS.RECAP_DRAFT_RECIPIENT,
+        `${principal.accountId}:${draft.sessionId}:${normalizedEmail}`,
+      );
+
+      const [draftOwned] = await tx
         .select()
         .from(meetingRecapDistributions)
         .where(combineWithWritableScope(
@@ -528,32 +538,88 @@ export class EmailDraftStorage {
         ))
         .limit(1)
         .for("update");
-      if (!existing) {
-        [existing] = await tx
-          .select()
-          .from(meetingRecapDistributions)
+
+      const [emailOwned] = await tx
+        .select()
+        .from(meetingRecapDistributions)
+        .where(combineWithWritableScope(
+          principal,
+          recapDistributionScopeColumns,
+          and(
+            eq(meetingRecapDistributions.sessionId, draft.sessionId),
+            sql`LOWER(BTRIM(${meetingRecapDistributions.attendeeEmail})) = ${normalizedEmail}`,
+          ),
+        ))
+        .limit(1)
+        .for("update");
+
+      if (
+        emailOwned
+        && (!draftOwned || emailOwned.id !== draftOwned.id)
+      ) {
+        const emailRowIsLive = (
+          emailOwned.status === "draft_created"
+          || emailOwned.status === "sent"
+        ) && !emailOwned.accessRevokedAt
+          && !emailOwned.discardedAt;
+        // Another live draft or an already-sent recap owns this attendee.
+        if (emailRowIsLive && emailOwned.draftId && emailOwned.draftId !== draftId) {
+          throw Object.assign(
+            new Error(
+              emailOwned.status === "sent"
+                ? "That recipient already has a sent recap for this meeting"
+                : "That recipient already has another recap draft for this meeting",
+            ),
+            { status: 409 },
+          );
+        }
+        if (emailRowIsLive && emailOwned.status === "sent") {
+          throw Object.assign(
+            new Error("That recipient already has a sent recap for this meeting"),
+            { status: 409 },
+          );
+        }
+      }
+
+      // Prefer the unique attendee row. If this draft previously pointed at a
+      // different attendee row, retire that prior row so one draft cannot keep
+      // two live distributions.
+      let existing = emailOwned ?? draftOwned ?? null;
+      if (
+        draftOwned
+        && emailOwned
+        && draftOwned.id !== emailOwned.id
+      ) {
+        await tx
+          .update(meetingRecapDistributions)
+          .set({
+            status: "failed",
+            error: "Superseded by recipient reassignment",
+            discardedAt: sql`COALESCE(${meetingRecapDistributions.discardedAt}, CURRENT_TIMESTAMP)`,
+            accessRevokedAt: sql`COALESCE(${meetingRecapDistributions.accessRevokedAt}, CURRENT_TIMESTAMP)`,
+            accessTokenHash: null,
+            onboardingTokenHash: null,
+            draftId: null,
+            updatedAt: sql`CURRENT_TIMESTAMP`,
+          })
           .where(combineWithWritableScope(
             principal,
             recapDistributionScopeColumns,
-            and(
-              eq(meetingRecapDistributions.sessionId, draft.sessionId),
-              eq(meetingRecapDistributions.attendeeEmail, normalizedEmail),
-              eq(meetingRecapDistributions.status, "failed"),
-            ),
-          ))
-          .limit(1)
-          .for("update");
-        if (existing) {
-          await tx
-            .update(meetingRecapDistributions)
-            .set({ draftId })
-            .where(combineWithWritableScope(
-              principal,
-              recapDistributionScopeColumns,
-              eq(meetingRecapDistributions.id, existing.id),
-            ));
-        }
+            eq(meetingRecapDistributions.id, draftOwned.id),
+          ));
+        existing = emailOwned;
+      } else if (emailOwned && emailOwned.draftId !== draftId) {
+        await tx
+          .update(meetingRecapDistributions)
+          .set({ draftId })
+          .where(combineWithWritableScope(
+            principal,
+            recapDistributionScopeColumns,
+            eq(meetingRecapDistributions.id, emailOwned.id),
+          ));
+        existing = { ...emailOwned, draftId };
       }
+
       const existingBodyHashes = recapCapabilityHashesFromBody(draft.body);
       if (
         existing
@@ -631,6 +697,7 @@ export class EmailDraftStorage {
             status: "draft_created",
             error: null,
             discardedAt: null,
+            draftId,
             updatedAt: sql`CURRENT_TIMESTAMP`,
           })
           .where(combineWithWritableScope(
