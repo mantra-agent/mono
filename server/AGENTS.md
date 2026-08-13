@@ -95,6 +95,8 @@ Per-user relationship identity is profile-owned. `agent_profiles.agent_name` is 
 
 Agent Instance is the mind/continuity boundary (`agent_instances` + `agent_instance_memberships`). An Instance belongs to exactly one Account. Instance membership roles are Manager | Participant; UNIQUE`(account_id, user_id)` encodes one User pin per Account. `agent_profiles.instance_id` is ownership; `agent_profiles.user_id` remains created_by / rolling-deploy dual-write lookup. Schema + backfill live in `server/agent-instance-schema.ts` (boot convergence). Do not rekey timers, memory, personas, skills, or runtime off User in this foundation cut.
 
+Spend authority is Account + pinned Instance, never `owner_user_id`. `accounts.entitlement` is `entitled | unentitled` (default unentitled; real personal Accounts backfill/create as entitled). `server/spend-authority.ts` is the sole fail-closed gate for inference (`model-client` chatCompletion/stream), Timer execution, and Runtime enqueue/claim. Quarantined Instances and unentitled Accounts cannot spend. System principals are platform infrastructure and are exempt. Stripe is not invented here — Account remains the future billing subject.
+
 GitNexus has one runtime authority: `gitnexus-runtime.ts`. Development may resolve the installed package, while deployed production must resolve only the build-owned `dist/gitnexus-runtime/gitnexus` artifact. That artifact is graph-only: LadybugDB graph ingestion and Cypher are required, native FTS is optional and must never be installed, loaded, or indexed in the production process. Code search composes graph/Cypher retrieval with Mantra's PostgreSQL semantic index.
 
 ## Session Vault ownership boundary

@@ -100,6 +100,7 @@ export async function convergeBootSchema(): Promise<void> {
         const { ensureTeamsSchema } = await import("./teams-schema");
         const { ensureOrganizationsSchema } = await import("./organizations-schema");
         const { ensureAgentInstanceSchema } = await import("./agent-instance-schema");
+        const { ensureSpendAuthoritySchema } = await import("./spend-authority-schema");
         const { ensureDriveResourcesSchema } = await import("./drive-resources-schema");
         const { ensureFilesIndexSchema } = await import("./files-index-schema");
         const { ensureDocumentArtifactsSchema } = await import("./document-artifacts-schema");
@@ -113,6 +114,8 @@ export async function convergeBootSchema(): Promise<void> {
         await ensureOrganizationsSchema(pool);
         // After accounts/memberships (foundation) and grant subjects; before domain consumers.
         await ensureAgentInstanceSchema(pool);
+        // Account entitlement discriminant for Phase 2 spend gate (Account pays, Instance consumes).
+        await ensureSpendAuthoritySchema(pool);
         await ensureDriveResourcesSchema(pool);
         await ensureFilesIndexSchema(pool);
         await ensureDocumentArtifactsSchema(pool);
