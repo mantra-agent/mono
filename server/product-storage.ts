@@ -4,11 +4,24 @@ import { requireCurrentPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { featureRequests, insertFeatureRequestSchema, insertProductContextSchema, insertProductSchema, platforms, productBacklogs, productContextArtifacts, productPlatformAssociations, products } from "@shared/models/platforms";
 import { libraryPages } from "@shared/models/info";
+import { vaults } from "@shared/models/vaults";
 import { visiblePlatform, writablePlatform } from "./platforms/platform-access";
 import { storage } from "./storage";
 
 const scopeColumns = { scope: products.scope, ownerUserId: products.ownerUserId, accountId: products.accountId };
 const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
+
+async function assertAssignableVault(vaultId: string | null | undefined) {
+  if (vaultId === undefined || vaultId === null) return;
+  const principal = requireCurrentPrincipal();
+  if (!principal.accountId) throw new Error("User account required");
+  const [vault] = await db.select({ id: vaults.id }).from(vaults).where(and(
+    eq(vaults.id, vaultId),
+    eq(vaults.accountId, principal.accountId),
+    eq(vaults.isArchived, false),
+  )).limit(1);
+  if (!vault) throw new Error("Product Vault must be live and belong to the active account");
+}
 
 export class ProductDependencyError extends Error {
   constructor(readonly dependencies: Record<string, number>) { super("Product has dependencies and cannot be deleted"); this.name = "ProductDependencyError"; }
@@ -49,12 +62,14 @@ export const productStorage = {
   async create(input: unknown) {
     const principal = requireCurrentPrincipal();
     const parsed = insertProductSchema.parse(input);
+    const vaultId = parsed.vaultId === undefined ? principal.activeVaultId : parsed.vaultId;
+    await assertAssignableVault(vaultId);
     if (parsed.platformIds.length) {
       const visible = await db.select({ id: platforms.id }).from(platforms).where(and(inArray(platforms.id, parsed.platformIds), writablePlatform()));
       if (visible.length !== new Set(parsed.platformIds).size) throw new Error("One or more Platforms are not writable");
     }
     return db.transaction((tx) => runWithDatabaseTransaction(tx, async () => {
-      const [product] = await tx.insert(products).values({ name: parsed.name, description: parsed.description, status: parsed.status, ...ownedInsertValues(principal, scopeColumns) }).returning();
+      const [product] = await tx.insert(products).values({ name: parsed.name, description: parsed.description, status: parsed.status, vaultId: vaultId ?? null, ...ownedInsertValues(principal, scopeColumns) }).returning();
       const [backlog] = await tx.insert(productBacklogs).values({ productId: product.id }).returning();
       if (parsed.platformIds.length) await tx.insert(productPlatformAssociations).values(parsed.platformIds.map((platformId) => ({ productId: product.id, platformId }))).onConflictDoNothing();
       return { ...product, backlogId: backlog.id };
@@ -63,7 +78,14 @@ export const productStorage = {
 
   async update(id: number, input: unknown) {
     const parsed = insertProductSchema.partial().parse(input);
-    const patch = { ...(parsed.name ? { name: parsed.name } : {}), ...(parsed.description !== undefined ? { description: parsed.description } : {}), ...(parsed.status ? { status: parsed.status } : {}), updatedAt: sql`CURRENT_TIMESTAMP` };
+    await assertAssignableVault(parsed.vaultId);
+    const patch = {
+      ...(parsed.name ? { name: parsed.name } : {}),
+      ...(parsed.description !== undefined ? { description: parsed.description } : {}),
+      ...(parsed.status ? { status: parsed.status } : {}),
+      ...(parsed.vaultId !== undefined ? { vaultId: parsed.vaultId } : {}),
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    };
     const principal = requireCurrentPrincipal();
     const [updated] = await db.update(products).set(patch).where(combineWithWritableScope(principal, scopeColumns, eq(products.id, id))).returning();
     return updated;

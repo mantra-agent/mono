@@ -1876,6 +1876,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         name: { type: "string", description: "Platform/product/environment name (create/update actions)" },
         description: { type: "string", description: "Description for platform/product create/update actions" },
         status: { type: "string", description: "Status for platform/product create/update actions: active, paused, archived" },
+        vaultId: { type: "string", description: "Live same-account Vault ID for Product placement on create_product/update_product; omit to use the active Vault on create, pass null to clear" },
         connectionId: { type: "number", description: "Provider connection ID to bind (save_source_binding, save_hosting_binding)" },
         owner: { type: "string", description: "Repo owner/org (save_source_binding)" },
         repo: { type: "string", description: "Repo name (save_source_binding)" },
