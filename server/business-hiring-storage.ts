@@ -2,7 +2,7 @@ import { randomBytes } from "crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { businessHiringSlots, businesses, jobRoles } from "@shared/schema";
 import { normalizeAssumptions } from "@shared/models/business-model";
-import { hiringSlotCreateSchema, hiringSlotUpdateSchema, calendarMonthAt, currentCalendarMonth, projectHiringSlots, type BusinessHiringProjection, type BusinessHiringSlot, type HiringSlotCreate, type HiringSlotUpdate } from "@shared/models/business-hiring";
+import { hiringSlotCreateSchema, hiringSlotUpdateSchema, calendarMonthAt, currentCalendarMonth, HIRING_HORIZON_MONTHS, projectHiringSlots, type BusinessHiringProjection, type BusinessHiringSlot, type HiringSlotCreate, type HiringSlotUpdate } from "@shared/models/business-hiring";
 import { db } from "./db";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
@@ -60,7 +60,7 @@ export class BusinessHiringStorage {
     const assumptions = normalizeAssumptions(model.assumptions);
     const roleIds = new Set(roles.map((role) => role.id));
     const unresolvedLegacyRoleIds = [...new Set(assumptions.phases.flatMap((phase) => phase.keyHires.map((hire) => hire.roleId)).filter((id) => !roleIds.has(id)))];
-    return { businessId, roles, slots, months: projectHiringSlots(currentCalendarMonth(), 18, slots, roles, assumptions.loadedCostMultiplier), unresolvedLegacyRoleIds };
+    return { businessId, roles, slots, months: projectHiringSlots(currentCalendarMonth(), HIRING_HORIZON_MONTHS, slots, roles, assumptions.loadedCostMultiplier), unresolvedLegacyRoleIds };
   }
   async create(input: HiringSlotCreate): Promise<BusinessHiringProjection> {
     const parsed = hiringSlotCreateSchema.parse(input); await this.assertBusiness(parsed.businessId, true); await jobRoleStorage.get(parsed.roleId);
