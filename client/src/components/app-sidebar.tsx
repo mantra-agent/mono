@@ -822,7 +822,7 @@ export function NavPage() {
                             item={item}
                             onNavigate={handleNav}
                             className={cn(
-                              "flex items-center gap-2 flex-1 min-w-0 rounded-md px-2 py-1.5 text-sm transition-colors",
+                              "group flex items-center gap-2 flex-1 min-w-0 rounded-md px-2 py-1.5 text-sm transition-colors",
                               active
                                 ? "bg-muted font-medium text-foreground"
                                 : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
@@ -834,14 +834,23 @@ export function NavPage() {
                               <item.icon
                                 className={cn(
                                   "h-4 w-4 shrink-0",
-                                  item.titleTone === "muted" ? "text-muted-foreground" : level ? sc.icon : ""
+                                  // Rest-only mute: child text color must not pin over parent hover/active.
+                                  item.titleTone === "muted" && !active && !level
+                                    ? "text-muted-foreground group-hover:text-foreground"
+                                    : level
+                                      ? sc.icon
+                                      : "",
                                 )}
                               />
                             )}
                             <span
                               className={cn(
                                 "flex-1 text-left truncate",
-                                item.titleTone === "muted" ? "text-muted-foreground" : level ? sc.text : "",
+                                item.titleTone === "muted" && !active && !level
+                                  ? "text-muted-foreground group-hover:text-foreground"
+                                  : level
+                                    ? sc.text
+                                    : "",
                                 level === "active" && "animate-pulse"
                               )}
                             >
