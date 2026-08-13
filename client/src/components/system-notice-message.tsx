@@ -48,7 +48,7 @@ function formatOptional(value: unknown): string | null {
   return String(value);
 }
 
-/** Seed message for Engineer Discuss from a transcript Error widget. */
+/** Seed message for Engineer Discuss from a transcript error/warning widget. */
 export function buildSystemNoticeDiscussionMessage({
   notice,
   sessionId,
@@ -58,11 +58,15 @@ export function buildSystemNoticeDiscussionMessage({
   sessionId?: string | null;
   timestamp?: string;
 }): string {
-  const label = ERROR_TYPE_LABELS[notice.errorType] || notice.errorType || "Error";
+  const isError = notice.severity === "error";
+  const label =
+    ERROR_TYPE_LABELS[notice.errorType] || notice.errorType || (isError ? "Error" : "Warning");
   const lines = [
-    "Diagnose and fix this session error. Start investigating immediately.",
+    isError
+      ? "Diagnose and fix this session error. Start investigating immediately."
+      : "Diagnose this session warning. Start investigating immediately and fix if it indicates a real defect.",
     "",
-    `Error: **${label}**`,
+    `${isError ? "Error" : "Warning"}: **${label}**`,
     `Description: ${notice.description}`,
     `Action hint: ${notice.actionHint}`,
   ];
@@ -75,7 +79,7 @@ export function buildSystemNoticeDiscussionMessage({
   }
 
   const diagnostics: Array<[string, string | null]> = [
-    ["Error type", formatOptional(notice.errorType)],
+    ["Notice type", formatOptional(notice.errorType)],
     ["Severity", formatOptional(notice.severity)],
     ["Termination reason", formatOptional(notice.terminationReason)],
     ["Abort reason", formatOptional(notice.abortReason)],
@@ -96,7 +100,9 @@ export function buildSystemNoticeDiscussionMessage({
 
   lines.push(
     "",
-    "Load the originating session transcript and relevant logs, identify the failed invariant, and ship the smallest coherent fix.",
+    isError
+      ? "Load the originating session transcript and relevant logs, identify the failed invariant, and ship the smallest coherent fix."
+      : "Load the originating session transcript and relevant logs, determine whether this warning is expected or a failed invariant, and ship the smallest coherent fix when action is needed.",
   );
 
   return lines.join("\n");
@@ -109,12 +115,13 @@ export function SystemNoticeMessage({
   noticeKey,
 }: SystemNoticeMessageProps) {
   const isError = notice.severity === "error";
+  const isActionableNotice = isError || notice.errorType !== "user_stopped";
   const Icon = isError ? AlertTriangle : AlertCircle;
-  const label = ERROR_TYPE_LABELS[notice.errorType] || "Notice";
+  const label = ERROR_TYPE_LABELS[notice.errorType] || (isError ? "Error" : "Warning");
   const discussion = useAgendaDiscussion();
   const { data: personasData } = useQuery<{ id: number; name: string }[]>({
     queryKey: ["/api/personas"],
-    enabled: isError,
+    enabled: isActionableNotice,
   });
   const engineerId = useMemo(
     () => personasData?.find((persona) => persona.name.toLowerCase() === "engineer")?.id,
@@ -129,7 +136,7 @@ export function SystemNoticeMessage({
     if (discussion.isPending) return;
     discussion.mutate({
       pendingKey,
-      title: `Error: ${label}`.slice(0, 80),
+      title: `${isError ? "Error" : "Warning"}: ${label}`.slice(0, 80),
       message: buildSystemNoticeDiscussionMessage({ notice, sessionId, timestamp }),
       clientTurnSuffix: `system-notice-${pendingKey}`.slice(0, 80),
       ...(engineerId ? { personaId: engineerId } : {}),
@@ -149,41 +156,34 @@ export function SystemNoticeMessage({
     );
   }
 
-  if (!isError) {
-    return (
-      <div
-        className="w-full rounded-md border-l-2 border-warning bg-warning/10 p-3"
-        data-testid="system-notice-message"
-      >
-        <div className="flex items-start gap-2">
-          <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
-          <div className="flex flex-1 flex-col gap-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-warning">{label}</span>
-              {timestamp && (
-                <span className="text-2xs text-muted-foreground/50">
-                  {formatDistanceToNow(new Date(timestamp), { addSuffix: true })}
-                </span>
-              )}
-            </div>
-            <p className="text-sm text-foreground/80">{notice.description}</p>
-            <p className="text-xs text-muted-foreground">{notice.actionHint}</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const tone = isError
+    ? {
+        shell: "border-destructive bg-destructive/5",
+        icon: "text-destructive",
+        label: "text-destructive",
+        description: "text-muted-foreground",
+        hint: "text-muted-foreground/70",
+        menuLabel: "Error actions",
+      }
+    : {
+        shell: "border-warning bg-warning/10",
+        icon: "text-warning",
+        label: "text-warning",
+        description: "text-foreground/80",
+        hint: "text-muted-foreground",
+        menuLabel: "Warning actions",
+      };
 
   return (
     <div
-      className="w-full rounded-md border-l-2 border-destructive bg-destructive/5 p-3"
+      className={`w-full rounded-md border-l-2 p-3 ${tone.shell}`}
       data-testid="system-notice-message"
     >
       <div className="flex items-start gap-2">
-        <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+        <Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${tone.icon}`} />
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-destructive">{label}</span>
+            <span className={`text-xs font-medium ${tone.label}`}>{label}</span>
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -191,7 +191,7 @@ export function SystemNoticeMessage({
                   variant="ghost"
                   size="icon"
                   className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
-                  aria-label="Error actions"
+                  aria-label={tone.menuLabel}
                   data-testid="button-system-notice-menu"
                 >
                   <MoreHorizontal className="h-3 w-3" />
@@ -216,8 +216,8 @@ export function SystemNoticeMessage({
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          <p className="text-sm text-muted-foreground">{notice.description}</p>
-          <p className="text-xs text-muted-foreground/70">{notice.actionHint}</p>
+          <p className={`text-sm ${tone.description}`}>{notice.description}</p>
+          <p className={`text-xs ${tone.hint}`}>{notice.actionHint}</p>
           {timestamp && (
             <div className="flex justify-end">
               <span
