@@ -1,9 +1,19 @@
-import { sql, eq, and, isNotNull } from "drizzle-orm";
+import { sql, eq, and, isNotNull, asc } from "drizzle-orm";
 import { type Request, type Response, type NextFunction } from "express";
 import { ADVISORY_LOCK_NS, acquireAdvisoryTransactionLock, db, type DrizzleTx } from "./db";
 import { createLogger } from "./log";
 import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
-import { accounts, memberships, users, userProfiles, agentProfiles, privilegedAccessAudit, type User } from "@shared/schema";
+import {
+  accounts,
+  memberships,
+  users,
+  userProfiles,
+  agentProfiles,
+  agentInstances,
+  agentInstanceMemberships,
+  privilegedAccessAudit,
+  type User,
+} from "@shared/schema";
 import { getUserEffectivePermissions, type Permission } from "./permissions";
 import { DEFAULT_AGENT_NAME } from "@shared/instance-config";
 import { deriveUserFirstName } from "@shared/identity-name";
@@ -161,6 +171,8 @@ export interface UserIdentityFoundation {
   role: PrincipalRole;
   activeVaultId: string;
   visibleVaultIds: string[];
+  /** Personal Agent Instance for this Account (mind boundary). */
+  instanceId: string;
 }
 
 export interface EnsureUserIdentityFoundationOptions {
@@ -203,13 +215,21 @@ export async function tryResolveUserIdentityFoundation(
       role: memberships.role,
       activeVaultId: users.activeVaultId,
       visibleVaultIds: users.visibleVaultIds,
+      instanceId: agentInstanceMemberships.instanceId,
     })
     .from(accounts)
     .innerJoin(memberships, eq(memberships.accountId, accounts.id))
     .innerJoin(users, eq(users.id, memberships.userId))
+    .leftJoin(
+      agentInstanceMemberships,
+      and(
+        eq(agentInstanceMemberships.accountId, accounts.id),
+        eq(agentInstanceMemberships.userId, userId),
+      ),
+    )
     .where(and(eq(accounts.kind, "personal"), eq(accounts.ownerUserId, userId), eq(memberships.userId, userId)))
     .limit(1);
-  if (!existing?.accountId || !existing.activeVaultId) {
+  if (!existing?.accountId || !existing.activeVaultId || !existing.instanceId) {
     return null;
   }
   return {
@@ -217,6 +237,7 @@ export async function tryResolveUserIdentityFoundation(
     role: normalizeRole(existing.role),
     activeVaultId: existing.activeVaultId,
     visibleVaultIds: existing.visibleVaultIds ?? [],
+    instanceId: existing.instanceId,
   };
 }
 
@@ -235,6 +256,7 @@ export async function listUsersWithIdentityFoundation(): Promise<
       role: memberships.role,
       activeVaultId: users.activeVaultId,
       visibleVaultIds: users.visibleVaultIds,
+      instanceId: agentInstanceMemberships.instanceId,
     })
     .from(users)
     .innerJoin(memberships, eq(memberships.userId, users.id))
@@ -246,11 +268,18 @@ export async function listUsersWithIdentityFoundation(): Promise<
         eq(accounts.ownerUserId, users.id),
       ),
     )
+    .innerJoin(
+      agentInstanceMemberships,
+      and(
+        eq(agentInstanceMemberships.accountId, accounts.id),
+        eq(agentInstanceMemberships.userId, users.id),
+      ),
+    )
     .where(isNotNull(users.activeVaultId));
 
   const out: Array<{ user: User; foundation: UserIdentityFoundation }> = [];
   for (const row of rows) {
-    if (!row.accountId || !row.activeVaultId) continue;
+    if (!row.accountId || !row.activeVaultId || !row.instanceId) continue;
     out.push({
       user: row.user,
       foundation: {
@@ -258,6 +287,7 @@ export async function listUsersWithIdentityFoundation(): Promise<
         role: normalizeRole(row.role),
         activeVaultId: row.activeVaultId,
         visibleVaultIds: row.visibleVaultIds ?? [],
+        instanceId: row.instanceId,
       },
     });
   }
@@ -309,7 +339,12 @@ export async function ensureUserIdentityFoundation(
         set: { role: membershipRole, updatedAt: sql`CURRENT_TIMESTAMP` },
       });
 
-    await ensureProfileRows(tx, user, accountId, identityName);
+    const instanceId = await ensurePersonalAgentInstance(tx, {
+      userId: user.id,
+      accountId,
+      name: firstName,
+    });
+    await ensureProfileRows(tx, user, accountId, instanceId, identityName);
 
     const [existingDefaultVault] = await tx
       .select({ id: vaults.id })
@@ -357,14 +392,116 @@ export async function ensureUserIdentityFoundation(
       role: normalizeRole(membershipRole),
       activeVaultId,
       visibleVaultIds,
+      instanceId,
     };
   });
+}
+
+/**
+ * Get-or-create the personal Agent Instance and Manager membership for (user, account).
+ * Encodes one User → one Instance pin per Account via membership uniqueness.
+ */
+async function ensurePersonalAgentInstance(
+  tx: DrizzleTx,
+  args: { userId: string; accountId: string; name: string },
+): Promise<string> {
+  const [existingMembership] = await tx
+    .select({ instanceId: agentInstanceMemberships.instanceId })
+    .from(agentInstanceMemberships)
+    .where(
+      and(
+        eq(agentInstanceMemberships.accountId, args.accountId),
+        eq(agentInstanceMemberships.userId, args.userId),
+      ),
+    )
+    .limit(1);
+  if (existingMembership?.instanceId) {
+    await tx
+      .insert(agentInstanceMemberships)
+      .values({
+        instanceId: existingMembership.instanceId,
+        userId: args.userId,
+        accountId: args.accountId,
+        role: "manager",
+      })
+      .onConflictDoUpdate({
+        target: [agentInstanceMemberships.accountId, agentInstanceMemberships.userId],
+        set: {
+          role: "manager",
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        },
+      });
+    return existingMembership.instanceId;
+  }
+
+  const [linkedProfile] = await tx
+    .select({ instanceId: agentProfiles.instanceId })
+    .from(agentProfiles)
+    .where(and(eq(agentProfiles.userId, args.userId), isNotNull(agentProfiles.instanceId)))
+    .limit(1);
+  if (linkedProfile?.instanceId) {
+    await tx
+      .insert(agentInstanceMemberships)
+      .values({
+        instanceId: linkedProfile.instanceId,
+        userId: args.userId,
+        accountId: args.accountId,
+        role: "manager",
+      })
+      .onConflictDoUpdate({
+        target: [agentInstanceMemberships.accountId, agentInstanceMemberships.userId],
+        set: {
+          instanceId: linkedProfile.instanceId,
+          role: "manager",
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        },
+      });
+    return linkedProfile.instanceId;
+  }
+
+  const [accountInstance] = await tx
+    .select({ id: agentInstances.id })
+    .from(agentInstances)
+    .where(eq(agentInstances.accountId, args.accountId))
+    .orderBy(asc(agentInstances.createdAt), asc(agentInstances.id))
+    .limit(1);
+
+  const instanceId = accountInstance?.id ?? (await tx
+    .insert(agentInstances)
+    .values({
+      accountId: args.accountId,
+      name: args.name,
+      createdByUserId: args.userId,
+      status: "active",
+    })
+    .returning({ id: agentInstances.id }))[0]?.id;
+  if (!instanceId) throw new Error(`Failed to resolve agent instance for user ${args.userId}`);
+
+  await tx
+    .insert(agentInstanceMemberships)
+    .values({
+      instanceId,
+      userId: args.userId,
+      accountId: args.accountId,
+      role: "manager",
+    })
+    .onConflictDoUpdate({
+      target: [agentInstanceMemberships.accountId, agentInstanceMemberships.userId],
+      set: {
+        instanceId,
+        role: "manager",
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      },
+    });
+
+  return instanceId;
 }
 
 async function ensureProfileRows(
   tx: DrizzleTx,
   user: User,
   accountId: string,
+  instanceId: string,
   identityName: string | null,
 ): Promise<void> {
   await tx
@@ -384,12 +521,22 @@ async function ensureProfileRows(
       },
     });
 
+  // Dual-write: user_id remains the rolling-deploy lookup key; instance_id is ownership.
   await tx
     .insert(agentProfiles)
-    .values({ userId: user.id, accountId, agentName: DEFAULT_AGENT_NAME })
+    .values({
+      userId: user.id,
+      accountId,
+      instanceId,
+      agentName: DEFAULT_AGENT_NAME,
+    })
     .onConflictDoUpdate({
       target: agentProfiles.userId,
-      set: { accountId, updatedAt: sql`CURRENT_TIMESTAMP` },
+      set: {
+        accountId,
+        instanceId,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      },
     });
 }
 
