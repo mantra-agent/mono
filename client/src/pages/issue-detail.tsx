@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Tooltip,
   TooltipContent,
@@ -25,11 +24,6 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
   ArrowLeft,
   Circle,
   CircleCheck,
@@ -42,9 +36,6 @@ import {
   Image as ImageIcon,
   ScrollText,
   Lightbulb,
-  Plus,
-  X,
-  Link,
   Paperclip,
   User,
   Bot,
@@ -338,7 +329,7 @@ function NotesThread({ issue, onAddNote, isUploading, handleFileUpload, feedback
   );
 }
 
-function IssueDetail({ issue, allIssues }: { issue: Issue; allIssues: Issue[] }) {
+function IssueDetail({ issue }: { issue: Issue }) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [isUploading, setIsUploading] = useState(false);
@@ -417,10 +408,9 @@ function IssueDetail({ issue, allIssues }: { issue: Issue; allIssues: Issue[] })
   };
 
   const currentStatus = issue.status as IssueStatus;
-  const currentDeps: number[] = (issue as any).dependencies || [];
-  const depIssues = currentDeps.length > 0
-    ? allIssues.filter((i) => currentDeps.includes(i.id))
-    : [];
+  const reporter = typeof issue.reporterEmail === "string" && issue.reporterEmail.trim()
+    ? issue.reporterEmail.trim()
+    : null;
 
   return (
     <div className="space-y-4">
@@ -462,6 +452,11 @@ function IssueDetail({ issue, allIssues }: { issue: Issue; allIssues: Issue[] })
             {issue.page && <span className="ml-2 font-mono">on {issue.page}</span>}
           </p>
         )}
+        {reporter ? (
+          <p className="text-xs text-muted-foreground" data-testid="text-issue-reporter">
+            Reporter {reporter}
+          </p>
+        ) : null}
         {(issue.platformEnvironmentId != null || issue.buildId) && (
           <p className="text-xs text-muted-foreground font-mono" data-testid="text-issue-env-build">
             {issue.platformEnvironmentId != null && <span>env:{issue.platformEnvironmentId}</span>}
@@ -550,88 +545,6 @@ function IssueDetail({ issue, allIssues }: { issue: Issue; allIssues: Issue[] })
         </Card>
       )}
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
-            <Link className="h-3.5 w-3.5" />
-            Dependencies
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button size="icon" variant="ghost" className="h-6 w-6 ml-auto" data-testid="button-add-dependency">
-                  <Plus className="h-3.5 w-3.5" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-72 p-2" align="end">
-                <p className="text-xs font-medium text-muted-foreground mb-2 px-1">Select dependencies</p>
-                <ScrollArea className="max-h-64">
-                  <div className="space-y-0.5">
-                    {allIssues
-                      .filter((i) => i.id !== issue.id && i.status !== "resolved")
-                      .map((candidate) => {
-                        const isSelected = currentDeps.includes(candidate.id);
-                        return (
-                          <button
-                            key={candidate.id}
-                            onClick={() => {
-                              const newDeps = isSelected
-                                ? currentDeps.filter((d) => d !== candidate.id)
-                                : [...currentDeps, candidate.id];
-                              updateMutation.mutate({ dependencies: newDeps });
-                            }}
-                            className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${
-                              isSelected ? "bg-primary/10" : "hover-elevate"
-                            }`}
-                            data-testid={`dep-option-${candidate.id}`}
-                          >
-                            <StatusIcon status={candidate.status as IssueStatus} className="h-3.5 w-3.5 shrink-0" />
-                            <span className="text-muted-foreground font-mono text-xs shrink-0">#{candidate.id}</span>
-                            <span className="truncate">{candidate.title}</span>
-                            {isSelected && <CircleCheck className="h-3.5 w-3.5 text-primary shrink-0 ml-auto" />}
-                          </button>
-                        );
-                      })}
-                  </div>
-                </ScrollArea>
-              </PopoverContent>
-            </Popover>
-          </CardTitle>
-        </CardHeader>
-        {depIssues.length > 0 && (
-          <CardContent>
-            <div className="space-y-1">
-              {depIssues.map((dep) => (
-                <div key={dep.id} className="flex items-center gap-2 group">
-                  <button
-                    onClick={() => setLocation(`/issues/${dep.id}`)}
-                    className="flex items-center gap-2 flex-1 text-left px-2 py-1.5 rounded-md text-sm hover-elevate min-w-0"
-                    data-testid={`link-dep-${dep.id}`}
-                  >
-                    <StatusIcon status={dep.status as IssueStatus} className="h-3.5 w-3.5 shrink-0" />
-                    <span className="text-muted-foreground font-mono text-xs shrink-0">#{dep.id}</span>
-                    <span className="truncate">{dep.title}</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      const newDeps = currentDeps.filter((d) => d !== dep.id);
-                      updateMutation.mutate({ dependencies: newDeps });
-                    }}
-                    className="invisible group-hover:visible shrink-0 p-0.5 rounded hover-elevate"
-                    data-testid={`button-remove-dep-${dep.id}`}
-                  >
-                    <X className="h-3 w-3 text-muted-foreground" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        )}
-        {depIssues.length === 0 && (
-          <CardContent>
-            <p className="text-xs text-muted-foreground">No dependencies linked.</p>
-          </CardContent>
-        )}
-      </Card>
-
       <NotesThread issue={issue} onAddNote={addNoteMutation} isUploading={isUploading} handleFileUpload={handleFileUpload} feedbackFileRef={feedbackFileRef} />
 
       <div className="flex justify-end pt-2">
@@ -661,15 +574,6 @@ export default function IssueDetailPage() {
   const [, setLocation] = useLocation();
   const issueId = params?.id ? parseInt(params.id, 10) : null;
 
-  const { data: listData, isLoading: listLoading } = useQuery<{ issues: Issue[] }>({
-    queryKey: ["/api/issues", "active"],
-    queryFn: async () => {
-      const res = await fetch("/api/issues?lightweight=true&exclude_status=resolved");
-      if (!res.ok) throw new Error(`Failed to fetch issues: ${res.statusText}`);
-      return res.json();
-    },
-  });
-
   const { data: issueData, isLoading: issueLoading } = useQuery<Issue>({
     queryKey: ["/api/issues", issueId],
     queryFn: async () => {
@@ -680,15 +584,13 @@ export default function IssueDetailPage() {
     enabled: issueId !== null,
   });
 
-  const allIssues = listData?.issues || [];
   const issue = issueData;
-  const isLoading = listLoading || issueLoading;
 
   useFocusContext(
     issueId !== null ? { entity: { type: "issue", id: String(issueId), label: issue?.title } } : null
   );
 
-  if (isLoading) {
+  if (issueLoading) {
     return (
       <div className="space-y-4 p-4">
         <Skeleton className="h-8 w-48" />
@@ -711,7 +613,7 @@ export default function IssueDetailPage() {
   return (
     <div className="h-full overflow-y-auto scrollbar-thin">
       <div className="p-4">
-        <IssueDetail issue={issue} allIssues={allIssues} />
+        <IssueDetail issue={issue} />
       </div>
     </div>
   );

@@ -3,9 +3,14 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { documentStorage } from "../memory";
 import { requireAuth, requireAdmin } from "../auth";
-import { listPlatformApplicationErrors } from "../error-telemetry";
+import {
+  dismissPlatformApplicationError,
+  getPlatformApplicationError,
+  listPlatformApplicationErrors,
+} from "../error-telemetry";
 import { createLogger } from "../log";
 import { requireModRouteGroup } from "../mods/mod-access";
+import { requireCurrentPrincipal } from "../principal-context";
 const requireActiveBuild = requireModRouteGroup("build.issues");
 
 const log = createLogger("IssueRoutes");
@@ -174,7 +179,6 @@ export function registerIssueRoutes(app: Express) {
 
   app.post("/api/issues/errors/:fingerprint/dismiss", requireActiveBuild, requireAdmin, async (req, res) => {
     try {
-      const { dismissPlatformApplicationError } = await import("../error-telemetry");
       const dismissed = await dismissPlatformApplicationError(req.principal!, String(req.params.fingerprint ?? ""));
       if (!dismissed) {
         return res.status(404).json({ error: "Error aggregate not found" });
@@ -185,6 +189,56 @@ export function registerIssueRoutes(app: Express) {
         errorType: error instanceof Error ? error.name : "UnknownError",
       });
       res.status(500).json({ error: "Failed to dismiss application error" });
+    }
+  });
+
+  app.post("/api/issues/errors/:fingerprint/open", requireActiveBuild, requireAdmin, async (req, res) => {
+    try {
+      const principal = req.principal ?? requireCurrentPrincipal();
+      const fingerprint = String(req.params.fingerprint ?? "");
+      const error = await getPlatformApplicationError(principal, fingerprint);
+      if (!error) {
+        return res.status(404).json({ error: "Error aggregate not found" });
+      }
+
+      const source = error.sourceFile
+        ? `${error.sourceFile}${error.sourceLine ? `:${error.sourceLine}` : ""}`
+        : error.sourceSite || "Unavailable";
+      const reproSteps = [
+        `Promoted from application error aggregate ${error.fingerprint}.`,
+        `Identity: ${error.errorIdentity}`,
+        `Source: ${source}`,
+        `Site: ${error.sourceSite}`,
+        `Occurrences: ${error.occurrenceCount}`,
+        `First seen: ${error.firstSeenAt}`,
+        `Last seen: ${error.lastSeenAt}`,
+      ].join("\n");
+
+      const issue = await storage.createIssue({
+        title: error.errorIdentity.slice(0, 500),
+        description: `Tracked open Issue promoted from the Errors queue for ${error.errorIdentity}.`,
+        reproSteps,
+        status: "open",
+        kind: "tracked",
+        logs: [
+          `fingerprint=${error.fingerprint}`,
+          `errorIdentity=${error.errorIdentity}`,
+          `sourceSite=${error.sourceSite}`,
+          `source=${source}`,
+          `occurrenceCount=${error.occurrenceCount}`,
+        ].join("\n"),
+      });
+
+      await dismissPlatformApplicationError(principal, fingerprint);
+      res.status(201).json(issue);
+    } catch (error) {
+      if (isIssueCreateValidationError(error)) {
+        return res.status(400).json({ error: error.message, code: error.code || "issue_create_validation" });
+      }
+      log.error("issue_errors.open_failed", {
+        errorType: error instanceof Error ? error.name : "UnknownError",
+      });
+      res.status(500).json({ error: "Failed to open application error as Issue" });
     }
   });
 
@@ -214,6 +268,7 @@ export function registerIssueRoutes(app: Express) {
 
   const updateIssueSchema = z.object({
     status: z.enum(["open", "in_progress", "in_review", "resolved"]).optional(),
+    kind: z.enum(["tracked", "reported"]).optional(),
     spec: z.string().max(10000).optional(),
     title: z.string().min(1).max(500).optional(),
     description: z.string().max(10000).optional(),

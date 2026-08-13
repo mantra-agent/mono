@@ -2,7 +2,7 @@ import { documentStorage } from "../memory/document-storage";
 import { documentStoreDocuments, issueKindEnum, issueStatusEnum, users, type Issue, type InsertIssue, type IssueStatus, type IssueNote } from "@shared/schema";
 import { createLogger } from "../log";
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction } from "../db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Principal } from "../principal";
 import { createUserPrincipalFromUser } from "../principal";
 import { principalHasPermission } from "../permissions";
@@ -131,7 +131,10 @@ function parseContent(content: string): {
   };
 }
 
-function docToIssue(doc: { content: string; metadata: Record<string, unknown> }): Issue {
+function docToIssue(
+  doc: { content: string; metadata: Record<string, unknown> },
+  reporterEmail?: string | null,
+): Issue {
   const meta = doc.metadata;
   const parsed = parseContent(doc.content || "");
   const reproFromMeta = normalizeOptionalText(meta.reproSteps);
@@ -159,7 +162,47 @@ function docToIssue(doc: { content: string; metadata: Record<string, unknown> })
     buildId,
     productId: parseOptionalPositiveInt(meta.productId) ?? 0,
     createdAt: meta.createdAt ? new Date(String(meta.createdAt)) : new Date(),
+    reporterEmail: reporterEmail ?? null,
   };
+}
+
+function toLightweightIssue(issue: Issue): Partial<Issue> {
+  return {
+    id: issue.id,
+    title: issue.title,
+    status: issue.status,
+    kind: issue.kind,
+    page: issue.page,
+    platformEnvironmentId: issue.platformEnvironmentId,
+    buildId: issue.buildId,
+    createdAt: issue.createdAt,
+    reporterEmail: issue.reporterEmail ?? null,
+  };
+}
+
+async function reporterEmailsByIssueIds(issueIds: number[]): Promise<Map<number, string | null>> {
+  const ids = Array.from(new Set(issueIds.filter((id) => Number.isInteger(id) && id > 0)));
+  const map = new Map<number, string | null>();
+  if (ids.length === 0) return map;
+
+  const rows = await db
+    .select({
+      issueId: documentStoreDocuments.documentId,
+      email: users.email,
+    })
+    .from(documentStoreDocuments)
+    .leftJoin(users, eq(documentStoreDocuments.ownerUserId, users.id))
+    .where(and(
+      eq(documentStoreDocuments.documentType, "issue"),
+      inArray(documentStoreDocuments.documentId, ids.map(String)),
+    ));
+
+  for (const row of rows) {
+    const id = Number(row.issueId);
+    if (!Number.isInteger(id) || id <= 0) continue;
+    map.set(id, typeof row.email === "string" && row.email.trim() ? row.email.trim() : null);
+  }
+  return map;
 }
 
 function issueMetadata(issue: Issue): Record<string, unknown> {
@@ -232,20 +275,16 @@ export class FileIssueStorage {
     }
 
     allIssues.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const reporters = await reporterEmailsByIssueIds(allIssues.map((issue) => issue.id));
+    allIssues = allIssues.map((issue) => ({
+      ...issue,
+      reporterEmail: reporters.get(issue.id) ?? null,
+    }));
 
     log.log(`getIssues count=${allIssues.length} status=${options?.status || "all"} lightweight=${!!options?.lightweight}`);
 
     if (options?.lightweight) {
-      return allIssues.map(i => ({
-        id: i.id,
-        title: i.title,
-        status: i.status,
-        kind: i.kind,
-        page: i.page,
-        platformEnvironmentId: i.platformEnvironmentId,
-        buildId: i.buildId,
-        createdAt: i.createdAt,
-      }));
+      return allIssues.map(toLightweightIssue);
     }
 
     return allIssues;
@@ -259,7 +298,12 @@ export class FileIssueStorage {
     }
     try {
       log.log(`getIssue id=${id} found`);
-      return docToIssue({ content: doc.content, metadata: (doc.metadata || {}) as Record<string, unknown> });
+      const issue = docToIssue({ content: doc.content, metadata: (doc.metadata || {}) as Record<string, unknown> });
+      const reporters = await reporterEmailsByIssueIds([issue.id]);
+      return {
+        ...issue,
+        reporterEmail: reporters.get(issue.id) ?? null,
+      };
     } catch (err) {
       log.error(`getIssue id=${id} parse error`, err);
       return undefined;
@@ -298,18 +342,14 @@ export class FileIssueStorage {
         });
       }
     }
-    const issues = Array.from(byId.values()).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-    if (!options?.lightweight) return issues;
-    return issues.map((issue) => ({
-      id: issue.id,
-      title: issue.title,
-      status: issue.status,
-      kind: issue.kind,
-      page: issue.page,
-      platformEnvironmentId: issue.platformEnvironmentId,
-      buildId: issue.buildId,
-      createdAt: issue.createdAt,
+    let issues = Array.from(byId.values()).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    const reporters = await reporterEmailsByIssueIds(issues.map((issue) => issue.id));
+    issues = issues.map((issue) => ({
+      ...issue,
+      reporterEmail: reporters.get(issue.id) ?? issue.reporterEmail ?? null,
     }));
+    if (!options?.lightweight) return issues;
+    return issues.map(toLightweightIssue);
   }
 
   async getIssueForAdmin(principal: Principal, id: number): Promise<Issue | undefined> {
@@ -563,15 +603,20 @@ export class FileIssueStorage {
       effectiveUpdates.buildId = nextBuild;
     }
 
+    const nextKind = effectiveUpdates.kind !== undefined
+      ? issueKindEnum.parse(effectiveUpdates.kind)
+      : existing.kind;
     const updated: Issue = {
       ...existing,
       ...effectiveUpdates,
       id: existing.id,
       createdAt: existing.createdAt,
+      kind: nextKind,
       reproSteps: (effectiveUpdates.reproSteps as string | undefined) ?? existing.reproSteps,
       platformEnvironmentId:
         (effectiveUpdates.platformEnvironmentId as number | undefined) ?? existing.platformEnvironmentId,
       buildId: (effectiveUpdates.buildId as string | undefined) ?? existing.buildId,
+      reporterEmail: existing.reporterEmail ?? null,
     };
     const content = issueToContent(updated);
     const metadata = issueMetadata(updated);

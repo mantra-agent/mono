@@ -218,6 +218,41 @@ export async function listPlatformApplicationErrors(
   return listRecentApplicationErrors(limit, offset);
 }
 
+export async function getApplicationError(
+  fingerprint: string,
+): Promise<AggregatedApplicationError | null> {
+  if (!/^[a-f0-9]{64}$/i.test(fingerprint)) return null;
+  await ensureSchema();
+  const result = await pool.query(
+    `SELECT fingerprint, error_identity, source_file, source_line, source_site,
+            first_seen_at, last_seen_at, occurrence_count
+     FROM application_error_aggregates
+     WHERE fingerprint = $1 AND dismissed_at IS NULL
+     LIMIT 1`,
+    [fingerprint.toLowerCase()],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    fingerprint: row.fingerprint,
+    errorIdentity: row.error_identity,
+    sourceFile: row.source_file,
+    sourceLine: row.source_line,
+    sourceSite: row.source_site,
+    firstSeenAt: new Date(row.first_seen_at).toISOString(),
+    lastSeenAt: new Date(row.last_seen_at).toISOString(),
+    occurrenceCount: Number(row.occurrence_count),
+  };
+}
+
+export async function getPlatformApplicationError(
+  principal: Principal,
+  fingerprint: string,
+): Promise<AggregatedApplicationError | null> {
+  requireApplicationErrorPermission(principal, "system:read");
+  return getApplicationError(fingerprint);
+}
+
 export async function dismissApplicationError(fingerprint: string): Promise<boolean> {
   if (!/^[a-f0-9]{64}$/i.test(fingerprint)) return false;
   await ensureSchema();
