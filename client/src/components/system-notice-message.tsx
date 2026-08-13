@@ -1,11 +1,12 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   AlertCircle,
   Loader2,
   MessageSquare,
   MoreHorizontal,
+  X,
 } from "lucide-react";
 import type { SystemNotice } from "@shared/models/chat";
 import { formatDistanceToNow } from "date-fns";
@@ -17,13 +18,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAgendaDiscussion } from "@/hooks/use-agenda-discussion";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { getClientTabId } from "@/lib/client-tab-identity";
 
 interface SystemNoticeMessageProps {
   notice: SystemNotice;
   timestamp?: string;
-  /** Originating session for Discuss context. */
+  /** Originating session for Discuss / dismiss context. */
   sessionId?: string | null;
-  /** Stable id for per-row Discuss pending state. */
+  /** Stable id for per-row pending state and dismiss target. */
   noticeKey?: string;
 }
 
@@ -35,6 +39,8 @@ const ERROR_TYPE_LABELS: Record<string, string> = {
   something_went_wrong: "Something went wrong",
   temporarily_busy: "Temporarily busy",
 };
+
+const CONTINUE_MESSAGE = "Please continue...";
 
 function formatOptional(value: unknown): string | null {
   if (value == null) return null;
@@ -116,12 +122,16 @@ export function SystemNoticeMessage({
 }: SystemNoticeMessageProps) {
   const isError = notice.severity === "error";
   const isActionableNotice = isError || notice.errorType !== "user_stopped";
+  const isDismissed = typeof notice.dismissedAt === "string" && notice.dismissedAt.length > 0;
+  const [locallyDismissed, setLocallyDismissed] = useState(false);
   const Icon = isError ? AlertTriangle : AlertCircle;
   const label = ERROR_TYPE_LABELS[notice.errorType] || (isError ? "Error" : "Warning");
   const discussion = useAgendaDiscussion();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const { data: personasData } = useQuery<{ id: number; name: string }[]>({
     queryKey: ["/api/personas"],
-    enabled: isActionableNotice,
+    enabled: isActionableNotice && !isDismissed && !locallyDismissed,
   });
   const engineerId = useMemo(
     () => personasData?.find((persona) => persona.name.toLowerCase() === "engineer")?.id,
@@ -132,8 +142,61 @@ export function SystemNoticeMessage({
   const discussPending =
     discussion.isPending && discussion.variables?.pendingKey === pendingKey;
 
+  const dismissMutation = useMutation({
+    mutationFn: async () => {
+      if (!sessionId || !noticeKey) {
+        throw new Error("Missing session or notice identity");
+      }
+      // Dismiss is the REVIEW-clearing mutation. Continue is best-effort after
+      // that so a failed agent admission cannot resurrect the notice.
+      await apiRequest(
+        "POST",
+        `/api/sessions/${sessionId}/notices/${encodeURIComponent(noticeKey)}/dismiss`,
+      );
+      try {
+        await apiRequest("POST", `/api/sessions/${sessionId}/messages`, {
+          content: CONTINUE_MESSAGE,
+          clientTurnId: `notice-dismiss-${noticeKey}`.slice(0, 120),
+          clientId: getClientTabId(),
+        });
+        return { continued: true as const };
+      } catch (continueError) {
+        return {
+          continued: false as const,
+          continueError:
+            continueError instanceof Error
+              ? continueError.message
+              : "Failed to send continue message",
+        };
+      }
+    },
+    onMutate: async () => {
+      // Hide immediately; session REVIEW/severity recompute is server-owned because
+      // another undismissed notice may still require Review.
+      setLocallyDismissed(true);
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      if (!result.continued) {
+        toast({
+          title: "Notice dismissed",
+          description: result.continueError || "Could not send Please continue...",
+          variant: "destructive",
+        });
+      }
+    },
+    onError: (error: Error) => {
+      setLocallyDismissed(false);
+      toast({
+        title: "Could not dismiss notice",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleDiscuss = () => {
-    if (discussion.isPending) return;
+    if (discussion.isPending || dismissMutation.isPending) return;
     discussion.mutate({
       pendingKey,
       title: `${isError ? "Error" : "Warning"}: ${label}`.slice(0, 80),
@@ -141,6 +204,13 @@ export function SystemNoticeMessage({
       clientTurnSuffix: `system-notice-${pendingKey}`.slice(0, 80),
       ...(engineerId ? { personaId: engineerId } : {}),
     });
+  };
+
+  const handleDismiss = () => {
+    if (!sessionId || !noticeKey || dismissMutation.isPending || isDismissed || locallyDismissed) {
+      return;
+    }
+    dismissMutation.mutate();
   };
 
   // User-stopped notices are passive. Operational warnings need a visible,
@@ -154,6 +224,12 @@ export function SystemNoticeMessage({
         </p>
       </div>
     );
+  }
+
+  // Dismissed notices leave the transcript so REVIEW can clear without a second
+  // residual error card. Local hide covers the optimistic path before refetch.
+  if (isDismissed || locallyDismissed) {
+    return null;
   }
 
   const tone = isError
@@ -173,6 +249,8 @@ export function SystemNoticeMessage({
         hint: "text-muted-foreground",
         menuLabel: "Warning actions",
       };
+
+  const canDismiss = Boolean(sessionId && noticeKey);
 
   return (
     <div
@@ -199,7 +277,7 @@ export function SystemNoticeMessage({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
-                  disabled={discussPending}
+                  disabled={discussPending || dismissMutation.isPending}
                   onSelect={(event) => {
                     event.preventDefault();
                     handleDiscuss();
@@ -218,16 +296,35 @@ export function SystemNoticeMessage({
           </div>
           <p className={`text-sm ${tone.description}`}>{notice.description}</p>
           <p className={`text-xs ${tone.hint}`}>{notice.actionHint}</p>
-          {timestamp && (
-            <div className="flex justify-end">
+          <div className="flex items-center justify-end gap-2">
+            {timestamp && (
               <span
                 className="text-2xs text-muted-foreground/50"
                 data-testid="text-system-notice-timestamp"
               >
                 {formatDistanceToNow(new Date(timestamp), { addSuffix: true })}
               </span>
-            </div>
-          )}
+            )}
+            {canDismiss && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 gap-1 px-1.5 text-2xs text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                disabled={dismissMutation.isPending}
+                onClick={handleDismiss}
+                aria-label="Dismiss notice and continue"
+                data-testid="button-system-notice-dismiss"
+              >
+                {dismissMutation.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <X className="h-3 w-3" />
+                )}
+                Dismiss
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>

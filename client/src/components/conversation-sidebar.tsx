@@ -38,6 +38,8 @@ import {
   Mic,
   Radio,
   Timer,
+  AlertTriangle,
+  AlertCircle,
 } from "lucide-react";
 import { isDurablyActiveSession, type ChatSession } from "@shared/models/chat";
 import { useSessionActionsMenuItems } from "@/components/session-actions-menu";
@@ -341,22 +343,37 @@ export function ConversationItem({
   // Read/already-viewed sessions are muted, including pinned sessions.
   const isAwaitingQuestion = !!conv.awaitingQuestionResponse;
   const isAwaitingPlanReview = !!conv.reviewKinds?.includes("plan_review");
-  const isAwaitingEmailReview = !!conv.reviewKinds?.some((kind) => !["question", "plan_review"].includes(kind));
-  const isAwaitingReview = !!conv.awaitingReview || isAwaitingQuestion;
+  const isAwaitingErrorReview =
+    !!conv.reviewKinds?.includes("error") || (!isLive && conv.errorSeverity === "error");
+  const isAwaitingWarningReview =
+    !!conv.reviewKinds?.includes("warning") ||
+    (!isLive && (conv.errorSeverity === "warning" || conv.errorSeverity === "warn"));
+  const isAwaitingEmailReview = !!conv.reviewKinds?.some(
+    (kind) => !["question", "plan_review", "error", "warning"].includes(kind),
+  );
+  const isAwaitingReview = !!conv.awaitingReview || isAwaitingQuestion || isAwaitingErrorReview || isAwaitingWarningReview;
   // In-progress / attention states own the title: full vault color, then the
   // active pulse modulates opacity. Read-state muting only applies once the
   // session is idle — never multiply muted alpha into an active title.
+  // Error/warning REVIEW owns its own semantic title color instead of vault tint.
   const isInProgressTitle =
     isLive || isAwaitingReview || !!conv.hasActiveDescendant || !!conv.hasActivePlan;
-  const sessionTitleColor = vaultTitleColor(
-    conv.vaultId ? [conv.vaultId] : undefined,
-    vaultById,
-    activeVaultId,
-    hasUnreadResult || isInProgressTitle ? 1 : MUTED_TITLE_ALPHA,
-  );
-  const statusTextClass = conv.errorSeverity === "error" && !isLive
-    ? "text-error"
-    : isLive
+  const sessionTitleColor =
+    !isLive && isAwaitingErrorReview
+      ? undefined
+      : !isLive && isAwaitingWarningReview
+        ? undefined
+        : vaultTitleColor(
+            conv.vaultId ? [conv.vaultId] : undefined,
+            vaultById,
+            activeVaultId,
+            hasUnreadResult || isInProgressTitle ? 1 : MUTED_TITLE_ALPHA,
+          );
+  const statusTextClass = !isLive && isAwaitingErrorReview
+    ? "text-destructive font-medium"
+    : !isLive && isAwaitingWarningReview
+      ? "text-warning font-medium"
+      : isLive
       ? "text-active font-medium motion-safe:animate-pulse"
       : isAwaitingReview
         ? "text-active font-medium"
@@ -398,6 +415,12 @@ export function ConversationItem({
     if (isAwaitingQuestion && !iconHovered && !isLive) {
       return <MessageCircleQuestion className="h-3.5 w-3.5 shrink-0 text-active" data-testid={`icon-conversation-question-${conv.id}`} />;
     }
+    if (isAwaitingErrorReview && !iconHovered && !isLive) {
+      return <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-destructive" data-testid={`icon-conversation-error-${conv.id}`} />;
+    }
+    if (isAwaitingWarningReview && !iconHovered && !isLive) {
+      return <AlertCircle className="h-3.5 w-3.5 shrink-0 text-warning" data-testid={`icon-conversation-warning-${conv.id}`} />;
+    }
     if ((isAwaitingPlanReview || isAwaitingEmailReview) && !iconHovered && !isLive) {
       return <MailOpen className="h-3.5 w-3.5 shrink-0 text-foreground" data-testid={`icon-conversation-review-${conv.id}`} />;
     }
@@ -434,11 +457,6 @@ export function ConversationItem({
           data-testid={`icon-conversation-voice-${conv.id}`}
         />
       );
-    }
-    if (conv.errorSeverity === "error") {
-      return isLastSenderAgent
-        ? <Bot className="h-3.5 w-3.5 shrink-0 text-destructive" data-testid={`icon-conversation-xyz-${conv.id}`} />
-        : <User className="h-3.5 w-3.5 shrink-0 text-destructive" data-testid={`icon-conversation-user-${conv.id}`} />;
     }
     return isLastSenderAgent
       ? <Bot className="h-3.5 w-3.5 shrink-0" data-testid={`icon-conversation-xyz-${conv.id}`} />
@@ -499,7 +517,11 @@ export function ConversationItem({
             data-testid={`button-rename-title-${conv.id}`}
           >
             <span
-              className="truncate"
+              className={cn(
+                "truncate",
+                !isLive && isAwaitingErrorReview && "text-destructive",
+                !isLive && isAwaitingWarningReview && "text-warning",
+              )}
               style={sessionTitleColor ? { color: sessionTitleColor } : undefined}
             >
               {conv.title && conv.title.length > 30 ? conv.title.slice(0, 30) + "…" : conv.title}

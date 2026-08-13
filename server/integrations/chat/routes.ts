@@ -573,6 +573,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           ...(s.awaitingQuestionResponse ? (["question"] as const) : []),
           ...(reviewPlanSessionIds.has(s.id) ? (["plan_review"] as const) : []),
           ...(emailReviewKindsBySession.get(s.id) ?? []),
+          // errorSeverity is the durable undismissed system-notice flag. Opening
+          // the session must not clear it; only explicit notice dismiss does.
+          ...(s.errorSeverity === "error" ? (["error"] as const) : []),
+          ...(s.errorSeverity === "warning" || s.errorSeverity === "warn"
+            ? (["warning"] as const)
+            : []),
         ];
         return {
           ...s,
@@ -1160,14 +1166,44 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   app.patch("/api/sessions/:id/read", async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
+      // Mark-read clears only the unread badge. errorSeverity remains until the
+      // human dismisses the system notice, so REVIEW + title/icon state persist.
       await chatStorage.setHasUnreadResult(id, false);
-      await chatStorage.setErrorSeverity(id, null);
       res.json({ ok: true });
     } catch (error) {
       chatLog.error("Error marking session as read:", error);
       res.status(500).json({ error: "Failed to mark session as read" });
     }
   });
+
+  app.post(
+    "/api/sessions/:id/notices/:messageId/dismiss",
+    async (req: Request, res: Response) => {
+      try {
+        const sessionId = req.params.id as string;
+        const messageId = req.params.messageId as string;
+        if (!sessionId || !messageId) {
+          return res.status(400).json({ error: "sessionId and messageId are required" });
+        }
+        const session = await chatStorage.getSession(sessionId);
+        if (!session) {
+          return res.status(404).json({ error: "Session not found" });
+        }
+        const dismissed = await chatStorage.dismissSystemNotice(sessionId, messageId);
+        if (!dismissed) {
+          return res.status(404).json({ error: "System notice not found" });
+        }
+        const updated = await chatStorage.getSession(sessionId);
+        res.json({
+          ok: true,
+          errorSeverity: updated?.errorSeverity ?? null,
+        });
+      } catch (error) {
+        chatLog.error("Error dismissing system notice:", error);
+        res.status(500).json({ error: "Failed to dismiss system notice" });
+      }
+    },
+  );
 
   app.patch("/api/sessions/:id/archive", async (req: Request, res: Response) => {
     try {

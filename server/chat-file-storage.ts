@@ -1737,8 +1737,14 @@ export interface IChatFileStorage {
   ): Promise<void>;
   setErrorSeverity(
     id: string,
-    severity: "warning" | "error" | null,
+    severity: "warning" | "error" | "warn" | null,
   ): Promise<void>;
+  /**
+   * Dismiss one system_notice message and recompute session errorSeverity from
+   * remaining undismissed notices. Returns false when the message is missing
+   * or not a system_notice.
+   */
+  dismissSystemNotice(sessionId: string, messageId: string): Promise<boolean>;
   setGitWriteOverride(id: string, enabled: boolean): Promise<void>;
   updateSessionContextFlags(
     id: string,
@@ -4561,15 +4567,73 @@ export const chatFileStorage: IChatFileStorage = {
     });
   },
 
-  async setErrorSeverity(id: string, severity: "warning" | "error" | null) {
+  async setErrorSeverity(id: string, severity: "warning" | "error" | "warn" | null) {
     return withConvLock(id, async () => {
       const data = await readConv(id);
       if (!data) return;
-      if (data.errorSeverity === severity) return;
-      data.errorSeverity = severity;
+      // Legacy writers used "warn"; normalize to the canonical ErrorSeverity.
+      const normalized = severity === "warn" ? "warning" : severity;
+      if (data.errorSeverity === normalized) return;
+      data.errorSeverity = normalized;
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
       invalidateSessionsCache();
+    });
+  },
+
+  async dismissSystemNotice(sessionId: string, messageId: string): Promise<boolean> {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data) return false;
+      const msg = data.messages.find((m) => m.id === messageId);
+      if (!msg || msg.role !== "system_notice") return false;
+
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(msg.content) as Record<string, unknown>;
+      } catch {
+        return false;
+      }
+      if (typeof parsed.severity !== "string" || typeof parsed.description !== "string") {
+        return false;
+      }
+
+      const now = new Date().toISOString();
+      if (typeof parsed.dismissedAt !== "string" || !parsed.dismissedAt) {
+        parsed.dismissedAt = now;
+        msg.content = JSON.stringify(parsed);
+        msg.updatedAt = now;
+      }
+
+      // Recompute severity from the newest undismissed notice so multi-notice
+      // sessions keep REVIEW when another actionable notice remains.
+      let nextSeverity: "warning" | "error" | null = null;
+      for (let i = data.messages.length - 1; i >= 0; i -= 1) {
+        const candidate = data.messages[i];
+        if (candidate.role !== "system_notice") continue;
+        try {
+          const notice = JSON.parse(candidate.content) as {
+            severity?: string;
+            dismissedAt?: string;
+          };
+          if (notice.dismissedAt) continue;
+          if (notice.severity === "error" || notice.severity === "warning") {
+            nextSeverity = notice.severity;
+            break;
+          }
+        } catch {
+          // Skip malformed notice rows; they cannot own REVIEW state.
+        }
+      }
+      data.errorSeverity = nextSeverity;
+      data.updatedAt = now;
+      await writeConv(data);
+      invalidateSessionsCache({
+        action: "updated",
+        sessionId,
+        session: convToMeta(data),
+      });
+      return true;
     });
   },
 
