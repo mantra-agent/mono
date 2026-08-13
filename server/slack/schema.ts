@@ -22,7 +22,10 @@ export async function ensureSlackSchema(pool: Pool): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT slack_installations_ids_check CHECK (
-        team_id ~ '^[A-Z0-9]{2,32}$' AND api_app_id ~ '^[A-Z0-9]{2,32}$' AND bot_user_id ~ '^[A-Z0-9]{2,32}$'
+        team_id ~ '^T[A-Z0-9]{1,31}$' AND api_app_id ~ '^A[A-Z0-9]{1,31}$' AND bot_user_id ~ '^U[A-Z0-9]{1,31}$'
+      ),
+      CONSTRAINT slack_installations_channel_ids_check CHECK (
+        cardinality(allowed_channel_ids) = 0 OR allowed_channel_ids[1] ~ '^C[A-Z0-9]{1,31}$'
       ),
       CONSTRAINT slack_installations_channel_limit CHECK (cardinality(allowed_channel_ids) <= 1),
       CONSTRAINT slack_installations_status_check CHECK (status IN ('unconfigured','ready','connected','degraded','disabled'))
@@ -47,7 +50,7 @@ export async function ensureSlackSchema(pool: Pool): Promise<void> {
       updated_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      CONSTRAINT slack_principal_mappings_ids_check CHECK (team_id ~ '^[A-Z0-9]{2,32}$' AND slack_user_id ~ '^[A-Z0-9]{2,32}$')
+      CONSTRAINT slack_principal_mappings_ids_check CHECK (team_id ~ '^T[A-Z0-9]{1,31}$' AND slack_user_id ~ '^U[A-Z0-9]{1,31}$')
     );
     CREATE UNIQUE INDEX IF NOT EXISTS slack_principal_mappings_external_unique
       ON slack_principal_mappings(installation_id, team_id, slack_user_id);
@@ -112,5 +115,18 @@ export async function ensureSlackSchema(pool: Pool): Promise<void> {
       ON slack_events(installation_id, status, received_at);
     CREATE INDEX IF NOT EXISTS slack_events_retention
       ON slack_events(updated_at);
+
+    ALTER TABLE slack_installations DROP CONSTRAINT IF EXISTS slack_installations_ids_check;
+    ALTER TABLE slack_installations ADD CONSTRAINT slack_installations_ids_check CHECK (
+      team_id ~ '^T[A-Z0-9]{1,31}$' AND api_app_id ~ '^A[A-Z0-9]{1,31}$' AND bot_user_id ~ '^U[A-Z0-9]{1,31}$'
+    );
+    ALTER TABLE slack_installations DROP CONSTRAINT IF EXISTS slack_installations_channel_ids_check;
+    ALTER TABLE slack_installations ADD CONSTRAINT slack_installations_channel_ids_check CHECK (
+      cardinality(allowed_channel_ids) = 0 OR allowed_channel_ids[1] ~ '^C[A-Z0-9]{1,31}$'
+    );
+    ALTER TABLE slack_principal_mappings DROP CONSTRAINT IF EXISTS slack_principal_mappings_ids_check;
+    ALTER TABLE slack_principal_mappings ADD CONSTRAINT slack_principal_mappings_ids_check CHECK (
+      team_id ~ '^T[A-Z0-9]{1,31}$' AND slack_user_id ~ '^U[A-Z0-9]{1,31}$'
+    );
   `);
 }

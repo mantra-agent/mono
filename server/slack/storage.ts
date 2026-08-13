@@ -109,7 +109,7 @@ export async function createInstallation(principal: Principal, input: {
     )
     SELECT ${input.platformEnvironmentId}, pc.id, ${input.teamId}, ${input.apiAppId}, ${input.botUserId},
            ${principal.accountId!}, ${principal.userId!}, v.id,
-           ${input.allowedChannelId ? [input.allowedChannelId] : []}::text[], FALSE, 'ready',
+           ${input.allowedChannelId ? sql`ARRAY[${input.allowedChannelId}]::text[]` : sql`ARRAY[]::text[]`}, FALSE, 'ready',
            ${principal.userId!}, ${principal.userId!}
       FROM provider_connections pc
       JOIN vaults v ON v.id = ${input.vaultId}
