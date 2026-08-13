@@ -81,6 +81,8 @@ export const REGISTERED_ICON_KEYS = [
   "Newspaper",
   "Mail",
   "BookOpen",
+  "Bot",
+  "Building2",
   "Calendar",
   "Briefcase",
   "Activity",
