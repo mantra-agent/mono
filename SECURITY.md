@@ -1,3 +1,10 @@
+<!-- 2026-08-13 Identity tree last-login and Instance metrics:
+- Assets/data: A01/A06/A07 admin identity graph, `session` login stamps, `memory_vnext_claims`, `timers`, and `api_calls` input tokens (S1 operational identity/usage metadata).
+- Flow/threat: authenticated Users/Agents admin trees -> last login plus per-Instance timer/claim/token counts. An unscoped or Account-only count would leak another Instance's mind size or spend, and last-active chat work is not a login (STRIDE information disclosure; DATA-01/IAM-01).
+- Deterministic controls/owner: `/api/auth/users` and `/api/auth/identity-graph` remain `users:read`. Last Login is MAX(`session.sess.createdAt`) per user, distinct from Last Active. Claims reuse the User Memory predicate (`lifecycle_stage IN ('canonical','linked')`) grouped by `instance_id`. Timers and 7-day input tokens join the writer's Account pin because those tables are still User-keyed. Owner: Core Identity. Severity: medium confidentiality. SLA: immediate.
+- Residual/rollback: timer/token counts follow the current User+Account pin, not a future Instance ownership column. Revert the Users one-screen tree, identity-graph metrics, and this finding together.
+-->
+
 <!-- 2026-08-13 Snapshot is not restore compilation:
 - Assets/data: A05/A07/A08 PostgreSQL recovery completeness across the application database -> logical Brain exporter -> private object storage -> human-controlled restore (S2/S3).
 - Threat/failure: export compiled named restore strategies and refused the whole snapshot when Live FK shape drifted (library_pages parent self-FK count/deferrability; runtime causal self-FK). Having bytes and knowing how to replay them were one problem, so Live produced no artifact (STRIDE availability/repudiation; DATA-01/OBS-01).

@@ -25,6 +25,9 @@ export interface IdentityGraphInstance {
   quarantineReason: string | null;
   createdAt: string;
   updatedAt: string;
+  managedTimerCount: number;
+  claimCount: number;
+  inputTokens7d: number;
 }
 
 export interface IdentityGraphInstanceMembership {
