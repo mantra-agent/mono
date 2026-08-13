@@ -9,6 +9,7 @@ import { safeEsmHelperPlugin } from "./safe-esm-helper-plugin";
 import { validateRepositoryCompliance } from "./repository-compliance";
 import { validateServerStandardsDisposition } from "./server-standards-disposition";
 import { validateClientMobileStandardsDisposition } from "./client-mobile-standards-disposition";
+import { validateBackupFateDisposition } from "./backup-fate-disposition";
 
 // Dev mode (set via BUILD_DEV_MODE=true in Dockerfile.dev) skips the heavy
 // production-only steps: gitnexus runtime bundling+patches, claude CLI
@@ -639,6 +640,14 @@ async function buildAll() {
     `client/mobile standards disposition valid: ${clientMobileDisposition.totalFiles} files (${Object.entries(clientMobileDisposition.counts)
       .map(([key, value]) => `${key}=${value}`)
       .join(", ")})`,
+  );
+
+  const backupFate = await validateBackupFateDisposition(process.cwd());
+  console.log(
+    `backup fate disposition valid: ${backupFate.declaredRelations} declared relations fated (${backupFate.fatedRelations} disposition names)` +
+      (backupFate.includedWithoutExporter.length
+        ? `; residual exporter-backfill debt (@task:2265): ${backupFate.includedWithoutExporter.length} included relation(s) without a TABLE_REGISTRY exporter`
+        : "; no exporter-backfill residual"),
   );
 
   if (DEV_MODE) {
