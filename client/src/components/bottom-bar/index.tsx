@@ -344,7 +344,7 @@ function BottomBarMenu({
           <button
             type="button"
             disabled={disabled}
-            className="shrink-0 flex items-center justify-center h-9 w-9 rounded-full bg-muted/50 border-[1.5px] border-border text-muted-foreground hover:bg-muted/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="shrink-0 flex items-center justify-center h-9 w-9 rounded-full bg-muted/50 border-[1.5px] border-foreground/25 text-muted-foreground hover:bg-muted/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             aria-label="More options"
           >
             <MoreHorizontal className="h-4 w-4" />
@@ -967,7 +967,7 @@ export function BottomBar({
                 placeholder={voiceInputPlaceholder ?? "Message Agent…"}
                 disabled={voiceActive || turnAdmissionPending}
                 className={cn(
-                  "bg-muted/50 border border-border rounded-[18px] px-3 py-[7px]",
+                  "bg-muted/50 border border-foreground/25 rounded-[18px] px-3 py-[7px]",
                   voiceActive && "pr-11",
                   "text-sm placeholder:text-muted-foreground",
                   "focus:border-ring focus:ring-1 focus:ring-ring",
