@@ -5,12 +5,16 @@ import { claimBrowserTelemetryBudget, enqueueBrowserTelemetry, getBrowserTelemet
 import { requirePermission } from "../permissions";
 import { executorManager } from "../executor-manager";
 import { eventBus } from "../event-bus";
-import { getTimezone, writeTimezoneToUserMd, getLocalTimeString } from "../timezone";
+import { getTimezone } from "../timezone";
 import { readFile, writeFile, stat, access } from "fs/promises";
 import { resolve } from "path";
 import { z } from "zod";
 import { createLogger, listLogFiles, readLogFile, readLogFileAsync, getCurrentLogFile, appendClientLog, resolveLogFilename, isVerboseEnabled, setVerboseEnabled } from "../log";
 import { storage } from "../storage";
+import { db } from "../db";
+import { userProfiles } from "@shared/schema";
+import { and, eq, sql } from "drizzle-orm";
+import { getPrincipal } from "../principal";
 
 const log = createLogger("system-routes");
 const CLIENT_LOG_MAX_ENTRIES_PER_MINUTE = 500;
@@ -265,16 +269,6 @@ export async function registerSystemRoutes(app: Express, serverStartTime: Date) 
     }
   });
 
-  app.get("/api/settings/timezone", (_req, res) => {
-    try {
-      const timezone = getTimezone();
-      const localTime = getLocalTimeString();
-      res.json({ timezone, localTime });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
   const timezoneSchema = z.object({
     timezone: z.string().min(1).refine((val) => {
       try {
@@ -286,23 +280,85 @@ export async function registerSystemRoutes(app: Express, serverStartTime: Date) 
     }, { message: "Invalid timezone identifier" }),
   });
 
-  app.put("/api/settings/timezone", async (req, res) => {
+  function formatLocalTimeInTimezone(timezone: string): string {
+    return new Date().toLocaleString("en-US", {
+      timeZone: timezone,
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  }
+
+  async function resolvePrincipalTimezone(userId: string, accountId: string | null | undefined): Promise<string> {
+    const conditions = [eq(userProfiles.userId, userId)];
+    if (accountId) conditions.push(eq(userProfiles.accountId, accountId));
+    const [profile] = await db
+      .select({ timezone: userProfiles.timezone })
+      .from(userProfiles)
+      .where(and(...conditions))
+      .limit(1);
+    const candidate = typeof profile?.timezone === "string" ? profile.timezone.trim() : "";
+    if (candidate) {
+      try {
+        Intl.DateTimeFormat(undefined, { timeZone: candidate });
+        return candidate;
+      } catch {
+        // fall through to process default
+      }
+    }
+    return getTimezone();
+  }
+
+  // Account timezone is principal-owned user_profiles.timezone (not process-global system_settings).
+  app.get("/api/settings/timezone", requireAuth, async (req, res) => {
     try {
+      const principal = getPrincipal(req);
+      if (!principal?.userId) return res.status(401).json({ error: "Authentication required" });
+      const timezone = await resolvePrincipalTimezone(principal.userId, principal.accountId);
+      res.json({ timezone, localTime: formatLocalTimeInTimezone(timezone) });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/settings/timezone", requireAuth, async (req, res) => {
+    try {
+      const principal = getPrincipal(req);
+      if (!principal?.userId || !principal.accountId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
       const parsed = timezoneSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid timezone" });
       }
 
       const { timezone } = parsed.data;
-      writeTimezoneToUserMd(timezone);
-
-      const status = await executorManager.getStatus();
-      if (status.status === "running") {
-        try { await executorManager.restart(); } catch (err) { log.warn("executor restart after timezone change failed", err); }
+      const updated = await db
+        .update(userProfiles)
+        .set({ timezone, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(and(eq(userProfiles.userId, principal.userId), eq(userProfiles.accountId, principal.accountId)))
+        .returning({ timezone: userProfiles.timezone });
+      if (updated.length === 0) {
+        // Replay-safe create when foundation rows lag behind first Account open.
+        await db.insert(userProfiles).values({
+          userId: principal.userId,
+          accountId: principal.accountId,
+          timezone,
+        }).onConflictDoUpdate({
+          target: userProfiles.userId,
+          set: { accountId: principal.accountId, timezone, updatedAt: sql`CURRENT_TIMESTAMP` },
+        });
       }
 
-      const localTime = getLocalTimeString();
-      res.json({ message: `Timezone set to ${timezone}`, timezone, localTime });
+      res.json({
+        message: `Timezone set to ${timezone}`,
+        timezone,
+        localTime: formatLocalTimeInTimezone(timezone),
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

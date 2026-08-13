@@ -38,7 +38,9 @@ const PUBLIC_RULES: ApiPolicyRule[] = [
 ];
 
 const ADMIN_RULES: ApiPolicyRule[] = [
-  { classification: "admin", prefixes: ["/api/admin", "/api/backup", "/api/backups", "/api/db-sync", "/api/schema", "/api/logs", "/api/events", "/api/tool-stats", "/api/secrets", "/api/diag", "/api/diagnostics", "/api/workspace", "/api/railway", "/api/expo", "/api/integrations/github", "/api/gitnexus", "/api/gitnexus-status", "/api/encryption", "/api/performance", "/api/gateway", "/api/models", "/api/settings", "/api/maintenance", "/api/mobile", "/api/setup", "/api/server", "/api/boot-info", "/api/config", "/api/design-doc", "/api/trust-config", "/api/openai-subscription", "/api/grok-subscription", "/api/claude-cli", "/api/elevenlabs", "/api/integrations/expo", "/api/integrations/automation-auth", "/api/platforms", "/api/provider-connections", "/api/prompt-modules", "/api/communications", "/api/notifications", "/api/auth/users", "/api/auth/meeting-join-policy", "/api/auth/dev-login", "/api/dev"], reason: "system administration route" },
+  { classification: "admin", prefixes: ["/api/admin", "/api/backup", "/api/backups", "/api/db-sync", "/api/schema", "/api/logs", "/api/events", "/api/tool-stats", "/api/secrets", "/api/diag", "/api/diagnostics", "/api/workspace", "/api/railway", "/api/expo", "/api/integrations/github", "/api/gitnexus", "/api/gitnexus-status", "/api/encryption", "/api/performance", "/api/gateway", "/api/models", "/api/maintenance", "/api/mobile", "/api/setup", "/api/server", "/api/boot-info", "/api/config", "/api/design-doc", "/api/trust-config", "/api/openai-subscription", "/api/grok-subscription", "/api/claude-cli", "/api/elevenlabs", "/api/integrations/expo", "/api/integrations/automation-auth", "/api/platforms", "/api/provider-connections", "/api/prompt-modules", "/api/communications", "/api/notifications", "/api/auth/users", "/api/auth/meeting-join-policy", "/api/auth/dev-login", "/api/dev"], reason: "system administration route" },
+  // Narrow residual /api/settings/* admin surface. Account timezone is personal (see PERSONAL_RULES).
+  { classification: "admin", exact: ["/api/settings/inference-debug"], reason: "system administration route" },
   { classification: "admin", prefixes: ["/api/auth/invite", "/api/auth/reset-request"], reason: "user administration route" },
   {
     classification: "admin",
@@ -58,7 +60,7 @@ const SERVICE_RULES: ApiPolicyRule[] = [
 ];
 
 const PERSONAL_RULES: ApiPolicyRule[] = [
-  { classification: "personal", exact: ["/api/client-logs", "/api/browser-telemetry", "/api/browser-telemetry/summary"], reason: "authenticated bounded client diagnostics" },
+  { classification: "personal", exact: ["/api/settings/timezone", "/api/client-logs", "/api/browser-telemetry", "/api/browser-telemetry/summary"], reason: "authenticated personal account settings and bounded client diagnostics" },
   { classification: "personal", methods: ["POST", "DELETE"], pattern: /^\/api\/objects\/[^/]+\/[^/]+\/grants$/, reason: "authenticated object grant mutation; ObjectGrantService.assertTargetAdmin remains the authoritative admin gate downstream" },
   { classification: "personal", prefixes: ["/api/mods"], reason: "authenticated Mod catalog and lifecycle; route-owned named permissions remain authoritative" },
   { classification: "personal", prefixes: ["/api/slack"], reason: "authenticated Slack Mod setup and operational status; route-owned Mod and named permissions remain authoritative" },
