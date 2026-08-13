@@ -1,7 +1,15 @@
 import {
   useSidebar,
 } from "@/components/ui/sidebar";
-import { useCallback, useEffect, useMemo, useRef, useState, type RefCallback } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type RefCallback,
+} from "react";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { useSessionActivity } from "@/hooks/use-session-activity";
 import { usePageActivity } from "@/hooks/use-page-activity";
@@ -375,6 +383,61 @@ const TEXT_ACTIVITY_VISUAL_STATE = {
   tool: "tool_call",
 } as const satisfies Record<ReturnType<typeof useSessionActivity>["visibleAssistantActivity"], AgentVisualState>;
 
+/** Hold duration before the top-left orb opens Report Issue instead of toggling nav. */
+const ORB_REPORT_HOLD_MS = 500;
+
+/** Shared pointer-hold handlers for the always-visible top-left agent orb. */
+function useOrbReportHold(onLongPress?: () => void) {
+  const holdTimerRef = useRef<number | null>(null);
+  const holdFiredRef = useRef(false);
+
+  const clearHoldTimer = useCallback(() => {
+    if (holdTimerRef.current !== null) {
+      window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearHoldTimer(), [clearHoldTimer]);
+
+  const onPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0 || !onLongPress) return;
+      holdFiredRef.current = false;
+      clearHoldTimer();
+      holdTimerRef.current = window.setTimeout(() => {
+        holdTimerRef.current = null;
+        holdFiredRef.current = true;
+        onLongPress();
+      }, ORB_REPORT_HOLD_MS);
+    },
+    [clearHoldTimer, onLongPress],
+  );
+
+  const onContextMenu = useCallback(
+    (event: { preventDefault: () => void }) => {
+      // Long-press is the report-issue gesture; suppress the native menu on hold.
+      if (onLongPress) event.preventDefault();
+    },
+    [onLongPress],
+  );
+
+  const consumeHoldClick = useCallback(() => {
+    if (!holdFiredRef.current) return false;
+    holdFiredRef.current = false;
+    return true;
+  }, []);
+
+  return {
+    onPointerDown,
+    onPointerUp: clearHoldTimer,
+    onPointerCancel: clearHoldTimer,
+    onPointerLeave: clearHoldTimer,
+    onContextMenu,
+    consumeHoldClick,
+  };
+}
+
 interface NavigationOrbProps {
   status: string;
   visualState: AgentVisualState;
@@ -382,29 +445,49 @@ interface NavigationOrbProps {
   voiceSession: ReturnType<typeof useVoiceSessionOptional>;
   targetRef?: RefCallback<HTMLButtonElement>;
   onClick?: () => void;
+  onLongPress?: () => void;
 }
 
-function NavigationOrb({ status, visualState, audioLevel, voiceSession, targetRef, onClick }: NavigationOrbProps) {
+function NavigationOrb({
+  status,
+  visualState,
+  audioLevel,
+  voiceSession,
+  targetRef,
+  onClick,
+  onLongPress,
+}: NavigationOrbProps) {
   const orbProps = {
     state: visualState,
     audioLevel,
     maxFrameRate: 20,
     className: "pointer-events-none absolute inset-0",
   } as const;
+  const hold = useOrbReportHold(onLongPress);
 
   return (
     <button
       ref={targetRef}
       type="button"
+      onPointerDown={hold.onPointerDown}
+      onPointerUp={hold.onPointerUp}
+      onPointerCancel={hold.onPointerCancel}
+      onPointerLeave={hold.onPointerLeave}
+      onContextMenu={hold.onContextMenu}
       onClick={(e) => {
         e.stopPropagation();
+        if (hold.consumeHoldClick()) {
+          e.preventDefault();
+          return;
+        }
         onClick?.();
       }}
       className={cn(
         "relative ml-1 flex h-7 w-7 shrink-0 cursor-pointer select-none items-center justify-center overflow-hidden rounded-md border border-transparent bg-background p-0 transition-colors hover:border-active",
         statusRingColors[status] && `ring-1 ${statusRingColors[status]}`,
       )}
-      aria-label="Open main navigation"
+      aria-label="Open main navigation. Hold to report an issue."
+      title="Hold to report an issue"
       data-testid="button-sidebar-toggle"
       data-voice-state={visualState}
     >
@@ -471,14 +554,35 @@ export function NavigationOrbButton() {
     toggleSidebar();
   }, [isMobile, openMobile, setWidgetOpen, toggleSidebar]);
 
+  const handleReportIssue = useCallback(() => {
+    openIssueCaptureDialog();
+  }, []);
+  const hold = useOrbReportHold(handleReportIssue);
+
   if (isPageActive) {
     return (
       <button
         type="button"
         ref={targetRef}
-        onClick={handleClick}
-        aria-label={open || openMobile ? "Close navigation" : "Open navigation"}
-        className="relative ml-1 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-active hover:bg-white/5"
+        onPointerDown={hold.onPointerDown}
+        onPointerUp={hold.onPointerUp}
+        onPointerCancel={hold.onPointerCancel}
+        onPointerLeave={hold.onPointerLeave}
+        onContextMenu={hold.onContextMenu}
+        onClick={(event) => {
+          if (hold.consumeHoldClick()) {
+            event.preventDefault();
+            return;
+          }
+          handleClick();
+        }}
+        aria-label={
+          openMobile
+            ? "Close navigation. Hold to report an issue."
+            : "Open navigation. Hold to report an issue."
+        }
+        title="Hold to report an issue"
+        className="relative ml-1 flex h-7 w-7 shrink-0 cursor-pointer select-none items-center justify-center rounded-md text-active hover:bg-white/5"
         data-testid="nav-orb"
         data-page-active="true"
       >
@@ -495,6 +599,7 @@ export function NavigationOrbButton() {
       audioLevel={audioLevel}
       voiceSession={voiceVisualActive ? voiceSession : null}
       onClick={handleClick}
+      onLongPress={handleReportIssue}
     />
   );
 }
