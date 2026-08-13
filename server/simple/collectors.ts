@@ -1619,7 +1619,9 @@ function itemFromSessionReview(params: {
     time: Number.isNaN(observedDate.getTime())
       ? formatInboxDate(dateInTimezone(params.observedAt, params.timezone), params.timezone)
       : stackTimeOverDate(formatClockTime(observedDate, params.timezone), observedDate, params.timezone),
-    completable: false,
+    // Check-circle clear resolves the owning Session review producers so the
+    // row leaves both Home INBOX and Session Menu REVIEW on the next rebuild.
+    completable: true,
     payload: {
       kind: "session_review",
       reviewKind: params.reviewKind,
@@ -1631,6 +1633,18 @@ function itemFromSessionReview(params: {
       inboxAddedAt: params.observedAt,
     },
     actions: [
+      {
+        id: `clear-session-review-${params.sessionId}`,
+        label: "Clear review",
+        type: "complete",
+        sourceRef,
+        payload: {
+          kind: "session_review",
+          sessionId: params.sessionId,
+          reviewKind: params.reviewKind,
+          reviewKinds: params.reviewKinds,
+        },
+      },
       {
         id: `open-session-${params.sessionId}`,
         label: "Open session",

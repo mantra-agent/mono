@@ -1745,6 +1745,11 @@ export interface IChatFileStorage {
    * or not a system_notice.
    */
   dismissSystemNotice(sessionId: string, messageId: string): Promise<boolean>;
+  /**
+   * Dismiss every undismissed system_notice and clear session errorSeverity.
+   * Used by Home INBOX check-circle clear so the session leaves REVIEW.
+   */
+  dismissAllSystemNotices(sessionId: string): Promise<{ dismissed: number }>;
   setGitWriteOverride(id: string, enabled: boolean): Promise<void>;
   updateSessionContextFlags(
     id: string,
@@ -4637,6 +4642,47 @@ export const chatFileStorage: IChatFileStorage = {
         session: convToMeta(data),
       });
       return true;
+    });
+  },
+
+  async dismissAllSystemNotices(sessionId: string): Promise<{ dismissed: number }> {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data) return { dismissed: 0 };
+
+      const now = new Date().toISOString();
+      let dismissed = 0;
+      for (const msg of data.messages) {
+        if (msg.role !== "system_notice") continue;
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = JSON.parse(msg.content) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        if (typeof parsed.severity !== "string" || typeof parsed.description !== "string") {
+          continue;
+        }
+        if (typeof parsed.dismissedAt === "string" && parsed.dismissedAt) continue;
+        parsed.dismissedAt = now;
+        msg.content = JSON.stringify(parsed);
+        msg.updatedAt = now;
+        dismissed += 1;
+      }
+
+      if (dismissed === 0 && data.errorSeverity == null) {
+        return { dismissed: 0 };
+      }
+
+      data.errorSeverity = null;
+      data.updatedAt = now;
+      await writeConv(data);
+      invalidateSessionsCache({
+        action: "updated",
+        sessionId,
+        session: convToMeta(data),
+      });
+      return { dismissed };
     });
   },
 

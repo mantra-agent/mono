@@ -9,6 +9,13 @@ import { generateSimpleFeed } from "../simple/generate-feed";
 import { goalsService } from "../goals-service";
 import { dismissPeopleSurface, snoozePeopleSurface } from "../simple/people-surface-state";
 import { dismissBuildDeploymentHomeItem } from "../mods/build-deployment-home";
+import { chatFileStorage } from "../chat-file-storage";
+import { emailDraftStorage } from "../email-draft-storage";
+import { updatePlanStatus } from "../plan-service";
+import { db } from "../db";
+import { planExecutions } from "@shared/schema";
+import { and, eq, isNull } from "drizzle-orm";
+import { combineWithWritableScope } from "../scoped-storage";
 import type { GoalHorizon, GoalIndexEntry } from "@shared/models/goals";
 import type { Task } from "@shared/models/work";
 import type { Principal } from "../principal";
@@ -279,6 +286,110 @@ async function completeBuildDeployment(
   return { ok: true, type: "build_deployment", projectionId };
 }
 
+/**
+ * Home INBOX check-circle clear for Session Menu REVIEW rows.
+ * Clears the owning producers so the session leaves REVIEW:
+ * undismissed system notices, active questions, needs_review plans (paused),
+ * and unsent session-linked email drafts (discarded).
+ */
+async function completeSessionReview(
+  principal: Principal,
+  homeItemId: string | null,
+  payload: Record<string, unknown>,
+) {
+  const sessionId = stringValue(payload.sessionId);
+  if (!sessionId) {
+    const err = new Error("sessionId is required");
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  if (homeItemId && homeItemId !== `session-review-${sessionId}`) {
+    const err = new Error("Home item identity does not match session review");
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  if (principal.actorType !== "user") {
+    const err = new Error("Session review clear requires an authenticated user");
+    (err as any).statusCode = 403;
+    throw err;
+  }
+
+  const session = await chatFileStorage.getSession(sessionId);
+  if (!session) {
+    const err = new Error("Session not found");
+    (err as any).statusCode = 404;
+    throw err;
+  }
+
+  const notices = await chatFileStorage.dismissAllSystemNotices(sessionId);
+  const question = await chatFileStorage.recordQuestionCancellation(
+    sessionId,
+    "user_cancelled",
+  );
+
+  const planScopeColumns = {
+    ownerUserId: planExecutions.ownerUserId,
+    accountId: planExecutions.accountId,
+  };
+  const planRows = await db
+    .select({ id: planExecutions.id })
+    .from(planExecutions)
+    .where(
+      combineWithWritableScope(
+        principal,
+        planScopeColumns,
+        and(
+          eq(planExecutions.originSessionId, sessionId),
+          eq(planExecutions.status, "needs_review"),
+          isNull(planExecutions.archivedAt),
+        ),
+      ),
+    );
+  let plansPaused = 0;
+  for (const row of planRows) {
+    await updatePlanStatus(row.id, "paused");
+    plansPaused += 1;
+  }
+
+  const draftIds = await emailDraftStorage.listDraftIdsBySession(principal, sessionId);
+  let draftsDiscarded = 0;
+  for (const draftId of draftIds) {
+    const discarded = await emailDraftStorage.discard(principal, draftId);
+    if (discarded) draftsDiscarded += 1;
+  }
+
+  const clearedSomething =
+    notices.dismissed > 0
+    || question.outcome === "cancelled"
+    || plansPaused > 0
+    || draftsDiscarded > 0
+    || Boolean(session.errorSeverity)
+    || Boolean(session.awaitingQuestionResponse);
+
+  if (!clearedSomething) {
+    // Idempotent clear: row may already be gone after a concurrent resolve.
+    return {
+      ok: true,
+      type: "session_review",
+      sessionId,
+      noticesDismissed: notices.dismissed,
+      questionCancelled: false,
+      plansPaused,
+      draftsDiscarded,
+    };
+  }
+
+  return {
+    ok: true,
+    type: "session_review",
+    sessionId,
+    noticesDismissed: notices.dismissed,
+    questionCancelled: question.outcome === "cancelled",
+    plansPaused,
+    draftsDiscarded,
+  };
+}
+
 export function registerHomeRoutes(app: Express) {
   app.get("/api/home/feed", requireAuth, async (req, res) => {
     try {
@@ -396,9 +507,19 @@ export function registerHomeRoutes(app: Express) {
       if (payload.kind === "build_deployment" && (!homeItemId || !buildProjectionId || homeItemId !== `build-deployment-${buildProjectionId}`)) {
         return res.status(400).json({ error: "Home item identity does not match Build deployment projection" });
       }
+      if (payload.kind === "session_review") {
+        const sessionId = stringValue(payload.sessionId);
+        if (!homeItemId || !sessionId || homeItemId !== `session-review-${sessionId}`) {
+          return res.status(400).json({ error: "Home item identity does not match session review" });
+        }
+      }
       const isBuildDeploymentComplete =
         (sourceType === "build" || sourceType === "artifact")
         && payload.kind === "build_deployment"
+        && Boolean(req.principal);
+      const isSessionReviewComplete =
+        sourceType === "session"
+        && payload.kind === "session_review"
         && Boolean(req.principal);
       const result = sourceType === "wellness"
         ? await completeWellness(payload)
@@ -408,7 +529,9 @@ export function registerHomeRoutes(app: Express) {
             ? await completeTask(payload)
             : isBuildDeploymentComplete
               ? await completeBuildDeployment(req.principal!, payload)
-              : null;
+              : isSessionReviewComplete
+                ? await completeSessionReview(req.principal!, homeItemId, payload)
+                : null;
 
       if (!result) return res.status(400).json({ error: "Unsupported Home completion source" });
       res.json(result);
