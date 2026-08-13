@@ -19,6 +19,8 @@ export function sourceRefToReferenceRef(sourceRef: SimpleSourceRef): ReferenceRe
       return createReferenceRef({ type: "meeting", id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href, vaultIds: sourceRef.vaultIds } });
     case "email":
       return createReferenceRef({ type: "email_thread", id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href, vaultIds: sourceRef.vaultIds } });
+    case "session":
+      return createReferenceRef({ type: "session", id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href, vaultIds: sourceRef.vaultIds } });
     case "artifact":
     case "news":
       return createReferenceRef({ type: "file", id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href, sourceType: sourceRef.type } });

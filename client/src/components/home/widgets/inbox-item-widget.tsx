@@ -1,15 +1,83 @@
-import { Inbox } from "lucide-react";
+import {
+  AlertCircle,
+  AlertTriangle,
+  Inbox,
+  MailOpen,
+  MessageCircleQuestion,
+} from "lucide-react";
 import type { SimpleFeedItem } from "@shared/models/simple";
 import { cn } from "@/lib/utils";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { simpleItemReferenceRefs } from "@shared/simple-references";
 
 function stringPayload(item: SimpleFeedItem, key: string): string | null {
   const value = item.payload?.[key];
   return typeof value === "string" ? value : null;
 }
 
+function sessionReviewTone(reviewKind: string | null): {
+  Icon: typeof AlertTriangle;
+  className: string;
+} {
+  switch (reviewKind) {
+    case "error":
+      return { Icon: AlertTriangle, className: "text-destructive" };
+    case "warning":
+      return { Icon: AlertCircle, className: "text-warning" };
+    case "question":
+      return { Icon: MessageCircleQuestion, className: "text-active" };
+    case "approval":
+      return { Icon: MailOpen, className: "text-foreground" };
+    default:
+      return { Icon: Inbox, className: "text-muted-foreground" };
+  }
+}
+
+/** "{Session} had an Error" / "has a Question" / "needs an Approval" */
+function SessionReviewInline({ item }: { item: SimpleFeedItem }) {
+  const reviewKind = stringPayload(item, "reviewKind");
+  const phrase = stringPayload(item, "phrase") ?? "needs";
+  const label = stringPayload(item, "reviewLabel") ?? "Review";
+  const sessionRef =
+    simpleItemReferenceRefs(item).find((ref) => ref.type === "session") ??
+    simpleItemReferenceRefs(item)[0] ??
+    null;
+  const { Icon, className } = sessionReviewTone(reviewKind);
+  const completed = item.status === "completed";
+
+  return (
+    <div
+      className={cn(
+        "mx-1 flex min-w-0 items-center gap-1.5",
+        completed && "opacity-70",
+      )}
+      data-testid={`session-review-inbox-${item.id}`}
+    >
+      {sessionRef ? (
+        <ReferenceRenderer
+          refValue={sessionRef}
+          surface="simple-row"
+          className={cn("mx-0 max-w-[min(100%,14rem)]", completed && "text-neutral hover:text-neutral")}
+        />
+      ) : (
+        <span className="truncate text-xs font-medium">{stringPayload(item, "sessionTitle") ?? item.title}</span>
+      )}
+      <span className="shrink-0 text-xs text-muted-foreground">{phrase}</span>
+      <span className={cn("inline-flex shrink-0 items-center gap-1 text-xs font-medium", className)}>
+        <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+        {label}
+      </span>
+    </div>
+  );
+}
+
 /** Inline mode: renders content for use inside SimpleTreeRow */
 function InboxItemInline({ item }: { item: SimpleFeedItem }) {
   const kind = stringPayload(item, "kind");
+  if (kind === "session_review") {
+    return <SessionReviewInline item={item} />;
+  }
+
   const href = item.actions?.find(a => a.type === "navigate")?.href;
   const completed = item.status === "completed";
   const showKind = kind && kind !== "email_review";
@@ -37,6 +105,14 @@ export function InboxItemWidget({ item, inline }: { item: SimpleFeedItem; inline
   if (inline) return <InboxItemInline item={item} />;
 
   const kind = stringPayload(item, "kind");
+  if (kind === "session_review") {
+    return (
+      <div className="flex min-h-10 items-center rounded-lg px-3 py-2.5 transition-colors hover:bg-accent/50">
+        <SessionReviewInline item={item} />
+      </div>
+    );
+  }
+
   const href = item.actions?.find(a => a.type === "navigate")?.href;
 
   const content = (

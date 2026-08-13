@@ -9,10 +9,15 @@ import {
   emailMessages,
   personEmails,
   persons,
+  planExecutions,
   resolveMeetingJoinMode,
   type GoalIndexEntry,
   type CalendarEventMetadata,
 } from "@shared/schema";
+import type { SessionReviewKind } from "@shared/models/chat";
+import { chatFileStorage } from "../chat-file-storage";
+import { emailDraftStorage } from "../email-draft-storage";
+import { combineWithVisibleScope } from "../scoped-storage";
 import { goalsService } from "../goals-service";
 import type { Task, Project, Milestone } from "@shared/models/work";
 import { formatHour, getWindowLabel, inRange } from "@shared/wellness-window";
@@ -27,7 +32,7 @@ import { ensurePeopleSurfaceStates, listPeopleSurfaceStates } from "./people-sur
 import { signalStorage } from "../news-storage";
 import type { SignalItem } from "@shared/models/signal";
 import { db } from "../db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { requireCurrentPrincipal } from "../principal-context";
 import { queryDistinctInteractionPeopleSeries } from "../interaction-activity";
 import { sensitiveVisiblePredicate } from "../sensitive-scope";
@@ -1453,6 +1458,211 @@ function itemFromProject(project: Project, section: SimpleSection, index: number
   };
 }
 
+// ─── Session review Inbox ───
+// Mirrors Session Menu REVIEW: undismissed error/warning, unanswered question,
+// plan needs_review, and pending session-linked email drafts. One Home row per
+// session with the highest-urgency review kind for navigation.
+
+const SESSION_REVIEW_INBOX_LIMIT = 25;
+const SESSION_REVIEW_PLAN_CHUNK = 100;
+
+type HomeSessionReviewKind = "error" | "warning" | "question" | "approval";
+
+function selectPrimaryHomeSessionReviewKind(
+  kinds: SessionReviewKind[],
+): HomeSessionReviewKind | null {
+  if (kinds.includes("error")) return "error";
+  if (kinds.includes("warning")) return "warning";
+  if (kinds.includes("question")) return "question";
+  if (
+    kinds.some(
+      (kind) =>
+        kind === "plan_review" ||
+        kind === "email_draft" ||
+        kind === "email_reply" ||
+        kind === "meeting_recap",
+    )
+  ) {
+    return "approval";
+  }
+  return null;
+}
+
+function homeSessionReviewPresentation(kind: HomeSessionReviewKind): {
+  phrase: string;
+  label: string;
+  priority: number;
+} {
+  switch (kind) {
+    case "error":
+      return { phrase: "had an", label: "Error", priority: 1 };
+    case "warning":
+      return { phrase: "had a", label: "Warning", priority: 2 };
+    case "question":
+      return { phrase: "has a", label: "Question", priority: 3 };
+    case "approval":
+      return { phrase: "needs an", label: "Approval", priority: 4 };
+  }
+}
+
+async function listPlanReviewSessionIds(sessionIds: string[]): Promise<Set<string>> {
+  const uniqueIds = Array.from(new Set(sessionIds.filter(Boolean)));
+  const reviewIds = new Set<string>();
+  if (uniqueIds.length === 0) return reviewIds;
+
+  const principal = requireCurrentPrincipal();
+  const planScopeColumns = {
+    ownerUserId: planExecutions.ownerUserId,
+    accountId: planExecutions.accountId,
+  };
+
+  for (let i = 0; i < uniqueIds.length; i += SESSION_REVIEW_PLAN_CHUNK) {
+    const chunk = uniqueIds.slice(i, i + SESSION_REVIEW_PLAN_CHUNK);
+    const rows = await db
+      .select({ sessionId: planExecutions.originSessionId })
+      .from(planExecutions)
+      .where(
+        combineWithVisibleScope(
+          principal,
+          planScopeColumns,
+          and(
+            inArray(planExecutions.originSessionId, chunk),
+            eq(planExecutions.status, "needs_review"),
+            isNull(planExecutions.archivedAt),
+          ),
+        ),
+      );
+    for (const row of rows) {
+      if (row.sessionId) reviewIds.add(row.sessionId);
+    }
+  }
+  return reviewIds;
+}
+
+function itemFromSessionReview(params: {
+  sessionId: string;
+  sessionTitle: string;
+  vaultId?: string;
+  observedAt: string;
+  reviewKind: HomeSessionReviewKind;
+  reviewKinds: SessionReviewKind[];
+  index: number;
+  timezone: string;
+}): SimpleFeedItem {
+  const presentation = homeSessionReviewPresentation(params.reviewKind);
+  const href = `/session?c=${encodeURIComponent(params.sessionId)}`;
+  const label = params.sessionTitle.trim() || "Session";
+  const sourceRef: SimpleSourceRef = {
+    type: "session",
+    id: params.sessionId,
+    label,
+    href,
+    observedAt: params.observedAt,
+    vaultIds: params.vaultId ? [params.vaultId] : undefined,
+  };
+  const reference = createReferenceRef({
+    type: "session",
+    id: params.sessionId,
+    metadata: { label, href },
+  });
+  const observedDate = new Date(params.observedAt);
+  const title = `${label} ${presentation.phrase} ${presentation.label}`;
+
+  return {
+    id: `session-review-${params.sessionId}`,
+    section: "inbox",
+    widgetType: "inbox_item",
+    title,
+    status: "active",
+    priority: presentation.priority,
+    sourceRefs: [sourceRef],
+    references: [reference],
+    anchorTime: params.observedAt,
+    actionTime: params.observedAt,
+    time: Number.isNaN(observedDate.getTime())
+      ? formatInboxDate(dateInTimezone(params.observedAt, params.timezone), params.timezone)
+      : stackTimeOverDate(formatClockTime(observedDate, params.timezone), observedDate, params.timezone),
+    completable: false,
+    payload: {
+      kind: "session_review",
+      reviewKind: params.reviewKind,
+      reviewLabel: presentation.label,
+      phrase: presentation.phrase,
+      sessionId: params.sessionId,
+      sessionTitle: label,
+      reviewKinds: params.reviewKinds,
+      inboxAddedAt: params.observedAt,
+    },
+    actions: [
+      {
+        id: `open-session-${params.sessionId}`,
+        label: "Open session",
+        type: "navigate",
+        href,
+        sourceRef,
+      },
+    ],
+  };
+}
+
+async function collectSessionReviewInboxItems(timezone: string): Promise<SimpleFeedItem[]> {
+  const principal = requireCurrentPrincipal();
+  if (principal.actorType !== "user") return [];
+
+  const sessions = await chatFileStorage.getAllSessions();
+  const candidates = sessions.filter((session) => !session.archivedAt);
+  if (candidates.length === 0) return [];
+
+  const sessionIds = candidates.map((session) => session.id);
+  const [emailKindsBySession, planReviewSessionIds] = await Promise.all([
+    emailDraftStorage.getPendingReviewKindsBySession(principal, sessionIds),
+    listPlanReviewSessionIds(sessionIds),
+  ]);
+
+  const items: SimpleFeedItem[] = [];
+  for (const session of candidates) {
+    const kinds: SessionReviewKind[] = [];
+    if (session.awaitingQuestionResponse) kinds.push("question");
+    if (planReviewSessionIds.has(session.id)) kinds.push("plan_review");
+    const emailKinds = emailKindsBySession.get(session.id);
+    if (emailKinds?.length) kinds.push(...emailKinds);
+    if (session.errorSeverity === "error") {
+      kinds.push("error");
+    } else if (
+      session.errorSeverity === "warning" ||
+      (session.errorSeverity as string | null | undefined) === "warn"
+    ) {
+      kinds.push("warning");
+    }
+
+    const primary = selectPrimaryHomeSessionReviewKind(kinds);
+    if (!primary) continue;
+
+    items.push(
+      itemFromSessionReview({
+        sessionId: session.id,
+        sessionTitle: session.title || "Session",
+        vaultId: session.vaultId,
+        observedAt: session.updatedAt || session.createdAt || new Date().toISOString(),
+        reviewKind: primary,
+        reviewKinds: Array.from(new Set(kinds)),
+        index: items.length,
+        timezone,
+      }),
+    );
+  }
+
+  return items
+    .sort((a, b) => {
+      const priorityDelta = (a.priority ?? 100) - (b.priority ?? 100);
+      if (priorityDelta !== 0) return priorityDelta;
+      const aMs = Date.parse(String(a.anchorTime ?? "")) || 0;
+      const bMs = Date.parse(String(b.anchorTime ?? "")) || 0;
+      return bMs - aMs;
+    })
+    .slice(0, SESSION_REVIEW_INBOX_LIMIT);
+}
+
 // ─── Build deployment Inbox ───
 
 function itemFromBuildDeployment(
@@ -1711,6 +1921,17 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`Build deployment collection failed: ${message}`);
     errors.push({ source: "build-deployments", message });
+  }
+
+  // Session REVIEW inbox: same undismissed review projection as Session Menu,
+  // presented as navigable Home rows with session chips + type labels.
+  try {
+    const sessionReviewItems = await collectSessionReviewInboxItems(timezone);
+    items.push(...sessionReviewItems);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error(`session review collection failed: ${message}`);
+    errors.push({ source: "session-review", message });
   }
 
   // Shared email→person map (email review sender chips + meeting attendee matching)
