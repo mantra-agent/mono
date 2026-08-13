@@ -1110,6 +1110,42 @@ function taskSection(task: Task, today: string, tomorrow: string, weekEnd: strin
   return "this_year"; // beyond next year remains clamped to this_year
 }
 
+/**
+ * Home surfaces obligation, not bulk grant visibility.
+ * - Projects/milestones: only owner-managed rows (`canManageVaults`).
+ * - Tasks: assigned to the current user, or user/agent work on those owned projects
+ *   (and standalone user/agent tasks). Shared-project grant access alone never
+ *   populates the Home bar.
+ */
+function isHomeOwnedProject(project: Project): boolean {
+  return project.canManageVaults === true;
+}
+
+function isHomeBarTask(
+  task: Task,
+  principalUserId: string | undefined,
+  ownedProjectIds: ReadonlySet<number>,
+): boolean {
+  if (
+    task.assigneeSubjectType === "user"
+    && task.assigneeSubjectId
+    && principalUserId
+    && task.assigneeSubjectId === principalUserId
+  ) {
+    return true;
+  }
+
+  if (task.projectId != null && ownedProjectIds.has(task.projectId)) {
+    return task.owner === "me" || task.owner === "agent";
+  }
+
+  if (task.projectId == null) {
+    return task.owner === "me" || task.owner === "agent";
+  }
+
+  return false;
+}
+
 function itemFromTask(task: Task, today: string, tomorrow: string, weekEnd: string, monthEnd: string, quarterEnd: string, yearEnd: string, index: number, milestoneMap: Map<string, Milestone>): SimpleFeedItem {
   const sourceRef: SimpleSourceRef = {
     type: "task",
@@ -1806,14 +1842,27 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     errors.push({ source: "goal", message });
   }
 
-  // Build milestone lookup map from active projects (needed by tasks and milestones)
+  // Build milestone lookup map from active projects (needed by tasks and milestones).
+  // Grant-visible shared projects stay in the map for deadline inheritance on
+  // assigned tasks, but Home only emits owner-managed projects/milestones.
   let milestoneMap = new Map<string, Milestone>();
   let activeProjects: Project[] = [];
+  let homeProjects: Project[] = [];
+  let homeProjectIds = new Set<number>();
   let completedTodayProjects: Project[] = [];
+  let principalUserId: string | undefined;
   try {
+    const principal = requireCurrentPrincipal();
+    principalUserId = principal.actorType === "user" ? principal.userId ?? undefined : undefined;
     const allProjects = await fileProjectStorage.getProjects();
     activeProjects = allProjects.filter(p => p.status === "active" || p.status === "planning");
-    completedTodayProjects = allProjects.filter(p => p.status === "completed" && isTodayInTimezone(p.completedAt, timezone));
+    homeProjects = activeProjects.filter(isHomeOwnedProject);
+    homeProjectIds = new Set(homeProjects.map(project => project.id));
+    completedTodayProjects = allProjects.filter(
+      p => p.status === "completed"
+        && isHomeOwnedProject(p)
+        && isTodayInTimezone(p.completedAt, timezone),
+    );
     for (const project of activeProjects) {
       for (const milestone of project.milestones ?? []) {
         milestoneMap.set(`${project.id}-${milestone.id}`, milestone);
@@ -1834,6 +1883,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     ]);
     [...readyTasks, ...activeTasks]
       .filter(task => {
+        if (!isHomeBarTask(task, principalUserId, homeProjectIds)) return false;
         const milestone = task.milestoneId && task.projectId != null
           ? milestoneMap.get(`${task.projectId}-${task.milestoneId}`)
           : undefined;
@@ -1847,7 +1897,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
       })
       .forEach((task, index) => items.push(itemFromTask(task, today, tomorrow, weekEnd, monthEnd, quarterEnd, yearEnd, index, milestoneMap)));
     completedTasks
-      .filter(task => isTodayInTimezone(task.updatedAt, timezone))
+      .filter(task => isHomeBarTask(task, principalUserId, homeProjectIds) && isTodayInTimezone(task.updatedAt, timezone))
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
       .forEach((task, index) => items.push({ ...itemFromTask(task, today, tomorrow, weekEnd, monthEnd, quarterEnd, yearEnd, 80 + index, milestoneMap), section: "done", status: "completed", completedAt: task.updatedAt }));
   } catch (err) {
@@ -2019,9 +2069,9 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     errors.push({ source: "calendar", message });
   }
 
-  // Projects (active/planning only, restricted to this_month/this_quarter)
+  // Projects (owner-managed active/planning only — not grant-shared bulk)
   try {
-    activeProjects.forEach((project, index) => {
+    homeProjects.forEach((project, index) => {
       const section = projectSection(project, today, monthEnd, quarterEnd, yearEnd, nextYearEnd);
       items.push(itemFromProject(project, section, index));
     });
@@ -2033,9 +2083,9 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     errors.push({ source: "project", message });
   }
 
-  // Milestones (independent items in this_week/this_month)
+  // Milestones (owner-managed projects only)
   try {
-    for (const project of activeProjects) {
+    for (const project of homeProjects) {
       for (const milestone of project.milestones ?? []) {
         // Milestones completed today land in DONE until the next calendar day; older completions drop out.
         if (milestone.status === "completed" && !isTodayInTimezone(milestone.completedAt, timezone)) continue;
