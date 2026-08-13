@@ -12,29 +12,50 @@ import { requireCurrentPrincipal } from "./principal-context";
 import { createLogger } from "./log";
 
 // REST surface over BusinessStorage for the Definition page: identity scalars
-// plus the three fixed narrative slots (Values / Vision / Mission), each a
-// linked Library page resolved through the canonical reference system. Reads
-// enrich the stored `*_page_id` soft-refs into `{ id, title, slug }` so the
-// client can render the shared inline library-page editor without a second
-// round-trip per slot. Every read/write flows through the principal-scoped
-// BusinessStorage and scoped library predicates — no unscoped table reads.
+// plus the fixed narrative slots (Values / Vision / Mission / Phases / Pitch /
+// GTM), each a linked Library page resolved through the canonical reference
+// system. Reads enrich the stored `*_page_id` soft-refs into `{ id, title, slug }`
+// so the client can render the shared inline library-page editor without a
+// second round-trip per slot. Every read/write flows through the
+// principal-scoped BusinessStorage and scoped library predicates — no unscoped
+// table reads.
 
 const log = createLogger("BusinessDefinitionRoutes");
 
-const NARRATIVE_SLOTS = ["values", "vision", "mission"] as const;
+const NARRATIVE_SLOTS = ["values", "vision", "mission", "phases", "pitch", "gtm"] as const;
 type NarrativeSlot = (typeof NARRATIVE_SLOTS)[number];
+type NarrativeColumn = `${NarrativeSlot}PageId`;
 
 const SLOT_LABEL: Record<NarrativeSlot, string> = {
   values: "Values",
   vision: "Vision",
   mission: "Mission",
+  phases: "Phases",
+  pitch: "Pitch",
+  gtm: "GTM",
 };
 
-const SLOT_COLUMN: Record<NarrativeSlot, "valuesPageId" | "visionPageId" | "missionPageId"> = {
+const SLOT_COLUMN: Record<NarrativeSlot, NarrativeColumn> = {
   values: "valuesPageId",
   vision: "visionPageId",
   mission: "missionPageId",
+  phases: "phasesPageId",
+  pitch: "pitchPageId",
+  gtm: "gtmPageId",
 };
+
+function narrativePageIds(business: Business): string[] {
+  return NARRATIVE_SLOTS.map((slot) => business[SLOT_COLUMN[slot]] ?? "");
+}
+
+function narrativePages(business: Business, refs: Map<string, NarrativePageRef>): Record<`${NarrativeSlot}Page`, NarrativePageRef | null> {
+  return Object.fromEntries(
+    NARRATIVE_SLOTS.map((slot) => {
+      const pageId = business[SLOT_COLUMN[slot]];
+      return [`${slot}Page`, pageId ? refs.get(pageId) ?? null : null];
+    }),
+  ) as Record<`${NarrativeSlot}Page`, NarrativePageRef | null>;
+}
 
 const libraryScopeColumns = {
   scope: libraryPages.scope,
@@ -53,6 +74,9 @@ interface BusinessDefinitionView extends Business {
   valuesPage: NarrativePageRef | null;
   visionPage: NarrativePageRef | null;
   missionPage: NarrativePageRef | null;
+  phasesPage: NarrativePageRef | null;
+  pitchPage: NarrativePageRef | null;
+  gtmPage: NarrativePageRef | null;
 }
 
 const createSchema = z.object({
@@ -113,29 +137,13 @@ async function loadNarrativeRefs(pageIds: string[]): Promise<Map<string, Narrati
 }
 
 async function toView(business: Business): Promise<BusinessDefinitionView> {
-  const refs = await loadNarrativeRefs([
-    business.valuesPageId ?? "",
-    business.visionPageId ?? "",
-    business.missionPageId ?? "",
-  ]);
-  return {
-    ...business,
-    valuesPage: business.valuesPageId ? refs.get(business.valuesPageId) ?? null : null,
-    visionPage: business.visionPageId ? refs.get(business.visionPageId) ?? null : null,
-    missionPage: business.missionPageId ? refs.get(business.missionPageId) ?? null : null,
-  };
+  const refs = await loadNarrativeRefs(narrativePageIds(business));
+  return { ...business, ...narrativePages(business, refs) };
 }
 
 async function toViews(list: Business[]): Promise<BusinessDefinitionView[]> {
-  const refs = await loadNarrativeRefs(
-    list.flatMap((b) => [b.valuesPageId ?? "", b.visionPageId ?? "", b.missionPageId ?? ""]),
-  );
-  return list.map((business) => ({
-    ...business,
-    valuesPage: business.valuesPageId ? refs.get(business.valuesPageId) ?? null : null,
-    visionPage: business.visionPageId ? refs.get(business.visionPageId) ?? null : null,
-    missionPage: business.missionPageId ? refs.get(business.missionPageId) ?? null : null,
-  }));
+  const refs = await loadNarrativeRefs(list.flatMap(narrativePageIds));
+  return list.map((business) => ({ ...business, ...narrativePages(business, refs) }));
 }
 
 export function registerBusinessDefinitionRoutes(app: Express): void {
@@ -237,13 +245,7 @@ export function registerBusinessDefinitionRoutes(app: Express): void {
           explicitVaultId: business.vaultIds[0] ?? null,
           tags: ["business-narrative", `business-${slot}`],
         });
-        const patch =
-          slot === "values"
-            ? { valuesPageId: page.id }
-            : slot === "vision"
-              ? { visionPageId: page.id }
-              : { missionPageId: page.id };
-        const updated = await businessStorage.update(business.id, patch);
+        const updated = await businessStorage.update(business.id, { [column]: page.id });
         log.info("business narrative page created", { businessId: business.id, slot, pageId: page.id });
         res.status(201).json(await toView(updated));
       } catch (error) {

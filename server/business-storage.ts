@@ -34,6 +34,9 @@ export interface Business {
   valuesPageId: string | null;
   visionPageId: string | null;
   missionPageId: string | null;
+  phasesPageId: string | null;
+  pitchPageId: string | null;
+  gtmPageId: string | null;
   dataRoomUrl: string | null;
   status: string;
   isPlatformInstrument: boolean;
@@ -65,6 +68,9 @@ export async function ensureBusinessesSchema(): Promise<void> {
       values_page_id text,
       vision_page_id text,
       mission_page_id text,
+      phases_page_id text,
+      pitch_page_id text,
+      gtm_page_id text,
       data_room_url text,
       status text NOT NULL DEFAULT 'active',
       is_platform_instrument boolean NOT NULL DEFAULT false,
@@ -78,6 +84,9 @@ export async function ensureBusinessesSchema(): Promise<void> {
   `);
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS is_platform_instrument boolean NOT NULL DEFAULT false`);
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS data_room_url text`);
+  await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS phases_page_id text`);
+  await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS pitch_page_id text`);
+  await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS gtm_page_id text`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_businesses_owner ON businesses(owner_user_id, account_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_businesses_scope_owner ON businesses(scope, owner_user_id)`);
 
@@ -141,6 +150,9 @@ function hydrate(row: BusinessRow, vaultIds: string[]): Business {
     valuesPageId: row.valuesPageId ?? null,
     visionPageId: row.visionPageId ?? null,
     missionPageId: row.missionPageId ?? null,
+    phasesPageId: row.phasesPageId ?? null,
+    pitchPageId: row.pitchPageId ?? null,
+    gtmPageId: row.gtmPageId ?? null,
     dataRoomUrl: row.dataRoomUrl ?? null,
     status: row.status,
     isPlatformInstrument: row.isPlatformInstrument,
@@ -203,6 +215,9 @@ export const businessStorage = {
         valuesPageId: input.valuesPageId ?? null,
         visionPageId: input.visionPageId ?? null,
         missionPageId: input.missionPageId ?? null,
+        phasesPageId: input.phasesPageId ?? null,
+        pitchPageId: input.pitchPageId ?? null,
+        gtmPageId: input.gtmPageId ?? null,
         dataRoomUrl: input.dataRoomUrl ?? null,
         status: "active",
         createdByUserId: principal.userId,
@@ -252,6 +267,9 @@ export const businessStorage = {
     if (patch.valuesPageId !== undefined) updates.valuesPageId = patch.valuesPageId;
     if (patch.visionPageId !== undefined) updates.visionPageId = patch.visionPageId;
     if (patch.missionPageId !== undefined) updates.missionPageId = patch.missionPageId;
+    if (patch.phasesPageId !== undefined) updates.phasesPageId = patch.phasesPageId;
+    if (patch.pitchPageId !== undefined) updates.pitchPageId = patch.pitchPageId;
+    if (patch.gtmPageId !== undefined) updates.gtmPageId = patch.gtmPageId;
     if (patch.dataRoomUrl !== undefined) updates.dataRoomUrl = patch.dataRoomUrl;
     if (patch.status !== undefined) updates.status = patch.status;
 

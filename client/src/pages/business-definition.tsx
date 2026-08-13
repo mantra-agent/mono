@@ -35,6 +35,9 @@ const NARRATIVE_SLOTS = [
   { slot: "values", label: "Values", page: (b: BusinessDefinition) => b.valuesPage },
   { slot: "vision", label: "Vision", page: (b: BusinessDefinition) => b.visionPage },
   { slot: "mission", label: "Mission", page: (b: BusinessDefinition) => b.missionPage },
+  { slot: "phases", label: "Phases", page: (b: BusinessDefinition) => b.phasesPage },
+  { slot: "pitch", label: "Pitch", page: (b: BusinessDefinition) => b.pitchPage },
+  { slot: "gtm", label: "GTM", page: (b: BusinessDefinition) => b.gtmPage },
 ] as const;
 
 function ScalarField({
