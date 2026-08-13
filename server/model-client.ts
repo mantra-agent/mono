@@ -43,6 +43,12 @@ onSecretChange((name) => {
   }
 });
 
+function codedError(code: string, message: string): Error {
+  const error = new Error(message);
+  (error as Error & { code?: string }).code = code;
+  return error;
+}
+
 function getOpenAIClient(apiKeyOverride?: string, baseURLOverride?: string): OpenAI {
   if (apiKeyOverride) {
     return new OpenAI(
@@ -54,7 +60,7 @@ function getOpenAIClient(apiKeyOverride?: string, baseURLOverride?: string): Ope
   if (!_openaiClient) {
     const apiKey = getSecretSync("OPENAI_API_KEY");
     if (!apiKey) {
-      throw new Error("OpenAI API key not configured — add one in Settings → Secrets");
+      throw codedError("CONNECTOR_NOT_CONFIGURED", "OpenAI API key not configured — add one in Settings → Secrets");
     }
     _openaiClient = new OpenAI({ apiKey });
   }
@@ -98,7 +104,7 @@ async function getOpenAISubscriptionAccessToken(): Promise<string> {
     const { getAccountTokens, updateAccount } = await import("./connected-accounts");
     const rawTokens = await getAccountTokens(OPENAI_SUBSCRIPTION_ACCOUNT_ID);
     if (!isOpenAISubscriptionTokens(rawTokens)) {
-      throw new Error("OpenAI Subscription not connected. Please connect your ChatGPT account in Settings → Connections.");
+      throw codedError("CONNECTOR_NOT_CONFIGURED", "OpenAI Subscription not connected. Please connect your ChatGPT account in Settings → Connections.");
     }
 
     const tokens: OpenAISubscriptionTokens = rawTokens;
@@ -171,7 +177,7 @@ async function getGrokSubscriptionAccessToken(): Promise<string> {
     const { getAccountTokens, updateAccount } = await import("./connected-accounts");
     const rawTokens = await getAccountTokens(GROK_SUBSCRIPTION_ACCOUNT_ID);
     if (!isGrokSubscriptionTokens(rawTokens)) {
-      throw new Error("Grok Subscription not connected. Please connect your xAI account in Settings → Connections.");
+      throw codedError("CONNECTOR_NOT_CONFIGURED", "Grok Subscription not connected. Please connect your xAI account in Settings → Connections.");
     }
 
     const tokens: GrokSubscriptionTokens = rawTokens;
@@ -785,7 +791,7 @@ function enrichModelError(err: unknown, routing: ModelRoutingDecision, metadata?
   (base as EnrichedModelError).inferenceMetadata = metadata;
   if (!(base as Error & { code?: string }).code) {
     const msg = base.message.toLowerCase();
-    (base as Error & { code?: string }).code = msg.includes("rate limit") || msg.includes("quota") ? "PROVIDER_QUOTA" : "MODEL_PROVIDER_ERROR";
+    (base as Error & { code?: string }).code = msg.includes("rate limit") || msg.includes("quota") ? "PROVIDER_QUOTA" : "PROVIDER_UNCLASSIFIED";
   }
   return base;
 }
@@ -2206,7 +2212,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
   if (lastAttemptError) {
     throw modelProviderErrorFromAttempt(lastAttemptError, CODEX_MAX_ATTEMPTS, { model: codexModel, metadata: options.metadata });
   }
-  throw new Error("Codex completion exhausted retries without an attempt error");
+  throw codedError("PROVIDER_RETRY_EXHAUSTED", "Codex completion exhausted retries without an attempt error");
 }
 
 async function claudeCliCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
@@ -2299,7 +2305,7 @@ async function anthropicCompletion(model: string, options: ChatCompletionOptions
       content = JSON.stringify(parsed.data);
     } else {
       log.warn(`Anthropic jsonMode extraction failed: ${parsed.error} — raw: ${content.slice(0, 200)}`);
-      throw new Error(`Anthropic JSON mode failed: ${parsed.error}. Model returned non-JSON: "${content.slice(0, 100)}"`);
+      throw codedError("JSON_MODE_PARSE_FAILED", `Anthropic JSON mode failed: ${parsed.error}. Model returned non-JSON: "${content.slice(0, 100)}"`);
     }
   }
 
@@ -2614,7 +2620,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       }
       throw event.providerFailure
         ? new ModelProviderError(event.providerFailure, undefined, responseContent)
-        : new Error(event.error);
+        : codedError("STREAM_ERROR_UNTYPED", event.error || "Provider stream error without structured failure");
     } else if (event.type === "thinking_delta") {
       if (firstThinkingAt === null) firstThinkingAt = Date.now();
     } else if (event.type === "tool_use_start" || event.type === "tool_use") {
@@ -3105,7 +3111,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
     } else {
       const streamError = normalizeLoggedModelError(
         err,
-        "MODEL_PROVIDER_ERROR",
+        "STREAM_ERROR_UNTYPED",
         err?.message || "OpenAI subscription stream error",
       );
       log.error(`openai-subscription stream ERROR model=${model}`, streamError);
