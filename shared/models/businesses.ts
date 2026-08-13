@@ -15,13 +15,16 @@ export const businesses = pgTable(
     publicName: text("public_name").notNull(),
     // Legal entity name; null until known.
     entityName: text("entity_name"),
-    // Exactly three fixed narrative slots, each a soft reference to a Library
-    // page (canonical reference system), like People's referenced pages. Null
-    // until the page is created. Soft refs mirror business_plans.thematic_goal_id
-    // rather than a hard DB FK so page deletion never blocks a Business.
+    // Fixed narrative slots, each a soft reference to a Library page (canonical
+    // reference system), like People's referenced pages. Null until the page is
+    // created. Soft refs mirror business_plans.thematic_goal_id rather than a
+    // hard DB FK so page deletion never blocks a Business.
     valuesPageId: text("values_page_id"),
     visionPageId: text("vision_page_id"),
     missionPageId: text("mission_page_id"),
+    phasesPageId: text("phases_page_id"),
+    pitchPageId: text("pitch_page_id"),
+    gtmPageId: text("gtm_page_id"),
     // User-configured external destination for the Business data room. The
     // server mutation boundary accepts HTTPS URLs only.
     dataRoomUrl: text("data_room_url"),
@@ -79,6 +82,9 @@ export const businessCreateSchema = z.object({
   valuesPageId: z.string().min(1).nullable().optional(),
   visionPageId: z.string().min(1).nullable().optional(),
   missionPageId: z.string().min(1).nullable().optional(),
+  phasesPageId: z.string().min(1).nullable().optional(),
+  pitchPageId: z.string().min(1).nullable().optional(),
+  gtmPageId: z.string().min(1).nullable().optional(),
   dataRoomUrl: z.string().url().max(2048).refine((value) => new URL(value).protocol === "https:", "Data Room URL must use HTTPS").nullable().optional(),
   vaultIds: z.array(z.string().min(1)).max(64).optional(),
 });
@@ -91,6 +97,9 @@ export const businessPatchSchema = z
     valuesPageId: z.string().min(1).nullable().optional(),
     visionPageId: z.string().min(1).nullable().optional(),
     missionPageId: z.string().min(1).nullable().optional(),
+    phasesPageId: z.string().min(1).nullable().optional(),
+    pitchPageId: z.string().min(1).nullable().optional(),
+    gtmPageId: z.string().min(1).nullable().optional(),
     dataRoomUrl: z.string().url().max(2048).refine((value) => new URL(value).protocol === "https:", "Data Room URL must use HTTPS").nullable().optional(),
     status: businessStatusSchema.optional(),
   })

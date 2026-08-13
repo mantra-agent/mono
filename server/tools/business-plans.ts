@@ -145,6 +145,9 @@ function businessResult(business: Business) {
     valuesPageId: business.valuesPageId,
     visionPageId: business.visionPageId,
     missionPageId: business.missionPageId,
+    phasesPageId: business.phasesPageId,
+    pitchPageId: business.pitchPageId,
+    gtmPageId: business.gtmPageId,
     status: business.status,
     vaultIds: business.vaultIds,
     createdAt: business.createdAt,
@@ -226,6 +229,9 @@ async function handleEntityAction(action: string, args: Record<string, unknown>)
       valuesPageId: optionalStr(args, "valuesPageId"),
       visionPageId: optionalStr(args, "visionPageId"),
       missionPageId: optionalStr(args, "missionPageId"),
+      phasesPageId: optionalStr(args, "phasesPageId"),
+      pitchPageId: optionalStr(args, "pitchPageId"),
+      gtmPageId: optionalStr(args, "gtmPageId"),
       vaultIds: stringArray(args.vaultIds),
     });
     if (!parsed.success) return { result: `business.create_business invalid: ${parsed.error.issues[0]?.message ?? "bad input"}`, error: true };
@@ -249,6 +255,9 @@ async function handleEntityAction(action: string, args: Record<string, unknown>)
       valuesPageId: optionalStr(args, "valuesPageId"),
       visionPageId: optionalStr(args, "visionPageId"),
       missionPageId: optionalStr(args, "missionPageId"),
+      phasesPageId: optionalStr(args, "phasesPageId"),
+      pitchPageId: optionalStr(args, "pitchPageId"),
+      gtmPageId: optionalStr(args, "gtmPageId"),
       status: optionalStr(args, "businessStatus"),
     });
     if (!parsed.success) return { result: `business.update_business invalid: ${parsed.error.issues[0]?.message ?? "bad input"}`, error: true };

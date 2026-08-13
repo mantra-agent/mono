@@ -19,6 +19,9 @@ export interface BusinessDefinition {
   valuesPageId: string | null;
   visionPageId: string | null;
   missionPageId: string | null;
+  phasesPageId: string | null;
+  pitchPageId: string | null;
+  gtmPageId: string | null;
   dataRoomUrl: string | null;
   status: string;
   isPlatformInstrument: boolean;
@@ -26,6 +29,9 @@ export interface BusinessDefinition {
   valuesPage: NarrativePageRef | null;
   visionPage: NarrativePageRef | null;
   missionPage: NarrativePageRef | null;
+  phasesPage: NarrativePageRef | null;
+  pitchPage: NarrativePageRef | null;
+  gtmPage: NarrativePageRef | null;
   createdAt?: string;
   updatedAt?: string;
 }
