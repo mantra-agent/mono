@@ -954,13 +954,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     const { agentProfiles } = await import("@shared/schema");
     const { db } = await import("./db");
     const { eq, sql } = await import("drizzle-orm");
+    const profileWhere = principal.instanceId
+      ? eq(agentProfiles.instanceId, principal.instanceId)
+      : eq(agentProfiles.userId, principal.userId);
 
     const action = args.action;
     if (action === "get") {
       const [profile] = await db
         .select({ agentName: agentProfiles.agentName, metadata: agentProfiles.metadata, relationshipState: agentProfiles.relationshipState })
         .from(agentProfiles)
-        .where(eq(agentProfiles.userId, principal.userId))
+        .where(profileWhere)
         .limit(1);
       if (!profile) return { result: "No agent profile found", error: true };
       return { result: JSON.stringify(profile) };
@@ -979,7 +982,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         const [existing] = await db
           .select({ metadata: agentProfiles.metadata })
           .from(agentProfiles)
-          .where(eq(agentProfiles.userId, principal.userId))
+          .where(profileWhere)
           .limit(1);
         const merged = { ...(existing?.metadata as Record<string, unknown> || {}), ...args.metadata };
         updates.metadata = merged;
@@ -987,7 +990,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       await db
         .update(agentProfiles)
         .set(updates)
-        .where(eq(agentProfiles.userId, principal.userId));
+        .where(profileWhere);
       eventBus.publish({
         category: "agent",
         event: "data:profiles_changed",
@@ -1000,7 +1003,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const [updated] = await db
         .select({ agentName: agentProfiles.agentName, metadata: agentProfiles.metadata })
         .from(agentProfiles)
-        .where(eq(agentProfiles.userId, principal.userId))
+        .where(profileWhere)
         .limit(1);
       return { result: `Agent profile updated: ${JSON.stringify(updated)}` };
     }

@@ -149,7 +149,8 @@ export async function ensureAgentInstanceSchema(pool: ConnectionPool): Promise<v
       END $migration$
     `);
 
-    // Ownership moves toward Instance; user_id remains created_by / dual-write compatibility.
+    // Ownership uniqueness is instance_id. Never recreate the retired user unique.
+    await client.query(`DROP INDEX IF EXISTS idx_agent_profiles_user_unique`);
     await client.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_profiles_instance_unique
         ON agent_profiles(instance_id)
@@ -158,6 +159,11 @@ export async function ensureAgentInstanceSchema(pool: ConnectionPool): Promise<v
     await client.query(
       `CREATE INDEX IF NOT EXISTS idx_agent_profiles_instance ON agent_profiles(instance_id)`,
     );
+
+    // Live leftovers from reverted commercial gates — unread and must not return.
+    await client.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS entitlement`);
+    await client.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS model_access`);
+    await client.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS stripe_customer_id`);
 
     await client.query(`
       COMMENT ON TABLE agent_instances IS
@@ -169,7 +175,7 @@ export async function ensureAgentInstanceSchema(pool: ConnectionPool): Promise<v
     `);
     await client.query(`
       COMMENT ON COLUMN agent_profiles.instance_id IS
-        'Owning Agent Instance. user_id remains created_by / rolling-deploy compatibility dual-write key.'
+        'Owning Agent Instance (unique when set). user_id remains created_by / rolling-deploy dual-write key, not uniqueness.'
     `);
 
     const backfill = await backfillAgentInstances(client);

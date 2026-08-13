@@ -536,23 +536,48 @@ async function ensureProfileRows(
       },
     });
 
-  // Dual-write: user_id remains the rolling-deploy lookup key; instance_id is ownership.
-  await tx
-    .insert(agentProfiles)
-    .values({
-      userId: user.id,
-      accountId,
-      instanceId,
-      agentName: DEFAULT_AGENT_NAME,
-    })
-    .onConflictDoUpdate({
-      target: agentProfiles.userId,
-      set: {
+  // Ownership key is instance_id; user_id stays created_by / dual-write.
+  const [existingByInstance] = await tx
+    .select({ id: agentProfiles.id })
+    .from(agentProfiles)
+    .where(eq(agentProfiles.instanceId, instanceId))
+    .limit(1);
+  if (existingByInstance) {
+    await tx
+      .update(agentProfiles)
+      .set({
+        userId: user.id,
         accountId,
         instanceId,
         updatedAt: sql`CURRENT_TIMESTAMP`,
-      },
-    });
+      })
+      .where(eq(agentProfiles.id, existingByInstance.id));
+    return;
+  }
+
+  const [existingByUser] = await tx
+    .select({ id: agentProfiles.id })
+    .from(agentProfiles)
+    .where(and(eq(agentProfiles.userId, user.id), sql`${agentProfiles.instanceId} IS NULL`))
+    .limit(1);
+  if (existingByUser) {
+    await tx
+      .update(agentProfiles)
+      .set({
+        accountId,
+        instanceId,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(agentProfiles.id, existingByUser.id));
+    return;
+  }
+
+  await tx.insert(agentProfiles).values({
+    userId: user.id,
+    accountId,
+    instanceId,
+    agentName: DEFAULT_AGENT_NAME,
+  });
 }
 
 function normalizeRole(role: string | null | undefined): PrincipalRole {
