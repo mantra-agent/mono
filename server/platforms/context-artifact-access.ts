@@ -6,7 +6,6 @@ import { libraryPages } from "@shared/models/info";
 import {
   environmentContextArtifacts,
   platformProductEnvironments,
-  platformProducts,
   platforms,
 } from "@shared/models/platforms";
 import { visiblePlatform } from "./platform-access";
@@ -32,8 +31,7 @@ export async function listVisibleEnvironmentContextPages(kinds: string[], enviro
     })
     .from(environmentContextArtifacts)
     .innerJoin(platformProductEnvironments, eq(environmentContextArtifacts.environmentId, platformProductEnvironments.id))
-    .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-    .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
+    .innerJoin(platforms, eq(platformProductEnvironments.platformId, platforms.id))
     .innerJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
     .where(and(
       inArray(environmentContextArtifacts.kind, kinds),

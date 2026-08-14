@@ -3,6 +3,7 @@ import { pgTable, text, varchar, serial, integer, real, boolean, timestamp, json
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { libraryPages } from "./models/info";
+import { products } from "./models/platforms";
 import { vaults } from "./models/vaults";
 import { businesses } from "./models/businesses";
 import { DEFAULT_AGENT_NAME } from "./instance-config";
@@ -2421,7 +2422,7 @@ export const workflowRuns = pgTable("workflow_runs", {
   linkedPlanId: text("linked_plan_id").references(() => planExecutions.id, { onDelete: "set null" }),
   linkedProjectId: integer("linked_project_id"),
   linkedPlatformId: integer("linked_platform_id"),
-  linkedProductId: integer("linked_product_id"),
+  linkedProductId: integer("linked_product_id").references(() => products.id, { onDelete: "set null" }),
   linkedEnvironmentId: integer("linked_environment_id"),
   createdBySessionId: text("created_by_session_id"),
   completedAt: timestamp("completed_at", { withTimezone: true }),

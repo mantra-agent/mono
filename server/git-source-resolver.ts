@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { createLogger } from "./log";
 import { getProviderCredential } from "./provider-credential-store";
-import { environmentSourceBindings, platformProductEnvironments, platformProducts, platforms, providerConnections } from "@shared/models/platforms";
+import { environmentSourceBindings, platformProductEnvironments, products, platforms, providerConnections } from "@shared/models/platforms";
 
 const log = createLogger("GitSourceResolver");
 
@@ -72,8 +72,8 @@ export async function resolveGitSource(options: ResolveOptions = {}): Promise<Re
       environmentId: environmentSourceBindings.environmentId,
       platformId: platforms.id,
       platformName: platforms.name,
-      productId: platformProducts.id,
-      productName: platformProducts.name,
+      productId: products.id,
+      productName: products.name,
       environmentName: platformProductEnvironments.name,
       sourceBindingId: environmentSourceBindings.id,
       provider: environmentSourceBindings.provider,
@@ -87,8 +87,8 @@ export async function resolveGitSource(options: ResolveOptions = {}): Promise<Re
     })
     .from(environmentSourceBindings)
     .innerJoin(platformProductEnvironments, eq(platformProductEnvironments.id, environmentSourceBindings.environmentId))
-    .innerJoin(platformProducts, eq(platformProducts.id, platformProductEnvironments.productId))
-    .innerJoin(platforms, eq(platforms.id, platformProducts.platformId))
+    .innerJoin(products, eq(products.id, platformProductEnvironments.productId))
+    .innerJoin(platforms, eq(platforms.id, platformProductEnvironments.platformId))
     .leftJoin(providerConnections, eq(providerConnections.id, environmentSourceBindings.connectionId));
 
   const rows = options.platformEnvironmentId

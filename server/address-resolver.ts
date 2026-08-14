@@ -29,7 +29,8 @@ import {
   environmentPromotionReleases,
   platformDeploymentObservations,
   platformProductEnvironments,
-  platformProducts,
+  productPlatformAssociations,
+  products,
   platforms,
   principleRevisions,
   principles,
@@ -506,17 +507,18 @@ const adapters: AddressResolverAdapter[] = [
   }),
   simpleAdapter("product", async (principal, refs) => {
     if (!principalHasPermission(principal, "build:read")) return resultMap(refs, "unauthorized");
-    const rows = await db.select({ id: platformProducts.id, name: platformProducts.name, description: platformProducts.description, updatedAt: platformProducts.updatedAt }).from(platformProducts)
-      .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
-      .where(and(inArray(platformProducts.id, numbers(refs)), visiblePlatform()));
+    const rows = await db.select({ id: products.id, name: products.name, description: products.description, updatedAt: products.updatedAt }).from(products)
+      .innerJoin(productPlatformAssociations, eq(productPlatformAssociations.productId, products.id))
+      .innerJoin(platforms, eq(productPlatformAssociations.platformId, platforms.id))
+      .where(and(inArray(products.id, numbers(refs)), visiblePlatform()));
     const byId = new Map(rows.map(row => [String(row.id), row]));
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.name, summary: byId.get(ref.id)!.description, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
   }),
   simpleAdapter("environment", async (principal, refs) => {
     if (!principalHasPermission(principal, "build:read")) return resultMap(refs, "unauthorized");
-    const rows = await db.select({ id: platformProductEnvironments.id, name: platformProductEnvironments.name, productName: platformProducts.name, platformName: platforms.name, updatedAt: platformProductEnvironments.updatedAt }).from(platformProductEnvironments)
-      .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-      .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
+    const rows = await db.select({ id: platformProductEnvironments.id, name: platformProductEnvironments.name, productName: products.name, platformName: platforms.name, updatedAt: platformProductEnvironments.updatedAt }).from(platformProductEnvironments)
+      .innerJoin(products, eq(platformProductEnvironments.productId, products.id))
+      .innerJoin(platforms, eq(platformProductEnvironments.platformId, platforms.id))
       .where(and(inArray(platformProductEnvironments.id, numbers(refs)), visiblePlatform()));
     const byId = new Map(rows.map(row => [String(row.id), row]));
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: `${byId.get(ref.id)!.platformName} / ${byId.get(ref.id)!.productName} / ${byId.get(ref.id)!.name}`, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));

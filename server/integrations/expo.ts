@@ -10,7 +10,7 @@ import { getGitCredentialEnv } from "../github-auth";
 import { resolveGitSource } from "../git-source-resolver";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
 import { and, eq } from "drizzle-orm";
-import { environmentHostingBindings, platformProductEnvironments, platformProducts, platforms } from "@shared/models/platforms";
+import { environmentHostingBindings, platformProductEnvironments, products, platforms } from "@shared/models/platforms";
 
 const log = createLogger("Expo");
 
@@ -71,11 +71,11 @@ async function resolveDefaultMobileEnvironmentId(): Promise<number | null> {
   const [row] = await db
     .select({ id: platformProductEnvironments.id })
     .from(platformProductEnvironments)
-    .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-    .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
+    .innerJoin(products, eq(platformProductEnvironments.productId, products.id))
+    .innerJoin(platforms, eq(platformProductEnvironments.platformId, platforms.id))
     .where(and(
       eq(platforms.name, DEFAULT_MOBILE_PLATFORM_NAME),
-      eq(platformProducts.name, DEFAULT_MOBILE_PRODUCT_NAME),
+      eq(products.name, DEFAULT_MOBILE_PRODUCT_NAME),
       eq(platformProductEnvironments.name, DEFAULT_MOBILE_ENVIRONMENT_NAME),
     ))
     .limit(1);
