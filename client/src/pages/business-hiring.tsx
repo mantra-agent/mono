@@ -1,4 +1,4 @@
-import { useMemo, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import {
   Building2,
   Code2,
@@ -37,9 +37,14 @@ import type { BusinessHiringProjection, BusinessHiringSlot } from "@shared/model
 import { currentCalendarMonth } from "@shared/models/business-hiring";
 import type { JobRole, JobTeam } from "@shared/models/job-roles";
 
-/** Match SessionMenu row geometry: px-2 py-1.5, text-sm, icon + label. */
+const ROLE_COL_STORAGE_KEY = "hiring-role-column-width";
+const ROLE_COL_DEFAULT = 192;
+const ROLE_COL_MIN = 128;
+const ROLE_COL_MAX = 420;
+
+/** Match SessionMenu row geometry: px-2 py-1.5, text-sm, icon + label. Width is runtime-driven. */
 const FROZEN_CELL =
-  "sticky left-0 z-10 min-w-[12rem] max-w-[12rem] border-r border-border/20 bg-background px-2 py-1.5 text-left align-middle";
+  "sticky left-0 z-10 border-r border-border/20 bg-background px-2 py-1.5 text-left align-middle";
 /** Same vertical padding as SessionMenu rows — no fixed h-8 that stretches past py-1.5. */
 const MONTH_CELL = "min-w-[2.75rem] px-0 py-1.5 text-center align-middle";
 const YEAR_DIVIDER = "border-l-2 border-border/70";
@@ -62,6 +67,22 @@ const TEAM_ICONS: Record<JobTeam, ComponentType<LucideProps>> = {
   Finance: DollarSign,
   People: Users,
 };
+
+function clampRoleColWidth(width: number): number {
+  return Math.min(ROLE_COL_MAX, Math.max(ROLE_COL_MIN, Math.round(width)));
+}
+
+function readStoredRoleColWidth(): number {
+  if (typeof window === "undefined") return ROLE_COL_DEFAULT;
+  try {
+    const raw = window.localStorage.getItem(ROLE_COL_STORAGE_KEY);
+    if (!raw) return ROLE_COL_DEFAULT;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? clampRoleColWidth(parsed) : ROLE_COL_DEFAULT;
+  } catch {
+    return ROLE_COL_DEFAULT;
+  }
+}
 
 function TeamIcon({ team }: { team: JobTeam | undefined }) {
   const Icon = team ? TEAM_ICONS[team] : Package;
@@ -92,11 +113,13 @@ function RoleRow({
   role,
   months,
   businessId,
+  frozenStyle,
 }: {
   slot: BusinessHiringSlot;
   role: JobRole | undefined;
   months: BusinessHiringProjection["months"];
   businessId: string;
+  frozenStyle: CSSProperties;
 }) {
   const { toast } = useToast();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -119,7 +142,7 @@ function RoleRow({
   const title = role?.title ?? "Unresolved role";
   return (
     <tr>
-      <td className={FROZEN_CELL}>
+      <td className={FROZEN_CELL} style={frozenStyle}>
         <div className="group relative flex w-full items-center gap-2">
           <TeamIcon team={role?.team} />
           <span className="min-w-0 flex-1 truncate text-sm text-foreground" title={role?.team ? `${title} · ${role.team}` : title}>
@@ -185,11 +208,13 @@ function AddRoleRow({
   months,
   businessId,
   onDone,
+  frozenStyle,
 }: {
   roles: JobRole[];
   months: BusinessHiringProjection["months"];
   businessId: string;
   onDone: () => void;
+  frozenStyle: CSSProperties;
 }) {
   const [roleId, setRoleId] = useState(roles[0]?.id ?? "");
   const { toast } = useToast();
@@ -209,7 +234,7 @@ function AddRoleRow({
   });
   return (
     <tr>
-      <td className={FROZEN_CELL}>
+      <td className={FROZEN_CELL} style={frozenStyle}>
         <Select value={roleId} onValueChange={setRoleId}>
           <SelectTrigger className="h-7" aria-label="Job Role"><SelectValue placeholder="Choose a Job Role" /></SelectTrigger>
           <SelectContent>{roles.map((role) => <SelectItem key={role.id} value={role.id}>{role.title}</SelectItem>)}</SelectContent>
@@ -236,6 +261,56 @@ export default function BusinessHiringPage() {
   const { businesses, selectedId, setSelectedId, isLoading: businessesLoading } = useSelectedBusiness();
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
+  const [roleColWidth, setRoleColWidth] = useState(ROLE_COL_DEFAULT);
+  const resizeStartRef = useRef<{ startX: number; startW: number } | null>(null);
+
+  useEffect(() => {
+    setRoleColWidth(readStoredRoleColWidth());
+  }, []);
+
+  const startRoleColResize = useCallback((event: React.MouseEvent | React.PointerEvent) => {
+    if (typeof window === "undefined") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = "clientX" in event ? event.clientX : 0;
+    resizeStartRef.current = { startX, startW: roleColWidth };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    const onMove = (ev: MouseEvent) => {
+      if (!resizeStartRef.current) return;
+      const delta = ev.clientX - resizeStartRef.current.startX;
+      setRoleColWidth(clampRoleColWidth(resizeStartRef.current.startW + delta));
+    };
+    const onUp = (ev: MouseEvent) => {
+      if (!resizeStartRef.current) {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        return;
+      }
+      const delta = ev.clientX - resizeStartRef.current.startX;
+      const finalW = clampRoleColWidth(resizeStartRef.current.startW + delta);
+      setRoleColWidth(finalW);
+      try {
+        window.localStorage.setItem(ROLE_COL_STORAGE_KEY, String(finalW));
+      } catch {
+        // ignore quota / private mode
+      }
+      resizeStartRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [roleColWidth]);
+
+  const frozenStyle = useMemo<CSSProperties>(() => ({
+    width: roleColWidth,
+    minWidth: roleColWidth,
+    maxWidth: roleColWidth,
+  }), [roleColWidth]);
+
   const key = ["/api/business/hiring", selectedId] as const;
   const { data, isLoading } = useQuery<BusinessHiringProjection>({
     queryKey: key,
@@ -276,11 +351,26 @@ export default function BusinessHiringPage() {
             </button>
           )}
           {data.roles.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">Create a Job Role first in Roles.</div> : null}
-          <div className="overflow-x-auto border-y border-border/20">
+          <div className="overflow-x-auto border-y border-border/20 scrollbar-visible">
             <table className="w-max min-w-full border-collapse text-sm tabular-nums">
               <thead>
                 <tr>
-                  <th className={cn(FROZEN_CELL, SHEET_HEADER_CLASS, "z-20 border-b")}>Role</th>
+                  <th className={cn(FROZEN_CELL, SHEET_HEADER_CLASS, "relative z-20 border-b")} style={frozenStyle}>
+                    Role
+                    <div
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label="Resize role column"
+                      aria-valuemin={ROLE_COL_MIN}
+                      aria-valuemax={ROLE_COL_MAX}
+                      aria-valuenow={roleColWidth}
+                      onMouseDown={startRoleColResize}
+                      className="absolute inset-y-0 -right-1.5 z-30 w-3 cursor-col-resize"
+                      data-testid="handle-hiring-role-resize"
+                    >
+                      <span className="pointer-events-none absolute inset-y-1 left-1/2 w-px -translate-x-1/2 bg-border/40" />
+                    </div>
+                  </th>
                   {months.map((month, index) => (
                     <th
                       key={month.calendarMonth}
@@ -303,9 +393,24 @@ export default function BusinessHiringPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((slot) => <RoleRow key={slot.id} slot={slot} role={roleById.get(slot.roleId)} months={months} businessId={selectedId} />)}
+                {rows.map((slot) => (
+                  <RoleRow
+                    key={slot.id}
+                    slot={slot}
+                    role={roleById.get(slot.roleId)}
+                    months={months}
+                    businessId={selectedId}
+                    frozenStyle={frozenStyle}
+                  />
+                ))}
                 {adding ? (
-                  <AddRoleRow roles={data.roles} months={months} businessId={selectedId} onDone={() => setAdding(false)} />
+                  <AddRoleRow
+                    roles={data.roles}
+                    months={months}
+                    businessId={selectedId}
+                    onDone={() => setAdding(false)}
+                    frozenStyle={frozenStyle}
+                  />
                 ) : null}
                 {rows.length === 0 && !adding ? (
                   <tr>
