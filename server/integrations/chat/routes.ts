@@ -1585,13 +1585,13 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   }> {
     const authorityDefinitions = await resolveAuthorityToolDefinitions(sessionId);
     const { filterToolsForPersonaBundle } = await import("../../tool-registry");
-    const { resolveSessionPersona } = await import("../../session-persona");
-    const activePersona = await resolveSessionPersona(sessionId, { persistFallback: false });
+    const { resolveSessionPersonaComposition } = await import("../../session-persona");
+    const { persona, toolBundle } = await resolveSessionPersonaComposition(sessionId, { persistFallback: false });
     return {
-      definitions: filterToolsForPersonaBundle(authorityDefinitions, activePersona?.toolBundle),
+      definitions: filterToolsForPersonaBundle(authorityDefinitions, toolBundle),
       authorityCount: authorityDefinitions.length,
-      personaName: activePersona?.name ?? "none",
-      bundleCount: activePersona?.toolBundle?.length ?? 0,
+      personaName: persona?.name ?? "none",
+      bundleCount: toolBundle?.length ?? 0,
     };
   }
 

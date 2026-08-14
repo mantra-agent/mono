@@ -18,7 +18,8 @@ import type {
   SpineMetadata,
   SpineSectionConfig,
 } from "../shared/context-spine";
-import { getSectionsForCallType, cacheTtlFromFreshness, SPINE_SECTIONS, getBootstrapSectionIds } from "./context-spine-config";
+import { getSectionsForCallType, cacheTtlFromFreshness, SPINE_SECTIONS, getBootstrapSectionIds, getRootOwnedSectionIds } from "./context-spine-config";
+import { CONTEXT_GROUP_DEFINITIONS, type ContextGroupId } from "../shared/persona-context";
 import { getInstructionGroupBySection } from "./context-instruction-groups";
 import { getModelForActivity, getConfig as getJobProfileConfig, ACTIVITY_CHAT, ACTIVITY_VOICE, ACTIVITY_VOICE_GREETING } from "./job-profiles";
 import type { TierId, ActivityId } from "./job-profiles";
@@ -35,9 +36,9 @@ import { peopleStorage } from "./people-storage";
 import { chatFileStorage } from "./chat-file-storage";
 import { listAllEvents, hasCalendarAccess } from "./google-calendar";
 import { listGmailAccounts } from "./gmail";
-import { getJournalEntriesSince } from "./thoughts";
+
 import { detectSessionType, BLEND_WEIGHTS, modulateWeights } from "./memory/vnext-retrieval-policy";
-import { getSkillDefinitionsForContext, getToolSchemas, getToolCatalog, filterToolsForPersonaBundle } from "./tool-registry";
+import { getToolSchemas, getToolCatalog, filterToolsForPersonaBundle } from "./tool-registry";
 import { withTimeout, isTimeoutError, SECTION_RESOLVE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
 import { requireCurrentPrincipal } from "./principal-context";
@@ -159,10 +160,8 @@ const INVALIDATION_EVENT_MAP: Record<string, string[]> = {
   "data:tasks_changed": ["world_model.active_work", "world_model.active_work.tasks"],
   "data:projects_changed": ["world_model.active_work", "world_model.active_work.projects"],
   "data:decisions_changed": ["world_model.decisions"],
-  "data:theses_changed": ["world_model.theses"],
   "data:calendar_changed": ["world_model.calendar"],
   "data:sessions_changed": ["session_context"],
-  "data:thoughts_changed": ["thoughts"],
   "cognition.emotion.changed": [
     "world_model.people.self.emotional_guidance",
     "world_model.people.self.emotional_state",
@@ -284,14 +283,10 @@ const sectionResolvers: Record<string, SectionResolver> = {
   "world_model.people.self.general_instructions": resolveGeneralInstructions,
   "world_model.people.self.chat_instructions": resolveChatInstructions,
   "world_model.people.self.principles": resolveSelfPrinciples,
-
-  "world_model.people.self.journal": resolveSelfJournal,
   "world_model.people.self.rules": resolveActiveRules,
   "world_model.people.partner": async () => "",
   "world_model.people.partner.identity": resolvePartnerIdentity,
-
   "world_model.people.partner.goals": resolveGoalsAll,
-  "world_model.people.partner.goals": async () => "",
   "world_model.people.partner.goals.today": resolveGoalsToday,
   "world_model.people.partner.goals.this_week": resolveGoalsThisWeek,
   "world_model.people.partner.goals.this_month": resolveGoalsThisMonth,
@@ -300,7 +295,6 @@ const sectionResolvers: Record<string, SectionResolver> = {
   "world_model.active_work.tasks": resolveActiveTasks,
   "world_model.active_work.projects": resolveActiveProjects,
   "world_model.decisions": resolveOpenDecisions,
-  "world_model.theses": resolveActiveTheses,
   "world_model.calendar": resolveCalendar,
   "world_model.meeting": async (request) => request.meetingContext ?? "",
   "history": async () => {
@@ -310,15 +304,12 @@ const sectionResolvers: Record<string, SectionResolver> = {
   "memory": async () => "",
   "memory.graph": resolveGraphMemory,
   "session_context": resolveSessionContext,
-  "thoughts": resolveThoughts,
   "capabilities": async () => "",
   "capabilities.tools": resolveTools,
   "capabilities.code_instructions": resolveCodeInstructions,
   "capabilities.planning_instructions": resolvePlanningInstructions,
   "capabilities.goals_instructions": resolveGoalsInstructions,
   "capabilities.decision_protocol": resolveDecisionProtocol,
-  "capabilities.skills": resolveSkills,
-  "capabilities.library": resolveLibraryIndex,
 };
 
 function stripLeadingIdentityClaim(content: string, names: Array<string | null>): string {
@@ -422,74 +413,33 @@ async function resolveGeneralInstructions(): Promise<string> {
   return `${UNIVERSAL_CONVERSATION_CONTEXT}\n\n${PERSONAL_RULE_CONTEXT}`;
 }
 
-/** Section descriptions for the persona context-bundle catalog. Keyed by section ID. */
-export const SECTION_CATALOG: Record<string, { description: string; recommendedFor: string; tokenCost: "small" | "medium" | "large" }> = {
-  "world_model.people.self.persona": { description: "Active persona and available persona modes", recommendedFor: "conversations, coaching", tokenCost: "medium" },
-  "world_model.people.self.emotional_guidance": { description: "How to use and update emotional state", recommendedFor: "conversations", tokenCost: "small" },
-  "world_model.people.self.emotional_state": { description: "Current emotional state and narrative", recommendedFor: "conversations", tokenCost: "small" },
-  "world_model.people.self.emotional_expression": { description: "Expression tags for voice/text", recommendedFor: "conversations, voice", tokenCost: "small" },
-  "world_model.people.self.general_instructions": { description: "Universal product behavior and persistence policy", recommendedFor: "all conversations", tokenCost: "small" },
-  "world_model.people.self.chat_instructions": { description: "Interactive chat-specific instructions", recommendedFor: "interactive chat", tokenCost: "small" },
-  "world_model.people.self.principles": { description: "Guiding life principles for decisions and reflection", recommendedFor: "coaching, reflection, planning", tokenCost: "large" },
-  "world_model.people.self.journal": { description: "Recent journal entries", recommendedFor: "reflection", tokenCost: "medium" },
-  "world_model.people.self.rules": { description: "Active behavioral rules and operational directives", recommendedFor: "all conversations", tokenCost: "medium" },
-  "world_model.people.partner": { description: "Partner context wrapper", recommendedFor: "conversations", tokenCost: "small" },
-  "world_model.people.partner.identity": { description: "Partner identity, context, growth edges", recommendedFor: "conversations", tokenCost: "small" },
-  "world_model.people.partner.goals": { description: "Full life goal tree with domains and horizons", recommendedFor: "planning, coaching, strategy", tokenCost: "large" },
-  "world_model.people.partner.goals": { description: "Goals by horizon wrapper", recommendedFor: "conversations, planning", tokenCost: "small" },
-  "world_model.people.partner.goals.today": { description: "Today's goals", recommendedFor: "conversations, planning", tokenCost: "small" },
-  "world_model.people.partner.goals.this_week": { description: "This week's goals", recommendedFor: "conversations, planning", tokenCost: "small" },
-  "world_model.people.partner.goals.this_month": { description: "This month's goals", recommendedFor: "conversations, planning", tokenCost: "small" },
-  "world_model.people.others": { description: "Close contacts with relationship context", recommendedFor: "relationship discussions", tokenCost: "large" },
-  "world_model.active_work": { description: "Active work wrapper", recommendedFor: "planning, review", tokenCost: "small" },
-  "world_model.active_work.tasks": { description: "Active tasks with status and owners", recommendedFor: "planning, review", tokenCost: "small" },
-  "world_model.active_work.projects": { description: "Active projects with milestones", recommendedFor: "planning, review", tokenCost: "small" },
-  "world_model.decisions": { description: "Open strategic decisions", recommendedFor: "strategy, decision-making", tokenCost: "small" },
-  "memory": { description: "Memory wrapper (enables all memory sub-sections)", recommendedFor: "conversations", tokenCost: "small" },
-  "memory.graph": { description: "Semantically linked vNEXT claims", recommendedFor: "conversations", tokenCost: "medium" },
-  "session_context": { description: "Current session metadata and history", recommendedFor: "conversations", tokenCost: "medium" },
-  "thoughts": { description: "Recent metacognitive observations", recommendedFor: "conversations, reflection", tokenCost: "small" },
-  "capabilities.goals_instructions": { description: "Goals mutation instructions", recommendedFor: "planning, review, FTUE, goal updates", tokenCost: "small" },
-  "capabilities.skills": { description: "Skill library with descriptions and usage", recommendedFor: "conversations, planning", tokenCost: "medium" },
-  "capabilities.library": { description: "Library page tree index", recommendedFor: "conversations, spec work", tokenCost: "large" },
-};
-
 export interface ContextSectionCatalogEntry {
-  id: string;
+  id: ContextGroupId;
   title: string;
   description: string;
   recommendedFor: string;
   tokenCost: "small" | "medium" | "large";
   defaultIncluded: boolean;
+  sectionIds: string[];
+  lockedByRoot: boolean;
 }
 
 /**
- * Public catalog of optional (non-bootstrap) context sections a persona can toggle.
- * Persona bundles are the single source of truth for which of these load; this
- * catalog exists so the Persona editor can render the available sections. Bootstrap
- * sections are always loaded and are intentionally excluded here.
+ * Public catalog of optional context groups a selectable persona can toggle.
+ * Root-owned sections always load and are intentionally excluded here.
  */
 export function getContextSectionCatalog(): ContextSectionCatalogEntry[] {
-  const bootstrapIds = getBootstrapSectionIds();
-  const defaultIncludedIds = new Set(
-    SPINE_SECTIONS.filter(s => s.defaultIncluded === true).map(s => s.id),
-  );
-  const entries: ContextSectionCatalogEntry[] = [];
-  const seen = new Set<string>();
-  for (const [sectionId, meta] of Object.entries(SECTION_CATALOG)) {
-    if (bootstrapIds.has(sectionId) || seen.has(sectionId)) continue;
-    seen.add(sectionId);
-    const config = SPINE_SECTIONS.find(s => s.id === sectionId);
-    entries.push({
-      id: sectionId,
-      title: config?.title ?? sectionId,
-      description: meta.description,
-      recommendedFor: meta.recommendedFor,
-      tokenCost: meta.tokenCost,
-      defaultIncluded: defaultIncludedIds.has(sectionId),
-    });
-  }
-  return entries;
+  const rootOwnedIds = getRootOwnedSectionIds();
+  return CONTEXT_GROUP_DEFINITIONS.map((group) => ({
+    id: group.id,
+    title: group.title,
+    description: group.description,
+    recommendedFor: group.recommendedFor,
+    tokenCost: group.tokenCost,
+    defaultIncluded: false,
+    sectionIds: [...group.sectionIds],
+    lockedByRoot: group.sectionIds.every((sectionId) => rootOwnedIds.has(sectionId)),
+  }));
 }
 
 async function resolveSessionAgenda(request: ContextRequest): Promise<string> {
@@ -661,22 +611,6 @@ async function resolveSelfPrinciples(): Promise<string> {
 }
 
 // Intention stack removed — autonomy skill handles autonomous work
-
-async function resolveSelfJournal(): Promise<string> {
-  try {
-    const entries = await getJournalEntriesSince(14, ["journal"]);
-
-    if (entries.length === 0) return "No journal entries yet.";
-
-    const lines = entries.map(e => {
-      const title = e.title && e.title !== e.date ? ` — ${e.title}` : "";
-      return `[${e.date}${title}] ${e.content}`;
-    });
-    return `Recent journal entries (newest first):\n\n${lines.join("\n\n")}`;
-  } catch {
-    return "No journal entries available.";
-  }
-}
 
 async function resolvePartnerIdentity(): Promise<string> {
   const { userName } = await resolveCurrentProfileIdentity();
@@ -1312,24 +1246,6 @@ async function resolveOpenDecisions(): Promise<string> {
     return `### Open Decisions (${sorted.length}${open.length > sorted.length ? ` of ${open.length}` : ""})\n${lines.join("\n")}`;
   } catch {
     return "No decisions available.";
-  }
-}
-
-async function resolveActiveTheses(): Promise<string> {
-  try {
-    const { thesisStorage } = await import("./thesis-storage");
-    const active = await thesisStorage.list({ status: "active" });
-    if (active.length === 0) return "";
-    const lines = active.map(t => {
-      const tags = (t.tags || []).join(", ");
-      const tagStr = tags ? ` [${tags}]` : "";
-      const stmt = (t.statement || "").trim();
-      const stmtStr = stmt ? ` — ${stmt.length > 120 ? stmt.slice(0, 117) + "..." : stmt}` : "";
-      return `- **${t.title}**${tagStr} ${(t.conviction || "low").toUpperCase()}${stmtStr}`;
-    });
-    return `### Active Theses (${active.length})\n${lines.join("\n")}`;
-  } catch {
-    return "";
   }
 }
 
@@ -1990,30 +1906,6 @@ function formatRelativeTime(date: Date): string {
   return `${days}d ago`;
 }
 
-const THOUGHT_CONTEXT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-const THOUGHT_CONTEXT_LIMIT = 15;
-
-async function resolveThoughts(): Promise<string> {
-  const intro = `What follows is your recent observation history — metacognitive observations you recorded using the observe tool. These are typed: (pattern) what repeats, (gap) expected vs found, (change) what shifted, (connection) how things link, (opportunity) what's possible.
-
-Use this as your foundation: build forward from these insights, go deeper where warranted, and move to new territory. Do not restate or rephrase observations you have already recorded. Quality over quantity — only call observe when the observation is specific, evidence-based, and will genuinely inform future interactions.`;
-  try {
-    const { listRecentMetacognitiveObservations } = await import("./memory/metacognitive-observations");
-    const recent = await listRecentMetacognitiveObservations(THOUGHT_CONTEXT_MAX_AGE_MS, THOUGHT_CONTEXT_LIMIT);
-    if (recent.length === 0) {
-      return `${intro}\n\nNo recent observations.`;
-    }
-    const rendered = recent.map(observation => {
-      const ts = formatRelativeTime(observation.observedAt);
-      return `(${observation.type}, provisional) [${ts}] ${observation.content}`;
-    }).join("\n\n");
-    return `${intro}\n\n${rendered}`;
-  } catch (err: unknown) {
-    log.warn(`resolveThoughts error: ${err instanceof Error ? err.message : String(err)}`);
-    return `${intro}\n\nNo recent observations.`;
-  }
-}
-
 const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
   code: "Query and navigate the codebase knowledge graph. Actions: query, context, impact, changes, architecture, modules, flows, rename, schema, cypher.",
   docx: "Read, write, edit, and clone Word documents. Actions: read, write, edit, clone.",
@@ -2179,8 +2071,8 @@ async function resolveTools(request: ContextRequest): Promise<string> {
   let bundle: string[] | null | undefined;
   if (mode !== "voice" && request.sessionId) {
     try {
-      const { resolveSessionPersona } = await import("./session-persona");
-      bundle = (await resolveSessionPersona(request.sessionId))?.toolBundle;
+      const { resolveSessionPersonaComposition } = await import("./session-persona");
+      bundle = (await resolveSessionPersonaComposition(request.sessionId))?.toolBundle;
     } catch (err: any) {
       log.warn(`resolveTools bundle lookup failed: ${err?.message ?? err}`);
     }
@@ -2276,47 +2168,6 @@ async function resolveTools(request: ContextRequest): Promise<string> {
     "- Do not infer that a tool is unavailable merely because its schema is absent from the initial set. Use `tools.get` to verify authority and load that exact callable schema for the current interactive run.",
     ...toc,
   ].join("\n");
-}
-
-async function resolveSkills(): Promise<string> {
-  try {
-    return await getSkillDefinitionsForContext();
-  } catch (err: any) {
-    log.warn(`resolveSkills error: ${err.message}`);
-    return "Skills unavailable.";
-  }
-}
-
-async function resolveLibraryIndex(): Promise<string> {
-  // Reference-only: render a compact pointer to the LIBRARY.md operating guide
-  // (library_process context artifact) and the load-bearing conventions. The
-  // full guide is fetched on demand via get_library_page, mirroring the
-  // PLANNING.md lazy-load pattern. Library2 Wiki/Index/Log is retired.
-  let guidePointer = "Before you find, save, or edit a Library page, load the Library operating guide (LIBRARY.md) with get_library_page. It is not inlined here.";
-  try {
-    const { listVisibleEnvironmentContextPages } = await import("./platforms/context-artifact-access");
-    const pages = await listVisibleEnvironmentContextPages(["library_process"]);
-    const guide = pages[0];
-    if (guide?.libraryPageId) {
-      guidePointer = `Before you find, save, or edit a Library page, load the Library operating guide: @page:${guide.libraryPageId} (get_library_page). It is not inlined here.`;
-    }
-  } catch {
-    // Degrade to the generic pointer; the conventions below still apply.
-  }
-
-  return `## Library Reference
-
-${guidePointer}
-
-The Library is durable, searchable knowledge organized by Vault and parent-page hierarchy. Library2 Wiki/Index/Log organization is retired.
-
-Canonical per-Vault folders — file into them by passing \`canonicalFolder\` to create_library_page:
-- plans — multi-step execution plans (filed automatically by the plan tool); every execution Plan page lives under the Plans folder of its own Vault
-- workflows — workflow run checkpoints and lifecycle artifacts (filed automatically)
-- specs — specifications and implementation designs
-- skills — all skill run outputs, logs, and artifacts
-
-Use Library tools on demand: search_library_pages/search to find pages; browse_tree/tree to inspect hierarchy; get_library_page to load full content; create_library_page/edit_library_page to write. New pages file under an explicit parent or canonicalFolder when supplied; otherwise they save at the active Vault root. Use a Library page rather than scratch for externally shareable artifacts.`;
 }
 
 function getContextWindowForModel(model: string): number {
@@ -2519,9 +2370,6 @@ export class ContextBuilder {
       if (sectionId === "world_model.people.self.rules") {
         return "ctx_pri_rules";
       }
-      if (sectionId === "world_model.people.self.journal") {
-        return "ctx_pri_journal";
-      }
       if (sectionId === "world_model.people.partner"
         || sectionId.startsWith("world_model.people.partner.")
         || sectionId === "world_model.people.others") {
@@ -2534,7 +2382,7 @@ export class ContextBuilder {
       if (sectionId === "world_model.calendar" || sectionId === "world_model.meeting") {
         return "ctx_wm_calendar";
       }
-      if (sectionId === "session_context" || sectionId === "thoughts"
+      if (sectionId === "session_context"
         || sectionId === "world_model.temporal"
         || sectionId === "world_model.runtime"
         || sectionId === "world_model.session_agenda") {
@@ -2547,7 +2395,7 @@ export class ContextBuilder {
       let phase: string;
       if (config.id === "world_model" || config.id.startsWith("world_model.")) {
         phase = getWorldModelSubPhase(config.id);
-      } else if (config.id === "session_context" || config.id === "thoughts") {
+      } else if (config.id === "session_context") {
         phase = "ctx_wm_session";
       } else if (config.id === "memory" || config.id.startsWith("memory.")) {
         phase = "ctx_memory";
@@ -2855,7 +2703,6 @@ export async function preWarmContextCaches(): Promise<void> {
       "world_model.people.self.rules",
       "world_model.people.partner.goals",
       "capabilities.goals_instructions",
-      "capabilities.skills",
     ];
     const warmCount = keySections.filter(id => getCachedSection(id) !== null).length;
     if (warmCount >= 4) {
@@ -2871,7 +2718,6 @@ export async function preWarmContextCaches(): Promise<void> {
       { name: "principles", fn: () => filePrincipleStorage.getAllLayer1() },
       { name: "rules", fn: () => fileRuleStorage.getAll() },
       { name: "goals", fn: () => goalsService.listAll() },
-      { name: "skills", fn: () => getSkillDefinitionsForContext() },
     ];
 
     const results = await Promise.allSettled(

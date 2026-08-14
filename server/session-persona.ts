@@ -2,6 +2,7 @@ import { createLogger } from "./log";
 import { chatFileStorage } from "./chat-file-storage";
 import { personaStorage, type PersonaEntry, type PersonaRevisionPayload } from "./file-storage/persona-storage";
 import type { PersonaSnapshot } from "@shared/models/chat";
+import { unionRootContextSections, unionRootToolBundle } from "../shared/persona-context";
 
 const log = createLogger("SessionPersona");
 
@@ -44,6 +45,24 @@ export async function resolveSessionPersona(
 
   const personas = await personaStorage.list();
   return await personaStorage.getActiveOrNull() ?? defaultPersona(personas);
+}
+
+export async function resolveSessionPersonaComposition(
+  sessionId?: string | null,
+  options: { persistFallback?: boolean } = {},
+): Promise<{
+  persona: PersonaEntry | null;
+  contextSections: Record<string, boolean>;
+  toolBundle: string[] | null;
+}> {
+  const persona = await resolveSessionPersona(sessionId, options);
+  const session = sessionId ? await chatFileStorage.getSession(sessionId) : null;
+  const root = await personaStorage.resolveRootPayload(session?.rootRevisionId);
+  return {
+    persona,
+    contextSections: unionRootContextSections(root?.contextSections, persona?.contextSections),
+    toolBundle: unionRootToolBundle(root?.toolBundle, persona?.toolBundle),
+  };
 }
 
 export async function setSessionPersona(
