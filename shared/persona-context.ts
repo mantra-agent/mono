@@ -1,6 +1,6 @@
 /** Shared Root ∪ selected-persona composition for context sections and tool bundles. */
 
-export const CONTEXT_GROUPS = ["emotions", "schedule", "life", "people", "principles"] as const;
+export const CONTEXT_GROUPS = ["emotions", "schedule", "people", "principles"] as const;
 export type ContextGroupId = (typeof CONTEXT_GROUPS)[number];
 
 export interface ContextGroupDefinition {
@@ -29,29 +29,18 @@ export const CONTEXT_GROUP_DEFINITIONS: readonly ContextGroupDefinition[] = [
   {
     id: "schedule",
     title: "Schedule",
-    description: "Today/week/month goals plus active work and open decisions",
-    recommendedFor: "Operator, Producer, Coach, Default",
+    description: "Goals through this quarter, active work, and open decisions",
+    recommendedFor: "Operator, Producer, Coach, Default, Strategist",
     tokenCost: "medium",
     sectionIds: [
       "world_model.people.partner.goals.today",
       "world_model.people.partner.goals.this_week",
       "world_model.people.partner.goals.this_month",
+      "world_model.people.partner.goals.this_quarter",
       "world_model.active_work",
       "world_model.active_work.tasks",
       "world_model.active_work.projects",
       "world_model.decisions",
-    ],
-  },
-  {
-    id: "life",
-    title: "Life",
-    description: "Partner identity and the full life goal tree",
-    recommendedFor: "Coach, Strategist",
-    tokenCost: "large",
-    sectionIds: [
-      "world_model.people.partner",
-      "world_model.people.partner.identity",
-      "world_model.people.partner.goals",
     ],
   },
   {
@@ -78,21 +67,22 @@ export const CONTEXT_GROUP_SECTION_IDS: ReadonlySet<string> = new Set(
 
 /**
  * Canonical optional context maps for selectable personas after the Root ∪
- * five-group cut. Keys are lowercase persona names. Values use group IDs only.
- * Empty object means Root-owned context only (History, Memory, Current Session).
- * Executive is intentionally absent until that rename ships; Operator remains
- * the known-path seat.
+ * four-group cut. Keys are lowercase persona names. Values use group IDs only.
+ * Empty object means Root-owned context only (History, Memory, Current Session,
+ * partner Identity). Life is retired: Identity is Root; goals through quarter
+ * live on Schedule. Longer horizons load via tools.
  */
 export const PERSONA_CONTEXT_MAPS: Readonly<Record<string, Readonly<Record<string, boolean>>>> = {
   architect: { principles: true },
   engineer: {},
   operator: { schedule: true },
+  executive: { schedule: true },
   producer: { schedule: true },
   default: { schedule: true },
-  coach: { emotions: true, schedule: true, life: true, people: true, principles: true },
-  companion: { emotions: true, life: true, people: true },
-  strategist: { principles: true, life: true, schedule: true },
-  investigator: { people: true, life: true },
+  coach: { emotions: true, schedule: true, people: true, principles: true },
+  companion: { emotions: true, schedule: true, people: true },
+  strategist: { principles: true, schedule: true },
+  investigator: { people: true, schedule: true },
   persuader: { people: true },
   visionary: {},
   creative: {},

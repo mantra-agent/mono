@@ -199,6 +199,8 @@ const SEED_PERSONAS = [
       "world_model.people.self.persona": true,
       "world_model.people.self.chat_instructions": true,
       "world_model.people.self.rules": true,
+      "world_model.people.partner": true,
+      "world_model.people.partner.identity": true,
       history: true,
       memory: true,
       "memory.graph": true,

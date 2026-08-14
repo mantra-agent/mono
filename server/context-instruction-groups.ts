@@ -34,7 +34,7 @@ export const INSTRUCTION_GROUPS: ContextInstructionGroup[] = [
     id: "relationship_context",
     title: "Relationship Context",
     flag: "context.relationships",
-    sectionIds: ["world_model.people.others", "world_model.people.partner.goals"],
+    sectionIds: ["world_model.people.others"],
     includeWhen: "Use for relationship, coaching, planning, and people-context conversations.",
   },
   {
