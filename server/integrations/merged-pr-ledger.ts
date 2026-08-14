@@ -1,28 +1,33 @@
-import { and, gte, lt, sql } from "drizzle-orm";
+import { and, gte, lt, sql, eq } from "drizzle-orm";
 import { mergedPullRequests } from "@shared/schema";
+import { environmentSourceBindings, providerConnections } from "@shared/models/platforms";
 import { db } from "../db";
 import { createLogger } from "../log";
 import { getSetting, setSetting } from "../system-settings";
 import { resolveGitSource } from "../git-source-resolver";
 import { gh, type RepoRef } from "./github-pr";
-import { eq } from "drizzle-orm";
-import { environmentSourceBindings, providerConnections } from "@shared/models/platforms";
 
 const log = createLogger("MergedPrLedger");
 
-const BACKFILL_SETTING_KEY = "merged_pr_ledger_backfill_v1";
+/** Bump when backfill cursor semantics change so stuck empty ledgers reseed. */
+const BACKFILL_SETTING_KEY = "merged_pr_ledger_backfill_v2";
 const CATCHUP_INTERVAL_MS = 5 * 60_000;
 const SEARCH_PAGE_SIZE = 100;
-/** Search API hard-caps at 1000 hits; keep windows under that at ~70 merges/day. */
-const BACKFILL_WINDOW_DAYS = 7;
+const REST_PAGE_SIZE = 100;
+/** Recent REST seed pages — enough for the visible heatmap at ~70 merges/day. */
+const RECENT_REST_MAX_PAGES = 15;
+/** Days of history the Dashboard heatmap asks for (+ a little slack). */
 const DASHBOARD_HISTORY_DAYS = 370;
+/** Search windows stay under the 1000-result hard cap. */
+const SEARCH_WINDOW_DAYS = 3;
+const CATCHUP_DAYS = 14;
 const GH_API = "https://api.github.com";
 const GH_HEADERS_BASE = {
   Accept: "application/vnd.github+json",
   "X-GitHub-Api-Version": "2022-11-28",
 };
 
-export type MergedPrSource = "live" | "backfill" | "catchup";
+export type MergedPrSource = "live" | "backfill" | "catchup" | "seed";
 
 export interface MergedPrRecordInput {
   owner: string;
@@ -36,10 +41,15 @@ export interface MergedPrRecordInput {
   source: MergedPrSource;
 }
 
+/**
+ * Walks history newest → oldest.
+ * `cursorDate` is the oldest UTC day already fully covered (inclusive).
+ * Next step covers (cursorDate - window) .. (cursorDate - 1).
+ */
 interface BackfillState {
   status: "pending" | "running" | "complete" | "error";
-  /** Exclusive lower bound already covered (ISO date YYYY-MM-DD). */
   cursorDate: string;
+  recentSeeded: boolean;
   updatedAt: string;
   lastError?: string;
   insertedTotal?: number;
@@ -53,6 +63,7 @@ interface GhPullDetail {
   merge_commit_sha: string | null;
   user: { login: string } | null;
   base?: { ref?: string };
+  updated_at?: string;
 }
 
 interface GhSearchItem {
@@ -148,7 +159,6 @@ async function resolveRepoToken(ref: RepoRef): Promise<string> {
 
 /**
  * Idempotent ledger write. Unique on (owner, repo, number).
- * Live merges win title/author/sha updates; backfill never clobbers richer live rows.
  */
 export async function recordMergedPullRequest(input: MergedPrRecordInput): Promise<void> {
   const { owner, repo } = normalizeOwnerRepo(input.owner, input.repo);
@@ -187,9 +197,55 @@ export async function recordMergedPullRequest(input: MergedPrRecordInput): Promi
         htmlUrl,
         mergedAt,
         mergeCommitSha: input.mergeCommitSha,
-        // First writer owns `source`; later revisits only refresh display fields.
       },
     });
+}
+
+async function recordMergedPullRequestsBatch(
+  inputs: MergedPrRecordInput[],
+): Promise<number> {
+  if (inputs.length === 0) return 0;
+  let written = 0;
+  // Keep batches small enough for one statement without blowing parameter limits.
+  const chunkSize = 50;
+  for (let offset = 0; offset < inputs.length; offset += chunkSize) {
+    const chunk = inputs.slice(offset, offset + chunkSize);
+    const values = chunk.map((input) => {
+      const { owner, repo } = normalizeOwnerRepo(input.owner, input.repo);
+      return {
+        owner,
+        repo,
+        number: input.number,
+        title: (input.title || `PR #${input.number}`).slice(0, 500),
+        author: input.author,
+        htmlUrl:
+          input.htmlUrl?.trim() ||
+          `https://github.com/${owner}/${repo}/pull/${input.number}`,
+        mergedAt: asMergedAt(input.mergedAt),
+        mergeCommitSha: input.mergeCommitSha,
+        source: input.source,
+      };
+    });
+    await db
+      .insert(mergedPullRequests)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [
+          mergedPullRequests.owner,
+          mergedPullRequests.repo,
+          mergedPullRequests.number,
+        ],
+        set: {
+          title: sql`excluded.title`,
+          author: sql`excluded.author`,
+          htmlUrl: sql`excluded.html_url`,
+          mergedAt: sql`excluded.merged_at`,
+          mergeCommitSha: sql`excluded.merge_commit_sha`,
+        },
+      });
+    written += values.length;
+  }
+  return written;
 }
 
 /** After a successful GitHub merge API call, fetch PR detail and ledger it. Fail-soft. */
@@ -269,6 +325,24 @@ export async function countMergedPrsInRange(start: Date, end: Date): Promise<num
   return Number(row?.value ?? 0);
 }
 
+async function ledgerRowCount(): Promise<number> {
+  const [row] = await db
+    .select({ value: sql<number>`count(*)::int` })
+    .from(mergedPullRequests);
+  return Number(row?.value ?? 0);
+}
+
+function defaultBackfillState(): BackfillState {
+  return {
+    status: "pending",
+    // Newest day fully covered starts as "tomorrow" so the first step covers today.
+    cursorDate: addUtcDays(utcDateString(new Date()), 1),
+    recentSeeded: false,
+    updatedAt: new Date().toISOString(),
+    insertedTotal: 0,
+  };
+}
+
 async function readBackfillState(): Promise<BackfillState> {
   const existing = await getSetting<BackfillState>(BACKFILL_SETTING_KEY);
   if (
@@ -277,14 +351,13 @@ async function readBackfillState(): Promise<BackfillState> {
     typeof existing.cursorDate === "string" &&
     typeof existing.status === "string"
   ) {
-    return existing;
+    return {
+      ...defaultBackfillState(),
+      ...existing,
+      recentSeeded: Boolean(existing.recentSeeded),
+    };
   }
-  return {
-    status: "pending",
-    cursorDate: daysAgoUtc(DASHBOARD_HISTORY_DAYS),
-    updatedAt: new Date().toISOString(),
-    insertedTotal: 0,
-  };
+  return defaultBackfillState();
 }
 
 async function writeBackfillState(state: BackfillState): Promise<void> {
@@ -303,8 +376,9 @@ async function githubSearch(
   url.searchParams.set("q", query);
   url.searchParams.set("per_page", String(SEARCH_PAGE_SIZE));
   url.searchParams.set("page", String(page));
-  url.searchParams.set("sort", "created");
-  url.searchParams.set("order", "asc");
+  // Newest first so recent heat fills even if a window is truncated at 1000.
+  url.searchParams.set("sort", "updated");
+  url.searchParams.set("order", "desc");
 
   const response = await fetch(url.toString(), {
     method: "GET",
@@ -334,6 +408,27 @@ async function githubSearch(
   return parsed as GhSearchResponse;
 }
 
+function searchItemToRecord(
+  ref: RepoRef,
+  item: GhSearchItem,
+  source: MergedPrSource,
+): MergedPrRecordInput | null {
+  const mergedAt = item.pull_request?.merged_at ?? item.closed_at;
+  if (!mergedAt) return null;
+  if (!item.pull_request) return null;
+  return {
+    owner: ref.owner,
+    repo: ref.repo,
+    number: item.number,
+    title: item.title,
+    author: item.user?.login ?? null,
+    htmlUrl: item.html_url,
+    mergedAt,
+    mergeCommitSha: null,
+    source,
+  };
+}
+
 async function ingestSearchWindow(
   ref: RepoRef,
   token: string,
@@ -341,29 +436,28 @@ async function ingestSearchWindow(
   toDateInclusive: string,
   source: MergedPrSource,
 ): Promise<number> {
-  const query = `repo:${ref.owner}/${ref.repo} is:pr is:merged merged:${fromDate}..${toDateInclusive}`;
+  const query = `repo:${ref.owner}/${ref.repo} is:pr is:merged base:main merged:${fromDate}..${toDateInclusive}`;
   let page = 1;
   let inserted = 0;
-  // Search hard-caps at 1000 results (10 pages).
   while (page <= 10) {
     const result = await githubSearch(token, query, page);
-    if (result.items.length === 0) break;
-    for (const item of result.items) {
-      const mergedAt = item.pull_request?.merged_at ?? item.closed_at;
-      if (!mergedAt) continue;
-      await recordMergedPullRequest({
+    if (page === 1) {
+      log.info("Merge ledger search window", {
         owner: ref.owner,
         repo: ref.repo,
-        number: item.number,
-        title: item.title,
-        author: item.user?.login ?? null,
-        htmlUrl: item.html_url,
-        mergedAt,
-        mergeCommitSha: null,
+        fromDate,
+        toDateInclusive,
+        totalCount: result.total_count,
         source,
       });
-      inserted += 1;
     }
+    if (result.items.length === 0) break;
+    const batch: MergedPrRecordInput[] = [];
+    for (const item of result.items) {
+      const record = searchItemToRecord(ref, item, source);
+      if (record) batch.push(record);
+    }
+    inserted += await recordMergedPullRequestsBatch(batch);
     if (result.items.length < SEARCH_PAGE_SIZE) break;
     if (page * SEARCH_PAGE_SIZE >= Math.min(result.total_count, 1000)) break;
     page += 1;
@@ -371,58 +465,176 @@ async function ingestSearchWindow(
   return inserted;
 }
 
-async function runCatchupOnce(): Promise<void> {
+/**
+ * Fast path: page closed main PRs by updated desc until past the recent horizon.
+ * Fills the visible heatmap without waiting on historical Search backfill.
+ */
+async function seedRecentViaRest(
+  ref: RepoRef,
+  since: Date,
+  source: MergedPrSource,
+): Promise<number> {
+  let inserted = 0;
+  let reachedPastSince = false;
+  for (let page = 1; page <= RECENT_REST_MAX_PAGES; page += 1) {
+    const raw = await gh<GhPullDetail[]>(
+      "GET",
+      `/repos/${ref.owner}/${ref.repo}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=${REST_PAGE_SIZE}&page=${page}`,
+    );
+    if (raw.length === 0) break;
+    const batch: MergedPrRecordInput[] = [];
+    for (const pr of raw) {
+      if (!pr.merged_at) continue;
+      const mergedAt = new Date(pr.merged_at);
+      if (mergedAt < since) {
+        reachedPastSince = true;
+        continue;
+      }
+      batch.push({
+        owner: ref.owner,
+        repo: ref.repo,
+        number: pr.number,
+        title: pr.title,
+        author: pr.user?.login ?? null,
+        htmlUrl: pr.html_url,
+        mergedAt: pr.merged_at,
+        mergeCommitSha: pr.merge_commit_sha,
+        source,
+      });
+    }
+    inserted += await recordMergedPullRequestsBatch(batch);
+    if (raw.length < REST_PAGE_SIZE) break;
+    // If every merged PR on this page is older than since, stop.
+    const newestMergedOnPage = raw
+      .filter((pr) => pr.merged_at)
+      .map((pr) => new Date(pr.merged_at!).getTime())
+      .reduce((max, ts) => Math.max(max, ts), 0);
+    if (reachedPastSince && newestMergedOnPage > 0 && newestMergedOnPage < since.getTime()) {
+      break;
+    }
+  }
+  return inserted;
+}
+
+async function runRecentSeed(): Promise<number> {
   const repos = await listBoundGitHubRepos();
-  if (repos.length === 0) return;
-  const fromDate = daysAgoUtc(3);
-  const toDate = utcDateString(new Date());
+  if (repos.length === 0) {
+    log.warn("Merge ledger recent seed found no bound GitHub repos");
+    return 0;
+  }
+  const since = new Date(`${daysAgoUtc(CATCHUP_DAYS)}T00:00:00.000Z`);
+  let inserted = 0;
   for (const ref of repos) {
     try {
-      const token = await resolveRepoToken(ref);
-      const inserted = await ingestSearchWindow(ref, token, fromDate, toDate, "catchup");
-      if (inserted > 0) {
-        log.debug("Merge ledger catch-up window ingested", {
-          owner: ref.owner,
-          repo: ref.repo,
-          fromDate,
-          toDate,
-          inserted,
-        });
-      }
+      const count = await seedRecentViaRest(ref, since, "seed");
+      inserted += count;
+      log.info("Merge ledger recent REST seed complete", {
+        owner: ref.owner,
+        repo: ref.repo,
+        inserted: count,
+        sinceDays: CATCHUP_DAYS,
+      });
     } catch (error) {
-      log.warn("Merge ledger catch-up failed for repo", {
+      log.warn("Merge ledger recent REST seed failed", {
         owner: ref.owner,
         repo: ref.repo,
         error: error instanceof Error ? error.message : String(error),
       });
+      // Fall back to search for this repo's recent window.
+      try {
+        const token = await resolveRepoToken(ref);
+        const fromDate = daysAgoUtc(CATCHUP_DAYS);
+        const toDate = utcDateString(new Date());
+        const count = await ingestSearchWindow(ref, token, fromDate, toDate, "seed");
+        inserted += count;
+        log.info("Merge ledger recent search seed complete", {
+          owner: ref.owner,
+          repo: ref.repo,
+          inserted: count,
+          fromDate,
+          toDate,
+        });
+      } catch (searchError) {
+        log.warn("Merge ledger recent search seed failed", {
+          owner: ref.owner,
+          repo: ref.repo,
+          error: searchError instanceof Error ? searchError.message : String(searchError),
+        });
+      }
     }
   }
+  return inserted;
 }
 
+async function runCatchupOnce(): Promise<number> {
+  const repos = await listBoundGitHubRepos();
+  if (repos.length === 0) return 0;
+  const fromDate = daysAgoUtc(CATCHUP_DAYS);
+  const toDate = utcDateString(new Date());
+  let inserted = 0;
+  for (const ref of repos) {
+    try {
+      // Prefer REST for catch-up — no search secondary rate limit.
+      const since = new Date(`${fromDate}T00:00:00.000Z`);
+      const restCount = await seedRecentViaRest(ref, since, "catchup");
+      inserted += restCount;
+      log.info("Merge ledger catch-up complete", {
+        owner: ref.owner,
+        repo: ref.repo,
+        fromDate,
+        toDate,
+        inserted: restCount,
+        path: "rest",
+      });
+    } catch (error) {
+      log.warn("Merge ledger catch-up REST failed; trying search", {
+        owner: ref.owner,
+        repo: ref.repo,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      try {
+        const token = await resolveRepoToken(ref);
+        const count = await ingestSearchWindow(ref, token, fromDate, toDate, "catchup");
+        inserted += count;
+        log.info("Merge ledger catch-up complete", {
+          owner: ref.owner,
+          repo: ref.repo,
+          fromDate,
+          toDate,
+          inserted: count,
+          path: "search",
+        });
+      } catch (searchError) {
+        log.warn("Merge ledger catch-up failed for repo", {
+          owner: ref.owner,
+          repo: ref.repo,
+          error: searchError instanceof Error ? searchError.message : String(searchError),
+        });
+      }
+    }
+  }
+  return inserted;
+}
+
+/** One historical step: walk SEARCH_WINDOW_DAYS backward from cursor. */
 async function runBackfillStep(): Promise<boolean> {
   const state = await readBackfillState();
   if (state.status === "complete") return true;
 
-  const today = utcDateString(new Date());
-  if (state.cursorDate >= today) {
+  const historyFloor = daysAgoUtc(DASHBOARD_HISTORY_DAYS);
+  // cursorDate = oldest day already covered. Next window ends the day before.
+  const toDate = addUtcDays(state.cursorDate, -1);
+  if (toDate < historyFloor) {
     await writeBackfillState({
       ...state,
       status: "complete",
-      cursorDate: today,
+      cursorDate: historyFloor,
     });
     return true;
   }
 
-  const windowEnd = addUtcDays(state.cursorDate, BACKFILL_WINDOW_DAYS - 1);
-  const toDate = windowEnd < today ? windowEnd : addUtcDays(today, -1);
-  if (toDate < state.cursorDate) {
-    await writeBackfillState({
-      ...state,
-      status: "complete",
-      cursorDate: today,
-    });
-    return true;
-  }
+  const fromDate = addUtcDays(toDate, -(SEARCH_WINDOW_DAYS - 1));
+  const windowStart = fromDate < historyFloor ? historyFloor : fromDate;
 
   await writeBackfillState({
     ...state,
@@ -432,29 +644,40 @@ async function runBackfillStep(): Promise<boolean> {
   const repos = await listBoundGitHubRepos();
   let inserted = 0;
   for (const ref of repos) {
-    const token = await resolveRepoToken(ref);
-    inserted += await ingestSearchWindow(
-      ref,
-      token,
-      state.cursorDate,
-      toDate,
-      "backfill",
-    );
+    try {
+      const token = await resolveRepoToken(ref);
+      inserted += await ingestSearchWindow(
+        ref,
+        token,
+        windowStart,
+        toDate,
+        "backfill",
+      );
+    } catch (error) {
+      log.warn("Merge ledger backfill window failed for repo", {
+        owner: ref.owner,
+        repo: ref.repo,
+        fromDate: windowStart,
+        toDate,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
-  const nextCursor = addUtcDays(toDate, 1);
-  const complete = nextCursor >= today;
+  const nextCursor = windowStart;
+  const complete = nextCursor <= historyFloor;
   await writeBackfillState({
     status: complete ? "complete" : "running",
-    cursorDate: complete ? today : nextCursor,
+    cursorDate: nextCursor,
+    recentSeeded: state.recentSeeded,
     updatedAt: new Date().toISOString(),
     insertedTotal: (state.insertedTotal ?? 0) + inserted,
   });
   log.info("Merge ledger backfill window complete", {
-    fromDate: state.cursorDate,
+    fromDate: windowStart,
     toDate,
     inserted,
-    nextCursor: complete ? today : nextCursor,
+    nextCursor,
     complete,
   });
   return complete;
@@ -462,13 +685,32 @@ async function runBackfillStep(): Promise<boolean> {
 
 async function runSyncLoopBody(): Promise<void> {
   try {
-    let complete = false;
-    // Bounded steps per wake so boot/catch-up never monopolize the event loop.
-    for (let step = 0; step < 8; step += 1) {
-      complete = await runBackfillStep();
+    let state = await readBackfillState();
+    const rows = await ledgerRowCount();
+
+    // Empty ledger or never-seeded: fill recent history first so CODE paints now.
+    if (!state.recentSeeded || rows === 0) {
+      const seeded = await runRecentSeed();
+      state = await readBackfillState();
+      await writeBackfillState({
+        ...state,
+        recentSeeded: true,
+        // After seed, mark the catch-up horizon as covered so backfill continues older.
+        cursorDate: daysAgoUtc(CATCHUP_DAYS),
+        insertedTotal: (state.insertedTotal ?? 0) + seeded,
+        status: state.status === "complete" ? "complete" : "running",
+      });
+      log.info("Merge ledger recent seed finished", { seeded, priorRows: rows });
+    }
+
+    // Always refresh the recent window first (correctness under external merges).
+    await runCatchupOnce();
+
+    // Then walk older history newest → oldest, bounded steps per wake.
+    for (let step = 0; step < 6; step += 1) {
+      const complete = await runBackfillStep();
       if (complete) break;
     }
-    await runCatchupOnce();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log.warn("Merge ledger sync cycle failed", { error: message });
@@ -492,14 +734,13 @@ function enqueueSync(): void {
   });
 }
 
-/** Start fail-soft background backfill + periodic catch-up. Safe to call once per process. */
+/** Start fail-soft background seed + catch-up + backfill. Safe to call once per process. */
 export function startMergedPrLedgerSync(): void {
   enqueueSync();
   if (catchupTimer) return;
   catchupTimer = setInterval(() => {
     enqueueSync();
   }, CATCHUP_INTERVAL_MS);
-  // Allow the process to exit in tests/shutdown without waiting on the timer.
   if (typeof catchupTimer.unref === "function") catchupTimer.unref();
   log.info("Merge ledger background sync started");
 }
