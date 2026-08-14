@@ -10076,9 +10076,10 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       }
       return result;
     }
+    // Compatibility alias: memory.get is the public name for vnext_claim_detail.
+    // Fall through in-place — do not re-enter a missing bridgeHandlers.memory binding.
     if (action === "get") {
       args.action = "vnext_claim_detail";
-      return bridgeHandlers.memory(args);
     }
     const retiredLegacyCrudActions: Record<string, string> = {
       create_link: "No faithful generic vNext equivalent exists for arbitrary memory_links writes. Use run_vnext_lifecycle to create source/entity/claim links, or use vnext_claim_detail to inspect existing graph provenance.",
