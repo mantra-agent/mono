@@ -1555,7 +1555,10 @@ export function setupAuth(app: Express) {
             email: users.email,
             role: users.role,
             createdAt: users.createdAt,
-          }).from(users).orderBy(asc(users.email), asc(users.id)),
+            onboardingStatus: userProfiles.onboardingStatus,
+          }).from(users)
+            .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
+            .orderBy(asc(users.email), asc(users.id)),
           getIdentityInstanceMetrics(),
         ]);
 
@@ -1577,7 +1580,10 @@ export function setupAuth(app: Express) {
             };
           }),
           instanceMemberships: instanceMembershipRows,
-          users: userRows,
+          users: userRows.map((user) => ({
+            ...user,
+            onboardingStatus: user.onboardingStatus ?? "not_started",
+          })),
         });
       } catch (err) {
         log.error("Failed to fetch identity graph for admin trees", {
