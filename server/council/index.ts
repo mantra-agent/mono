@@ -127,7 +127,7 @@ function productionCumulativeUsage(
       // session_id parseInt issue (base36 chat session ids → null).
       const result = await pool.query(
         `SELECT COALESCE(SUM(cost_total), 0)::float AS cost,
-                COALESCE(SUM(input_tokens + output_tokens), 0)::int AS tokens
+                COALESCE(SUM(input_tokens + output_tokens), 0)::float8 AS tokens
            FROM api_calls
           WHERE session_key = $1 AND timestamp >= $2`,
         [runScopedKey, startedAt],
