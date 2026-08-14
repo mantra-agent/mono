@@ -435,16 +435,6 @@ interface ToolCatalogEntry {
   isCore: boolean;
 }
 
-function timeAgo(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
 function PersonaIconDisplay({ iconName, className }: { iconName: string; className?: string }) {
   const Icon = resolvePersonaIcon(iconName);
   return <Icon className={className} />;
@@ -525,7 +515,7 @@ function PersonaProseEditor({
   applyField,
   placeholder,
   actionLabel,
-  minHeightClassName = "min-h-24",
+  minHeightClassName = "min-h-[2.75rem]",
 }: {
   value: string;
   changed?: boolean;
@@ -541,43 +531,48 @@ function PersonaProseEditor({
   useEffect(() => {
     setDraft(value);
   }, [value]);
+  const showMenu = Boolean(onApplyField || onRevertField);
   return (
-    <div className={cn(PROFILE_DESCRIPTION_FRAME_CLASS, "group/editor relative")}>
-      {(changed || onApplyField || onRevertField) && (
-        <div className="absolute right-1.5 top-1.5 flex items-center gap-1">
-          {changed && <Circle className="h-1.5 w-1.5 fill-warning text-warning" aria-label="Edited locally" />}
-          {(onApplyField || onRevertField) && (
-            <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/editor:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
-                  aria-label={actionLabel}
-                >
-                  <MoreHorizontal className="h-3.5 w-3.5" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
-                {onApplyField && <DropdownMenuItem onSelect={() => onApplyField(applyField)}>Apply to Default</DropdownMenuItem>}
-                {onRevertField && <DropdownMenuItem onSelect={() => onRevertField(applyField)}>Revert to Default</DropdownMenuItem>}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </div>
-      )}
-      <Textarea
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => {
-          if (draft !== value) onCommit(draft);
-        }}
-        placeholder={placeholder}
-        className={cn(
-          minHeightClassName,
-          "w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
-          PROFILE_DESCRIPTION_TEXT_CLASS,
+    <div className="group/editor grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-0 px-2 py-1.5">
+      <div className={cn(PROFILE_DESCRIPTION_FRAME_CLASS, "min-w-0")}>
+        {changed && (
+          <div className="mb-1 flex justify-end">
+            <Circle className="h-1.5 w-1.5 fill-warning text-warning" aria-label="Edited locally" />
+          </div>
         )}
-      />
+        <Textarea
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => {
+            if (draft !== value) onCommit(draft);
+          }}
+          placeholder={placeholder}
+          className={cn(
+            minHeightClassName,
+            "w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
+            PROFILE_DESCRIPTION_TEXT_CLASS,
+          )}
+        />
+      </div>
+      {showMenu ? (
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="flex h-6 min-h-6 w-6 min-w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/editor:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
+              aria-label={actionLabel}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
+            {onApplyField && <DropdownMenuItem onSelect={() => onApplyField(applyField)}>Apply to Default</DropdownMenuItem>}
+            {onRevertField && <DropdownMenuItem onSelect={() => onRevertField(applyField)}>Revert to Default</DropdownMenuItem>}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <span className="h-6 w-6 shrink-0" aria-hidden="true" />
+      )}
     </div>
   );
 }
@@ -795,13 +790,9 @@ function PersonaTreeItem({
   const showApply = canApply && resolveApplyTargetId(persona) != null;
   const showRevert = showApply && personaBaseline(persona) != null;
   const collapsedDescription = draft.description.trim();
-  const { data: history = [] } = useQuery<Array<{ id: string; changeSummary: string; createdAt: string; createdByUserId: string | null }>>({
-    queryKey: ["/api/personas", persona.id, "history"],
-    enabled: open,
-  });
   const personaAction = useMutation({
-    mutationFn: async ({ action, revisionId }: { action: "restore" | "keep-mine" | "use-updated-default"; revisionId?: string }) => {
-      await apiRequest("POST", `/api/personas/${persona.id}/${action}`, revisionId ? { revisionId } : {});
+    mutationFn: async ({ action }: { action: "keep-mine" | "use-updated-default" }) => {
+      await apiRequest("POST", `/api/personas/${persona.id}/${action}`, {});
     },
     onSuccess: onRefresh,
   });
@@ -866,22 +857,6 @@ function PersonaTreeItem({
               </div>
             </div>
           )}
-          {history.length > 0 && (
-            <div>
-              {history.map((revision) => (
-                <div key={revision.id} className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default")}>
-                  <span className="min-w-0 flex-1 truncate">{revision.changeSummary}</span>
-                  <span className="text-xs text-muted-foreground">{timeAgo(revision.createdAt)}</span>
-                  {revision.id !== persona.currentRevisionId && revision.createdByUserId && (
-                    <Button size="sm" variant="ghost" onClick={() => personaAction.mutate({ action: "restore", revisionId: revision.id })}>Restore</Button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default")}>
-            <p className="text-xs text-muted-foreground">Updated {timeAgo(persona.updatedAt)}</p>
-          </div>
         </div>
       </CollapsibleContent>
       <DefaultSyncDialog sync={sync} />
@@ -936,7 +911,7 @@ function CreatePersonaForm({ onSuccess, onClose }: { onSuccess: () => void; onCl
             value={description}
             onChange={(event) => setDescription(event.target.value)}
             placeholder="Add description"
-            className={cn("min-h-24 w-full resize-none border-0 bg-transparent p-0 shadow-none md:text-[14px]", PROFILE_DESCRIPTION_TEXT_CLASS)}
+            className={cn("min-h-[2.75rem] w-full resize-none border-0 bg-transparent p-0 shadow-none md:text-[14px]", PROFILE_DESCRIPTION_TEXT_CLASS)}
           />
         </div>
         <div className={PROFILE_DESCRIPTION_FRAME_CLASS}>
@@ -979,10 +954,6 @@ function PlatformPersonaItem({ persona, canApply, onPublished }: { persona: Pers
   const sync = usePersonaDefaultSync(onPublished);
   const showApply = canApply && resolveApplyTargetId(persona) != null;
   const collapsedDescription = draft.description.trim();
-  const { data: history = [] } = useQuery<Array<{ id: string; payload: Record<string, unknown>; changeSummary: string; createdAt: string }>>({
-    queryKey: ["/api/personas", persona.id, "history"],
-    enabled: open,
-  });
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={`persona-row-${persona.id}`}>
       <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "group hover:bg-accent/70")}>
@@ -1015,29 +986,6 @@ function PlatformPersonaItem({ persona, canApply, onPublished }: { persona: Pers
             onApplyField={showApply ? (field) => sync.request(() => buildApplyField(persona, draft, field)) : undefined}
             showAdvancedFields={showAdvancedFields}
           />
-          {history.length > 0 && history.map((revision) => (
-            <div key={revision.id} className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default")}>
-              <span className="min-w-0 flex-1 truncate">{revision.changeSummary}</span>
-              <span className="text-xs text-muted-foreground">{timeAgo(revision.createdAt)}</span>
-              {showApply && revision.id !== persona.currentRevisionId && (
-                <Button size="sm" variant="ghost" onClick={() => sync.request(() => ({
-                  mode: "apply",
-                  title: `Republish this ${persona.name} revision?`,
-                  description: `Publish this earlier ${persona.name} revision as the current platform default.`,
-                  rows: buildApplyDiffRows(currentPayload(persona), revision.payload),
-                  run: async () => {
-                    const targetId = resolveApplyTargetId(persona);
-                    if (targetId == null) throw new Error("This persona has no platform default to apply to.");
-                    await apiRequest("POST", `/api/personas/platform/${targetId}/publish`, {
-                      changes: revision.payload,
-                      changeSummary: `Republish ${revision.changeSummary}`,
-                      confirmed: true,
-                    });
-                  },
-                }))}>Republish</Button>
-              )}
-            </div>
-          ))}
         </div>
       </CollapsibleContent>
       <DefaultSyncDialog sync={sync} />
