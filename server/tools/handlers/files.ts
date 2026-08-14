@@ -9,6 +9,61 @@ import {
 import type { ToolHandler } from "../contracts";
 import { contractReject } from "../shared/failures";
 
+/** True when buffer bytes are not safe UTF-8 text for tool/conversation storage. */
+function looksLikeBinaryBuffer(buffer: Buffer): boolean {
+  if (buffer.length === 0) return false;
+  // Common magic headers first — cheaper and more precise than a full scan.
+  if (buffer.length >= 8 && buffer[0] === 0x89 && buffer.toString("ascii", 1, 4) === "PNG") {
+    return true;
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return true; // JPEG
+  }
+  if (buffer.length >= 6) {
+    const head6 = buffer.toString("ascii", 0, 6);
+    if (head6 === "GIF87a" || head6 === "GIF89a") return true;
+  }
+  if (buffer.length >= 4 && buffer.toString("ascii", 0, 4) === "%PDF") return true;
+  if (
+    buffer.length >= 12 &&
+    buffer.toString("ascii", 0, 4) === "RIFF" &&
+    buffer.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return true;
+  }
+  if (buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04) {
+    return true; // ZIP / office / many containers
+  }
+  // Null bytes are illegal in PostgreSQL text/json and never appear in UTF-8 text.
+  const sampleLen = Math.min(buffer.length, 8192);
+  for (let i = 0; i < sampleLen; i += 1) {
+    if (buffer[i] === 0) return true;
+  }
+  return false;
+}
+
+function detectBinaryKind(buffer: Buffer): string {
+  if (buffer.length >= 8 && buffer[0] === 0x89 && buffer.toString("ascii", 1, 4) === "PNG") {
+    return "image/png";
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (buffer.length >= 6) {
+    const head6 = buffer.toString("ascii", 0, 6);
+    if (head6 === "GIF87a" || head6 === "GIF89a") return "image/gif";
+  }
+  if (buffer.length >= 4 && buffer.toString("ascii", 0, 4) === "%PDF") return "application/pdf";
+  if (
+    buffer.length >= 12 &&
+    buffer.toString("ascii", 0, 4) === "RIFF" &&
+    buffer.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  return "application/octet-stream";
+}
+
 /** Classify errors emitted by the canonical Files API/provider boundary. */
 export function classifyFilesToolError(err: unknown): ToolFailure | undefined {
   if (!err || typeof err !== "object") return undefined;
@@ -82,6 +137,24 @@ export const persistentFileHandlers: Readonly<Record<string, ToolHandler>> = {
       const cleanPath = objectPath.split("?")[0];
       const objectFile = await storageService.getObjectEntityFile(cleanPath);
       const [buffer] = await objectFile.download();
+      // Binary object bodies (PNG, PDF, etc.) contain null bytes and other
+      // control characters that must never enter tool results or conversation
+      // JSONB. Fail closed with a descriptor instead of utf-8 decoding.
+      if (looksLikeBinaryBuffer(buffer)) {
+        const metadata = await objectFile.getMetadata().catch(() => null);
+        const contentType =
+          typeof metadata?.contentType === "string" && metadata.contentType
+            ? metadata.contentType
+            : detectBinaryKind(buffer);
+        const sizeLabel = `${buffer.length} bytes`;
+        return {
+          result:
+            `File "${cleanPath}" is binary (${contentType}, ${sizeLabel}) and cannot be read as text. ` +
+            `Open it in the web UI or use an image/PDF-capable tool. Do not embed raw bytes in chat.`,
+          error: true,
+          failure: inputFailure("files_binary_not_text", contentType),
+        };
+      }
       const content = buffer.toString("utf-8");
 
       const offset = typeof args?.offset === "number" && args.offset >= 0 ? args.offset : 0;

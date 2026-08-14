@@ -36,6 +36,49 @@ export interface ConversationWriteResult {
   updatedCount: number;
 }
 
+/**
+ * PostgreSQL text/json reject U+0000 (SQLSTATE 22P05 untranslatable_character).
+ * Tool results, model text, and nested diagnostics can smuggle null bytes into
+ * conversation payloads; strip them at the canonical write boundary so one
+ * bad string cannot fail the whole session persist.
+ */
+export function sanitizeConversationPayloadForPostgres<T>(value: T): T {
+  return sanitizeJsonValue(value) as T;
+}
+
+function sanitizeJsonValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.includes("\u0000") ? value.replaceAll("\u0000", "") : value;
+  }
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((entry) => {
+      const sanitized = sanitizeJsonValue(entry);
+      if (sanitized !== entry) changed = true;
+      return sanitized;
+    });
+    return changed ? next : value;
+  }
+  if (value && typeof value === "object") {
+    // Preserve Date and other non-plain objects as-is; conversation payloads are
+    // plain JSON-serializable records.
+    if (Object.getPrototypeOf(value) !== Object.prototype && !(value instanceof Object && value.constructor === Object)) {
+      return value;
+    }
+    const record = value as Record<string, unknown>;
+    let changed = false;
+    const next: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(record)) {
+      const sanitizedKey = key.includes("\u0000") ? key.replaceAll("\u0000", "") : key;
+      const sanitized = sanitizeJsonValue(entry);
+      if (sanitizedKey !== key || sanitized !== entry) changed = true;
+      next[sanitizedKey] = sanitized;
+    }
+    return changed ? next : value;
+  }
+  return value;
+}
+
 export async function readConversationMessages(
   principal: Principal,
   sessionId: string,
@@ -161,7 +204,7 @@ export async function writeConversationRevision(
   }
 
   for (let ordinal = 0; ordinal < input.messages.length; ordinal += 1) {
-    const message = input.messages[ordinal];
+    const message = sanitizeConversationPayloadForPostgres(input.messages[ordinal]);
     const previous = previousById.get(message.id);
     if (!previous) {
       insertedCount += 1;

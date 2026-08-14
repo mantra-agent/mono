@@ -3360,6 +3360,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
               `persist warning notice failed sessionId=${sessionId}: ${saveErr instanceof Error ? saveErr.message : String(saveErr)}`,
             ),
           );
+        // Same contract as ordinary system notices: undismissed warning owns
+        // Session Menu REVIEW / Home session_review until explicit dismiss.
+        await chatStorage
+          .setErrorSeverity(sessionId, "warning")
+          .catch((sevErr) =>
+            chatLog.warn(
+              `persist warning severity failed sessionId=${sessionId}: ${sevErr instanceof Error ? sevErr.message : String(sevErr)}`,
+            ),
+          );
         journal("system_notice", {
           severity: "warning",
           content: JSON.stringify(persistNotice),
