@@ -1,7 +1,7 @@
 import { useEffect, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Check, ChevronRight, Circle, Loader2, MoreHorizontal, Plus, RotateCcw, X } from "lucide-react";
+import { Check, ChevronRight, Circle, Loader2, MoreHorizontal, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { HIERARCHY_PRIMARY_ACTION_CLASS, HIERARCHY_SECTION_HEADER_CLASS, HIERARCHY_SESSION_ROW_CLASS, HIERARCHY_TREE_STACK_CLASS } from "@/components/hierarchy-section-header";
@@ -72,19 +72,39 @@ const FIELD_LABELS: Record<LocalField, string> = {
   icon: "Icon",
   promptOverlay: "Prompt",
   expressionTags: "Expressions",
-  memoryGraphTokenBudget: "Memory graph budget",
-  semanticTier: "Model",
+  memoryGraphTokenBudget: "Memory",
+  semanticTier: "Thinking",
   contextSections: "Context",
-  toolBundle: "Tool bundle",
+  toolBundle: "Tools",
 };
 
-const UPDATE_STATE_LABELS: Record<Persona["updateState"], string> = {
-  following: "Following default",
-  customized: "Customized",
-  update_available: "Update available",
-  conflict: "Conflict",
-  pinned_legacy: "Customized",
-};
+const MEMORY_TIERS = [
+  { value: "fast", label: "Fast", tokens: 1000 },
+  { value: "balanced", label: "Balanced", tokens: 4000 },
+  { value: "high", label: "High", tokens: 10000 },
+  { value: "max", label: "Max", tokens: 20000 },
+] as const;
+
+/** Map a stored token budget to the closest named memory tier, or "" when unset. */
+function budgetToTier(budget: string): string {
+  const n = Number(budget);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  let best = MEMORY_TIERS[0].value as string;
+  let bestDiff = Infinity;
+  for (const tier of MEMORY_TIERS) {
+    const diff = Math.abs(tier.tokens - n);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = tier.value;
+    }
+  }
+  return best;
+}
+
+function tierToBudget(tier: string): string {
+  const found = MEMORY_TIERS.find((entry) => entry.value === tier);
+  return found ? String(found.tokens) : "";
+}
 
 interface ApplyDiffRow {
   field: string;
@@ -92,12 +112,14 @@ interface ApplyDiffRow {
   after: string;
 }
 
-interface ApplyPending {
+type DefaultSyncMode = "apply" | "revert";
+
+interface PendingSync {
+  mode: DefaultSyncMode;
   title: string;
   description: string;
-  changes: Record<string, unknown>;
-  summary: string;
   rows: ApplyDiffRow[];
+  run: () => Promise<void>;
 }
 
 function formatDiffValue(value: unknown): string {
@@ -171,59 +193,113 @@ function buildApplyDiffRows(
     .filter((row): row is ApplyDiffRow => row != null);
 }
 
-function buildApplyAll(persona: Persona, draft: PersonaPayloadDraft): ApplyPending {
-  const changes = fullApplyPayload(persona, draft);
-  const baseline =
-    persona.platformBaseline ||
-    (persona.isSystem || persona.source === "seed"
-      ? {
-          name: persona.name,
-          icon: persona.icon,
-          description: persona.description,
-          promptOverlay: persona.promptOverlay,
-          expressionTags: persona.expressionTags,
-          cognitiveOverrides: persona.cognitiveOverrides,
-          semanticTier: persona.semanticTier,
-          contextSections: persona.contextSections,
-          toolBundle: persona.toolBundle,
-        }
-      : null);
+function resolveApplyTargetId(persona: Persona): number | null {
+  return persona.templatePersonaId ?? ((persona.isSystem || persona.source === "seed") ? persona.id : null);
+}
+
+function currentPayload(persona: Persona): Record<string, unknown> {
   return {
+    name: persona.name,
+    icon: persona.icon,
+    description: persona.description,
+    promptOverlay: persona.promptOverlay,
+    expressionTags: persona.expressionTags,
+    cognitiveOverrides: persona.cognitiveOverrides,
+    semanticTier: persona.semanticTier,
+    contextSections: persona.contextSections,
+    toolBundle: persona.toolBundle,
+  };
+}
+
+function personaBaseline(persona: Persona): Record<string, unknown> | null {
+  if (persona.platformBaseline) return persona.platformBaseline as Record<string, unknown>;
+  if (persona.isSystem || persona.source === "seed") return currentPayload(persona);
+  return null;
+}
+
+function publishedFieldFor(field: LocalField): string {
+  return field === "memoryGraphTokenBudget" ? "cognitiveOverrides" : field;
+}
+
+function buildApplyAll(persona: Persona, draft: PersonaPayloadDraft): PendingSync {
+  const changes = fullApplyPayload(persona, draft);
+  const targetId = resolveApplyTargetId(persona);
+  return {
+    mode: "apply",
     title: `Apply ${persona.name} to default?`,
     description: `Publish ${persona.name}'s current values as the platform default for everyone. Personas following the default update automatically; customized copies get an "Update available".`,
-    changes,
-    summary: `Apply ${persona.name} to default`,
-    rows: buildApplyDiffRows(baseline as Record<string, unknown> | null, changes),
+    rows: buildApplyDiffRows(personaBaseline(persona), changes),
+    run: async () => {
+      if (targetId == null) throw new Error("This persona has no platform default to apply to.");
+      await apiRequest("POST", `/api/personas/platform/${targetId}/publish`, {
+        changes,
+        changeSummary: `Apply ${persona.name} to default`,
+        confirmed: true,
+      });
+    },
   };
 }
 
-function buildApplyField(persona: Persona, draft: PersonaPayloadDraft, field: LocalField): ApplyPending {
+function buildApplyField(persona: Persona, draft: PersonaPayloadDraft, field: LocalField): PendingSync {
   const label = FIELD_LABELS[field];
   const payload = fullApplyPayload(persona, draft);
-  const publishedField = field === "memoryGraphTokenBudget" ? "cognitiveOverrides" : field;
+  const publishedField = publishedFieldFor(field);
   const changes = { [publishedField]: payload[publishedField] };
-  const beforeValue =
-    persona.platformBaseline
-      ? (persona.platformBaseline as Record<string, unknown>)[publishedField]
-      : persona.isSystem || persona.source === "seed"
-        ? (persona as unknown as Record<string, unknown>)[publishedField]
-        : undefined;
+  const baseline = personaBaseline(persona);
+  const targetId = resolveApplyTargetId(persona);
   return {
+    mode: "apply",
     title: `Apply ${label} to default?`,
     description: `Publish ${persona.name}'s ${label} as the platform default for everyone.`,
-    changes,
-    summary: `Apply ${label} to default`,
-    rows: buildApplyDiffRows(
-      { [publishedField]: beforeValue },
-      changes,
-    ),
+    rows: buildApplyDiffRows({ [publishedField]: baseline?.[publishedField] }, changes),
+    run: async () => {
+      if (targetId == null) throw new Error("This persona has no platform default to apply to.");
+      await apiRequest("POST", `/api/personas/platform/${targetId}/publish`, {
+        changes,
+        changeSummary: `Apply ${label} to default`,
+        confirmed: true,
+      });
+    },
   };
 }
 
-function ApplyDiffView({ rows }: { rows: ApplyDiffRow[] }) {
+function buildRevertAll(persona: Persona): PendingSync {
+  const baseline = personaBaseline(persona);
+  return {
+    mode: "revert",
+    title: `Revert ${persona.name} to default?`,
+    description: `Discard ${persona.name}'s customizations and restore the current platform default.`,
+    rows: buildApplyDiffRows(currentPayload(persona), baseline),
+    run: async () => {
+      if (baseline == null) throw new Error("This persona has no platform default to revert to.");
+      await apiRequest("POST", `/api/personas/${persona.id}/use-updated-default`, {});
+    },
+  };
+}
+
+function buildRevertField(persona: Persona, field: LocalField): PendingSync {
+  const label = FIELD_LABELS[field];
+  const publishedField = publishedFieldFor(field);
+  const baseline = personaBaseline(persona);
+  const baselineValue = baseline?.[publishedField];
+  return {
+    mode: "revert",
+    title: `Revert ${label} to default?`,
+    description: `Discard ${persona.name}'s ${label} customization and restore the current platform default.`,
+    rows: buildApplyDiffRows({ [publishedField]: currentPayload(persona)[publishedField] }, { [publishedField]: baselineValue }),
+    run: async () => {
+      if (baseline == null) throw new Error("This persona has no platform default to revert to.");
+      await apiRequest("PUT", `/api/personas/${persona.id}`, { [publishedField]: baselineValue });
+    },
+  };
+}
+
+function ApplyDiffView({ rows, mode }: { rows: ApplyDiffRow[]; mode: DefaultSyncMode }) {
   if (rows.length === 0) {
-    return <p className="text-sm text-muted-foreground">No changes from the current default.</p>;
+    return <p className="text-sm text-muted-foreground">No differences from the current default.</p>;
   }
+  const leftLabel = mode === "revert" ? "Current" : "Current default";
+  const rightLabel = mode === "revert" ? "After revert" : "After apply";
   return (
     <div className="max-h-80 space-y-2 overflow-auto pr-1">
       {rows.map((row) => (
@@ -231,11 +307,11 @@ function ApplyDiffView({ rows }: { rows: ApplyDiffRow[] }) {
           <div className="mb-1 text-xs font-medium text-foreground">{row.field}</div>
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="min-w-0">
-              <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Current default</div>
+              <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">{leftLabel}</div>
               <pre className="whitespace-pre-wrap break-words rounded-md bg-background/60 px-2 py-1.5 text-xs text-muted-foreground">{row.before}</pre>
             </div>
             <div className="min-w-0">
-              <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">After apply</div>
+              <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">{rightLabel}</div>
               <pre className="whitespace-pre-wrap break-words rounded-md bg-background/60 px-2 py-1.5 text-xs text-foreground">{row.after}</pre>
             </div>
           </div>
@@ -245,61 +321,55 @@ function ApplyDiffView({ rows }: { rows: ApplyDiffRow[] }) {
   );
 }
 
-/** Promote a persona (or one field) up to its platform default, behind a confirmation prompt. */
-function useApplyToDefault(persona: Persona, onDone: () => void) {
+/** Apply a persona (or one field) to its platform default, or revert it back, behind a confirmation prompt. */
+function usePersonaDefaultSync(onDone: () => void) {
   const { toast } = useToast();
-  const [pending, setPending] = useState<ApplyPending | null>(null);
-  const applyTargetId = persona.templatePersonaId ?? ((persona.isSystem || persona.source === "seed") ? persona.id : null);
+  const [pending, setPending] = useState<PendingSync | null>(null);
   const mutation = useMutation({
-    mutationFn: async (input: ApplyPending) => {
-      if (applyTargetId == null) throw new Error("This persona has no platform default to apply to.");
-      await apiRequest("POST", `/api/personas/platform/${applyTargetId}/publish`, {
-        changes: input.changes,
-        changeSummary: input.summary,
-        confirmed: true,
-      });
+    mutationFn: async (input: PendingSync) => {
+      await input.run();
     },
-    onSuccess: () => {
-      toast({ title: "Applied to default" });
+    onSuccess: (_data, input) => {
+      toast({ title: input.mode === "revert" ? "Reverted to default" : "Applied to default" });
       setPending(null);
       onDone();
     },
     onError: (err: Error) => {
-      toast({ title: "Couldn't apply to default", description: err.message, variant: "destructive" });
+      toast({ title: "Couldn't update default", description: err.message, variant: "destructive" });
     },
   });
-  const request = (build: () => ApplyPending) => {
+  const request = (build: () => PendingSync) => {
     try {
       setPending(build());
     } catch (err) {
-      toast({ title: "Can't apply", description: (err as Error).message, variant: "destructive" });
+      toast({ title: "Can't continue", description: (err as Error).message, variant: "destructive" });
     }
   };
   return {
-    hasTarget: applyTargetId != null,
     pending,
     request,
     cancel: () => setPending(null),
     confirm: () => {
       if (pending) mutation.mutate(pending);
     },
-    applying: mutation.isPending,
+    working: mutation.isPending,
   };
 }
 
-function ApplyToDefaultDialog({ apply }: { apply: ReturnType<typeof useApplyToDefault> }) {
+function DefaultSyncDialog({ sync }: { sync: ReturnType<typeof usePersonaDefaultSync> }) {
+  const mode: DefaultSyncMode = sync.pending?.mode ?? "apply";
   return (
-    <AlertDialog open={apply.pending != null} onOpenChange={(o) => { if (!o) apply.cancel(); }}>
+    <AlertDialog open={sync.pending != null} onOpenChange={(o) => { if (!o) sync.cancel(); }}>
       <AlertDialogContent className="max-w-3xl">
         <AlertDialogHeader>
-          <AlertDialogTitle>{apply.pending?.title}</AlertDialogTitle>
-          <AlertDialogDescription>{apply.pending?.description}</AlertDialogDescription>
+          <AlertDialogTitle>{sync.pending?.title}</AlertDialogTitle>
+          <AlertDialogDescription>{sync.pending?.description}</AlertDialogDescription>
         </AlertDialogHeader>
-        <ApplyDiffView rows={apply.pending?.rows || []} />
+        <ApplyDiffView rows={sync.pending?.rows || []} mode={mode} />
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction disabled={apply.applying || (apply.pending?.rows.length ?? 0) === 0} onClick={(event) => { event.preventDefault(); apply.confirm(); }}>
-            {apply.applying ? "Applying…" : "Apply to default"}
+          <AlertDialogAction disabled={sync.working || (sync.pending?.rows.length ?? 0) === 0} onClick={(event) => { event.preventDefault(); sync.confirm(); }}>
+            {sync.working ? "Working…" : mode === "revert" ? "Revert to default" : "Apply to default"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -307,7 +377,7 @@ function ApplyToDefaultDialog({ apply }: { apply: ReturnType<typeof useApplyToDe
   );
 }
 
-function ApplyHeaderMenu({ onApplyAll }: { onApplyAll: () => void }) {
+function PersonaActionsMenu({ onApplyAll, onRevertAll }: { onApplyAll: () => void; onRevertAll?: () => void }) {
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
@@ -323,6 +393,7 @@ function ApplyHeaderMenu({ onApplyAll }: { onApplyAll: () => void }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
         <DropdownMenuItem onSelect={onApplyAll}>Apply to Default</DropdownMenuItem>
+        {onRevertAll && <DropdownMenuItem onSelect={onRevertAll}>Revert to Default</DropdownMenuItem>}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -430,6 +501,7 @@ function PersonaProseEditor({
   changed,
   onCommit,
   onApplyField,
+  onRevertField,
   applyField,
   placeholder,
   actionLabel,
@@ -439,6 +511,7 @@ function PersonaProseEditor({
   changed?: boolean;
   onCommit: (next: string) => void;
   onApplyField?: (field: LocalField) => void;
+  onRevertField?: (field: LocalField) => void;
   applyField: LocalField;
   placeholder: string;
   actionLabel: string;
@@ -450,10 +523,10 @@ function PersonaProseEditor({
   }, [value]);
   return (
     <div className={cn(PROFILE_DESCRIPTION_FRAME_CLASS, "group/editor relative")}>
-      {(changed || onApplyField) && (
+      {(changed || onApplyField || onRevertField) && (
         <div className="absolute right-1.5 top-1.5 flex items-center gap-1">
           {changed && <Circle className="h-1.5 w-1.5 fill-warning text-warning" aria-label="Edited locally" />}
-          {onApplyField && (
+          {(onApplyField || onRevertField) && (
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <button
@@ -465,7 +538,8 @@ function PersonaProseEditor({
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
-                <DropdownMenuItem onSelect={() => onApplyField(applyField)}>Apply to Default</DropdownMenuItem>
+                {onApplyField && <DropdownMenuItem onSelect={() => onApplyField(applyField)}>Apply to Default</DropdownMenuItem>}
+                {onRevertField && <DropdownMenuItem onSelect={() => onRevertField(applyField)}>Revert to Default</DropdownMenuItem>}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -494,12 +568,14 @@ function PersonaPayloadEditor({
   onChange,
   onCommit,
   onApplyField,
+  onRevertField,
 }: {
   persona: Persona;
   draft: PersonaPayloadDraft;
   onChange: (draft: PersonaPayloadDraft) => void;
   onCommit?: (draft: PersonaPayloadDraft) => void;
   onApplyField?: (field: LocalField) => void;
+  onRevertField?: (field: LocalField) => void;
 }) {
   const { data: sectionCatalog = [] } = useQuery<ContextSectionCatalogEntry[]>({ queryKey: ["/api/personas/section-catalog"] });
   const { data: toolCatalog = [] } = useQuery<ToolCatalogEntry[]>({ queryKey: ["/api/personas/tool-catalog"] });
@@ -525,9 +601,12 @@ function PersonaPayloadEditor({
   });
   const mark = (field: LocalField) => <LocalEditMark field={field} changedFields={persona.changedFields} />;
   const fieldMenu = (field: LocalField) =>
-    onApplyField ? <DropdownMenuItem onSelect={() => onApplyField(field)}>Apply to Default</DropdownMenuItem> : undefined;
-  const originalBudget = readMemoryGraphTokenBudget(persona.cognitiveOverrides);
-  const originalBudgetText = originalBudget == null ? "" : String(originalBudget);
+    onApplyField || onRevertField ? (
+      <>
+        {onApplyField && <DropdownMenuItem onSelect={() => onApplyField(field)}>Apply to Default</DropdownMenuItem>}
+        {onRevertField && <DropdownMenuItem onSelect={() => onRevertField(field)}>Revert to Default</DropdownMenuItem>}
+      </>
+    ) : undefined;
   return (
     <div className="space-y-1">
       <PersonaProseEditor
@@ -535,6 +614,7 @@ function PersonaPayloadEditor({
         changed={persona.changedFields?.includes("description")}
         onCommit={(description) => commit("description", description)}
         onApplyField={onApplyField}
+        onRevertField={onRevertField}
         applyField="description"
         placeholder="Add description"
         actionLabel="Description actions"
@@ -544,6 +624,7 @@ function PersonaPayloadEditor({
         changed={persona.changedFields?.includes("promptOverlay")}
         onCommit={(promptOverlay) => commit("promptOverlay", promptOverlay)}
         onApplyField={onApplyField}
+        onRevertField={onRevertField}
         applyField="promptOverlay"
         placeholder="Add prompt"
         actionLabel="Prompt actions"
@@ -553,28 +634,17 @@ function PersonaPayloadEditor({
         <ProfileTreeRow label="Expressions" icon={mark("expressionTags")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("expressionTags")} menuVisibility="hover" expandedContent={<Input value={draft.expressionTags} placeholder="curious, gravitas" onChange={(event) => set("expressionTags", event.target.value)} {...commitInput("expressionTags", persona.expressionTags.join(", "))} />}>
           <span className="truncate">{draft.expressionTags || "None"}</span>
         </ProfileTreeRow>
-        <ProfileTreeRow
-          label="Memory graph budget"
-          icon={mark("memoryGraphTokenBudget")}
-          hasValue
-          showEmpty
-          mobileLayout="inline"
-          menuContent={fieldMenu("memoryGraphTokenBudget")}
-          menuVisibility="hover"
-          expandedContent={
-            <Input
-              type="number"
-              min={1}
-              value={draft.memoryGraphTokenBudget}
-              onChange={(event) => set("memoryGraphTokenBudget", event.target.value)}
-              {...commitInput("memoryGraphTokenBudget", originalBudgetText)}
-              placeholder="Default"
-            />
-          }
-        >
-          <span>{draft.memoryGraphTokenBudget || "Default"}</span>
+        <ProfileTreeRow label="Memory" icon={mark("memoryGraphTokenBudget")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("memoryGraphTokenBudget")} menuVisibility="hover">
+          <Select value={budgetToTier(draft.memoryGraphTokenBudget) || undefined} onValueChange={(value) => commit("memoryGraphTokenBudget", tierToBudget(value))}>
+            <SelectTrigger><SelectValue placeholder="Default" /></SelectTrigger>
+            <SelectContent>
+              {MEMORY_TIERS.map((tier) => (
+                <SelectItem key={tier.value} value={tier.value}>{tier.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </ProfileTreeRow>
-        <ProfileTreeRow label="Model" icon={mark("semanticTier")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("semanticTier")} menuVisibility="hover">
+        <ProfileTreeRow label="Thinking" icon={mark("semanticTier")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("semanticTier")} menuVisibility="hover">
           <Select value={draft.semanticTier} onValueChange={(value) => commit("semanticTier", value as PersonaPayloadDraft["semanticTier"])}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -596,7 +666,7 @@ function PersonaPayloadEditor({
         })}</div>}>
           <span>{Object.keys(draft.contextSections).length} overrides</span>
         </ProfileTreeRow>
-        <ProfileTreeRow label="Tool bundle" icon={mark("toolBundle")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("toolBundle")} menuVisibility="hover" expandedContent={<div>{toolCatalog.map((entry) => {
+        <ProfileTreeRow label="Tools" icon={mark("toolBundle")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("toolBundle")} menuVisibility="hover" expandedContent={<div>{toolCatalog.map((entry) => {
           const on = entry.isCore || draft.toolBundle.includes(entry.name);
           return (
             <button key={entry.name} type="button" disabled={entry.isCore} className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70 disabled:opacity-60")} onClick={() => commit("toolBundle", on ? draft.toolBundle.filter((name) => name !== entry.name) : [...draft.toolBundle, entry.name])}>
@@ -672,16 +742,12 @@ function PersonaNameEditor({
 function PersonaTreeItem({
   persona,
   canApply,
-  onRevert,
   onUpdate,
   onRefresh,
-  onSetDefault,
 }: {
   persona: Persona;
   canApply: boolean;
-  onRevert: () => void;
   onRefresh: () => void;
-  onSetDefault: () => void;
   onUpdate: (data: Record<string, unknown>) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -689,8 +755,9 @@ function PersonaTreeItem({
   useEffect(() => {
     setDraft(draftFromPersona(persona));
   }, [persona]);
-  const apply = useApplyToDefault(persona, onRefresh);
-  const showApply = canApply && apply.hasTarget;
+  const sync = usePersonaDefaultSync(onRefresh);
+  const showApply = canApply && resolveApplyTargetId(persona) != null;
+  const showRevert = showApply && personaBaseline(persona) != null;
   const { data: history = [] } = useQuery<Array<{ id: string; changeSummary: string; createdAt: string; createdByUserId: string | null }>>({
     queryKey: ["/api/personas", persona.id, "history"],
     enabled: open,
@@ -721,7 +788,12 @@ function PersonaTreeItem({
           onCommit={(name) => onUpdate({ name })}
         />
         {persona.isDefault && <span className="shrink-0 text-xs text-muted-foreground/70">Default</span>}
-        {showApply && <ApplyHeaderMenu onApplyAll={() => apply.request(() => buildApplyAll(persona, draft))} />}
+        {showApply && (
+          <PersonaActionsMenu
+            onApplyAll={() => sync.request(() => buildApplyAll(persona, draft))}
+            onRevertAll={showRevert ? () => sync.request(() => buildRevertAll(persona)) : undefined}
+          />
+        )}
         <CollapsibleTrigger asChild>
           <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground/60" aria-label={open ? "Collapse persona" : "Expand persona"}>
             <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
@@ -735,7 +807,8 @@ function PersonaTreeItem({
             draft={draft}
             onChange={setDraft}
             onCommit={(next) => onUpdate(payloadFromDraft(next))}
-            onApplyField={showApply ? (field) => apply.request(() => buildApplyField(persona, draft, field)) : undefined}
+            onApplyField={showApply ? (field) => sync.request(() => buildApplyField(persona, draft, field)) : undefined}
+            onRevertField={showRevert ? (field) => sync.request(() => buildRevertField(persona, field)) : undefined}
           />
           {persona.updateAvailable && (
             <div className="px-2 text-sm">
@@ -759,22 +832,12 @@ function PersonaTreeItem({
               ))}
             </div>
           )}
-          <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between")}>
-            <p className="text-xs text-muted-foreground">{UPDATE_STATE_LABELS[persona.updateState]} · Updated {timeAgo(persona.updatedAt)}</p>
-            <div className="flex items-center gap-2">
-              {!persona.isSystem && !persona.isDefault && (
-                <Button size="sm" variant="ghost" onClick={onSetDefault}>Set as default</Button>
-              )}
-              {persona.source !== "seed" && (persona.updateState === "customized" || persona.updateState === "pinned_legacy") && (
-                <Button size="sm" variant="outline" className="gap-1" onClick={onRevert}>
-                  <RotateCcw className="h-3 w-3" /> Revert to default
-                </Button>
-              )}
-            </div>
+          <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default")}>
+            <p className="text-xs text-muted-foreground">Updated {timeAgo(persona.updatedAt)}</p>
           </div>
         </div>
       </CollapsibleContent>
-      <ApplyToDefaultDialog apply={apply} />
+      <DefaultSyncDialog sync={sync} />
     </Collapsible>
   );
 }
@@ -865,8 +928,8 @@ function PlatformPersonaItem({ persona, canApply, onPublished }: { persona: Pers
   useEffect(() => {
     setDraft(draftFromPersona(persona));
   }, [persona]);
-  const apply = useApplyToDefault(persona, onPublished);
-  const showApply = canApply && apply.hasTarget;
+  const sync = usePersonaDefaultSync(onPublished);
+  const showApply = canApply && resolveApplyTargetId(persona) != null;
   const { data: history = [] } = useQuery<Array<{ id: string; payload: Record<string, unknown>; changeSummary: string; createdAt: string }>>({
     queryKey: ["/api/personas", persona.id, "history"],
     enabled: open,
@@ -876,7 +939,7 @@ function PlatformPersonaItem({ persona, canApply, onPublished }: { persona: Pers
       <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "group hover:bg-accent/70")}>
         <PersonaIconDisplay iconName={persona.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-foreground">{persona.name}</span>
-        {showApply && <ApplyHeaderMenu onApplyAll={() => apply.request(() => buildApplyAll(persona, draft))} />}
+        {showApply && <PersonaActionsMenu onApplyAll={() => sync.request(() => buildApplyAll(persona, draft))} />}
         <CollapsibleTrigger asChild>
           <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground/60" aria-label={open ? "Collapse persona" : "Expand persona"}>
             <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
@@ -889,39 +952,34 @@ function PlatformPersonaItem({ persona, canApply, onPublished }: { persona: Pers
             persona={persona}
             draft={draft}
             onChange={setDraft}
-            onApplyField={showApply ? (field) => apply.request(() => buildApplyField(persona, draft, field)) : undefined}
+            onApplyField={showApply ? (field) => sync.request(() => buildApplyField(persona, draft, field)) : undefined}
           />
           {history.length > 0 && history.map((revision) => (
             <div key={revision.id} className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default")}>
               <span className="min-w-0 flex-1 truncate">{revision.changeSummary}</span>
               <span className="text-xs text-muted-foreground">{timeAgo(revision.createdAt)}</span>
               {showApply && revision.id !== persona.currentRevisionId && (
-                <Button size="sm" variant="ghost" onClick={() => apply.request(() => ({
+                <Button size="sm" variant="ghost" onClick={() => sync.request(() => ({
+                  mode: "apply",
                   title: `Republish this ${persona.name} revision?`,
                   description: `Publish this earlier ${persona.name} revision as the current platform default.`,
-                  changes: revision.payload,
-                  summary: `Republish ${revision.changeSummary}`,
-                  rows: buildApplyDiffRows(
-                    {
-                      name: persona.name,
-                      icon: persona.icon,
-                      description: persona.description,
-                      promptOverlay: persona.promptOverlay,
-                      expressionTags: persona.expressionTags,
-                      cognitiveOverrides: persona.cognitiveOverrides,
-                      semanticTier: persona.semanticTier,
-                      contextSections: persona.contextSections,
-                      toolBundle: persona.toolBundle,
-                    },
-                    revision.payload,
-                  ),
+                  rows: buildApplyDiffRows(currentPayload(persona), revision.payload),
+                  run: async () => {
+                    const targetId = resolveApplyTargetId(persona);
+                    if (targetId == null) throw new Error("This persona has no platform default to apply to.");
+                    await apiRequest("POST", `/api/personas/platform/${targetId}/publish`, {
+                      changes: revision.payload,
+                      changeSummary: `Republish ${revision.changeSummary}`,
+                      confirmed: true,
+                    });
+                  },
                 }))}>Republish</Button>
               )}
             </div>
           ))}
         </div>
       </CollapsibleContent>
-      <ApplyToDefaultDialog apply={apply} />
+      <DefaultSyncDialog sync={sync} />
     </Collapsible>
   );
 }
@@ -936,36 +994,12 @@ export default function PersonasPage() {
     queryKey: ["/api/personas/management"],
     refetchInterval: 30000,
   });
-  const revertMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiRequest("POST", `/api/personas/${id}/use-updated-default`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/personas/management"] });
-      toast({ title: "Persona reverted to default" });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
-  });
   const updateMutation = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: Record<string, unknown> }) => {
       await apiRequest("PUT", `/api/personas/${id}`, data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/personas/management"] });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
-  });
-  const defaultMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiRequest("POST", `/api/personas/${id}/set-default`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/personas/management"] });
-      toast({ title: "Default Persona updated" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -1000,9 +1034,7 @@ export default function PersonasPage() {
                 key={persona.id}
                 persona={persona}
                 canApply={canApply}
-                onRevert={() => revertMutation.mutate(persona.id)}
                 onRefresh={refresh}
-                onSetDefault={() => defaultMutation.mutate(persona.id)}
                 onUpdate={(data) => updateMutation.mutate({ id: persona.id, data })}
               />
             ))}
