@@ -40,7 +40,11 @@ const PERIOD_MODES: { key: PeriodMode; label: string }[] = [
   { key: "annually", label: "Annually" },
 ];
 const ASSUMPTIONS_DISCLOSURE_KEY = "mantra.forecast.assumptions-open.v1";
+const FORECAST_TREE_KEY = "mantra.forecast.tree-open.v1";
 const MAX_ASSUMPTION_PREFERENCES = 64;
+const FORECAST_TREE_ROWS = ["utilization", "accounts", "newAccounts", "users", "expandedUsers", "meetings", "grossProfit", "revenue", "cogs", "opex"] as const;
+type ForecastTreeRow = (typeof FORECAST_TREE_ROWS)[number];
+type ForecastTreeState = Record<ForecastTreeRow, boolean>;
 
 function readAssumptionsPreferences(): Record<string, boolean> {
   try {
@@ -68,6 +72,39 @@ function persistAssumptionsOpen(preferenceKey: string | null, open: boolean): vo
   }
 }
 
+function emptyForecastTree(): ForecastTreeState {
+  return Object.fromEntries(FORECAST_TREE_ROWS.map((row) => [row, false])) as ForecastTreeState;
+}
+
+function readForecastTreePreferences(): Record<string, ForecastTreeState> {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(FORECAST_TREE_KEY) ?? "{}") as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, ForecastTreeState] => {
+      const value = entry[1];
+      return Boolean(value && typeof value === "object" && !Array.isArray(value) && FORECAST_TREE_ROWS.every((row) => typeof (value as Record<string, unknown>)[row] === "boolean"));
+    }).slice(-MAX_ASSUMPTION_PREFERENCES));
+  } catch {
+    return {};
+  }
+}
+
+function readForecastTree(preferenceKey: string | null): ForecastTreeState {
+  return preferenceKey ? readForecastTreePreferences()[preferenceKey] ?? emptyForecastTree() : emptyForecastTree();
+}
+
+function persistForecastTree(preferenceKey: string | null, tree: ForecastTreeState): void {
+  if (!preferenceKey) return;
+  try {
+    const preferences = readForecastTreePreferences();
+    delete preferences[preferenceKey];
+    preferences[preferenceKey] = tree;
+    window.localStorage.setItem(FORECAST_TREE_KEY, JSON.stringify(Object.fromEntries(Object.entries(preferences).slice(-MAX_ASSUMPTION_PREFERENCES))));
+  } catch {
+    // Browser storage is an optional preference layer. The tree remains closed by default.
+  }
+}
+
 function trimNum(value: number): string {
   return (Math.round(value * 10) / 10).toLocaleString();
 }
@@ -83,8 +120,26 @@ function fmtCurrency(value: number): string {
   return sign + String.fromCharCode(36) + amount;
 }
 
+function fmtWhole(value: number): string {
+  return Math.round(value).toLocaleString();
+}
+
 function fmtHours(value: number): string {
-  return value >= 0.05 ? `${trimNum(value)} hrs` : "—";
+  return value >= 0.5 ? `${fmtWhole(value)} hrs` : "—";
+}
+
+function ceilMeetings(value: number): number {
+  return value > 0 ? Math.ceil(value) : 0;
+}
+
+function fmtMeetings(value: number): string {
+  const count = ceilMeetings(value);
+  return count > 0 ? count.toLocaleString() : "—";
+}
+
+function fmtRunway(value: number): string {
+  if (!Number.isFinite(value)) return "∞";
+  return value >= 0.5 ? `${fmtWhole(value)} mo` : "—";
 }
 
 function formatTokens(value: number): string {
@@ -165,14 +220,7 @@ export default function BusinessModelPage() {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [assumptionsOpen, setAssumptionsOpen] = useState(() => readAssumptionsOpen(assumptionsPreferenceKey));
   const [period, setPeriod] = useState<PeriodMode>("monthly");
-  const [utilizationOpen, setUtilizationOpen] = useState(true);
-  const [accountsOpen, setAccountsOpen] = useState(true);
-  const [usersOpen, setUsersOpen] = useState(true);
-  const [meetingsOpen, setMeetingsOpen] = useState(true);
-  const [grossProfitOpen, setGrossProfitOpen] = useState(true);
-  const [revenueOpen, setRevenueOpen] = useState(true);
-  const [cogsOpen, setCogsOpen] = useState(true);
-  const [opexOpen, setOpexOpen] = useState(false);
+  const [tree, setTree] = useState<ForecastTreeState>(() => readForecastTree(assumptionsPreferenceKey));
   const loadedIdRef = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -192,11 +240,20 @@ export default function BusinessModelPage() {
 
   useEffect(() => {
     setAssumptionsOpen(readAssumptionsOpen(assumptionsPreferenceKey));
+    setTree(readForecastTree(assumptionsPreferenceKey));
   }, [assumptionsPreferenceKey]);
 
   const changeAssumptionsOpen = useCallback((open: boolean) => {
     setAssumptionsOpen(open);
     persistAssumptionsOpen(assumptionsPreferenceKey, open);
+  }, [assumptionsPreferenceKey]);
+
+  const toggleTree = useCallback((row: ForecastTreeRow) => {
+    setTree((current) => {
+      const next = { ...current, [row]: !current[row] };
+      persistForecastTree(assumptionsPreferenceKey, next);
+      return next;
+    });
   }, [assumptionsPreferenceKey]);
 
   const save = useMutation({
@@ -314,42 +371,44 @@ export default function BusinessModelPage() {
               </tr>
             </thead>
             <tbody>
-              <DataRow label="Utilization" periods={periods} render={(row) => utilizationOpen ? "" : fmtHours(row.hoursUsed)} onToggle={() => setUtilizationOpen((open) => !open)} open={utilizationOpen} tone={() => "text-foreground"} emphasize />
-              {utilizationOpen && <DataRow label="Accounts" indent periods={periods} render={(row) => Math.round(row.activeAccounts).toLocaleString()} onToggle={() => setAccountsOpen((open) => !open)} open={accountsOpen} />}
-              {utilizationOpen && accountsOpen && <DataRow label="New Accounts" indent={2} periods={periods} render={(row) => row.newAccounts >= 0.05 ? `+${trimNum(row.newAccounts)}` : "—"} />}
-              {utilizationOpen && accountsOpen && <DataRow label="From External Meetings" indent={3} periods={periods} render={(row) => row.newAccountsFromMeetings >= 0.05 ? `+${trimNum(row.newAccountsFromMeetings)}` : "—"} />}
-              {utilizationOpen && accountsOpen && <DataRow label="Churned Accounts" indent={2} periods={periods} render={(row) => row.churnedAccounts >= 0.05 ? `-${trimNum(row.churnedAccounts)}` : "—"} tone={() => "text-muted-foreground"} />}
-              {utilizationOpen && <DataRow label="Users" indent periods={periods} render={(row) => Math.round(row.activeUsers).toLocaleString()} onToggle={() => setUsersOpen((open) => !open)} open={usersOpen} />}
-              {utilizationOpen && usersOpen && <DataRow label="New Users" indent={2} periods={periods} render={(row) => row.newUsers >= 0.05 ? `+${trimNum(row.newUsers)}` : "—"} />}
-              {utilizationOpen && usersOpen && <DataRow label="Expanded Users" indent={2} periods={periods} render={(row) => row.expandedUsers >= 0.05 ? `+${trimNum(row.expandedUsers)}` : "—"} />}
-              {utilizationOpen && usersOpen && <DataRow label="From Internal Meetings" indent={3} periods={periods} render={(row) => row.expandedUsersFromMeetings >= 0.05 ? `+${trimNum(row.expandedUsersFromMeetings)}` : "—"} />}
-              {utilizationOpen && usersOpen && <DataRow label="Contracted Users" indent={2} periods={periods} render={(row) => row.contractedUsers >= 0.05 ? `-${trimNum(row.contractedUsers)}` : "—"} tone={() => "text-muted-foreground"} />}
-              {utilizationOpen && <DataRow label="Meetings" indent periods={periods} render={(row) => meetingsOpen ? "" : (row.meetings >= 0.05 ? trimNum(row.meetings) : "—")} onToggle={() => setMeetingsOpen((open) => !open)} open={meetingsOpen} />}
-              {utilizationOpen && meetingsOpen && <DataRow label="Internal Meetings" indent={2} periods={periods} render={(row) => row.internalMeetings >= 0.05 ? trimNum(row.internalMeetings) : "—"} />}
-              {utilizationOpen && meetingsOpen && <DataRow label="External Meetings" indent={2} periods={periods} render={(row) => row.externalMeetings >= 0.05 ? trimNum(row.externalMeetings) : "—"} />}
-              {utilizationOpen && <DataRow label="Hours Used" indent periods={periods} render={(row) => row.hoursUsed >= 0.05 ? trimNum(row.hoursUsed) : "—"} />}
-              <DataRow label="Gross Profit" periods={periods} render={(row) => grossProfitOpen ? "" : fmtCurrency(row.grossProfit)} onToggle={() => setGrossProfitOpen((open) => !open)} open={grossProfitOpen} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} emphasize />
-              {grossProfitOpen && <DataRow label="Gross Profit" indent periods={periods} render={(row) => fmtCurrency(row.grossProfit)} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />}
-              {grossProfitOpen && <DataRow label="Revenue" indent periods={periods} render={(row) => fmtCurrency(row.totalCashRevenue)} onToggle={() => setRevenueOpen((open) => !open)} open={revenueOpen} />}
-              {grossProfitOpen && revenueOpen && <DataRow label="Starting Cohort" indent={2} periods={periods} render={(row) => fmtCurrency(row.startingCohortRevenue)} />}
-              {grossProfitOpen && revenueOpen && <DataRow label="Account Churn" indent={2} periods={periods} render={(row) => row.churnedRevenue > 0 ? fmtCurrency(-row.churnedRevenue) : "—"} tone={() => "text-muted-foreground"} />}
-              {grossProfitOpen && revenueOpen && <DataRow label="Added Users" indent={2} periods={periods} render={(row) => row.userExpansionRevenue > 0 ? `+${fmtCurrency(row.userExpansionRevenue)}` : "—"} />}
-              {grossProfitOpen && revenueOpen && <DataRow label="Lost Users" indent={2} periods={periods} render={(row) => row.userContractionRevenue > 0 ? fmtCurrency(-row.userContractionRevenue) : "—"} tone={() => "text-muted-foreground"} />}
-              {grossProfitOpen && revenueOpen && <DataRow label="Upgrades" indent={2} periods={periods} render={(row) => row.tierExpansionRevenue > 0 ? `+${fmtCurrency(row.tierExpansionRevenue)}` : "—"} />}
-              {grossProfitOpen && revenueOpen && <DataRow label="MRR" indent={2} periods={periods} render={(row) => fmtCurrency(row.mrr)} />}
-              {grossProfitOpen && revenueOpen && <DataRow label="NRR" indent={2} periods={periods} render={(row) => row.startingCohortRevenue > 0 ? fmtPercent(row.cohortNrr) : "—"} tone={() => "text-muted-foreground"} />}
-              {grossProfitOpen && <DataRow label="COGS" indent periods={periods} render={(row) => fmtCurrency(-row.cogs)} onToggle={() => setCogsOpen((open) => !open)} open={cogsOpen} tone={() => "text-muted-foreground"} />}
-              {grossProfitOpen && cogsOpen && <DataRow label="Tokens Used" indent={2} periods={periods} render={(row) => row.tokensUsed >= 0.5 ? formatTokens(row.tokensUsed) : "—"} />}
-              {grossProfitOpen && cogsOpen && <DataRow label="Token Cost" indent={2} periods={periods} render={(row) => row.tokenCost >= 0.5 ? fmtCurrency(-row.tokenCost) : "—"} tone={() => "text-muted-foreground"} />}
-              {grossProfitOpen && cogsOpen && <DataRow label="Support" indent={2} periods={periods} render={(row) => row.supportCogs >= 0.5 ? fmtCurrency(-row.supportCogs) : "—"} tone={() => "text-muted-foreground"} />}
-              <DataRow label="OpEx" periods={periods} render={(row) => fmtCurrency(-row.totalOpex)} onToggle={() => setOpexOpen((open) => !open)} open={opexOpen} emphasize />
-              {opexOpen && <DataRow label="Staff" indent periods={periods} render={(row) => fmtCurrency(-row.staffOpex)} tone={() => "text-muted-foreground"} />}
-              {opexOpen && budget.departments.map((department) => (
+              <DataRow label="Utilization" periods={periods} render={(row) => tree.utilization ? "" : fmtHours(row.hoursUsed)} onToggle={() => toggleTree("utilization")} open={tree.utilization} tone={() => "text-foreground"} emphasize />
+              {tree.utilization && <DataRow label="Accounts" indent periods={periods} render={(row) => Math.round(row.activeAccounts).toLocaleString()} onToggle={() => toggleTree("accounts")} open={tree.accounts} />}
+              {tree.utilization && tree.accounts && <DataRow label="New Accounts" indent={2} periods={periods} render={(row) => row.newAccounts >= 0.05 ? `+${trimNum(row.newAccounts)}` : "—"} onToggle={() => toggleTree("newAccounts")} open={tree.newAccounts} />}
+              {tree.utilization && tree.accounts && tree.newAccounts && <DataRow label="From External Meetings" indent={3} periods={periods} render={(row) => row.newAccountsFromMeetings >= 0.05 ? `+${trimNum(row.newAccountsFromMeetings)}` : "—"} />}
+              {tree.utilization && tree.accounts && <DataRow label="Churned Accounts" indent={2} periods={periods} render={(row) => row.churnedAccounts >= 0.05 ? `-${trimNum(row.churnedAccounts)}` : "—"} tone={() => "text-muted-foreground"} />}
+              {tree.utilization && <DataRow label="Users" indent periods={periods} render={(row) => Math.round(row.activeUsers).toLocaleString()} onToggle={() => toggleTree("users")} open={tree.users} />}
+              {tree.utilization && tree.users && <DataRow label="New Users" indent={2} periods={periods} render={(row) => row.newUsers >= 0.05 ? `+${trimNum(row.newUsers)}` : "—"} />}
+              {tree.utilization && tree.users && <DataRow label="Expanded Users" indent={2} periods={periods} render={(row) => row.expandedUsers >= 0.05 ? `+${trimNum(row.expandedUsers)}` : "—"} onToggle={() => toggleTree("expandedUsers")} open={tree.expandedUsers} />}
+              {tree.utilization && tree.users && tree.expandedUsers && <DataRow label="From Internal Meetings" indent={3} periods={periods} render={(row) => row.expandedUsersFromMeetings >= 0.05 ? `+${trimNum(row.expandedUsersFromMeetings)}` : "—"} />}
+              {tree.utilization && tree.users && <DataRow label="Contracted Users" indent={2} periods={periods} render={(row) => row.contractedUsers >= 0.05 ? `-${trimNum(row.contractedUsers)}` : "—"} tone={() => "text-muted-foreground"} />}
+              {tree.utilization && <DataRow label="Meetings" indent periods={periods} render={(row) => tree.meetings ? "" : fmtMeetings(row.meetings)} onToggle={() => toggleTree("meetings")} open={tree.meetings} />}
+              {tree.utilization && tree.meetings && <DataRow label="Internal Meetings" indent={2} periods={periods} render={(row) => fmtMeetings(Math.min(row.internalMeetings, ceilMeetings(row.meetings)))} />}
+              {tree.utilization && tree.meetings && <DataRow label="External Meetings" indent={2} periods={periods} render={(row) => fmtMeetings(ceilMeetings(row.meetings) - ceilMeetings(Math.min(row.internalMeetings, ceilMeetings(row.meetings))))} />}
+              {tree.utilization && <DataRow label="Hours Used" indent periods={periods} render={(row) => row.hoursUsed >= 0.5 ? fmtWhole(row.hoursUsed) : "—"} />}
+              <DataRow label="Gross Profit" periods={periods} render={(row) => tree.grossProfit ? "" : fmtCurrency(row.grossProfit)} onToggle={() => toggleTree("grossProfit")} open={tree.grossProfit} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} emphasize />
+              {tree.grossProfit && <DataRow label="Gross Profit" indent periods={periods} render={(row) => fmtCurrency(row.grossProfit)} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />}
+              {tree.grossProfit && <DataRow label="Revenue" indent periods={periods} render={(row) => fmtCurrency(row.totalCashRevenue)} onToggle={() => toggleTree("revenue")} open={tree.revenue} />}
+              {tree.grossProfit && tree.revenue && <DataRow label="Starting Cohort" indent={2} periods={periods} render={(row) => fmtCurrency(row.startingCohortRevenue)} />}
+              {tree.grossProfit && tree.revenue && <DataRow label="Account Churn" indent={2} periods={periods} render={(row) => row.churnedRevenue > 0 ? fmtCurrency(-row.churnedRevenue) : "—"} tone={() => "text-muted-foreground"} />}
+              {tree.grossProfit && tree.revenue && <DataRow label="Added Users" indent={2} periods={periods} render={(row) => row.userExpansionRevenue > 0 ? `+${fmtCurrency(row.userExpansionRevenue)}` : "—"} />}
+              {tree.grossProfit && tree.revenue && <DataRow label="Lost Users" indent={2} periods={periods} render={(row) => row.userContractionRevenue > 0 ? fmtCurrency(-row.userContractionRevenue) : "—"} tone={() => "text-muted-foreground"} />}
+              {tree.grossProfit && tree.revenue && <DataRow label="Upgrades" indent={2} periods={periods} render={(row) => row.tierExpansionRevenue > 0 ? `+${fmtCurrency(row.tierExpansionRevenue)}` : "—"} />}
+              {tree.grossProfit && tree.revenue && <DataRow label="MRR" indent={2} periods={periods} render={(row) => fmtCurrency(row.mrr)} />}
+              {tree.grossProfit && tree.revenue && <DataRow label="NRR" indent={2} periods={periods} render={(row) => row.startingCohortRevenue > 0 ? fmtPercent(row.cohortNrr) : "—"} tone={() => "text-muted-foreground"} />}
+              {tree.grossProfit && <DataRow label="COGS" indent periods={periods} render={(row) => fmtCurrency(-row.cogs)} onToggle={() => toggleTree("cogs")} open={tree.cogs} tone={() => "text-muted-foreground"} />}
+              {tree.grossProfit && tree.cogs && <DataRow label="Tokens Used" indent={2} periods={periods} render={(row) => row.tokensUsed >= 0.5 ? formatTokens(row.tokensUsed) : "—"} />}
+              {tree.grossProfit && tree.cogs && <DataRow label="Token Cost" indent={2} periods={periods} render={(row) => row.tokenCost >= 0.5 ? fmtCurrency(-row.tokenCost) : "—"} tone={() => "text-muted-foreground"} />}
+              {tree.grossProfit && tree.cogs && <DataRow label="Support" indent={2} periods={periods} render={(row) => row.supportCogs >= 0.5 ? fmtCurrency(-row.supportCogs) : "—"} tone={() => "text-muted-foreground"} />}
+              <DataRow label="OpEx" periods={periods} render={(row) => fmtCurrency(-row.totalOpex)} onToggle={() => toggleTree("opex")} open={tree.opex} emphasize />
+              {tree.opex && <DataRow label="Staff" indent periods={periods} render={(row) => fmtCurrency(-row.staffOpex)} tone={() => "text-muted-foreground"} />}
+              {tree.opex && budget.departments.map((department) => (
                 <DataRow key={department.id} label={department.name} indent periods={periods} render={(row) => fmtCurrency(-(row.departmentOpex[department.id] ?? 0))} tone={() => "text-muted-foreground"} />
               ))}
               <DataRow label="Operating Income" periods={periods} render={(row) => fmtCurrency(row.operatingIncome)} tone={(row) => row.operatingIncome < 0 ? "text-destructive" : "text-foreground"} />
               <DataRow label="Net Cash Flow" periods={periods} render={(row) => fmtCurrency(row.netCashChange)} tone={(row) => row.netCashChange < 0 ? "text-destructive" : "text-foreground"} />
+              <DataRow label="Investment" periods={periods} render={(row) => row.financingCash > 0 ? fmtCurrency(row.financingCash) : "—"} />
               <DataRow label="Cash Balance" periods={periods} render={(row) => fmtCurrency(row.endingCash)} tone={(row) => row.endingCash < 0 ? "font-medium text-destructive" : "text-foreground"} emphasize />
+              <DataRow label="Runway" periods={periods} render={(row) => fmtRunway(row.runwayMonths)} />
               <DataRow label="ARR" periods={periods} render={(row) => fmtCurrency(row.arr)} />
             </tbody>
           </table>

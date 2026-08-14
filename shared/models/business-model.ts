@@ -617,7 +617,7 @@ export interface PeriodRow {
   totalCashRevenue: number; productRevenue: number; productCogs: number; supportCogs: number; cogs: number; mrr: number; arr: number; grossProfit: number;
   staffOpex: number; acquisitionOpex: number; budgetOpex: number; departmentOpex: Record<string, number>;
   totalOpex: number; operatingIncome: number;
-  acquisitionSpend: number; netCashChange: number; financingCash: number; endingCash: number;
+  acquisitionSpend: number; netCashChange: number; financingCash: number; endingCash: number; runwayMonths: number;
 }
 
 export interface GateSummary {
@@ -739,12 +739,13 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
       const startOfMonthAge = age - 1;
       startUsers += cohort.accounts * Math.pow(accountSurvivalMonthly, startOfMonthAge) * cohort.usersPerAccount * Math.pow(netUserMovementMonthly, startOfMonthAge);
     }
-    const meetings = startUsers * hoursUsedPerUser * assumptions.meetingsPerHour;
+    const seedAccounts = month <= 3 ? assumptions.quarterOneNewAccounts / 3 : 0;
+    const seedUsers = seedAccounts * assumptions.averageUsersPerNewAccount;
+    const meetings = (startUsers + seedUsers) * hoursUsedPerUser * assumptions.meetingsPerHour;
     const internalMeetings = meetings * internalMeetingShare;
     const externalMeetings = meetings - internalMeetings;
     const newAccountsFromMeetings = externalMeetings * assumptions.newAccountsPerExternalMeeting;
     const expandedUsersFromMeetings = internalMeetings * assumptions.expandedUsersPerInternalMeeting;
-    const seedAccounts = month <= 3 ? assumptions.quarterOneNewAccounts / 3 : 0;
     const newAccounts = seedAccounts + newAccountsFromMeetings;
     cohorts.push({ birthMonth: month, accounts: newAccounts, usersPerAccount: assumptions.averageUsersPerNewAccount });
     let activeAccounts = 0;
@@ -1053,6 +1054,7 @@ export function aggregateMonths(months: MonthRow[], mode: PeriodMode): PeriodRow
       netCashChange: sum((row) => row.netCashChange),
       financingCash: sum((row) => row.financingCash),
       endingCash: last.endingCash,
+      runwayMonths: last.runwayMonths,
     };
   });
 }
