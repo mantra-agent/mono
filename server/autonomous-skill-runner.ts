@@ -75,6 +75,18 @@ async function recordAutonomousAttention(
   });
 }
 
+/**
+ * Pure empty_response means the model ended with no final text after work was
+ * already preserved. That is a truthful degraded discriminant for transcript /
+ * skill_run telemetry, not a user-facing "Processing stopped" page. Output-limit,
+ * budget exhaustion, recovered tool failure, and structural misses still page.
+ */
+function shouldPageAutonomousDegradation(
+  degradationReason: string | undefined,
+): boolean {
+  return degradationReason !== "empty_response";
+}
+
 function describeExecutorFailure(result: ExecutorRunResult): string {
   const abortSummary = formatAbortDetails(result.abortDetails);
   if (abortSummary) return `Skill run stopped by executor guard:\n\n${abortSummary}`;
@@ -1212,7 +1224,10 @@ export async function executeAutonomousSkillRun(
         }).catch((e: unknown) => {
           logger.error(`[SkillChat] [${sessionId}] Failed to record error attention: ${e instanceof Error ? e.message : String(e)}`);
         });
-      } else if (result.status === "degraded") {
+      } else if (
+        result.status === "degraded" &&
+        shouldPageAutonomousDegradation(result.degradationReason)
+      ) {
         await recordAutonomousAttention(sessionId, "warning", {
           errorType: "processing_stopped",
           description: result.error?.trim()
@@ -1225,6 +1240,14 @@ export async function executeAutonomousSkillRun(
         }).catch((e: unknown) => {
           logger.error(`[SkillChat] [${sessionId}] Failed to record degraded attention: ${e instanceof Error ? e.message : String(e)}`);
         });
+      } else if (
+        result.status === "degraded" &&
+        result.degradationReason === "empty_response"
+      ) {
+        logger.log(
+          `[SkillChat] [${sessionId}] empty_response preserved without paging attention ` +
+          `(tools=${result.toolCalls?.length ?? 0})`,
+        );
       }
       const endReason = result.status === "succeeded" ? "complete" : result.error || result.status;
       await chatFileStorage.setEndReason(sessionId, endReason).catch(() => undefined);
@@ -1307,18 +1330,24 @@ export async function executeAutonomousSkillRun(
         await chatFileStorage.setEndReason(sessionId, terminalFailureReason || "structural_requirements_failed").catch((e: unknown) => {
           logger.error(`[SkillChat] [${sessionId}] Failed to reconcile degraded endReason: ${e instanceof Error ? e.message : String(e)}`);
         });
-        await recordAutonomousAttention(sessionId, "warning", {
-          errorType: "processing_stopped",
-          description: terminalFailureReason
-            ? `This autonomous run finished degraded: ${terminalFailureReason}`
-            : "This autonomous run finished degraded after structural requirements failed.",
-          actionHint: "Review the warning in this session, then continue or retry if the outcome is incomplete.",
-          artifactKey: `autonomous-attention:degraded:${sessionId}`,
-          terminationReason: terminalFailureReason || "structural_requirements_failed",
-          degradationReason: result.status === "degraded" ? result.degradationReason : undefined,
-        }).catch((e: unknown) => {
-          logger.error(`[SkillChat] [${sessionId}] Failed to reconcile degraded attention: ${e instanceof Error ? e.message : String(e)}`);
-        });
+        const reconcileDegradationReason =
+          result.status === "degraded" ? result.degradationReason : undefined;
+        // Structural misses have no degradationReason and must still page.
+        // Pure empty_response already logged above and must not page twice.
+        if (shouldPageAutonomousDegradation(reconcileDegradationReason)) {
+          await recordAutonomousAttention(sessionId, "warning", {
+            errorType: "processing_stopped",
+            description: terminalFailureReason
+              ? `This autonomous run finished degraded: ${terminalFailureReason}`
+              : "This autonomous run finished degraded after structural requirements failed.",
+            actionHint: "Review the warning in this session, then continue or retry if the outcome is incomplete.",
+            artifactKey: `autonomous-attention:degraded:${sessionId}`,
+            terminationReason: terminalFailureReason || "structural_requirements_failed",
+            degradationReason: reconcileDegradationReason,
+          }).catch((e: unknown) => {
+            logger.error(`[SkillChat] [${sessionId}] Failed to reconcile degraded attention: ${e instanceof Error ? e.message : String(e)}`);
+          });
+        }
       }
       const degradedReason = result.status === "degraded"
         ? result.error || "executor_degraded"
