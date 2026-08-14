@@ -1,11 +1,7 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
+import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
 import { getWellnessWindowAdherence, isConsecutiveCadenceCompletion } from "@shared/wellness-window";
-import { Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 interface WellnessLogEntry {
   id: number;
@@ -49,13 +45,6 @@ const SPIKE_STROKE_WIDTH = 0.75;
 const SPIKE_BASE_SCALE = 0.7;
 /** Per-spike variance around SPIKE_BASE_SCALE (±10%). */
 const SPIKE_SCALE_VARIANCE = 0.1;
-
-function formatMetricValue(value: number, metricType?: string | null): string {
-  const num = value >= 1000 ? value.toLocaleString() : `${Math.round(value * 10) / 10}`;
-  if (metricType === "mindful_minutes") return `${num} min`;
-  if (metricType === "steps") return `${num} steps`;
-  return num;
-}
 
 /** Stable 0–1 hash from a numeric id so spike sizes don't reshuffle on re-render. */
 function unitHash(id: number): number {
@@ -178,7 +167,7 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windo
       }
     }
 
-    return { events, ticks, connectors, nowX };
+    return { events, ticks, connectors, nowX, domainEnd };
   }, [logs, category, pulseWindowSize, intervalDays, windowStart, windowEnd, timezone]);
 
   return (
@@ -190,20 +179,28 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windo
         role="img"
         aria-label="Activity timeline with ideal cadence ticks and completion heartbeats through now"
       >
-        {timeline.ticks.map(({ timestamp, x }) => (
-          <g key={timestamp}>
-            <line
-              x1={x}
-              y1={BASELINE_Y}
-              x2={x}
-              y2="194"
-              className="stroke-muted-foreground/60"
-              strokeWidth="0.75"
-              vectorEffect="non-scaling-stroke"
-            />
-            <title>{`Ideal completion · ${new Date(timestamp).toLocaleDateString()}`}</title>
-          </g>
-        ))}
+        {timeline.ticks.map(({ timestamp, x }) => {
+          const date = new Date(timestamp);
+          const label = `${date.getMonth() + 1}/${date.getDate()}`;
+          const isEnd = timestamp === timeline.domainEnd;
+          return (
+            <g key={timestamp}>
+              <line
+                x1={x}
+                y1={BASELINE_Y}
+                x2={x}
+                y2="194"
+                className="stroke-muted-foreground/60"
+                strokeWidth="0.75"
+                vectorEffect="non-scaling-stroke"
+              />
+              <text x={x} y="214" textAnchor={isEnd ? "end" : "middle"} className="fill-muted-foreground text-[12px]">
+                {label}
+              </text>
+              <title>{`Ideal completion · ${date.toLocaleDateString()}`}</title>
+            </g>
+          );
+        })}
         {timeline.connectors.map(({ key, x1, x2, className, opacity }) => (
           x2 > x1 ? (
             <line
@@ -240,49 +237,20 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windo
   );
 }
 
-function LogHistoryItem({ entry, onDelete, linkedMetricType }: { entry: WellnessLogEntry; onDelete: (id: number) => void; linkedMetricType?: string | null }) {
-  const formatted = new Date(entry.completedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-  return (
-    <div className="group flex min-h-11 items-center justify-between px-2" data-testid={`log-entry-${entry.id}`}>
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="text-sm text-foreground">{formatted}</span>
-        {entry.tier && <span className="text-xs text-muted-foreground">{entry.tier === "great" ? "Great" : "Good"}{entry.metricValue != null && ` · ${formatMetricValue(entry.metricValue, linkedMetricType)}`}</span>}
-        {!entry.tier && entry.notes && <span className="truncate text-xs text-muted-foreground">{entry.notes}</span>}
-      </div>
-      <Button variant="ghost" size="icon" className="h-11 w-11 text-destructive opacity-100 @md:opacity-0 @md:group-hover:opacity-100" onClick={() => onDelete(entry.id)} aria-label="Delete completion">
-        <Trash2 className="h-3.5 w-3.5" />
-      </Button>
-    </div>
-  );
-}
-
 export function ActivityDetailPanel({ activityId, category, pulseWindowSize, intervalDays, windowStart, windowEnd, metricInfo }: ActivityDetailPanelProps) {
-  const { toast } = useToast();
-  const [showAll, setShowAll] = useState(false);
   const { data: logs, isLoading: logsLoading } = useQuery<WellnessLogEntry[]>({ queryKey: ["/api/wellness/logs", activityId], queryFn: async () => {
     const response = await fetch(`/api/wellness/logs?activityId=${activityId}&limit=500`, { credentials: "include" });
     if (!response.ok) throw new Error("Failed to load logs");
     return response.json();
   }});
-  const deleteMutation = useMutation({ mutationFn: (logId: number) => apiRequest("DELETE", `/api/wellness/logs/${logId}`), onSuccess: () => {
-    queryClient.invalidateQueries({ queryKey: ["/api/wellness/logs", activityId] });
-    queryClient.invalidateQueries({ queryKey: ["/api/wellness/activities", activityId, "trends"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/wellness/status"] });
-    toast({ title: "Log deleted" });
-  }, onError: (error: Error) => toast({ title: "Delete failed", description: error.message, variant: "destructive" }) });
 
-  if (logsLoading) return <div className="space-y-3 py-3"><Skeleton className="h-40 w-full" /><Skeleton className="h-20 w-full" /></div>;
+  if (logsLoading) return <div className="space-y-3 py-3"><Skeleton className="h-40 w-full" /></div>;
   const displayLogs = logs ?? [];
-  const visibleLogs = showAll ? displayLogs : displayLogs.slice(0, 20);
 
   return (
-    <div className="space-y-4" data-testid={`detail-panel-${activityId}`}>
+    <div className="space-y-2" data-testid={`detail-panel-${activityId}`}>
       <HeartbeatHistory logs={displayLogs} category={category} pulseWindowSize={pulseWindowSize} intervalDays={intervalDays} windowStart={windowStart} windowEnd={windowEnd} />
       {metricInfo?.linkedMetricType && <div className="text-xs text-muted-foreground">Linked to {metricInfo.linkedMetricType}</div>}
-      <div className="divide-y divide-border/20">
-        {visibleLogs.map((entry) => <LogHistoryItem key={entry.id} entry={entry} linkedMetricType={metricInfo?.linkedMetricType} onDelete={(id) => deleteMutation.mutate(id)} />)}
-      </div>
-      {!showAll && displayLogs.length > 20 && <Button variant="ghost" size="sm" className="text-cta" onClick={() => setShowAll(true)}>Show {displayLogs.length - 20} more</Button>}
     </div>
   );
 }
