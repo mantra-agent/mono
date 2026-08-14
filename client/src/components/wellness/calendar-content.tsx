@@ -925,10 +925,7 @@ function ActivityRow({
         <ActivityHeartbeatSparkline
           activityId={activity.id}
           logs={logs}
-          category={activity.category}
           intervalDays={activity.intervalDays}
-          windowStart={activity.windowStart}
-          windowEnd={activity.windowEnd}
         />
 
         {/* Right-side controls */}

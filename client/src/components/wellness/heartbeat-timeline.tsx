@@ -1,4 +1,4 @@
-import { getWellnessWindowAdherence, isConsecutiveCadenceCompletion } from "@shared/wellness-window";
+import { isConsecutiveCadenceCompletion } from "@shared/wellness-window";
 import { useMemo } from "react";
 
 export interface WellnessLogEntry {
@@ -15,14 +15,8 @@ interface TimelineEvent {
   x: number;
   left: number;
   right: number;
-  adherence: number;
   isStreakDay: boolean;
   scale: number;
-}
-
-interface EventPaint {
-  isStreakDay: boolean;
-  opacity: number;
 }
 
 type ConnectorSegment =
@@ -39,8 +33,8 @@ type ConnectorSegment =
       x1: number;
       x2: number;
       kind: "blend";
-      from: EventPaint;
-      to: EventPaint;
+      fromIsStreakDay: boolean;
+      toIsStreakDay: boolean;
     };
 
 export interface HeartbeatTimelineModel {
@@ -62,6 +56,8 @@ const SPIKE_HALF_WIDTH = 40;
 const SPIKE_BASE_SCALE = 0.7;
 /** Per-spike variance around SPIKE_BASE_SCALE (±10%). */
 const SPIKE_SCALE_VARIANCE = 0.1;
+/** Completions always paint full strength — Window is label/cue only. */
+const COMPLETION_OPACITY = 1;
 
 /** Stable 0–1 hash from a numeric id so spike sizes don't reshuffle on re-render. */
 function unitHash(id: number): number {
@@ -100,14 +96,6 @@ function eventStrokeClass(isStreakDay: boolean): string {
   return isStreakDay ? "stroke-success" : "stroke-foreground";
 }
 
-function eventOpacity(adherence: number): number {
-  return Math.max(0.12, adherence / 100);
-}
-
-function eventPaint(event: Pick<TimelineEvent, "adherence" | "isStreakDay">): EventPaint {
-  return { isStreakDay: event.isStreakDay, opacity: eventOpacity(event.adherence) };
-}
-
 /** Token stroke for gradient stops — matches stroke-success / stroke-foreground. */
 function paintStopColor(isStreakDay: boolean, opacity: number): string {
   const token = isStreakDay ? "var(--success)" : "var(--foreground)";
@@ -119,7 +107,7 @@ function openEndedSegment(
   key: string,
   x1: number,
   x2: number,
-  neighbor: Pick<TimelineEvent, "adherence" | "isStreakDay"> | null,
+  neighbor: Pick<TimelineEvent, "isStreakDay"> | null,
 ): ConnectorSegment {
   if (!neighbor) {
     return { key, x1, x2, kind: "solid", className: "stroke-muted-foreground/40", opacity: 0.35 };
@@ -130,42 +118,44 @@ function openEndedSegment(
     x2,
     kind: "solid",
     className: eventStrokeClass(neighbor.isStreakDay),
-    opacity: eventOpacity(neighbor.adherence),
+    opacity: COMPLETION_OPACITY,
   };
 }
 
 /**
  * Mid connectors blend naturally when the two spike colors differ.
- * Same-color pairs stay a single solid stroke at the weaker opacity.
+ * Same-color pairs stay a single solid stroke at full completion opacity.
  */
 function midSegment(
   key: string,
   x1: number,
   x2: number,
-  left: Pick<TimelineEvent, "adherence" | "isStreakDay">,
-  right: Pick<TimelineEvent, "adherence" | "isStreakDay">,
+  left: Pick<TimelineEvent, "isStreakDay">,
+  right: Pick<TimelineEvent, "isStreakDay">,
 ): ConnectorSegment {
-  const from = eventPaint(left);
-  const to = eventPaint(right);
-  if (from.isStreakDay === to.isStreakDay) {
+  if (left.isStreakDay === right.isStreakDay) {
     return {
       key,
       x1,
       x2,
       kind: "solid",
-      className: eventStrokeClass(from.isStreakDay),
-      opacity: Math.min(from.opacity, to.opacity),
+      className: eventStrokeClass(left.isStreakDay),
+      opacity: COMPLETION_OPACITY,
     };
   }
-  return { key, x1, x2, kind: "blend", from, to };
+  return {
+    key,
+    x1,
+    x2,
+    kind: "blend",
+    fromIsStreakDay: left.isStreakDay,
+    toIsStreakDay: right.isStreakDay,
+  };
 }
 
 export function buildHeartbeatTimeline(
   logs: WellnessLogEntry[],
-  category: string,
   intervalDays: number,
-  windowStart: number | null,
-  windowEnd: number | null,
   timezone: string,
 ): HeartbeatTimelineModel {
   const intervalMs = Math.max(1, intervalDays) * 86_400_000;
@@ -190,8 +180,7 @@ export function buildHeartbeatTimeline(
     .sort((a, b) => new Date(a.completedAt).getTime() - new Date(b.completedAt).getTime())
     .map((entry, index, orderedLogs) => {
       const completedAt = new Date(entry.completedAt);
-      // Window is a UI recommendation only: adherence drives opacity, never green.
-      const adherence = getWellnessWindowAdherence(category, windowStart, windowEnd, completedAt, timezone);
+      // Window is a UI recommendation only — never dims paint.
       const previousEntry = orderedLogs[index - 1];
       const previousCompletedAt = previousEntry ? new Date(previousEntry.completedAt) : null;
       const isStreakDay = Boolean(
@@ -206,7 +195,6 @@ export function buildHeartbeatTimeline(
         x,
         left,
         right,
-        adherence,
         isStreakDay,
         scale,
       };
@@ -242,15 +230,12 @@ export function buildHeartbeatTimeline(
 
 function useHeartbeatTimeline(
   logs: WellnessLogEntry[],
-  category: string,
   intervalDays: number,
-  windowStart: number | null,
-  windowEnd: number | null,
 ): HeartbeatTimelineModel {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return useMemo(
-    () => buildHeartbeatTimeline(logs, category, intervalDays, windowStart, windowEnd, timezone),
-    [logs, category, intervalDays, windowStart, windowEnd, timezone],
+    () => buildHeartbeatTimeline(logs, intervalDays, timezone),
+    [logs, intervalDays, timezone],
   );
 }
 
@@ -273,7 +258,7 @@ function HeartbeatPaint({
     <>
       {blendGradients.length > 0 ? (
         <defs>
-          {blendGradients.map(({ key, x1, x2, from, to }) => (
+          {blendGradients.map(({ key, x1, x2, fromIsStreakDay, toIsStreakDay }) => (
             <linearGradient
               key={`grad-${key}`}
               id={`${gradientIdPrefix}-${key}`}
@@ -283,8 +268,8 @@ function HeartbeatPaint({
               x2={x2}
               y2={BASELINE_Y}
             >
-              <stop offset="0%" stopColor={paintStopColor(from.isStreakDay, from.opacity)} />
-              <stop offset="100%" stopColor={paintStopColor(to.isStreakDay, to.opacity)} />
+              <stop offset="0%" stopColor={paintStopColor(fromIsStreakDay, COMPLETION_OPACITY)} />
+              <stop offset="100%" stopColor={paintStopColor(toIsStreakDay, COMPLETION_OPACITY)} />
             </linearGradient>
           ))}
         </defs>
@@ -356,7 +341,7 @@ function HeartbeatPaint({
           />
         );
       })}
-      {timeline.events.map(({ entry, x, left, right, adherence, isStreakDay, scale }) => (
+      {timeline.events.map(({ entry, x, left, right, isStreakDay, scale }) => (
         <path
           key={entry.id}
           d={heartbeatPath(x, scale, left, right)}
@@ -366,9 +351,9 @@ function HeartbeatPaint({
           vectorEffect="non-scaling-stroke"
           strokeLinecap="round"
           strokeLinejoin="round"
-          style={{ opacity: eventOpacity(adherence) }}
+          style={{ opacity: COMPLETION_OPACITY }}
         >
-          <title>{`${new Date(entry.completedAt).toLocaleString()} · ${adherence}% on track`}</title>
+          <title>{new Date(entry.completedAt).toLocaleString()}</title>
         </path>
       ))}
     </>
@@ -378,18 +363,12 @@ function HeartbeatPaint({
 /** Full Trends graph for the activity details screen (axis + date ticks + heartbeat). */
 export function HeartbeatHistory({
   logs,
-  category,
   intervalDays,
-  windowStart,
-  windowEnd,
 }: {
   logs: WellnessLogEntry[];
-  category: string;
   intervalDays: number;
-  windowStart: number | null;
-  windowEnd: number | null;
 }) {
-  const timeline = useHeartbeatTimeline(logs, category, intervalDays, windowStart, windowEnd);
+  const timeline = useHeartbeatTimeline(logs, intervalDays);
 
   return (
     <div className="min-w-0 overflow-hidden">
@@ -412,20 +391,14 @@ export function HeartbeatHistory({
  */
 export function ActivityHeartbeatSparkline({
   logs,
-  category,
   intervalDays,
-  windowStart,
-  windowEnd,
   activityId,
 }: {
   logs: WellnessLogEntry[];
-  category: string;
   intervalDays: number;
-  windowStart: number | null;
-  windowEnd: number | null;
   activityId: number;
 }) {
-  const timeline = useHeartbeatTimeline(logs, category, intervalDays, windowStart, windowEnd);
+  const timeline = useHeartbeatTimeline(logs, intervalDays);
 
   return (
     <div className="min-w-0 flex-1 overflow-hidden" aria-hidden="true">

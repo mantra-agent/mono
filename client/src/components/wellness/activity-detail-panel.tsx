@@ -10,15 +10,11 @@ interface ActivityMetricInfo {
 
 interface ActivityDetailPanelProps {
   activityId: number;
-  category: string;
-  pulseWindowSize: number;
   intervalDays: number;
-  windowStart: number | null;
-  windowEnd: number | null;
   metricInfo?: ActivityMetricInfo;
 }
 
-export function ActivityDetailPanel({ activityId, category, intervalDays, windowStart, windowEnd, metricInfo }: ActivityDetailPanelProps) {
+export function ActivityDetailPanel({ activityId, intervalDays, metricInfo }: ActivityDetailPanelProps) {
   const { data: logs, isLoading: logsLoading } = useQuery<WellnessLogEntry[]>({ queryKey: ["/api/wellness/logs", activityId], queryFn: async () => {
     const response = await fetch(`/api/wellness/logs?activityId=${activityId}&limit=500`, { credentials: "include" });
     if (!response.ok) throw new Error("Failed to load logs");
@@ -30,7 +26,7 @@ export function ActivityDetailPanel({ activityId, category, intervalDays, window
 
   return (
     <div className="space-y-2" data-testid={`detail-panel-${activityId}`}>
-      <HeartbeatHistory logs={displayLogs} category={category} intervalDays={intervalDays} windowStart={windowStart} windowEnd={windowEnd} />
+      <HeartbeatHistory logs={displayLogs} intervalDays={intervalDays} />
       {metricInfo?.linkedMetricType && <div className="text-xs text-muted-foreground">Linked to {metricInfo.linkedMetricType}</div>}
     </div>
   );
