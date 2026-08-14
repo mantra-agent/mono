@@ -1,3 +1,10 @@
+<!-- 2026-08-14 Account name + last-active:
+- Assets/data: A01/A07 Account admin name (`accounts.name`) and projected last-active (S1 operational identity). No new Account column.
+- Flow/threat: Accounts admin -> rename / suspend / archive / toast. A second last-active clock or foundation replay overwrite would lie about who is live or undo an admin rename (STRIDE tampering; IAM-01).
+- Deterministic controls/owner: `renameAccount` is the sole name write (`users:write`). Foundation still does not rename existing Accounts. Last Active is MAX of member `getAdminUserActivity()` timestamps already used by Users admin. Confirmations name the Account; toasts emit `@account:id`. Owner: Core Identity. Severity: medium integrity. SLA: immediate.
+- Residual/rollback: Last Active is empty when no member has activity. Revert rename route, graph projection, confirm/toast/row, and this finding together.
+-->
+
 <!-- 2026-08-14 Accounts REGISTERED vs ACTIVATED:
 - Assets/data: A01/A07 Account admin tree plus owner `user_profiles.onboarding_status` (S1 operational identity; not a new Account field).
 - Flow/threat: Accounts admin -> section active Accounts by registered vs finished onboarding. Treating timer/memory counts or a second Account column as the cut would mis-section accounts that have a user-created timer, lagging reconcile, or unfinished FTUE (STRIDE spoofing/tampering analogue; IAM-01).
