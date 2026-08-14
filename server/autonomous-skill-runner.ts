@@ -1930,7 +1930,15 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
       : conv.spawnerTool === "session.spawn_child.engineering"
         ? "child" as const
         : undefined;
-  const { tools, toolExecutor } = await getSkillTools(ACTIVITY_WORK, sessionKey, sessionId, undefined, trustedDelegation);
+  // 5th arg is authoritySkillName; trustedDelegation is the 6th.
+  const { tools, toolExecutor } = await getSkillTools(
+    ACTIVITY_WORK,
+    sessionKey,
+    sessionId,
+    undefined,
+    undefined,
+    trustedDelegation,
+  );
 
   let finalStatus: "succeeded" | "failed" = "succeeded";
   let finalSummary = "Child session response completed";
