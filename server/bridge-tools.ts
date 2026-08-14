@@ -49,7 +49,7 @@ import {
   type ToolFailure,
 } from "./tool-failure";
 import { extractToolFailureKind, inferFailureKind } from "@shared/tool-failure";
-import { resolveRegisteredTool } from "./tool-registry";
+import { COGNITION_ACTION_TOOL_ALIASES, resolveRegisteredTool } from "./tool-registry";
 import { prepareToolInvocation } from "./tools/invocation";
 import { assertRegisteredToolHandlers } from "./tools/registry-validation";
 import { composeToolDomainHandlers } from "./tools/domain-adapters";
@@ -12637,11 +12637,28 @@ export async function executeTool(
 ): Promise<ToolResult> {
   const startTime = Date.now();
 
+  // Models often emit cognition actions as bare tool names (e.g. set_emotion).
+  // Alias resolution maps the name to cognition; inject action when absent so
+  // schema validation still requires the umbrella contract.
+  const invocationArgs: Record<string, any> = { ...(args ?? {}) };
+  if (
+    COGNITION_ACTION_TOOL_ALIASES.has(toolName) &&
+    (invocationArgs.action === undefined || invocationArgs.action === null || invocationArgs.action === "")
+  ) {
+    invocationArgs.action = toolName;
+  }
+
   const registeredTool = resolveRegisteredTool(toolName);
   if (!registeredTool) {
     const durationMs = Date.now() - startTime;
     toolExec.log(`rejected tool=${toolName} callId=${toolCallId} reason=unregistered_tool`);
-    return { result: `Unknown tool: ${toolName}`, error: true, sideEffectOnly: true, durationMs };
+    return {
+      result: `Unknown tool: ${toolName}`,
+      error: true,
+      sideEffectOnly: true,
+      durationMs,
+      failure: inputFailure("tool_unregistered", toolName),
+    };
   }
   const resolvedName = registeredTool.name;
   const handler = DISPATCH_MAP[resolvedName];
@@ -12656,7 +12673,7 @@ export async function executeTool(
       failure: internalFailure("tool_registered_handler_missing", resolvedName),
     };
   }
-  const prepared = prepareToolInvocation(resolvedName, args, registeredTool.schema);
+  const prepared = prepareToolInvocation(resolvedName, invocationArgs, registeredTool.schema);
   if (prepared.outcome === "invalid") {
     const durationMs = Date.now() - startTime;
     toolExec.log(`rejected tool=${toolName} callId=${toolCallId} reason=${prepared.error}`);

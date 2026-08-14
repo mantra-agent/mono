@@ -537,6 +537,8 @@ export interface AutonomousRunResult {
   status: "succeeded" | "degraded" | "failed" | "yielded";
   summary?: string;
   error?: string;
+  /** Executor degradation discriminant; pure empty_response must not page attention. */
+  degradationReason?: string;
   /** Source-owned Plan child terminal truth, preserved from AgentExecutor when applicable. */
   childMissionOutcome?: ChildMissionTerminalOutcome;
   /** Failed deterministic checklist requirements (present when status === "degraded"). */
@@ -1779,6 +1781,7 @@ async function runSkillPipeline(
         status: "degraded",
         summary: degradedSummary,
         error: reason,
+        degradationReason: reason,
         durationMs,
         childMissionOutcome: result.childMissionOutcome,
       };

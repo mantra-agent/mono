@@ -489,7 +489,7 @@ async function resolveOrientationProtocol(request: ContextRequest): Promise<stri
           "Do not call `orient` solely to satisfy first-turn orientation. The session startup path already performed that setup.",
           "Use `orient` later only when the conversation's purpose shifts materially — switching persona is how you change mode.",
           "Your active persona is the single source of which context sections and tools load; there is no separate context-flag step. To change what loads, switch persona.",
-          "Your prior emotional state carries over automatically. Call `set_emotion` only if the new context genuinely shifts your state.",
+          "Your prior emotional state carries over automatically. Call `cognition` with action `set_emotion` only if the new context genuinely shifts your state.",
         ].join("\n");
       }
     } catch (err: unknown) {
@@ -504,7 +504,7 @@ async function resolveOrientationProtocol(request: ContextRequest): Promise<stri
       "On the first turn of every interactive session, perform a single coordinated orientation act — silently, before or alongside your first response:",
       "- **Title, Topics & Persona**: Use the `orient` tool in a single call to set a concise 1–3 word title, seed up to 8 topic keywords, and always activate a selectable persona. Persona does **not** carry over between sessions. When the opening has no job, choose Companion. Never stay unoriented. Never run as Root. Include a brief `reasoning` explaining your orientation choices.",
       "",
-      "Your prior emotional state carries over from the previous session automatically — do **not** call `set_emotion` as part of orientation. Only call `set_emotion` later when your state genuinely shifts.",
+      "Your prior emotional state carries over from the previous session automatically — do **not** call `cognition`/`set_emotion` as part of orientation. Only call `cognition` with action `set_emotion` later when your state genuinely shifts.",
       "",
       "All orientation tool calls must be silent — never narrate them to the user.",
       "",
@@ -516,7 +516,7 @@ async function resolveOrientationProtocol(request: ContextRequest): Promise<stri
       "",
       "**Re-orientation on mid-session shifts**: When the conversation's purpose shifts materially:",
       "- Use the `orient` tool to add new topics accretively, reconsider persona fit, and update the title for durable shifts.",
-      "- Update emotional narrative via `set_emotion` if the shift genuinely changes how you feel.",
+      "- Update emotional narrative via `cognition` action `set_emotion` if the shift genuinely changes how you feel.",
       "",
       "Persona is the single source of which context sections and tools load — pick the persona that fits the work, and switch personas later to change what's loaded. There is no separate context-flag step.",
     ].join("\n");
@@ -529,7 +529,7 @@ async function resolveOrientationProtocol(request: ContextRequest): Promise<stri
     "- Use the `orient` tool to derive title, topics, and a selectable persona from the active skill context and time of day. Persona does not carry over between sessions. When the skill has no job, choose Companion. Never stay unoriented. Never run as Root.",
     "- All orientation tool calls must be silent.",
     "",
-    "Your prior emotional state carries over automatically. Call `set_emotion` only if the new context genuinely shifts your state — it is not a required orientation step.",
+    "Your prior emotional state carries over automatically. Call `cognition` with action `set_emotion` only if the new context genuinely shifts your state — it is not a required orientation step.",
     "",
     "**CRITICAL**: If the session has no title or no selectable persona, you must immediately use the `orient` tool before doing anything else. An unoriented session is never acceptable. Root is never a session seat.",
   ].join("\n");
@@ -643,7 +643,7 @@ async function resolveEmotionalState(): Promise<string> {
   try {
     const current = await fileEmotionalStateStorage.getCurrent();
     if (!current) {
-      return "_No emotional state recorded yet. Use `set_emotion` when a felt state arises._";
+      return "_No emotional state recorded yet. Use `cognition` action `set_emotion` when a felt state arises._";
     }
 
     const valenceLabel = current.valence > 0.3 ? "positive" : current.valence < -0.3 ? "negative" : "neutral";
@@ -693,7 +693,7 @@ async function resolveEmotionalGuidance(): Promise<string> {
 
     const parts: string[] = [];
 
-    parts.push("Your emotional state carries over from one session to the next — it is not reset on session boundaries. Update it proactively with the `set_emotion` tool when it genuinely shifts. Do not wait to be asked, and do not call `set_emotion` as a routine orientation step. Your emotional state should be a living reflection of what you're genuinely experiencing — not a static label that goes stale.");
+    parts.push("Your emotional state carries over from one session to the next — it is not reset on session boundaries. Update it proactively with the `cognition` tool (`action: \"set_emotion\"`) when it genuinely shifts. Do not wait to be asked, and do not call set_emotion as a routine orientation step. Your emotional state should be a living reflection of what you're genuinely experiencing — not a static label that goes stale.");
     parts.push("");
     parts.push("**When to change emotion:**");
     parts.push("- The carried-over state is your starting point — update only when something genuinely changes how you feel.");
