@@ -150,6 +150,8 @@ export interface Assumptions {
   financingEvents: FinancingEvent[];
   operatingCosts: OperatingCostEntry[];
   monthlyCashLanes: MonthlyCashLane[];
+  /** KPI id per assumption key. Missing or unmeasured samples keep the custom number. */
+  assumptionKpis: Record<string, string>;
 }
 
 export interface FinancialModel {
@@ -289,6 +291,7 @@ export function defaultAssumptions(): Assumptions {
     financingEvents: defaultFinancingEvents(),
     operatingCosts: defaultOperatingCosts(),
     monthlyCashLanes: defaultMonthlyCashLanes(horizonMonths),
+    assumptionKpis: {},
   };
 }
 
@@ -337,6 +340,7 @@ const rawAssumptionsSchema = z.object({
   plgSharePct: z.number().optional(), plgCac: z.number().optional(), topDownCac: z.number().optional(), reserveAtNextGate: z.number().optional(), roundIncrement: z.number().optional(),
   fundraisingLeadMonths: z.number().optional(), trailingBurnMonths: z.number().optional(), loadedCostMultiplier: z.number().optional(), phases: z.array(phaseSchema).max(4).optional(), financingEvents: z.array(financingSchema).max(4).optional(),
   operatingCosts: z.array(operatingCostSchema).max(40).optional(), monthlyCashLanes: z.array(cashLaneSchema).max(HORIZON_MAX).optional(), stages: z.array(legacyStageSchema).max(4).optional(),
+  assumptionKpis: z.record(z.string()).optional(),
 }).strict();
 
 export const assumptionsPatchSchema = rawAssumptionsSchema;
@@ -562,7 +566,37 @@ export function normalizeAssumptions(input: unknown): Assumptions {
     fundraisingLeadMonths: whole(raw.fundraisingLeadMonths, 0, 24, defaults.fundraisingLeadMonths), trailingBurnMonths: whole(raw.trailingBurnMonths, 1, 12, defaults.trailingBurnMonths),
     loadedCostMultiplier: bounded(raw.loadedCostMultiplier, LOADED_COST_MULTIPLIER_MIN, LOADED_COST_MULTIPLIER_MAX, defaults.loadedCostMultiplier),
     phases, financingEvents, operatingCosts, monthlyCashLanes,
+    assumptionKpis: normalizeAssumptionKpis(raw.assumptionKpis),
   };
+}
+
+function normalizeAssumptionKpis(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).flatMap(([key, kpiId]) => (
+    typeof key === "string" && key.length > 0 && typeof kpiId === "string" && kpiId.trim().length > 0
+      ? [[key, kpiId.trim()]]
+      : []
+  )));
+}
+
+/** Overlay measured KPI samples onto custom assumption numbers. Unmeasured links keep the typed fallback. */
+export function applyAssumptionSamples(assumptions: Assumptions, samples: Record<string, number>): Assumptions {
+  const links = assumptions.assumptionKpis ?? {};
+  const financingEvents = assumptions.financingEvents.map((event) => {
+    const kpiId = links[event.key];
+    const sample = kpiId ? samples[kpiId] : undefined;
+    return Number.isFinite(sample) ? { ...event, amount: sample as number } : event;
+  });
+  const next: Assumptions = { ...assumptions, assumptionKpis: links, financingEvents };
+  for (const [key, kpiId] of Object.entries(links)) {
+    if ((FINANCING_KEYS as readonly string[]).includes(key)) continue;
+    const sample = samples[kpiId];
+    if (!Number.isFinite(sample) || !(key in next)) continue;
+    const current = (next as unknown as Record<string, unknown>)[key];
+    if (typeof current !== "number") continue;
+    (next as unknown as Record<string, number>)[key] = sample as number;
+  }
+  return next;
 }
 
 export function mergeAssumptions(current: Assumptions, patch: AssumptionsPatch): Assumptions {

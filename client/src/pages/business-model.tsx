@@ -10,10 +10,12 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
+  DropdownMenuItem,
   DropdownMenuSub,
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu";
+import { ReferencePicker } from "@/components/references/reference-picker";
 import { useAuth } from "@/hooks/use-auth";
 import { useSelectedBusiness } from "@/hooks/use-selected-business";
 import { usePageLoadActivity } from "@/hooks/use-page-activity";
@@ -23,6 +25,7 @@ import { cn } from "@/lib/utils";
 import type { BusinessBudget } from "@shared/models/business-budgets";
 import {
   aggregateMonths,
+  applyAssumptionSamples,
   computeProjection,
   FINANCING_LABELS,
   type Assumptions,
@@ -31,6 +34,7 @@ import {
   type PeriodMode,
   type PeriodRow,
 } from "@shared/models/business-model";
+import type { Kpi } from "@shared/models/metrics";
 import type { BusinessHiringProjection } from "@shared/models/business-hiring";
 import type { JobRole } from "@shared/models/job-roles";
 
@@ -163,9 +167,10 @@ interface NumericInputProps {
   min?: number;
   step?: number;
   ariaLabel: string;
+  disabled?: boolean;
 }
 
-function NumericInput({ value, onChange, prefix, suffix, min, step, ariaLabel }: NumericInputProps) {
+function NumericInput({ value, onChange, prefix, suffix, min, step, ariaLabel, disabled }: NumericInputProps) {
   return (
     <div className="flex h-5 w-40 max-w-full items-center gap-1 rounded-md bg-muted/50 px-1.5 focus-within:ring-1 focus-within:ring-ring sm:w-48">
       {prefix && <span className="shrink-0 text-xs text-muted-foreground">{prefix}</span>}
@@ -175,12 +180,13 @@ function NumericInput({ value, onChange, prefix, suffix, min, step, ariaLabel }:
         inputMode="decimal"
         min={min}
         step={step}
+        disabled={disabled}
         value={Number.isFinite(value) ? value : ""}
         onChange={(event) => {
           const next = Number(event.target.value);
           if (Number.isFinite(next)) onChange(next);
         }}
-        className="h-5 min-w-0 flex-1 bg-transparent p-0 text-right text-xs leading-none tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        className="h-5 min-w-0 flex-1 bg-transparent p-0 text-right text-xs leading-none tabular-nums outline-none [appearance:textfield] disabled:cursor-default disabled:text-muted-foreground [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
       />
       {suffix && <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">{suffix}</span>}
     </div>
@@ -213,6 +219,8 @@ export default function BusinessModelPage() {
     enabled: Boolean(selectedId),
     queryFn: async () => (await apiRequest("GET", hiringUrl)).json(),
   });
+  const kpisUrl = selectedId ? `/api/business/kpis?businessId=${encodeURIComponent(selectedId)}` : "/api/business/kpis";
+  const { data: kpisData } = useQuery<{ kpis: Kpi[] }>({ queryKey: [kpisUrl], enabled: Boolean(selectedId) });
   usePageLoadActivity("page:business-model", isLoading || isFetching || budgetLoading || budgetFetching || hiringLoading || hiringFetching);
   const assumptionsPreferenceKey = useMemo(() => {
     if (!user?.id || !principal?.accountId || !selectedId) return null;
@@ -305,7 +313,28 @@ export default function BusinessModelPage() {
     });
   }, [scheduleSave]);
 
-  const projection = useMemo(() => draft && budget && hiring ? computeProjection(draft, rolesData?.roles ?? hiring.roles, budget.departments, hiring.slots) : null, [budget, draft, rolesData, hiring]);
+  const linkAssumption = useCallback((key: string, kpiId: string | null) => {
+    setDraft((current) => {
+      if (!current) return current;
+      const assumptionKpis = { ...(current.assumptionKpis ?? {}) };
+      if (kpiId) assumptionKpis[key] = kpiId;
+      else delete assumptionKpis[key];
+      const next = { ...current, assumptionKpis };
+      scheduleSave(next);
+      return next;
+    });
+  }, [scheduleSave]);
+
+  const kpiById = useMemo(() => new Map((kpisData?.kpis ?? []).map((kpi) => [kpi.id, kpi])), [kpisData]);
+  const assumptionSamples = useMemo(() => Object.fromEntries(
+    (kpisData?.kpis ?? []).flatMap((kpi) => Number.isFinite(kpi.score?.value) ? [[kpi.id, kpi.score!.value as number]] : []),
+  ), [kpisData]);
+  const liveAssumptions = useMemo(() => draft ? applyAssumptionSamples(draft, assumptionSamples) : null, [assumptionSamples, draft]);
+  const sampled = useCallback((key: string) => {
+    const kpiId = draft?.assumptionKpis?.[key];
+    return Boolean(kpiId) && Number.isFinite(kpiById.get(kpiId!)?.score?.value);
+  }, [draft, kpiById]);
+  const projection = useMemo(() => liveAssumptions && budget && hiring ? computeProjection(liveAssumptions, rolesData?.roles ?? hiring.roles, budget.departments, hiring.slots) : null, [budget, hiring, liveAssumptions, rolesData]);
   const periods = useMemo(() => projection ? aggregateMonths(projection.months, period) : [], [projection, period]);
   const staffRoles = useMemo(() => {
     if (!draft || !hiring || periods.length === 0) return [];
@@ -328,7 +357,7 @@ export default function BusinessModelPage() {
     );
   }
 
-  if (isLoading || budgetLoading || hiringLoading || !draft || !budget || !hiring || !projection) return null;
+  if (isLoading || budgetLoading || hiringLoading || !draft || !liveAssumptions || !budget || !hiring || !projection) return null;
 
   return (
     <div className="w-full space-y-6 p-4" data-testid="business-model-page">
@@ -336,29 +365,68 @@ export default function BusinessModelPage() {
       <section className="overflow-hidden border-y border-border/20">
         <ProfileDetailSection title="Assumptions" open={assumptionsOpen} onOpenChange={changeAssumptionsOpen} headerAction={<SavedIndicator state={saveState} />}>
           <div className="space-y-0">
-            <Driver label="Starting accounts"><NumericInput ariaLabel="Starting paying accounts" value={draft.startingAccounts} min={0} step={1} onChange={(startingAccounts) => updateGlobal({ startingAccounts })} /></Driver>
-            <Driver label="Starting users"><NumericInput ariaLabel="Starting users" value={draft.startingUsers} min={0} step={1} onChange={(startingUsers) => updateGlobal({ startingUsers })} /></Driver>
-            <Driver label="Q1 new accounts"><NumericInput ariaLabel="Quarter one new accounts" value={draft.quarterOneNewAccounts} min={0} step={1} onChange={(quarterOneNewAccounts) => updateGlobal({ quarterOneNewAccounts })} /></Driver>
-            <Driver label="Users per new account"><NumericInput ariaLabel="Average users per new account" value={draft.averageUsersPerNewAccount} min={1} step={1} onChange={(averageUsersPerNewAccount) => updateGlobal({ averageUsersPerNewAccount })} /></Driver>
-            <Driver label="Annual account churn"><NumericInput ariaLabel="Annual account churn" value={draft.annualAccountChurnPct} min={0} step={1} suffix="%" onChange={(annualAccountChurnPct) => updateGlobal({ annualAccountChurnPct })} /></Driver>
-            <Driver label="User contraction"><NumericInput ariaLabel="Annual user contraction within existing accounts" value={draft.annualExistingAccountUserContractionPct} min={0} step={5} suffix="% / yr" onChange={(annualExistingAccountUserContractionPct) => updateGlobal({ annualExistingAccountUserContractionPct })} /></Driver>
-            <Driver label="Account upgrades"><NumericInput ariaLabel="Annual account upgrade rate" value={draft.annualAccountUpgradePct} min={0} step={5} suffix="% / yr" onChange={(annualAccountUpgradePct) => updateGlobal({ annualAccountUpgradePct })} /></Driver>
-            <Driver label="Base plan"><NumericInput ariaLabel="Base plan monthly price" value={draft.maxSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} /></Driver>
-            <Driver label="Upgraded plan"><NumericInput ariaLabel="Upgraded plan monthly price" value={draft.maxPlusSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxPlusSubscriptionMonthly) => updateGlobal({ maxPlusSubscriptionMonthly })} /></Driver>
-            <Driver label="Additional user"><NumericInput ariaLabel="Additional user monthly price" value={draft.participantSeatMonthly} min={0} step={25} prefix="$" suffix="/ mo" onChange={(participantSeatMonthly) => updateGlobal({ participantSeatMonthly })} /></Driver>
-            <Driver label="Hours per user"><NumericInput ariaLabel="Hours used per active user per month" value={draft.hoursUsedPerActiveUser} min={0} step={1} suffix="/ mo" onChange={(hoursUsedPerActiveUser) => updateGlobal({ hoursUsedPerActiveUser })} /></Driver>
-            <Driver label="Meetings per hour"><NumericInput ariaLabel="Meetings per hour used" value={draft.meetingsPerHour} min={0} step={0.05} onChange={(meetingsPerHour) => updateGlobal({ meetingsPerHour })} /></Driver>
-            <Driver label="Internal meeting share"><NumericInput ariaLabel="Share of meetings that are internal" value={draft.internalMeetingSharePct} min={0} step={5} suffix="%" onChange={(internalMeetingSharePct) => updateGlobal({ internalMeetingSharePct })} /></Driver>
-            <Driver label="Accounts per external meeting"><NumericInput ariaLabel="New accounts per external meeting" value={draft.newAccountsPerExternalMeeting} min={0} step={0.01} onChange={(newAccountsPerExternalMeeting) => updateGlobal({ newAccountsPerExternalMeeting })} /></Driver>
-            <Driver label="Users per internal meeting"><NumericInput ariaLabel="Expanded users per internal meeting" value={draft.expandedUsersPerInternalMeeting} min={0} step={0.01} onChange={(expandedUsersPerInternalMeeting) => updateGlobal({ expandedUsersPerInternalMeeting })} /></Driver>
-            <Driver label="Tokens per hour"><NumericInput ariaLabel="Tokens used per hour" value={draft.tokensUsedPerHour} min={0} step={10000} onChange={(tokensUsedPerHour) => updateGlobal({ tokensUsedPerHour })} /></Driver>
-            <Driver label="Token cost"><NumericInput ariaLabel="Blended token cost per million" value={draft.blendedTokenCostPerMillion} min={0} step={0.25} prefix="$" suffix="/ 1M" onChange={(blendedTokenCostPerMillion) => updateGlobal({ blendedTokenCostPerMillion })} /></Driver>
-            <Driver label="Loaded comp multiplier"><NumericInput ariaLabel="Fully loaded staff comp multiplier on base salary plus bonus" value={draft.loadedCostMultiplier} min={0.5} step={0.05} suffix="×" onChange={(loadedCostMultiplier) => updateGlobal({ loadedCostMultiplier })} /></Driver>
-            {draft.financingEvents.map((event) => (
-              <Driver key={event.key} label={FINANCING_LABELS[event.key]}>
-                <NumericInput ariaLabel={`${FINANCING_LABELS[event.key]} investment`} value={event.amount} min={0} step={50000} prefix="$" onChange={(amount) => updateFinancing(event.key, amount)} />
-              </Driver>
-            ))}
+            <AssumptionDriver assumptionKey="startingAccounts" label="Starting accounts" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Starting paying accounts" value={liveAssumptions.startingAccounts} min={0} step={1} disabled={sampled("startingAccounts")} onChange={(startingAccounts) => updateGlobal({ startingAccounts })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="startingUsers" label="Starting users" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Starting users" value={liveAssumptions.startingUsers} min={0} step={1} disabled={sampled("startingUsers")} onChange={(startingUsers) => updateGlobal({ startingUsers })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="quarterOneNewAccounts" label="Q1 new accounts" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Quarter one new accounts" value={liveAssumptions.quarterOneNewAccounts} min={0} step={1} disabled={sampled("quarterOneNewAccounts")} onChange={(quarterOneNewAccounts) => updateGlobal({ quarterOneNewAccounts })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="averageUsersPerNewAccount" label="Users per new account" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Average users per new account" value={liveAssumptions.averageUsersPerNewAccount} min={1} step={1} disabled={sampled("averageUsersPerNewAccount")} onChange={(averageUsersPerNewAccount) => updateGlobal({ averageUsersPerNewAccount })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="annualAccountChurnPct" label="Annual account churn" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Annual account churn" value={liveAssumptions.annualAccountChurnPct} min={0} step={1} suffix="%" disabled={sampled("annualAccountChurnPct")} onChange={(annualAccountChurnPct) => updateGlobal({ annualAccountChurnPct })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="annualExistingAccountUserContractionPct" label="User contraction" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Annual user contraction within existing accounts" value={liveAssumptions.annualExistingAccountUserContractionPct} min={0} step={5} suffix="% / yr" disabled={sampled("annualExistingAccountUserContractionPct")} onChange={(annualExistingAccountUserContractionPct) => updateGlobal({ annualExistingAccountUserContractionPct })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="annualAccountUpgradePct" label="Account upgrades" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Annual account upgrade rate" value={liveAssumptions.annualAccountUpgradePct} min={0} step={5} suffix="% / yr" disabled={sampled("annualAccountUpgradePct")} onChange={(annualAccountUpgradePct) => updateGlobal({ annualAccountUpgradePct })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="maxSubscriptionMonthly" label="Base plan" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Base plan monthly price" value={liveAssumptions.maxSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" disabled={sampled("maxSubscriptionMonthly")} onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="maxPlusSubscriptionMonthly" label="Upgraded plan" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Upgraded plan monthly price" value={liveAssumptions.maxPlusSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" disabled={sampled("maxPlusSubscriptionMonthly")} onChange={(maxPlusSubscriptionMonthly) => updateGlobal({ maxPlusSubscriptionMonthly })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="participantSeatMonthly" label="Additional user" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Additional user monthly price" value={liveAssumptions.participantSeatMonthly} min={0} step={25} prefix="$" suffix="/ mo" disabled={sampled("participantSeatMonthly")} onChange={(participantSeatMonthly) => updateGlobal({ participantSeatMonthly })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="hoursUsedPerActiveUser" label="Hours per user" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Hours used per active user per month" value={liveAssumptions.hoursUsedPerActiveUser} min={0} step={1} suffix="/ mo" disabled={sampled("hoursUsedPerActiveUser")} onChange={(hoursUsedPerActiveUser) => updateGlobal({ hoursUsedPerActiveUser })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="meetingsPerHour" label="Meetings per hour" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Meetings per hour used" value={liveAssumptions.meetingsPerHour} min={0} step={0.05} disabled={sampled("meetingsPerHour")} onChange={(meetingsPerHour) => updateGlobal({ meetingsPerHour })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="internalMeetingSharePct" label="Internal meeting share" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Share of meetings that are internal" value={liveAssumptions.internalMeetingSharePct} min={0} step={5} suffix="%" disabled={sampled("internalMeetingSharePct")} onChange={(internalMeetingSharePct) => updateGlobal({ internalMeetingSharePct })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="newAccountsPerExternalMeeting" label="Accounts per external meeting" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="New accounts per external meeting" value={liveAssumptions.newAccountsPerExternalMeeting} min={0} step={0.01} disabled={sampled("newAccountsPerExternalMeeting")} onChange={(newAccountsPerExternalMeeting) => updateGlobal({ newAccountsPerExternalMeeting })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="expandedUsersPerInternalMeeting" label="Users per internal meeting" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Expanded users per internal meeting" value={liveAssumptions.expandedUsersPerInternalMeeting} min={0} step={0.01} disabled={sampled("expandedUsersPerInternalMeeting")} onChange={(expandedUsersPerInternalMeeting) => updateGlobal({ expandedUsersPerInternalMeeting })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="tokensUsedPerHour" label="Tokens per hour" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Tokens used per hour" value={liveAssumptions.tokensUsedPerHour} min={0} step={10000} disabled={sampled("tokensUsedPerHour")} onChange={(tokensUsedPerHour) => updateGlobal({ tokensUsedPerHour })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="blendedTokenCostPerMillion" label="Token cost" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Blended token cost per million" value={liveAssumptions.blendedTokenCostPerMillion} min={0} step={0.25} prefix="$" suffix="/ 1M" disabled={sampled("blendedTokenCostPerMillion")} onChange={(blendedTokenCostPerMillion) => updateGlobal({ blendedTokenCostPerMillion })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="loadedCostMultiplier" label="Loaded comp multiplier" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Fully loaded staff comp multiplier on base salary plus bonus" value={liveAssumptions.loadedCostMultiplier} min={0.5} step={0.05} suffix="×" disabled={sampled("loadedCostMultiplier")} onChange={(loadedCostMultiplier) => updateGlobal({ loadedCostMultiplier })} />
+            </AssumptionDriver>
+            {draft.financingEvents.map((event) => {
+              const liveEvent = liveAssumptions.financingEvents.find((candidate) => candidate.key === event.key) ?? event;
+              return (
+                <AssumptionDriver key={event.key} assumptionKey={event.key} label={FINANCING_LABELS[event.key]} draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                  <NumericInput ariaLabel={`${FINANCING_LABELS[event.key]} investment`} value={liveEvent.amount} min={0} step={50000} prefix="$" disabled={sampled(event.key)} onChange={(amount) => updateFinancing(event.key, amount)} />
+                </AssumptionDriver>
+              );
+            })}
           </div>
         </ProfileDetailSection>
       </section>
@@ -449,11 +517,62 @@ export default function BusinessModelPage() {
   );
 }
 
-function Driver({ label, children }: { label: string; children: ReactNode }) {
+function AssumptionDriver({
+  assumptionKey,
+  label,
+  draft,
+  kpiById,
+  onLink,
+  children,
+}: {
+  assumptionKey: string;
+  label: string;
+  draft: Assumptions;
+  kpiById: Map<string, Kpi>;
+  onLink: (key: string, kpiId: string | null) => void;
+  children: ReactNode;
+}) {
+  const kpiId = draft.assumptionKpis?.[assumptionKey];
+  const kpi = kpiId ? kpiById.get(kpiId) : undefined;
+  const sampled = Boolean(kpiId) && Number.isFinite(kpi?.score?.value);
+  const fallback = Boolean(kpiId) && !sampled;
   return (
     <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
-      <span className="min-w-0 truncate text-muted-foreground">{label}</span>
-      <div className="min-w-0 shrink-0">{children}</div>
+      <span className="min-w-0 truncate text-muted-foreground">
+        {label}
+        {kpi && <span className="ml-1.5 text-xs text-muted-foreground/80">{sampled ? kpi.name : `${kpi.name} · custom`}</span>}
+        {kpiId && !kpi && <span className="ml-1.5 text-xs text-muted-foreground/80">Missing KPI · custom</span>}
+      </span>
+      <div className="flex min-w-0 shrink-0 items-center gap-1">
+        {children}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" aria-label={`${label} assumption options`} className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground">
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>Link</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="p-0">
+                <div className="w-72 p-2" onClick={(event) => event.stopPropagation()}>
+                  <ReferencePicker
+                    value={kpi ? [{ type: "kpi", id: kpi.id, label: kpi.name }] : []}
+                    onChange={(next) => onLink(assumptionKey, next[0]?.id ?? null)}
+                    types={["kpi"]}
+                    mode="single"
+                    variant="compact"
+                    placeholder="Choose KPI"
+                    showToken={false}
+                  />
+                </div>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            {kpiId && <DropdownMenuItem onSelect={() => onLink(assumptionKey, null)}>Unlink</DropdownMenuItem>}
+            {fallback && <DropdownMenuItem disabled>Unmeasured · using custom</DropdownMenuItem>}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   );
 }
