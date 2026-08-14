@@ -14,6 +14,15 @@ import { useLibraryUnread } from "@/components/library-activity-indicator";
 // bookmarked links still resolve.
 const REDIRECT_HASHES = new Set(["data", "db"]);
 
+function decodeHashParam(value: string): string {
+  if (!value) return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 function parseHashInfo(hash: string): {
   tab: InfoTab;
   specSlug?: string;
@@ -21,11 +30,12 @@ function parseHashInfo(hash: string): {
 } {
   const raw = hash.replace(/^#/, "");
   if (raw.startsWith("library?spec=")) {
-    const slug = raw.slice("library?spec=".length);
+    const slug = decodeHashParam(raw.slice("library?spec=".length));
     return { tab: "library", specSlug: slug || undefined };
   }
   if (raw.startsWith("library?page=")) {
-    const slug = raw.slice("library?page=".length);
+    // page= accepts either the human slug or the stable page UUID.
+    const slug = decodeHashParam(raw.slice("library?page=".length));
     return { tab: "library", pageSlug: slug || undefined };
   }
   // Legacy #notes and #notes?id=X redirect to library

@@ -501,11 +501,16 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
     const handler = () => {
       const raw = window.location.hash.replace(/^#/, "");
       if (raw.startsWith("library?page=")) {
-        const slug = raw.slice("library?page=".length);
-        if (slug) {
-          const match = pages.find(p => p.slug === slug);
-          if (match) setSelectedId(match.id);
+        let pageRef = raw.slice("library?page=".length);
+        if (!pageRef) return;
+        try {
+          pageRef = decodeURIComponent(pageRef);
+        } catch {
+          /* keep raw token when malformed */
         }
+        // Canonical @page links emit UUID; in-app navigation prefers slug.
+        const match = pages.find((p) => p.slug === pageRef || p.id === pageRef);
+        if (match) setSelectedId(match.id);
       }
     };
     window.addEventListener("hashchange", handler);
