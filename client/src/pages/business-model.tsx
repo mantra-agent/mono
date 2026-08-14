@@ -10,7 +10,6 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
-  DropdownMenuItem,
   DropdownMenuSub,
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
@@ -551,25 +550,20 @@ function AssumptionDriver({
               <MoreHorizontal className="h-4 w-4" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>Link</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="p-0">
-                <div className="w-72 p-2" onClick={(event) => event.stopPropagation()}>
-                  <ReferencePicker
-                    value={kpi ? [{ type: "kpi", id: kpi.id, label: kpi.name }] : []}
-                    onChange={(next) => onLink(assumptionKey, next[0]?.id ?? null)}
-                    types={["kpi"]}
-                    mode="single"
-                    variant="compact"
-                    placeholder="Choose KPI"
-                    showToken={false}
-                  />
-                </div>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            {kpiId && <DropdownMenuItem onSelect={() => onLink(assumptionKey, null)}>Unlink</DropdownMenuItem>}
-            {fallback && <DropdownMenuItem disabled>Unmeasured · using custom</DropdownMenuItem>}
+          <DropdownMenuContent align="end" className="overflow-visible" onCloseAutoFocus={(event) => event.preventDefault()}>
+            <div className="w-72 p-2" onClick={(event) => event.stopPropagation()}>
+              <p className="mb-2 px-1 text-xs font-medium text-muted-foreground">{kpiId ? "Change KPI" : "Link KPI"}</p>
+              <ReferencePicker
+                value={kpi ? [{ type: "kpi", id: kpi.id, label: kpi.name }] : []}
+                onChange={(next) => onLink(assumptionKey, next[0]?.id ?? null)}
+                types={["kpi"]}
+                mode="single"
+                variant="compact"
+                placeholder="Choose KPI"
+                showToken={false}
+              />
+              {fallback && <p className="mt-2 px-1 text-xs text-muted-foreground">Unmeasured · using custom</p>}
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
