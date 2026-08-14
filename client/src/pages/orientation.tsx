@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { usePageHeader } from "@/hooks/use-page-header";
 import {
@@ -17,7 +17,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
@@ -44,14 +43,10 @@ import {
   ChevronDown,
   ChevronRight,
   Compass,
-  FileText,
-  Layers,
-  Link2,
   MoreHorizontal,
   Plus,
   ShieldCheck,
   SlidersHorizontal,
-  Tag,
   type LucideIcon,
 } from "lucide-react";
 
@@ -123,16 +118,6 @@ function formatValue(value: unknown): string {
   return String(value);
 }
 
-function tagsToReferenceText(tags: string[]): string {
-  return tags
-    .map((tag) => {
-      const slug = normalizeTagSlug(tag);
-      return slug ? `@tag:${slug}` : "";
-    })
-    .filter(Boolean)
-    .join(" ");
-}
-
 function searchableText(section: SectionConfig, item: OrientationRecord): string {
   const parts = [
     section.label,
@@ -165,95 +150,45 @@ function useSectionData(section: SectionConfig) {
   });
 }
 
-function TagLinks({ tags, empty = "—" }: { tags: string[]; empty?: string }) {
-  if (!tags.length) {
-    return <span className="text-muted-foreground">{empty}</span>;
+function uniqueTags(...groups: string[][]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const group of groups) {
+    for (const tag of group) {
+      const normalized = tag.trim();
+      if (!normalized) continue;
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(normalized);
+    }
+  }
+  return result;
+}
+
+function TagChip({ tag }: { tag: string }) {
+  const slug = normalizeTagSlug(tag);
+  if (!slug) {
+    return <span className="text-sm text-muted-foreground">{tag}</span>;
   }
   return (
     <InlineReferenceText
-      text={tagsToReferenceText(tags)}
-      className="inline-flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5"
+      text={`@tag:${slug}`}
+      className="inline-flex min-w-0 max-w-full items-center [&_span]:mx-0"
     />
   );
 }
 
-function DetailTextRow({
-  label,
-  icon,
-  value,
-  testId,
-  mono = false,
-}: {
-  label: string;
-  icon: ReactNode;
-  value: unknown;
-  testId: string;
-  mono?: boolean;
-}) {
-  const display = formatValue(value);
-  const hasValue = display !== "—";
-  return (
-    <ProfileTreeRow
-      label={label}
-      icon={icon}
-      hasValue={hasValue}
-      showEmpty
-      mobileLayout="inline"
-      testId={testId}
-    >
-      <span className={cn("min-w-0 whitespace-pre-wrap break-words text-sm", mono && "font-mono text-xs")}>
-        {display}
-      </span>
-    </ProfileTreeRow>
-  );
-}
-
-function DetailTagsRow({
-  label,
+function OrientationTagRow({
   tags,
-  testId,
-  editable = false,
   onChange,
+  testId,
+  editable = true,
 }: {
-  label: string;
   tags: string[];
+  onChange?: (tags: string[]) => void;
   testId: string;
   editable?: boolean;
-  onChange?: (tags: string[]) => void;
-}) {
-  return (
-    <ProfileTreeRow
-      label={label}
-      icon={<Tag className="h-3.5 w-3.5" />}
-      hasValue={tags.length > 0}
-      showEmpty
-      mobileLayout="inline"
-      testId={testId}
-      expandedContent={
-        editable && onChange ? (
-          <UniversalTagPicker
-            variant="compact"
-            selected={tags}
-            onChange={onChange}
-            placeholder="Add tag"
-            testId={`${testId}-picker`}
-          />
-        ) : undefined
-      }
-    >
-      <TagLinks tags={tags} empty="None" />
-    </ProfileTreeRow>
-  );
-}
-
-function RuleTagRow({
-  tags,
-  onChange,
-  testId,
-}: {
-  tags: string[];
-  onChange: (tags: string[]) => void;
-  testId: string;
 }) {
   const [open, setOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(tags.length);
@@ -294,15 +229,16 @@ function RuleTagRow({
   }, [tags]);
 
   const hasOverflow = visibleCount < tags.length;
+  const canEdit = editable && typeof onChange === "function";
 
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <ProfileTreeRow
-        label={<span data-testid={`${testId}-label`}>Tags</span>}
-        icon={<SlidersHorizontal className="h-3.5 w-3.5" />}
-        hasValue={tags.length > 0}
-        showEmpty
-        actionContent={
+  const row = (
+    <ProfileTreeRow
+      label={<span data-testid={`${testId}-label`}>Tags</span>}
+      icon={<SlidersHorizontal className="h-3.5 w-3.5" />}
+      hasValue={tags.length > 0}
+      showEmpty
+      actionContent={
+        canEdit ? (
           <PopoverTrigger asChild>
             <Button
               variant="ghost"
@@ -314,44 +250,80 @@ function RuleTagRow({
               {hasOverflow ? <MoreHorizontal className="h-3.5 w-3.5" /> : <Plus className="h-3 w-3" />}
             </Button>
           </PopoverTrigger>
-        }
-        mobileLayout="inline"
-        testId={testId}
+        ) : undefined
+      }
+      mobileLayout="inline"
+      testId={testId}
+    >
+      <div
+        ref={summaryRef}
+        className="relative flex h-5 w-48 min-w-0 items-center justify-end gap-1 overflow-hidden"
+        data-testid={`${testId}-summary`}
       >
-        <div
-          ref={summaryRef}
-          className="relative flex h-5 w-48 min-w-0 items-center justify-end gap-1 overflow-hidden"
-          data-testid={`${testId}-summary`}
-        >
-          <div ref={measurementRef} aria-hidden className="pointer-events-none invisible absolute left-0 top-0 flex items-center gap-1">
-            {tags.map((tag) => (
-              <Badge key={tag} variant="outline" className="h-5 px-1.5 py-0 text-xs">
-                {tag}
-              </Badge>
-            ))}
-          </div>
-          {tags.slice(0, visibleCount).map((tag) => (
-            <Badge
-              key={tag}
-              variant="outline"
-              className="h-5 max-w-full shrink-0 overflow-hidden px-1.5 py-0 text-xs"
-              data-testid={`${testId}-badge-${tag}`}
-            >
-              <span className="truncate">{tag}</span>
-            </Badge>
+        <div ref={measurementRef} aria-hidden className="pointer-events-none invisible absolute left-0 top-0 flex items-center gap-1">
+          {tags.map((tag) => (
+            <span key={tag} className="inline-flex shrink-0">
+              <TagChip tag={tag} />
+            </span>
           ))}
         </div>
-      </ProfileTreeRow>
+        {tags.slice(0, visibleCount).map((tag) => (
+          <span key={tag} className="inline-flex max-w-full shrink-0 overflow-hidden" data-testid={`${testId}-chip-${tag}`}>
+            <TagChip tag={tag} />
+          </span>
+        ))}
+      </div>
+    </ProfileTreeRow>
+  );
+
+  if (!canEdit) return row;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      {row}
       <PopoverContent align="end" className="w-72 p-2" onOpenAutoFocus={(event) => event.preventDefault()} data-testid={`${testId}-popover`}>
         <UniversalTagPicker
           variant="compact"
           selected={tags}
-          onChange={onChange}
+          onChange={onChange!}
           placeholder="Add tag"
           testId={`${testId}-picker`}
         />
       </PopoverContent>
     </Popover>
+  );
+}
+
+function SummaryTextArea({
+  value,
+  onChange,
+  onCommit,
+  placeholder,
+  testId,
+  minHeightClass = "min-h-20",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onCommit: () => void;
+  placeholder: string;
+  testId: string;
+  minHeightClass?: string;
+}) {
+  return (
+    <div className={PROFILE_DESCRIPTION_FRAME_CLASS}>
+      <Textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={onCommit}
+        placeholder={placeholder}
+        className={cn(
+          minHeightClass,
+          "w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
+          PROFILE_DESCRIPTION_TEXT_CLASS,
+        )}
+        data-testid={testId}
+      />
+    </div>
   );
 }
 
@@ -381,21 +353,15 @@ function RuleDetails({ item }: { item: OrientationRecord }) {
 
   return (
     <div className="space-y-0.5">
-      <div className={PROFILE_DESCRIPTION_FRAME_CLASS}>
-        <Textarea
-          value={ruleText}
-          onChange={(event) => setRuleText(event.target.value)}
-          onBlur={commitRule}
-          placeholder="Rule"
-          className={cn(
-            "min-h-20 w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
-            PROFILE_DESCRIPTION_TEXT_CLASS,
-          )}
-          data-testid={`input-rule-text-${ruleId}`}
-        />
-      </div>
+      <SummaryTextArea
+        value={ruleText}
+        onChange={setRuleText}
+        onCommit={commitRule}
+        placeholder="Rule"
+        testId={`input-rule-text-${ruleId}`}
+      />
 
-      <RuleTagRow
+      <OrientationTagRow
         tags={tags}
         testId={`row-rule-tags-${ruleId}`}
         onChange={(nextTags) => updateMutation.mutate({ tags: nextTags.length ? nextTags : undefined })}
@@ -406,36 +372,65 @@ function RuleDetails({ item }: { item: OrientationRecord }) {
 
 function PrincipleDetails({ item }: { item: OrientationRecord }) {
   const id = String(item.id ?? "");
+  const [layer1, setLayer1] = useState(text(item.layer1));
+  const [layer2, setLayer2] = useState(text(item.layer2));
+  const autoTags = asStringArray(item.autoTags);
+  const manualTags = asStringArray(item.manualTags);
+  const tags = uniqueTags(manualTags, autoTags);
+
+  const updateMutation = useMutation({
+    mutationFn: async (patch: Record<string, unknown>) => {
+      const response = await apiRequest("PUT", `/api/principles/${id}`, patch);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/principles"] });
+    },
+  });
+
+  const commitLayer1 = () => {
+    const next = layer1.trim();
+    if (!next || next === text(item.layer1)) {
+      setLayer1(text(item.layer1));
+      return;
+    }
+    updateMutation.mutate({ layer1: next });
+  };
+
+  const commitLayer2 = () => {
+    const next = layer2.trim();
+    if (next === text(item.layer2)) return;
+    updateMutation.mutate({ layer2: next });
+  };
+
   return (
     <div className="space-y-0.5">
-      <DetailTextRow
-        label="Layer 1"
-        icon={<FileText className="h-3.5 w-3.5" />}
-        value={item.layer1}
-        testId={`row-principle-layer1-${id}`}
+      <SummaryTextArea
+        value={layer1}
+        onChange={setLayer1}
+        onCommit={commitLayer1}
+        placeholder="Layer 1"
+        testId={`input-principle-layer1-${id}`}
       />
-      <DetailTextRow
-        label="Layer 2"
-        icon={<Layers className="h-3.5 w-3.5" />}
-        value={item.layer2}
-        testId={`row-principle-layer2-${id}`}
+      <SummaryTextArea
+        value={layer2}
+        onChange={setLayer2}
+        onCommit={commitLayer2}
+        placeholder="Layer 2"
+        testId={`input-principle-layer2-${id}`}
+        minHeightClass="min-h-24"
       />
-      <DetailTagsRow
-        label="Auto tags"
-        tags={asStringArray(item.autoTags)}
-        testId={`row-principle-auto-tags-${id}`}
-      />
-      <DetailTagsRow
-        label="Manual tags"
-        tags={asStringArray(item.manualTags)}
-        testId={`row-principle-manual-tags-${id}`}
-      />
-      <DetailTextRow
-        label="Related"
-        icon={<Link2 className="h-3.5 w-3.5" />}
-        value={item.relatedIds}
-        testId={`row-principle-related-${id}`}
-        mono
+
+      <OrientationTagRow
+        tags={tags}
+        testId={`row-principle-tags-${id}`}
+        onChange={(nextTags) => {
+          const nextAuto = autoTags.filter((tag) => nextTags.some((next) => next.toLowerCase() === tag.toLowerCase()));
+          const nextManual = nextTags.filter(
+            (tag) => !nextAuto.some((auto) => auto.toLowerCase() === tag.toLowerCase()),
+          );
+          updateMutation.mutate({ autoTags: nextAuto, manualTags: nextManual });
+        }}
       />
     </div>
   );
@@ -443,31 +438,19 @@ function PrincipleDetails({ item }: { item: OrientationRecord }) {
 
 function ThesisDetails({ item }: { item: OrientationRecord }) {
   const id = String(item.id ?? "");
+  const [statement, setStatement] = useState(text(item.statement));
+  const tags = asStringArray(item.tags);
+
   return (
     <div className="space-y-0.5">
-      <DetailTextRow
-        label="Statement"
-        icon={<FileText className="h-3.5 w-3.5" />}
-        value={item.statement}
-        testId={`row-thesis-statement-${id}`}
+      <SummaryTextArea
+        value={statement}
+        onChange={setStatement}
+        onCommit={() => setStatement(text(item.statement))}
+        placeholder="Statement"
+        testId={`input-thesis-statement-${id}`}
       />
-      <DetailTextRow
-        label="Status"
-        icon={<Layers className="h-3.5 w-3.5" />}
-        value={item.status}
-        testId={`row-thesis-status-${id}`}
-      />
-      <DetailTextRow
-        label="Conviction"
-        icon={<Compass className="h-3.5 w-3.5" />}
-        value={item.conviction}
-        testId={`row-thesis-conviction-${id}`}
-      />
-      <DetailTagsRow
-        label="Tags"
-        tags={asStringArray(item.tags)}
-        testId={`row-thesis-tags-${id}`}
-      />
+      <OrientationTagRow tags={tags} testId={`row-thesis-tags-${id}`} editable={false} />
     </div>
   );
 }
