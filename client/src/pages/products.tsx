@@ -28,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { usePageLoadActivity } from "@/hooks/use-page-activity";
 import { useVaults } from "@/hooks/use-vaults";
+import { vaultTitleColor } from "@/lib/vault-title-color";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { createReferenceRef } from "@shared/references";
@@ -109,13 +110,20 @@ function ProductRow({
   onDelete: () => void;
 }) {
   const queryClient = useQueryClient();
-  const { vaults } = useVaults();
+  const { vaults, activeVaultId } = useVaults();
   const [open, setOpen] = useState(defaultOpen);
   const [adding, setAdding] = useState(false);
   const [newKind, setNewKind] = useState("");
   const [pageId, setPageId] = useState("");
   const [pendingDelete, setPendingDelete] = useState<ProductContext | null>(null);
   const selectedVault = vaults.find((vault) => vault.id === product.vaultId) ?? null;
+  const vaultById = useMemo(() => new Map(vaults.map((vault) => [vault.id, vault])), [vaults]);
+  const titleColor = vaultTitleColor(
+    product.vaultId ? [product.vaultId] : undefined,
+    vaultById,
+    activeVaultId,
+    1,
+  );
 
   const patchProduct = useMutation({
     mutationFn: async (body: { description?: string; vaultId?: string | null }) =>
@@ -153,8 +161,12 @@ function ProductRow({
           className="flex min-w-0 flex-1 items-center gap-2 pr-14 text-left"
           aria-expanded={open}
         >
-          <span className="min-w-0 flex-1 truncate text-foreground">{product.name}</span>
-          <span className="shrink-0 text-xs capitalize text-muted-foreground">{product.status}</span>
+          <span
+            className={cn("min-w-0 flex-1 truncate", !titleColor && "text-foreground")}
+            style={titleColor ? { color: titleColor } : undefined}
+          >
+            {product.name}
+          </span>
         </button>
         <button
           type="button"
