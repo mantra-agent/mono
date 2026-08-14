@@ -71,7 +71,7 @@ Root `AGENTS.md` is mandatory and authoritative for Engineering Principles, arch
 
 ## Business Model boundary
 
-`financial_models.business_id` is the immutable owner of one financial model per Business. `BusinessModelStorage` is the sole ordinary get-or-create/update boundary; every read and mutation requires an explicit Business ID and composes canonical Business Vault visibility/writability. Existing account-global models migrate replay-safely to the account's database-owned platform-instrument Business. KPI Business ownership remains derived through KPI → Metric → Business; do not duplicate Business identity on KPI rows or trust client filtering.
+`financial_models.business_id` is the immutable owner of one financial model per Business. `BusinessModelStorage` is the sole ordinary get-or-create/update boundary; every read and mutation requires an explicit Business ID and composes canonical Business Vault visibility/writability. Existing account-global models migrate replay-safely to the account's database-owned platform-instrument Business. KPI Business ownership remains derived through KPI → Metric → Business; do not duplicate Business identity on KPI rows or trust client filtering. The Business Mod-owned `business` Agent tool exposes `get_model` as a pure read that loads assumptions through `BusinessModelStorage`, then derives the same projection the Model UI computes via `computeProjection` + `aggregateMonths` over Hiring slots and Budget departments; optional `period` is `monthly|quarterly|annually` (default monthly). Model writes remain HTTP/UI-owned until an explicit assumptions mutation action is added.
 
 ## Business Budget boundary
 

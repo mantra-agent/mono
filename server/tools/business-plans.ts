@@ -548,6 +548,7 @@ async function handleHiringAction(action: string, args: Record<string, unknown>)
   return { result: safeStringify(await businessHiringStorage.update(slotId, { businessId, plannedStartMonth: optionalStr(args, "plannedStartMonth"), clearFields: stringArray(args.clearFields) as ["plannedStartMonth"] | undefined, idempotencyKey }), { label: "bridge.business.hiring.update" }) };
 }
 const BUDGET_ACTIONS = new Set(["get_budget", ...Object.keys(BUDGET_MUTATION_ACTIONS)]);
+const MODEL_ACTIONS = new Set(["get_model"]);
 const PLAN_ACTIONS = new Set([
   "list", "get", "create", "rename", "delete", "set_thematic_goal", "clear_thematic_goal",
   "add_initiative", "remove_initiative", "set_leading_metric", "clear_leading_metric", "set_lagging_kpi", "clear_lagging_kpi", "add_kpi", "remove_kpi", "assign_vault",
@@ -558,10 +559,85 @@ const METRIC_ACTIONS = new Set([
   "sample_range", "sample_usage", "list_samples", "record_sample", "delete_sample",
 ]);
 
+const MODEL_PERIOD_MODES = new Set(["monthly", "quarterly", "annually"]);
+
+async function handleModelAction(action: string, args: Record<string, unknown>) {
+  const businessId = requiredStr(args, "businessId");
+  if (!businessId) return { result: `business.${action} requires businessId`, error: true };
+  if (action !== "get_model") return { result: `Unknown business Model action: ${action}`, error: true };
+
+  const periodArg = optionalStr(args, "period") ?? "monthly";
+  if (!MODEL_PERIOD_MODES.has(periodArg)) {
+    return { result: "business.get_model period must be monthly, quarterly, or annually", error: true };
+  }
+  const period = periodArg as "monthly" | "quarterly" | "annually";
+
+  const { businessModelStorage } = await import("../business-model-storage");
+  const { businessBudgetStorage } = await import("../business-budget-storage");
+  const { businessHiringStorage } = await import("../business-hiring-storage");
+  const { jobRoleStorage } = await import("../job-role-storage");
+  const { aggregateMonths, computeProjection } = await import("@shared/models/business-model");
+
+  const [model, budget, hiring, rolesList] = await Promise.all([
+    businessModelStorage.getOrCreate(businessId),
+    businessBudgetStorage.get(businessId),
+    businessHiringStorage.projection(businessId),
+    jobRoleStorage.list({ limit: 200 }),
+  ]);
+
+  const roles = rolesList.length > 0 ? rolesList : hiring.roles;
+  const departments = budget?.departments ?? [];
+  const projection = computeProjection(model.assumptions, roles, departments, hiring.slots);
+  const periods = aggregateMonths(projection.months, period);
+  const last = periods[periods.length - 1] ?? null;
+
+  return {
+    result: safeStringify({
+      model: {
+        id: model.id,
+        businessId: model.businessId,
+        name: model.name,
+        assumptions: model.assumptions,
+        createdAt: model.createdAt,
+        updatedAt: model.updatedAt,
+      },
+      period,
+      periods,
+      months: projection.months,
+      gates: projection.gates,
+      financing: projection.financing,
+      financingNeed: projection.financingNeed,
+      metricSeries: projection.metricSeries,
+      aggregates: {
+        horizonMonths: projection.months.length,
+        periodCount: periods.length,
+        entryContributionGrossMargin: projection.entryContributionGrossMargin,
+        baselineCacPaybackMonths: projection.baselineCacPaybackMonths,
+        impliedRetainedAccountArpaExpansionPct: projection.impliedRetainedAccountArpaExpansionPct,
+        endingCash: last?.endingCash ?? null,
+        runwayMonths: last?.runwayMonths ?? null,
+        arr: last?.arr ?? null,
+        mrr: last?.mrr ?? null,
+        activeAccounts: last?.activeAccounts ?? null,
+        activeUsers: last?.activeUsers ?? null,
+        budgetMonthlyTotalCents: budget ? budget.monthlyTotalCents : 0,
+        budgetConfigured: Boolean(budget),
+        approvedHiringSlots: hiring.slots.filter((slot) => slot.status === "approved").length,
+      },
+      budgetDepartments: departments.map((department) => ({
+        id: department.id,
+        name: department.name,
+        monthlyTotalCents: departmentMonthlyTotal(department),
+      })),
+    }, { label: "bridge.business.model.get" }),
+  };
+}
+
 export const handleBusiness: ToolHandler = async (args) => {
   const action = String(args.action || "list");
   try {
     if (ENTITY_ACTIONS.has(action)) return await handleEntityAction(action, args);
+    if (MODEL_ACTIONS.has(action)) return await handleModelAction(action, args);
     if (BUDGET_ACTIONS.has(action)) return await handleBudgetAction(action, args);
     if (HIRING_ACTIONS.has(action)) return await handleHiringAction(action, args);
     if (KPI_ACTIONS.has(action)) return await handleKpiAction(action, args);
