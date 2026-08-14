@@ -135,10 +135,8 @@ export function SlackDetail() {
   const [apiAppId, setApiAppId] = useState("");
   const [botUserId, setBotUserId] = useState("");
   const [channelId, setChannelId] = useState("");
-  const [channelName, setChannelName] = useState("");
 
   const [mappingDrafts, setMappingDrafts] = useState<Record<string, string>>({});
-  const [channelNameDrafts, setChannelNameDrafts] = useState<Record<string, string>>({});
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/mods"] });
@@ -186,7 +184,6 @@ export function SlackDetail() {
     setApiAppId("");
     setBotUserId("");
     setChannelId("");
-    setChannelName("");
   };
 
   const saveConnection = useMutation({
@@ -255,7 +252,6 @@ export function SlackDetail() {
         botUserId: ids[2],
         vaultId,
         allowedChannelId: ids[3],
-        ...(channelName.trim() ? { allowedChannelName: channelName.trim() } : {}),
       });
       return res.json() as Promise<SlackInstallation>;
     },
@@ -266,24 +262,6 @@ export function SlackDetail() {
     },
     onError: (error: unknown) => {
       toast({ title: "Installation failed", description: parseApiError(error), variant: "destructive" });
-    },
-  });
-
-  const saveChannelName = useMutation({
-    mutationFn: async (installation: SlackInstallation) => {
-      const allowedChannelName = (channelNameDrafts[installation.id] || installation.allowedChannelName || "").trim();
-      if (!/^#?[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(allowedChannelName)) {
-        throw new Error("Channel name looks like eng or #eng");
-      }
-      const res = await apiRequest("PUT", `/api/slack/installations/${installation.id}/channel-name`, { allowedChannelName });
-      return res.json() as Promise<SlackInstallation>;
-    },
-    onSuccess: () => {
-      toast({ title: "Channel name saved" });
-      refresh();
-    },
-    onError: (error: unknown) => {
-      toast({ title: "Channel name failed", description: parseApiError(error), variant: "destructive" });
     },
   });
 
@@ -460,30 +438,6 @@ export function SlackDetail() {
                     </div>
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                       <div className="min-w-0 flex-1 space-y-2">
-                        <Label htmlFor={`slack-channel-name-${installation.id}`}>Channel name</Label>
-                        <Input
-                          id={`slack-channel-name-${installation.id}`}
-                          value={channelNameDrafts[installation.id] ?? installation.allowedChannelName ?? ""}
-                          onChange={(event) => setChannelNameDrafts((current) => ({ ...current, [installation.id]: event.target.value }))}
-                          placeholder="#eng"
-                          autoComplete="off"
-                          spellCheck={false}
-                          className="font-mono text-xs"
-                          data-testid={`input-slack-channel-name-${installation.id}`}
-                        />
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => saveChannelName.mutate(installation)}
-                        disabled={saveChannelName.isPending}
-                        data-testid={`button-slack-channel-name-${installation.id}`}
-                      >
-                        Save name
-                      </Button>
-                    </div>
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                      <div className="min-w-0 flex-1 space-y-2">
                         <Label htmlFor={`slack-user-${installation.id}`}>Your Slack User ID</Label>
                         <Input
                           id={`slack-user-${installation.id}`}
@@ -645,10 +599,6 @@ export function SlackDetail() {
               <div className="space-y-2">
                 <Label htmlFor="slack-channel-id">Channel ID</Label>
                 <Input id="slack-channel-id" value={channelId} onChange={(event) => setChannelId(event.target.value)} placeholder="C…" className="font-mono text-xs" autoComplete="off" spellCheck={false} data-testid="input-slack-channel-id" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="slack-channel-name">Channel name</Label>
-                <Input id="slack-channel-name" value={channelName} onChange={(event) => setChannelName(event.target.value)} placeholder="#eng" className="font-mono text-xs" autoComplete="off" spellCheck={false} data-testid="input-slack-channel-name" />
               </div>
             </div>
           </div>

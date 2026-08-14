@@ -4,7 +4,8 @@ import { requireAuth } from "../auth";
 import { requirePermission } from "../permissions";
 import { requireCurrentPrincipal } from "../principal-context";
 import { requireModRouteGroup } from "../mods/mod-access";
-import { createInstallation, listOwnedInstallations, listOwnedMappings, setAllowedChannelName, setInstallationEnabled, upsertPrincipalMapping } from "./storage";
+import { loadSlackCredentials, getSlackChannelName } from "./client";
+import { createInstallation, listOwnedInstallations, listOwnedMappings, rememberAllowedChannelName, setInstallationEnabled, upsertPrincipalMapping } from "./storage";
 
 const slackId = (prefix: "T" | "A" | "U" | "C") =>
   z.string().regex(new RegExp(`^${prefix}[A-Z0-9]{1,31}$`));
@@ -16,10 +17,6 @@ const createSchema = z.object({
   botUserId: slackId("U"),
   vaultId: z.string().min(1).max(128),
   allowedChannelId: slackId("C").optional(),
-  allowedChannelName: z.string().trim().min(1).max(80).regex(/^#?[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/).optional(),
-}).strict();
-const channelNameSchema = z.object({
-  allowedChannelName: z.string().trim().min(1).max(80).regex(/^#?[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/),
 }).strict();
 const mappingSchema = z.object({
   slackUserId: slackId("U"),
@@ -35,9 +32,6 @@ const PUBLIC_SLACK_ERRORS = new Set([
 
 function publicSlackError(error: unknown, fallback: string): string {
   if (error instanceof z.ZodError) {
-    if (error.issues.some((issue) => issue.path.includes("allowedChannelName"))) {
-      return "Channel name looks like eng or #eng";
-    }
     return "Team, App, Bot, Channel, and User IDs must look like T… / A… / U… / C…";
   }
   if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "23505") {
@@ -45,6 +39,18 @@ function publicSlackError(error: unknown, fallback: string): string {
   }
   if (error instanceof Error && PUBLIC_SLACK_ERRORS.has(error.message)) return error.message;
   return fallback;
+}
+
+async function resolveCreatedChannelName(installation: Awaited<ReturnType<typeof createInstallation>>) {
+  const channelId = installation.allowedChannelIds[0];
+  if (!channelId) return installation;
+  try {
+    const name = await getSlackChannelName(await loadSlackCredentials(installation), channelId);
+    if (!name) return installation;
+    return await rememberAllowedChannelName(installation.id, channelId, name) ?? installation;
+  } catch {
+    return installation;
+  }
 }
 
 export function registerSlackRoutes(app: Express): void {
@@ -63,19 +69,10 @@ export function registerSlackRoutes(app: Express): void {
 
   app.post("/api/slack/installations", ...gates, async (req, res) => {
     try {
-      const installation = await createInstallation(requireCurrentPrincipal(), createSchema.parse(req.body));
-      res.status(201).json(installation);
+      const created = await createInstallation(requireCurrentPrincipal(), createSchema.parse(req.body));
+      res.status(201).json(await resolveCreatedChannelName(created));
     } catch (error) {
       res.status(400).json({ error: publicSlackError(error, "Slack installation could not be created") });
-    }
-  });
-
-  app.put("/api/slack/installations/:id/channel-name", ...gates, async (req, res) => {
-    try {
-      const { allowedChannelName } = channelNameSchema.parse(req.body);
-      res.json(await setAllowedChannelName(requireCurrentPrincipal(), req.params.id, allowedChannelName));
-    } catch (error) {
-      res.status(400).json({ error: publicSlackError(error, "Slack channel name could not be updated") });
     }
   });
 
