@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Check, ChevronRight, Loader2 } from "lucide-react";
+import { Check, ChevronRight, Loader2, MoreHorizontal } from "lucide-react";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+} from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/use-auth";
 import { useSelectedBusiness } from "@/hooks/use-selected-business";
 import { usePageLoadActivity } from "@/hooks/use-page-activity";
@@ -272,13 +281,25 @@ export default function BusinessModelPage() {
           title="Forecast"
           defaultOpen
           headerAction={(
-            <div className="flex items-center gap-1 rounded-md border border-border/40 p-0.5">
-              {PERIOD_MODES.map((mode) => (
-                <button key={mode.key} type="button" onClick={() => setPeriod(mode.key)} className={cn("min-h-8 rounded px-3 text-xs font-medium normal-case tracking-normal transition-colors", period === mode.key ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}>
-                  {mode.label}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button type="button" aria-label="Forecast options" className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground">
+                  <MoreHorizontal className="h-4 w-4" />
                 </button>
-              ))}
-            </div>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>Cadence</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {PERIOD_MODES.map((mode) => (
+                      <DropdownMenuCheckboxItem key={mode.key} checked={period === mode.key} onCheckedChange={() => setPeriod(mode.key)}>
+                        {mode.label}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         >
           <div className="overflow-x-auto">
@@ -299,7 +320,8 @@ export default function BusinessModelPage() {
               {utilizationOpen && usersOpen && <DataRow label="Expanded Users" indent={2} periods={periods} render={(row) => row.expandedUsers >= 0.05 ? `+${trimNum(row.expandedUsers)}` : "—"} />}
               {utilizationOpen && usersOpen && <DataRow label="Contracted Users" indent={2} periods={periods} render={(row) => row.contractedUsers >= 0.05 ? `-${trimNum(row.contractedUsers)}` : "—"} tone={() => "text-muted-foreground"} />}
               {utilizationOpen && <DataRow label="Hours Used" indent periods={periods} render={(row) => row.hoursUsed >= 0.05 ? trimNum(row.hoursUsed) : "—"} />}
-              <DataRow label="Gross Profit" periods={periods} render={(row) => fmtCurrency(row.grossProfit)} onToggle={() => setGrossProfitOpen((open) => !open)} open={grossProfitOpen} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} emphasize />
+              <DataRow label="Gross Profit" periods={periods} render={(row) => grossProfitOpen ? "" : fmtCurrency(row.grossProfit)} onToggle={() => setGrossProfitOpen((open) => !open)} open={grossProfitOpen} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} emphasize />
+              {grossProfitOpen && <DataRow label="Gross Profit" indent periods={periods} render={(row) => fmtCurrency(row.grossProfit)} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />}
               {grossProfitOpen && <DataRow label="Revenue" indent periods={periods} render={(row) => fmtCurrency(row.totalCashRevenue)} onToggle={() => setRevenueOpen((open) => !open)} open={revenueOpen} />}
               {grossProfitOpen && revenueOpen && <DataRow label="Starting Cohort" indent={2} periods={periods} render={(row) => fmtCurrency(row.startingCohortRevenue)} />}
               {grossProfitOpen && revenueOpen && <DataRow label="Account Churn" indent={2} periods={periods} render={(row) => row.churnedRevenue > 0 ? fmtCurrency(-row.churnedRevenue) : "—"} tone={() => "text-muted-foreground"} />}
@@ -311,10 +333,7 @@ export default function BusinessModelPage() {
               {grossProfitOpen && <DataRow label="COGS" indent periods={periods} render={(row) => fmtCurrency(-row.cogs)} onToggle={() => setCogsOpen((open) => !open)} open={cogsOpen} tone={() => "text-muted-foreground"} />}
               {grossProfitOpen && cogsOpen && <DataRow label="Tokens Used" indent={2} periods={periods} render={(row) => row.tokensUsed >= 0.5 ? formatTokens(row.tokensUsed) : "—"} />}
               {grossProfitOpen && cogsOpen && <DataRow label="Token Cost" indent={2} periods={periods} render={(row) => row.tokenCost >= 0.5 ? fmtCurrency(-row.tokenCost) : "—"} tone={() => "text-muted-foreground"} />}
-              {grossProfitOpen && cogsOpen && <DataRow label="Other COGS" indent={2} periods={periods} render={(row) => {
-                const otherCogs = row.cogs - row.tokenCost;
-                return otherCogs >= 0.5 ? fmtCurrency(-otherCogs) : "—";
-              }} tone={() => "text-muted-foreground"} />}
+              {grossProfitOpen && cogsOpen && <DataRow label="Support" indent={2} periods={periods} render={(row) => row.supportCogs >= 0.5 ? fmtCurrency(-row.supportCogs) : "—"} tone={() => "text-muted-foreground"} />}
               <DataRow label="OpEx" periods={periods} render={(row) => fmtCurrency(-row.totalOpex)} onToggle={() => setOpexOpen((open) => !open)} open={opexOpen} emphasize />
               {opexOpen && <DataRow label="Staff" indent periods={periods} render={(row) => fmtCurrency(-row.staffOpex)} tone={() => "text-muted-foreground"} />}
               {opexOpen && budget.departments.map((department) => (
