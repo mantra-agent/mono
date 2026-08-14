@@ -1,6 +1,12 @@
 import { getSecret } from "../../secrets-store";
 import { createLogger } from "../../log";
 import { providerFetch, readBoundedProviderBody } from "../provider-http";
+import {
+  getSentryFullConfig,
+  isSentryFullyConfigured,
+  resolveSentryDsn,
+  type SentryFullConfig,
+} from "./config";
 
 const log = createLogger("SentryClient");
 
@@ -17,11 +23,8 @@ export class SentryApiError extends Error {
   }
 }
 
-export interface SentryConfig {
-  hasToken: boolean;
-  org: string | null;
-  project: string | null;
-}
+/** API + crash-capture readiness. Prefer this over the legacy token-only shape. */
+export type SentryConfig = SentryFullConfig;
 
 export interface SentryUptimeAggregate {
   checkCount: number;
@@ -30,21 +33,16 @@ export interface SentryUptimeAggregate {
 }
 
 export async function getSentryConfig(): Promise<SentryConfig> {
-  const token = await getSecret("SENTRY_AUTH_TOKEN");
-  const org = await getSecret("SENTRY_ORG");
-  const project = await getSecret("SENTRY_PROJECT");
-  return {
-    hasToken: !!(token && token.length > 0),
-    org: org || null,
-    project: project || null,
-  };
+  return getSentryFullConfig();
 }
 
 export function isSentryConfigured(
   cfg: SentryConfig
-): cfg is SentryConfig & { org: string; project: string; hasToken: true } {
-  return cfg.hasToken && !!cfg.org && !!cfg.project;
+): cfg is SentryConfig & { dsn: string; org: string; project: string; hasToken: true } {
+  return isSentryFullyConfigured(cfg);
 }
+
+export { resolveSentryDsn };
 
 async function sentryFetch(
   path: string,

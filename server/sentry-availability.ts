@@ -22,6 +22,7 @@ function completedUtcDay(now = new Date()): { start: Date; end: Date } {
 async function configuredStatus(): Promise<{ cfg: Awaited<ReturnType<typeof getSentryConfig>>; missing: string[] }> {
   const cfg = await getSentryConfig();
   const missing: string[] = [];
+  if (!cfg.dsn) missing.push("SENTRY_DSN");
   if (!cfg.hasToken) missing.push("SENTRY_AUTH_TOKEN");
   if (!cfg.org) missing.push("SENTRY_ORG");
   if (!cfg.project) missing.push("SENTRY_PROJECT");

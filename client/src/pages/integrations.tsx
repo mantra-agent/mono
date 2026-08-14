@@ -3641,13 +3641,13 @@ function SentryDetail() {
         ? <span className="text-foreground">Waiting for a complete day · {status.checkCount}/{status.expectedChecks}</span>
         : status?.status === "unavailable"
           ? <span className="text-error">{status.error}</span>
-          : <span className="text-muted-foreground">Configure Sentry credentials</span>;
+          : <span className="text-muted-foreground">Add DSN + API credentials once</span>;
 
   return (
     <div className="min-w-0 space-y-2">
       <IntegrationTreeSection label="Crash reporting" initialOpen={status?.status === "not_configured"} testIdPrefix="sentry">
-        <ProfileTreeRow label="Sentry API" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
-          <span className={status?.configured ? "text-active" : "text-muted-foreground"}>{status?.configured ? "Configured" : "Needs credentials"}</span>
+        <ProfileTreeRow label="Web · Mobile · Server" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
+          <span className={status?.configured ? "text-active" : "text-muted-foreground"}>{status?.configured ? "One setup arms all surfaces" : "Needs DSN + API credentials"}</span>
         </ProfileTreeRow>
         <div className="min-w-0 px-2 py-1.5"><SecretsForSection section="sentry" /></div>
       </IntegrationTreeSection>

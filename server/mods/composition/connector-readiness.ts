@@ -75,7 +75,9 @@ export function secretConnectorReadiness(connectorKey: string): ConnectorReadine
     case "sendgrid":
       return allSecrets("SENDGRID_API_KEY", "SENDGRID_FROM_EMAIL") ? "ready" : "setup-required";
     case "sentry":
-      return allSecrets("EXPO_PUBLIC_SENTRY_DSN", "SENTRY_AUTH_TOKEN", "SENTRY_ORG", "SENTRY_PROJECT")
+      // One DSN (SENTRY_DSN or mobile build alias) + API credentials arms every surface.
+      return (anySecret("SENTRY_DSN", "EXPO_PUBLIC_SENTRY_DSN") &&
+        allSecrets("SENTRY_AUTH_TOKEN", "SENTRY_ORG", "SENTRY_PROJECT"))
         ? "ready"
         : "setup-required";
     case "expo":

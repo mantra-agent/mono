@@ -25,11 +25,16 @@ async function renderRoot(): Promise<void> {
     { default: App },
     { initializeActiveScrollbars },
     { initializeBrowserTelemetry },
+    { initWebSentry },
   ] = await Promise.all([
     import("./App"),
     import("./lib/active-scrollbars"),
     import("./lib/browser-telemetry"),
+    import("./lib/sentry"),
   ]);
+
+  // Fail-open crash capture — never blocks first paint.
+  void initWebSentry();
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});

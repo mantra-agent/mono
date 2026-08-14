@@ -1,7 +1,11 @@
 import { reportSentryStatus } from './startup-telemetry';
 import Constants from 'expo-constants';
 
-const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
+// Prefer shared SENTRY_DSN; keep EXPO_PUBLIC_* as the mobile build-time alias.
+const dsn =
+  process.env.EXPO_PUBLIC_SENTRY_DSN ||
+  process.env.SENTRY_DSN ||
+  '';
 
 // Lazy reference — only populated when DSN is configured and Sentry is loaded.
 let SentryModule: typeof import('@sentry/react-native') | null = null;
@@ -21,7 +25,7 @@ let SentryModule: typeof import('@sentry/react-native') | null = null;
  */
 export function initSentry() {
   const missing: string[] = [];
-  if (!dsn) missing.push('EXPO_PUBLIC_SENTRY_DSN');
+  if (!dsn) missing.push('SENTRY_DSN');
 
   if (missing.length > 0) {
     reportSentryStatus(false, missing);
@@ -50,6 +54,7 @@ export function initSentry() {
       // Tag every event with commit SHA and build profile for traceability.
       event.tags = {
         ...event.tags,
+        surface: 'mobile',
         'git.commit': gitSha,
         'build.profile': buildProfile,
       };
