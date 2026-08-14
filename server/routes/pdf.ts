@@ -1,10 +1,31 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "../auth";
+import { createLogger } from "../log";
 import { generatePdf, openPdf, readPdfContentHandle } from "../pdf-service";
+
+const log = createLogger("PdfRoutes");
 
 function statusOf(error: unknown): number {
   const status = (error as { status?: number })?.status;
   return typeof status === "number" ? status : 500;
+}
+
+function statusClass(status: number): string {
+  if (status === 400) return "bad_request";
+  if (status === 403) return "forbidden";
+  if (status === 404) return "not_found";
+  if (status === 415) return "unsupported_media";
+  if (status === 502) return "provider";
+  if (status >= 500) return "internal";
+  return "other";
+}
+
+function logPdfFailure(operation: "open" | "content" | "generate", error: unknown): number {
+  const status = statusOf(error);
+  const fields = { operation, status, statusClass: statusClass(status) };
+  if (status >= 500) log.error("PDF route failed", fields);
+  else log.warn("PDF route failed", fields);
+  return status;
 }
 
 export function registerPdfRoutes(app: Express): void {
@@ -12,7 +33,7 @@ export function registerPdfRoutes(app: Express): void {
     try {
       res.json(await openPdf(req.body ?? {}));
     } catch (error) {
-      const status = statusOf(error);
+      const status = logPdfFailure("open", error);
       res.status(status).json({ error: status >= 500 ? "Failed to open PDF" : (error as Error).message });
     }
   });
@@ -21,7 +42,7 @@ export function registerPdfRoutes(app: Express): void {
     try {
       res.status(201).json(await generatePdf(req.body ?? {}));
     } catch (error) {
-      const status = statusOf(error);
+      const status = logPdfFailure("generate", error);
       res.status(status).json({ error: status >= 500 ? "Failed to generate PDF" : (error as Error).message });
     }
   });
@@ -35,7 +56,7 @@ export function registerPdfRoutes(app: Express): void {
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.send(buffer);
     } catch (error) {
-      const status = statusOf(error);
+      const status = logPdfFailure("content", error);
       res.status(status).json({ error: status >= 500 ? "Failed to read PDF" : (error as Error).message });
     }
   });
