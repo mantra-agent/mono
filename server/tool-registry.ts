@@ -1435,7 +1435,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   orient: {
-    description: "Unified session orientation — set title, topics, and persona in a single call. On first-turn orientation (no title set yet), `persona` is REQUIRED and the call will be rejected without it. For mid-session re-orientation, all parameters are optional for partial updates.",
+    description: "Unified session orientation — set title, topics, and persona in a single call. On first-turn orientation (no title set yet), `title` is required. Persona is optional so an ambiguous opening can stay unoriented. For mid-session re-orientation, all parameters are optional for partial updates.",
     category: "communication",
 
     parameters: {
@@ -1448,7 +1448,7 @@ export const TOOLS: Record<string, ToolMeta> = {
       },
       required: [],
     },
-    whenToUse: "On the first turn of every session to set title, topics, and persona together — persona is REQUIRED on the first call (before any title is set) and will be rejected without it. Also for mid-session re-orientation when the conversation's purpose shifts (persona optional on updates). The active persona determines which context sections and tools load — switch persona to change what's assembled.",
+    whenToUse: "On the first turn of every session to set a title, optional topics, and a persona only when the opening has a real job. Also for mid-session re-orientation when the conversation's purpose shifts. The active persona determines which context sections and tools load — switch persona to change what's assembled.",
   },
   session: {
     description: "Session metadata, agenda, lifecycle, attention, and tree messaging. Prefer list_agenda + complete/skip/defer; never guess item IDs. Children do not inherit agendas. Coding missions: delegation=engineering (parent needs trusted engineering + build:write; child uses its own clone).",

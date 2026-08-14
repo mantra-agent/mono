@@ -45,7 +45,6 @@ const ADDITIONAL_SKILL_RECOMMENDATIONS: Record<string, string> = {
   "coach": "Coach",
   "curate": "Investigator",
   "research": "Investigator",
-  "scan": "Default",
 };
 
 /**
@@ -75,21 +74,8 @@ export async function seedSkillPersonaRecommendations(): Promise<void> {
     );
   const templateIds = new Map(templates.map((row) => [row.name, row.id]));
 
-  // Creative → Visionary recast: draft was never finished-encounter work. Move
-  // the global draft recommendation off the renamed Visionary row onto Default
-  // when it still points at that legacy Creative/Visionary template.
-  const [defaultTemplate] = await db
-    .select({ id: personas.id })
-    .from(personas)
-    .where(
-      and(
-        eq(personas.scope, "global"),
-        eq(personas.source, "seed"),
-        eq(personas.isSystem, false),
-        sql`LOWER(${personas.name}) = 'default'`,
-      ),
-    )
-    .limit(1);
+  // Creative → Visionary recast: draft was never finished-encounter work.
+  // Clear leftover Creative/Visionary recommendations so the skill runs under Root.
   const legacyVisionaryTemplates = await db
     .select({ id: personas.id })
     .from(personas)
@@ -101,12 +87,12 @@ export async function seedSkillPersonaRecommendations(): Promise<void> {
         sql`LOWER(${personas.name}) IN ('visionary', 'creative')`,
       ),
     );
-  if (defaultTemplate && legacyVisionaryTemplates.length > 0) {
+  if (legacyVisionaryTemplates.length > 0) {
     const legacyIds = legacyVisionaryTemplates.map((row) => row.id);
     await db
       .update(skills)
       .set({
-        recommendedPersonaTemplateId: defaultTemplate.id,
+        recommendedPersonaTemplateId: null,
         updatedAt: new Date(),
       })
       .where(
@@ -119,9 +105,8 @@ export async function seedSkillPersonaRecommendations(): Promise<void> {
   }
 
   // Operator → Executive recast: maintenance and known-path skills are not
-  // allocate-and-commit work. Move those global recommendations off the
-  // renamed Executive row onto Default when they still point at Operator
-  // or Executive.
+  // allocate-and-commit work. Clear leftover Operator/Executive and Default
+  // recommendations so those skills run under Root.
   const maintenanceSkillNames = [
     "history-rollup",
     "brief-daily",
@@ -131,8 +116,9 @@ export async function seedSkillPersonaRecommendations(): Promise<void> {
     "goal-manager",
     "streamline",
     "scan",
+    "draft",
   ] as const;
-  const legacyExecutiveTemplates = await db
+  const leftoverTemplates = await db
     .select({ id: personas.id })
     .from(personas)
     .where(
@@ -140,22 +126,22 @@ export async function seedSkillPersonaRecommendations(): Promise<void> {
         eq(personas.scope, "global"),
         eq(personas.source, "seed"),
         eq(personas.isSystem, false),
-        sql`LOWER(${personas.name}) IN ('executive', 'operator')`,
+        sql`LOWER(${personas.name}) IN ('executive', 'operator', 'default')`,
       ),
     );
-  if (defaultTemplate && legacyExecutiveTemplates.length > 0) {
-    const executiveIds = legacyExecutiveTemplates.map((row) => row.id);
+  if (leftoverTemplates.length > 0) {
+    const leftoverIds = leftoverTemplates.map((row) => row.id);
     await db
       .update(skills)
       .set({
-        recommendedPersonaTemplateId: defaultTemplate.id,
+        recommendedPersonaTemplateId: null,
         updatedAt: new Date(),
       })
       .where(
         and(
           eq(skills.scope, "global"),
           inArray(skills.name, [...maintenanceSkillNames]),
-          inArray(skills.recommendedPersonaTemplateId, executiveIds),
+          inArray(skills.recommendedPersonaTemplateId, leftoverIds),
         ),
       );
   }

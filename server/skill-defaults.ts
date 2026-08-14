@@ -29,7 +29,7 @@ import {
     scoreThreshold?: number | null;
     whenToUse?: string;
     outputSpec?: string;
-    recommendedPersona?: "Default" | "Strategist" | "Coach" | "Executive" | "Visionary" | "Companion" | "Architect" | "Investigator" | "Engineer" | "Producer" | "Persuader";
+    recommendedPersona?: "Strategist" | "Coach" | "Executive" | "Visionary" | "Companion" | "Architect" | "Investigator" | "Engineer" | "Producer" | "Persuader";
 
     pinnedToContext?: boolean;
     sessionType?: "autonomous" | "agent";
@@ -43,7 +43,6 @@ import {
   export const BUILTIN_SKILL_DEFAULTS: SkillDefault[] = [
   {
     name: "history-rollup",
-    recommendedPersona: "Default",
     description: "Core hourly historical-continuity maintenance. The Skill's own routed model run summarizes deterministic owner-scoped source windows and persists each result through a validated immutable write boundary.",
     category: "system",
     activity: ACTIVITY_MEMORY,
@@ -250,7 +249,7 @@ No preamble. No source list. No explanation of your process. No extra headings.
   },
   {
     name: "brief-daily",
-    recommendedPersona: "Default",
+    recommendedPersona: "Companion",
     description: "Assembles a morning briefing calibrated to the day's actual cognitive load. Monday/Wednesday/Friday carry more weight; Tuesday/Thursday are minimal. Archives to Library and links to Goals page.",
     category: "communication",
     activity: ACTIVITY_WORK,
@@ -419,7 +418,7 @@ Do NOT use the \`priorities\` tool with action "set_brief" for Daily Brief visib
   },
   {
     name: "autonomy",
-    recommendedPersona: "Default",
+    recommendedPersona: "Executive",
     description: "Agent's autonomous scan-and-execute loop. Asks how Agent can help Ray achieve his goals; scans current goals, calendar, people, projects, tasks, issues, logs, news, workflows, decisions, email, and wellness; executes safe internal work; uses aligned Agent-assigned tasks as a legitimate work queue; routes durable outputs to canonical systems; and gates unsafe or unclear work for review.",
     category: "system",
     activity: ACTIVITY_WORK,
@@ -496,7 +495,7 @@ Return a compact operational report:
   },
   {
     name: "draft",
-    recommendedPersona: "Default",
+    recommendedPersona: "Persuader",
     description: "Draft writing in the current user's canonical voice. Resolves the user's writing standard from active Rules and Library, applies the correct register, runs the standard's required sweep, and persists through the native draft surface when available.",
     category: "communication",
     activity: ACTIVITY_WORK,
@@ -713,7 +712,6 @@ Use the \`converse\` tool to initiate a conversation:
     },
   {
     name: "enrich-email",
-    recommendedPersona: "Default",
     description: "Enriches triaged email threads with contextual summaries, decisions, and recommended actions by cross-referencing people, tasks, calendar, and memory. Can auto-dismiss 🟢 Acknowledge emails when appropriate.",
     category: "communication",
     activity: ACTIVITY_WORK,
@@ -868,7 +866,6 @@ For each selected idea:
   },
   {
     name: "sleep",
-    recommendedPersona: "Default",
     description: "Nightly vNext sleep cycle — existing claim lifecycle, REM dream generation over vNext claims and recent sessions, and weekly GSI scoring.",
     category: "memory",
     activity: ACTIVITY_MEMORY,
@@ -1536,7 +1533,6 @@ Read your preContext or user message for:
   },
   {
     name: "goal-manager",
-    recommendedPersona: "Default",
     description: "Nightly steward of the goal graph. Reviews active goals across horizons, repairs high-confidence hierarchy and relationship gaps, prunes dangling links whose endpoint no longer resolves, flags weak goal definitions and provenance gaps for Ray, and appends a deterministic run log. Conservative authority: never deletes a goal, at most 25 mutations per run.",
     category: "planning",
     activity: ACTIVITY_WORK,
@@ -1599,7 +1595,7 @@ Return a 3-5 line summary: goals reviewed, mutations by type, count flagged, and
   },
   {
     name: "streamline",
-    recommendedPersona: "Default",
+    recommendedPersona: "Producer",
     description: "Quiet Thursday-night bandwidth maintenance before Friday planning. Reconciles Ray's real commitments against capacity, repairs safe date and priority drift, recalibrates task effort from execution evidence, writes one short running log entry, and starts a focused conversation only when an irreducible tradeoff remains.",
     category: "thinking",
     activity: ACTIVITY_THINKING,

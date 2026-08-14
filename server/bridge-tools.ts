@@ -1029,19 +1029,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       return { result: "No orientation parameters provided. Pass at least one of: title, topics, persona.", error: true };
     }
 
-    // First-turn enforcement: if no meaningful title is set yet, persona is required
-    if (!hasPersona) {
-      const { chatFileStorage } = await import("./chat-file-storage");
-      const { hasRealSessionTitle } = await import("./session-orientation");
-      const conv = await chatFileStorage.getSession(sessionId);
-      if (!hasRealSessionTitle(conv?.title)) {
-        return {
-          result: "First-turn orientation requires `persona`. Include the `persona` parameter (name or id) alongside title and topics on the initial orient call.",
-          error: true,
-          failure: inputFailure("orient_persona_required"),
-        };
-      }
-    }
+    // First-turn enforcement: a meaningful title is required. Persona is optional
+    // so an ambiguous opening can stay unoriented instead of minting a leftover job.
 
     let validatedTitle: string | undefined;
     if (hasTitle) {

@@ -15,14 +15,12 @@ export function hasRealSessionTitle(title: string | null | undefined): boolean {
 /**
  * Canonical persisted orientation invariant.
  *
- * A session is established once it has a meaningful title and an active persona.
- * Persona is the single source of context sections and tools, so selecting one is
- * the orientation act that scopes the session. Legacy sessions that predate
- * persona-owned context are still honored via their persisted context flags.
+ * A session is established once it has a meaningful title. Persona is optional:
+ * unoriented is a real state when the opening has no job. Legacy sessions that
+ * predate persona-owned context are still honored via their persisted context flags.
  */
 export function isSessionOrientationEstablished(
   session: SessionOrientationSnapshot | null | undefined,
 ): boolean {
-  return hasRealSessionTitle(session?.title)
-    && (session?.personaId != null || session?.contextFlags != null);
+  return hasRealSessionTitle(session?.title);
 }

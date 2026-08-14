@@ -134,7 +134,7 @@ const SECTION_GROUPS: SectionGroup[] = [
   {
     label: "Capabilities",
     sections: [
-      { id: "capabilities.code_instructions", label: "Code Instructions", bootstrap: true },
+      { id: "capabilities.code_instructions", label: "Code Instructions" },
       { id: "capabilities.goals_instructions", label: "Goals Instructions", bootstrap: true },
     ],
   },

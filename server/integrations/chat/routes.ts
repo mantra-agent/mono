@@ -2451,7 +2451,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           : orientation.skipped === "already-oriented"
             ? "already oriented"
             : orientation.fallback
-              ? `fallback · ${orientation.personaName || "Default"}${orientation.fallbackReason ? ` · ${orientation.fallbackReason}` : ""}`
+              ? `fallback · ${orientation.personaName || "Unoriented"}${orientation.fallbackReason ? ` · ${orientation.fallbackReason}` : ""}`
               : "skipped";
         // NOT emitting end: publishChatStreamEvent(sessionKey, sessionId, {...})
         if (orientation.skipped !== "already-oriented") {

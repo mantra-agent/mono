@@ -35,7 +35,7 @@ export interface RequiredContextReferenceMetadata {
 }
 
 export interface CodingContextMetadata {
-  alwaysOn: true;
+  alwaysOn: boolean;
   requiredReferences: RequiredContextReferenceMetadata[];
   proof?: {
     impact?: string[];

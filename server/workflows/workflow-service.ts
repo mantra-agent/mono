@@ -1198,7 +1198,7 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
       ],
     },
     {
-      key: "documentation", title: "Documentation", position: 6, autonomyMode: "autonomous", persona: "Default",
+      key: "documentation", title: "Documentation", position: 6, autonomyMode: "autonomous", persona: "Engineer",
       evidenceRequirements: ["Durable final documentation that records the implemented truth, linked evidence, decisions, handoff, and any remaining gates under the loaded governing context."],
       allowedTransitions: [{ toStageKey: null, on: "passed", reason: "complete" }],
     },

@@ -17,8 +17,8 @@
 // full context on the correct tier. The handoff is invisible to the user.
 //
 // Fail-closed: if the classification call or parse fails, a preselected
-// session persona is preserved; otherwise Default is activated. The session
-// stays untitled so the next turn retries.
+// session persona is preserved; otherwise the session stays unoriented.
+// The session stays untitled so the next turn retries.
 import { createLogger } from "./log";
 import { chatCompletion } from "./model-client";
 import { resolveModelCandidates, type ModelRoutingDecision } from "./model-routing";
@@ -88,7 +88,7 @@ export interface OrientationBootstrapResult {
 interface BootstrapClassification {
   title: string;
   topics: string[];
-  persona: string;
+  persona?: string;
 }
 
 export function buildBootstrapSystemPrompt(router: PersonaEntry): string {
@@ -107,7 +107,7 @@ export function buildBootstrapSystemPrompt(router: PersonaEntry): string {
     "- Prefer compact noun phrases over meta-descriptions. Do not title the user's request mechanics.",
     "- Examples: 'audit the Session menu UI' -> 'Session Menu Audit'; 'review TIVE pricing' -> 'TIVE Pricing Review'; 'debug duplicate question widgets' -> 'Question Widget Duplication'; 'improve the router that names Sessions' -> 'Session Naming Router'.",
     "- Before returning, apply this test: could this title distinguish the Session from five others involving the same kind of work? If not, make the subject more specific.",
-    '- "persona": the persona name that best fits the opening (use "Default" when ambiguous)',
+    '- "persona": the persona name that best fits the opening, or omit it when the opening is ambiguous',
   ].join("\n");
 }
 
@@ -134,11 +134,10 @@ function parseClassification(raw: string, personas: PersonaEntry[]): BootstrapCl
     ? obj.topics.filter((t): t is string => typeof t === "string" && !!t.trim()).map((t) => t.trim()).slice(0, 8)
     : [];
   const requested = typeof obj.persona === "string" ? obj.persona.trim() : "";
-  const match = personas.find((p) => p.name.toLowerCase() === requested.toLowerCase());
-  const fallback = personas.find((p) => p.isDefault) ?? personas.find((p) => p.name === "Default");
-  const persona = match ?? fallback;
-  if (!persona) return null;
-  return { title, topics, persona: persona.name };
+  const match = requested
+    ? personas.find((p) => !p.isSystem && p.name.toLowerCase() === requested.toLowerCase())
+    : undefined;
+  return { title, topics, persona: match?.name };
 }
 
 /** Apply orientation through the canonical orient mutation path (same boundary as model-issued orient calls). */
@@ -271,7 +270,7 @@ export async function ensureSessionOriented(options: {
     const applied = await applyOrient(sessionId, sessionKey, {
       title: classification.title,
       topics: classification.topics,
-      persona: classification.persona,
+      ...(classification.persona ? { persona: classification.persona } : {}),
       // The orient handler derives semantic recommendations from title/topics/persona.
       // An explicit empty map means the bootstrap also establishes context scope in
       // this one mutation, even when no optional sections are recommended.
@@ -308,31 +307,25 @@ export async function ensureSessionOriented(options: {
   }
 }
 
-/** Fail closed: preserve a preselected persona, otherwise activate Default. Session stays untitled and retries next turn. */
+/** Fail closed: preserve a preselected persona, otherwise stay unoriented. Session stays untitled and retries next turn. */
 async function failClosed(
   sessionId: string,
-  sessionKey: string | undefined,
+  _sessionKey: string | undefined,
   startedAt: number,
   diagnostic: Pick<OrientationBootstrapResult, "llm" | "fallbackReason">,
 ): Promise<OrientationBootstrapResult> {
   try {
-    const personas = await personaStorage.list();
-    const fallback = personas.find((p) => p.isDefault) ?? personas.find((p) => p.name === "Default");
-    if (fallback) {
-      const applied = await applyOrient(sessionId, sessionKey, { persona: fallback.name });
-      if (applied.error) log.warn(`bootstrap fail-closed orient failed sessionId=${sessionId}: ${applied.result}`);
-      const { resolveSessionPersona } = await import("./session-persona");
-      const effectivePersona = await resolveSessionPersona(sessionId, { persistFallback: false });
-      return {
-        applied: false,
-        skipped: null,
-        personaName: effectivePersona?.name ?? fallback.name,
-        fallback: true,
-        fallbackReason: diagnostic.fallbackReason,
-        elapsedMs: Date.now() - startedAt,
-        llm: diagnostic.llm,
-      };
-    }
+    const { resolveSessionPersona } = await import("./session-persona");
+    const effectivePersona = await resolveSessionPersona(sessionId, { persistFallback: false });
+    return {
+      applied: false,
+      skipped: null,
+      personaName: effectivePersona?.name,
+      fallback: true,
+      fallbackReason: diagnostic.fallbackReason,
+      elapsedMs: Date.now() - startedAt,
+      llm: diagnostic.llm,
+    };
   } catch (fallbackErr) {
     log.error(`bootstrap fail-closed fallback errored sessionId=${sessionId}: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
   }

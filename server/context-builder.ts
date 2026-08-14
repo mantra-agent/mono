@@ -502,7 +502,7 @@ async function resolveOrientationProtocol(request: ContextRequest): Promise<stri
       "**Session Orientation Protocol**",
       "",
       "On the first turn of every interactive session, perform a single coordinated orientation act — silently, before or alongside your first response:",
-      "- **Title, Topics & Persona**: Use the `orient` tool in a single call to set a concise 1–3 word title, seed up to 8 topic keywords, and activate a persona. You **must** include the `persona` parameter on the first orient call — it is required and the call will be rejected without it. Persona does **not** carry over between sessions, so every new session starts with no active persona until you select one. Include a brief `reasoning` explaining your orientation choices.",
+      "- **Title, Topics & Persona**: Use the `orient` tool in a single call to set a concise 1–3 word title, seed up to 8 topic keywords, and activate a persona only when the opening has a real job. Persona does **not** carry over between sessions. Ambiguous openings stay unoriented. Include a brief `reasoning` explaining your orientation choices.",
       "",
       "Your prior emotional state carries over from the previous session automatically — do **not** call `set_emotion` as part of orientation. Only call `set_emotion` later when your state genuinely shifts.",
       "",
@@ -526,7 +526,7 @@ async function resolveOrientationProtocol(request: ContextRequest): Promise<stri
     "**Session Orientation Protocol (Autonomous)**",
     "",
     "Orient from available context without user interaction:",
-    "- Use the `orient` tool to derive title, topics, and persona from the active skill context and time of day. You **must** include the `persona` parameter on the first orient call — it is required and the call will be rejected without it. Persona does not carry over between sessions; every new session starts with no active persona.",
+    "- Use the `orient` tool to derive title and topics from the active skill context and time of day. Include a persona only when the skill has a real job. Persona does not carry over between sessions; janitor work may stay on Root.",
     "- All orientation tool calls must be silent.",
     "",
     "Your prior emotional state carries over automatically. Call `set_emotion` only if the new context genuinely shifts your state — it is not a required orientation step.",
@@ -750,7 +750,7 @@ async function resolveActivePersona(request: ContextRequest): Promise<string> {
       return [
         "**No active persona — orient to select one.**",
         "",
-        "Persona is session-scoped: every new session starts without an active persona. Choose one as part of your first-turn `orient` call (the `persona` parameter is required). Pick the persona that best fits the moment — you can switch later by calling `orient` again with a new `persona`.",
+        "Persona is session-scoped: every new session starts without an active persona. Choose one as part of your first-turn `orient` call when the opening has a real job. Ambiguous openings can stay unoriented. You can switch later by calling `orient` again with a new `persona`.",
         "",
         "Available personas:",
         personaList,
@@ -758,7 +758,13 @@ async function resolveActivePersona(request: ContextRequest): Promise<string> {
     }
 
     const resolved = active;
-    if (!resolved) throw new Error("No personas found — seed may not have run");
+    if (!resolved) {
+      return [
+        "**No active persona — run under Root.**",
+        "",
+        "This session has no selectable persona. Stay in Root. Do not invent a leftover Default seat. Interactive work should orient to a real job when the opening has one.",
+      ].join("\n");
+    }
 
     const overlay = resolved.promptOverlay
       || "- Be concise but thorough when the topic warrants it\n- When asked to do something, do it\n- Think step by step for complex problems";
@@ -785,7 +791,7 @@ async function resolveActivePersona(request: ContextRequest): Promise<string> {
         ].join("\n")
       : [
           `\n\n**Active persona: ${resolved.name}**`,
-          `\nFirst-turn persona selection is handled by the session orientation protocol. Mid-session, switch personas proactively using the \`orient\` tool (with just the \`persona\` parameter) when the conversation shifts to a domain better served by a different mode. Do not ask permission — read the moment and adapt. Switch back to Default when the need passes.`,
+          `\nFirst-turn persona selection is handled by the session orientation protocol. Mid-session, switch personas proactively using the \`orient\` tool (with just the \`persona\` parameter) when the conversation shifts to a domain better served by a different mode. Do not ask permission — read the moment and adapt. Stay in the current job when the need has not actually changed.`,
           `\nAvailable personas:`,
           otherPersonas,
         ].join("\n");
@@ -1959,7 +1965,7 @@ const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
 async function resolveCodeInstructions(): Promise<string> {
   const header = `## Coding Instructions
 
-This section is always loaded. Use it for code changes, debugging, repo/system diagnosis, builds, PRs, merges, deployments, and implementation planning.`;
+This section loads with the Development context group. Use it for code changes, debugging, repo/system diagnosis, builds, PRs, merges, deployments, and implementation planning.`;
 
   // Repo CODING.md is the single source of truth. Environment coding_process
   // artifacts are fallback only, and are never joined with the filesystem body
@@ -2584,12 +2590,12 @@ export class ContextBuilder {
 
     const codingInstructionTokens = sectionTokenCounts["capabilities.code_instructions"] || 0;
     const codingContext: SpineMetadata["codingContext"] = {
-      alwaysOn: true,
+      alwaysOn: false,
       requiredReferences: [
         {
           id: "coding_instructions",
           label: "Compact coding instructions",
-          required: true,
+          required: false,
           loaded: codingInstructionTokens > 0,
           source: "capabilities.code_instructions",
           evidence: codingInstructionTokens > 0 ? [`${codingInstructionTokens} tokens included`] : ["Missing from rendered context"],

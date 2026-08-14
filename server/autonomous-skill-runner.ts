@@ -684,7 +684,7 @@ export async function executeAutonomousSkillRun(
      */
     titleOverride?: string;
     /** Explicit persona applied before context assembly and first inference. */
-    personaName?: "Engineer" | "Architect" | "Default";
+    personaName?: "Engineer" | "Architect";
     /** Admission priority inherited from the root session that initiated this run. */
     admissionTier?: AdmissionTier;
     /** Stable root session identity shared by this run and all descendants. */
