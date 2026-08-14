@@ -87,7 +87,7 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
       if (next.activity !== lastActivity || next.sessionId !== lastOwner) {
         lastActivity = next.activity;
         lastOwner = next.sessionId;
-        log.info("SESSION:HANDOFF_ACTIVITY_OWNER", {
+        log.debug("SESSION:HANDOFF_ACTIVITY_OWNER", {
           activeSession,
           activity: next.activity,
           ownerSessionId: next.sessionId,
