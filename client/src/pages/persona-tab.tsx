@@ -1,10 +1,12 @@
-import { useEffect, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Check, ChevronRight, Circle, Loader2, MoreHorizontal, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { HIERARCHY_PRIMARY_ACTION_CLASS, HIERARCHY_SECTION_HEADER_CLASS, HIERARCHY_SESSION_ROW_CLASS, HIERARCHY_TREE_STACK_CLASS } from "@/components/hierarchy-section-header";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import { MarkdownContent } from "@/components/chat-shared";
 import { Card } from "@/components/ui/card";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { PROFILE_DESCRIPTION_FRAME_CLASS, PROFILE_DESCRIPTION_TEXT_CLASS } from "@/components/profile-description-style";
@@ -13,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
@@ -460,28 +463,31 @@ function IconPicker({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="relative">
-      <button
-        type="button"
-        className={cn(
-          "flex shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/70 hover:text-foreground",
-          compact ? "h-5 w-5" : "h-8 gap-2 px-2",
-        )}
-        onClick={(event) => {
-          event.stopPropagation();
-          setOpen((current) => !current);
-        }}
-        aria-label="Change icon"
-        data-testid="button-icon-picker-toggle"
-      >
-        <PersonaIconDisplay iconName={value} className="h-3.5 w-3.5" />
-      </button>
-      {open && (
-        <div
-          className="absolute left-0 top-full z-20 mt-1 grid w-56 grid-cols-5 gap-1 rounded-md border border-border/30 bg-background p-2"
-          data-testid="icon-picker-grid"
+    <Popover open={open} onOpenChange={setOpen} modal={false}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "flex shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground",
+            compact ? "h-6 w-6 min-h-6 min-w-6" : "h-8 gap-2 px-2",
+          )}
           onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+          aria-label="Change icon"
+          data-testid="button-icon-picker-toggle"
         >
+          <PersonaIconDisplay iconName={value} className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={4}
+        className="w-56 p-2"
+        data-testid="icon-picker-grid"
+        onClick={(event) => event.stopPropagation()}
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
+        <div className="grid grid-cols-5 gap-1">
           {AVAILABLE_ICONS.map((iconName) => (
             <button
               key={iconName}
@@ -501,8 +507,8 @@ function IconPicker({
             </button>
           ))}
         </div>
-      )}
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -516,6 +522,7 @@ function PersonaProseEditor({
   placeholder,
   actionLabel,
   minHeightClassName = "min-h-[2.75rem]",
+  markdown = false,
 }: {
   value: string;
   changed?: boolean;
@@ -526,12 +533,19 @@ function PersonaProseEditor({
   placeholder: string;
   actionLabel: string;
   minHeightClassName?: string;
+  markdown?: boolean;
 }) {
   const [draft, setDraft] = useState(value);
+  const [editing, setEditing] = useState(false);
   useEffect(() => {
     setDraft(value);
   }, [value]);
   const showMenu = Boolean(onApplyField || onRevertField);
+  const showMarkdownPreview = markdown && !editing;
+  const commitDraft = () => {
+    if (draft !== value) onCommit(draft);
+    setEditing(false);
+  };
   return (
     <div className="group/editor grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-0 px-2 py-1.5">
       <div className={cn(PROFILE_DESCRIPTION_FRAME_CLASS, "min-w-0")}>
@@ -540,19 +554,41 @@ function PersonaProseEditor({
             <Circle className="h-1.5 w-1.5 fill-warning text-warning" aria-label="Edited locally" />
           </div>
         )}
-        <Textarea
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => {
-            if (draft !== value) onCommit(draft);
-          }}
-          placeholder={placeholder}
-          className={cn(
-            minHeightClassName,
-            "w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
-            PROFILE_DESCRIPTION_TEXT_CLASS,
-          )}
-        />
+        {showMarkdownPreview ? (
+          <button
+            type="button"
+            className={cn(
+              minHeightClassName,
+              "w-full cursor-text rounded-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-ring",
+            )}
+            onClick={() => setEditing(true)}
+            aria-label={`Edit ${actionLabel.replace(/ actions$/i, "").toLowerCase()}`}
+          >
+            {value.trim() ? (
+              <div className={cn("prose prose-sm dark:prose-invert max-w-none break-words", PROFILE_DESCRIPTION_TEXT_CLASS, "prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:overflow-x-auto")}>
+                <MarkdownContent content={value} compact />
+              </div>
+            ) : (
+              <span className="text-muted-foreground">{placeholder}</span>
+            )}
+          </button>
+        ) : (
+          <Textarea
+            value={draft}
+            autoFocus={markdown}
+            onChange={(event) => setDraft(event.target.value)}
+            onFocus={() => {
+              if (markdown) setEditing(true);
+            }}
+            onBlur={commitDraft}
+            placeholder={placeholder}
+            className={cn(
+              minHeightClassName,
+              "w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
+              PROFILE_DESCRIPTION_TEXT_CLASS,
+            )}
+          />
+        )}
       </div>
       {showMenu ? (
         <DropdownMenu modal={false}>
@@ -707,6 +743,7 @@ function PersonaPayloadEditor({
         placeholder="Add prompt"
         actionLabel="Prompt actions"
         minHeightClassName="min-h-32"
+        markdown
       />
     </div>
   );
@@ -999,6 +1036,7 @@ export default function PersonasPage() {
   const { hasPermission } = useAuth();
   const canApply = hasPermission("system:write");
   const [creating, setCreating] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const { data: allPersonas, isLoading } = useQuery<Persona[]>({
     queryKey: ["/api/personas/management"],
     refetchInterval: 30000,
@@ -1018,35 +1056,67 @@ export default function PersonasPage() {
     queryClient.invalidateQueries({ queryKey: ["/api/personas/management"] });
   };
   const personas = allPersonas || [];
-  const sortedPersonas = [...personas].sort((a, b) => (a.isSystem ? -1 : 0) - (b.isSystem ? -1 : 0) || a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  const sortedPersonas = useMemo(
+    () =>
+      [...personas].sort(
+        (a, b) => (a.isSystem ? -1 : 0) - (b.isSystem ? -1 : 0) || a.sortOrder - b.sortOrder || a.name.localeCompare(b.name),
+      ),
+    [personas],
+  );
+  const trimmedSearch = searchQuery.trim().toLowerCase();
+  const visiblePersonas = useMemo(() => {
+    if (!trimmedSearch) return sortedPersonas;
+    return sortedPersonas.filter((persona) => {
+      const haystack = [
+        persona.name,
+        persona.description,
+        persona.promptOverlay || "",
+        persona.expressionTags.join(" "),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(trimmedSearch);
+    });
+  }, [sortedPersonas, trimmedSearch]);
   return (
     <div className={cn(HIERARCHY_TREE_STACK_CLASS, "w-full")}>
+      <HierarchySearchInput
+        value={searchQuery}
+        onChange={setSearchQuery}
+        inputTestId="input-search-personas"
+        clearTestId="button-clear-search-personas"
+        ariaLabel="Search personas"
+      />
+      <button type="button" onClick={() => setCreating(true)} className={HIERARCHY_PRIMARY_ACTION_CLASS} data-testid="button-new-persona">
+        <Plus className="h-3.5 w-3.5 shrink-0" />
+        <span>New Persona</span>
+      </button>
+      {creating && <CreatePersonaForm onSuccess={refresh} onClose={() => setCreating(false)} />}
       <section>
         <h2 className={HIERARCHY_SECTION_HEADER_CLASS}>Personas</h2>
-        <button type="button" onClick={() => setCreating(true)} className={HIERARCHY_PRIMARY_ACTION_CLASS} data-testid="button-new-persona">
-          <Plus className="h-3.5 w-3.5 shrink-0" />
-          <span>New Persona</span>
-        </button>
-        {creating && <CreatePersonaForm onSuccess={refresh} onClose={() => setCreating(false)} />}
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           </div>
-        ) : sortedPersonas.length === 0 ? (
-          <div className="px-2 py-1.5 text-sm text-muted-foreground">No personas yet</div>
+        ) : visiblePersonas.length === 0 ? (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+            {trimmedSearch ? `No personas match "${searchQuery.trim()}"` : "No personas yet"}
+          </div>
         ) : (
           <div>
-            {sortedPersonas.map((persona) => persona.isSystem ? (
-              <PlatformPersonaItem key={persona.id} persona={persona} canApply={canApply} onPublished={refresh} />
-            ) : (
-              <PersonaTreeItem
-                key={persona.id}
-                persona={persona}
-                canApply={canApply}
-                onRefresh={refresh}
-                onUpdate={(data) => updateMutation.mutate({ id: persona.id, data })}
-              />
-            ))}
+            {visiblePersonas.map((persona) =>
+              persona.isSystem ? (
+                <PlatformPersonaItem key={persona.id} persona={persona} canApply={canApply} onPublished={refresh} />
+              ) : (
+                <PersonaTreeItem
+                  key={persona.id}
+                  persona={persona}
+                  canApply={canApply}
+                  onRefresh={refresh}
+                  onUpdate={(data) => updateMutation.mutate({ id: persona.id, data })}
+                />
+              ),
+            )}
           </div>
         )}
       </section>
