@@ -3862,12 +3862,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
               error: message,
               ...sourceContext,
             });
-            const failure = classifyGitError({ stderr: message })
-              ?? permissionFailure("git_auth_denied", "source_bound_clone_failed");
+            const failure = classifyGitError(err);
             return {
               result: `Git clone failed for the authorized Platform source binding.\n${message}`,
               error: true,
-              failure,
+              ...(failure ? { failure } : {}),
             };
           } finally {
             await cleanupAskpass(authEnv);
