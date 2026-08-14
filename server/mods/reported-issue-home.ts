@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { createReferenceRef, type ReferenceRef } from "@shared/references";
 import {
   documentStoreDocuments,
@@ -30,6 +30,9 @@ const dismissalScope: ScopeColumns = {
 };
 
 const MAX_HOME_REPORTED_ISSUES = 25;
+const MAX_AUTO_CLEARS_PER_COLLECT = 50;
+const SURFACE_WINDOW_MS = 48 * 60 * 60 * 1000;
+const AUTO_CLEAR_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 const OPEN_STATUSES = ["open", "in_progress", "in_review"] as const;
 
 export interface ReportedIssueHomeItemRecord {
@@ -83,6 +86,72 @@ export function reportedIssueReasonKey(issueId: number): string {
   return `reported-issue:${issueId}`;
 }
 
+function reportedIssueVisibilityPredicate(environmentIds: number[]) {
+  return and(
+    eq(documentStoreDocuments.documentType, "issue"),
+    sql`${documentStoreDocuments.metadata}->>'kind' = 'reported'`,
+    inArray(sql`(${documentStoreDocuments.metadata}->>'status')`, [...OPEN_STATUSES]),
+    inArray(
+      sql`((${documentStoreDocuments.metadata}->>'platformEnvironmentId')::int)`,
+      environmentIds,
+    ),
+    sql`${documentStoreDocuments.ownerUserId} IS NOT NULL`,
+  );
+}
+
+async function listVisibleReportedIssueEnvironmentIds(): Promise<number[]> {
+  const visibleEnvironments = await db
+    .select({ id: platformProductEnvironments.id })
+    .from(platformProductEnvironments)
+    .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
+    .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
+    .where(visiblePlatform());
+  return visibleEnvironments.map((row) => row.id);
+}
+
+async function expireAgedReportedIssueHomeItems(
+  principal: Principal,
+  environmentIds: number[],
+  dismissedIds: Set<string>,
+): Promise<void> {
+  const owner = requireOwner(principal);
+  const cutoff = new Date(Date.now() - AUTO_CLEAR_AFTER_MS);
+  const aged = await db
+    .select({ documentId: documentStoreDocuments.documentId })
+    .from(documentStoreDocuments)
+    .leftJoin(
+      reportedIssueHomeDismissals,
+      and(
+        eq(reportedIssueHomeDismissals.issueId, documentStoreDocuments.documentId),
+        combineWithVisibleScope(principal, dismissalScope),
+      ),
+    )
+    .where(and(
+      reportedIssueVisibilityPredicate(environmentIds),
+      lt(documentStoreDocuments.createdAt, cutoff),
+      isNull(reportedIssueHomeDismissals.id),
+    ))
+    .orderBy(documentStoreDocuments.createdAt)
+    .limit(MAX_AUTO_CLEARS_PER_COLLECT);
+
+  for (const row of aged) {
+    const issueId = parseIssueId(row.documentId);
+    if (!issueId || dismissedIds.has(String(issueId))) continue;
+    await db
+      .insert(reportedIssueHomeDismissals)
+      .values({
+        issueId: String(issueId),
+        reasonKey: reportedIssueReasonKey(issueId),
+        dismissedAt: new Date(),
+        dismissedByUserId: owner.userId,
+        createdByUserId: owner.userId,
+        ...ownedInsertValues(principal, dismissalScope),
+      })
+      .onConflictDoNothing();
+    dismissedIds.add(String(issueId));
+  }
+}
+
 export async function listReportedIssueHomeItems(
   principal: Principal,
 ): Promise<ReportedIssueHomeItemRecord[]> {
@@ -90,13 +159,7 @@ export async function listReportedIssueHomeItems(
   if (!(await hasActiveBuildAccess(principal))) return [];
   if (!principalHasPermission(principal, "system:read")) return [];
 
-  const visibleEnvironments = await db
-    .select({ id: platformProductEnvironments.id })
-    .from(platformProductEnvironments)
-    .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-    .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
-    .where(visiblePlatform());
-  const environmentIds = visibleEnvironments.map((row) => row.id);
+  const environmentIds = await listVisibleReportedIssueEnvironmentIds();
   if (environmentIds.length === 0) return [];
 
   const dismissed = await db
@@ -104,7 +167,9 @@ export async function listReportedIssueHomeItems(
     .from(reportedIssueHomeDismissals)
     .where(combineWithVisibleScope(principal, dismissalScope));
   const dismissedIds = new Set(dismissed.map((row) => row.issueId));
+  await expireAgedReportedIssueHomeItems(principal, environmentIds, dismissedIds);
 
+  const surfacedAfter = new Date(Date.now() - SURFACE_WINDOW_MS);
   const rows = await db
     .select({
       documentId: documentStoreDocuments.documentId,
@@ -119,14 +184,8 @@ export async function listReportedIssueHomeItems(
     .innerJoin(users, eq(documentStoreDocuments.ownerUserId, users.id))
     .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
     .where(and(
-      eq(documentStoreDocuments.documentType, "issue"),
-      sql`${documentStoreDocuments.metadata}->>'kind' = 'reported'`,
-      inArray(sql`(${documentStoreDocuments.metadata}->>'status')`, [...OPEN_STATUSES]),
-      inArray(
-        sql`((${documentStoreDocuments.metadata}->>'platformEnvironmentId')::int)`,
-        environmentIds,
-      ),
-      sql`${documentStoreDocuments.ownerUserId} IS NOT NULL`,
+      reportedIssueVisibilityPredicate(environmentIds),
+      gte(documentStoreDocuments.createdAt, surfacedAfter),
     ))
     .orderBy(desc(documentStoreDocuments.createdAt))
     .limit(200);
