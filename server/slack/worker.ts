@@ -35,7 +35,7 @@ import {
   verifySlackIdentity,
   type SlackCredentialBundle,
 } from "./client";
-import { executeSlackTurn } from "./turn-service";
+import { executeSlackTurn, SLACK_CHANNEL_PENDING_TEXT } from "./turn-service";
 
 const log = createLogger("SlackWorker");
 
@@ -160,12 +160,26 @@ async function processEvent(installation: SlackInstallationRow, event: ClaimedSl
     if (!(await installationActive(installation))) throw new Error("slack_mod_or_installation_inactive");
     credentials = await loadSlackCredentials(installation);
     const mapped = await resolveMappedPrincipal(event, installation);
+    if (event.eventType === "app_mention") {
+      const receipt = await postSlackMessage(credentials, {
+        channel: event.channelId,
+        threadTs: event.rootTs,
+        text: SLACK_CHANNEL_PENDING_TEXT,
+        clientMsgId: event.deliveryClientMsgId,
+      });
+      progressTs = receipt.ts;
+      await settleEvent(event.id, "completed", {
+        response: SLACK_CHANNEL_PENDING_TEXT,
+        deliveryState: "final",
+        deliveryTs: receipt.ts,
+      });
+      return;
+    }
     const binding = await resolveSessionBinding(mapped.principal, installation, event, mapped.mappingId);
     await acceptCanonicalTurn(mapped.principal, event, binding.bindingId, binding.sessionId, mapped.mappingId);
     if (!(await installationActive(installation))) throw new Error("slack_mod_or_installation_inactive");
     const receipt = await postSlackMessage(credentials, {
       channel: event.channelId,
-      threadTs: event.eventType === "app_mention" ? event.rootTs : undefined,
       text: SLACK_PROGRESS_TEXT,
       clientMsgId: event.deliveryClientMsgId,
     });
@@ -175,7 +189,15 @@ async function processEvent(installation: SlackInstallationRow, event: ClaimedSl
     const timeout = setTimeout(() => controller.abort(new Error("slack_turn_deadline")), SLACK_EVENT_DEADLINE_MS);
     timeout.unref?.();
     let response: string;
-    try { response = await executeSlackTurn(mapped.principal, { sessionId: binding.sessionId, eventId: event.eventId, signal: controller.signal }); }
+    try {
+      response = await executeSlackTurn(mapped.principal, {
+        sessionId: binding.sessionId,
+        eventId: event.eventId,
+        eventType: event.eventType,
+        content: typeof event.body === "string" ? event.body : "",
+        signal: controller.signal,
+      });
+    }
     finally { clearTimeout(timeout); }
     if (!(await installationActive(installation))) throw new Error("slack_mod_or_installation_inactive");
     await updateSlackMessage(credentials, { channel: event.channelId, ts: receipt.ts, text: response });

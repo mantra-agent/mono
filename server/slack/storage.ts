@@ -252,18 +252,32 @@ export async function resolveMappedPrincipal(event: ClaimedSlackEvent, installat
     activeVaultId: row.active_vault_id as string | null, visibleVaultIds: row.visible_vault_ids as string[] | null,
     createdAt: row.created_at as Date, passwordSignupAt: row.password_signup_at as Date | null,
   });
-  return {
-    mappingId: String(row.mapping_id),
-    principal: { ...principal, accountId: installation.accountId, visibleVaultIds: [installation.vaultId], activeVaultId: installation.vaultId },
-  };
+  if (event.eventType !== "message.im") {
+    return {
+      mappingId: String(row.mapping_id),
+      principal: { ...principal, accountId: installation.accountId, visibleVaultIds: [installation.vaultId], activeVaultId: installation.vaultId },
+    };
+  }
+  return { mappingId: String(row.mapping_id), principal };
 }
 
 export async function resolveSessionBinding(principal: Principal, installation: SlackInstallationRow, event: ClaimedSlackEvent, mappingId: string): Promise<{ bindingId: string; sessionId: string }> {
-  const externalKey = event.eventType === "message.im"
-    ? `slack:${installation.id}:dm:${event.slackUserId}:${event.channelId}`
-    : `slack:${installation.id}:mention:${event.slackUserId}:${event.channelId}:${event.rootTs}`;
+  if (event.eventType !== "message.im") throw new Error("slack_channel_session_deferred");
+  const externalKey = `slack:${installation.id}:dm:${event.slackUserId}:${event.channelId}`;
   return runWithPrincipal(principal, async () => {
-    const session = await chatFileStorage.createSessionOnce("TIVE Slack", externalKey, "fast", { sessionType: "user" });
+    const { resolveCurrentProfileIdentity } = await import("../profile-identity");
+    const identity = await resolveCurrentProfileIdentity();
+    const name = identity.userName?.trim()
+      || (identity.userFirstName !== "there" ? identity.userFirstName : "")
+      || "User";
+    const title = `Slack DM: ${name}`;
+    const session = await chatFileStorage.createSessionOnce(title, externalKey, undefined, {
+      sessionType: "user",
+      protectTitle: true,
+    });
+    if (session.outcome === "existing" && session.session.title !== title) {
+      await chatFileStorage.updateSessionTitle(session.session.id, title, { source: "manual" });
+    }
     const result = await db.execute(sql`
       INSERT INTO slack_session_bindings (
         installation_id, mapping_id, external_key, channel_id, root_ts, session_id,
