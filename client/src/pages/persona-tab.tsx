@@ -377,14 +377,24 @@ function DefaultSyncDialog({ sync }: { sync: ReturnType<typeof usePersonaDefault
   );
 }
 
-function PersonaActionsMenu({ onApplyAll, onRevertAll }: { onApplyAll: () => void; onRevertAll?: () => void }) {
+function PersonaActionsMenu({
+  onApplyAll,
+  onRevertAll,
+  showAdvancedFields,
+  onToggleAdvancedFields,
+}: {
+  onApplyAll?: () => void;
+  onRevertAll?: () => void;
+  showAdvancedFields: boolean;
+  onToggleAdvancedFields: () => void;
+}) {
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
           onClick={(event) => event.stopPropagation()}
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
           aria-label="Persona actions"
           data-testid="button-persona-actions"
         >
@@ -392,8 +402,17 @@ function PersonaActionsMenu({ onApplyAll, onRevertAll }: { onApplyAll: () => voi
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
-        <DropdownMenuItem onSelect={onApplyAll}>Apply to Default</DropdownMenuItem>
+        {onApplyAll && <DropdownMenuItem onSelect={onApplyAll}>Apply to Default</DropdownMenuItem>}
         {onRevertAll && <DropdownMenuItem onSelect={onRevertAll}>Revert to Default</DropdownMenuItem>}
+        <DropdownMenuItem
+          onSelect={(event) => {
+            event.preventDefault();
+            onToggleAdvancedFields();
+          }}
+        >
+          <Check className={cn("mr-2 h-3.5 w-3.5", showAdvancedFields ? "text-cta" : "text-muted-foreground/30")} />
+          {showAdvancedFields ? "Hide Advanced Fields" : "Show Advanced Fields"}
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -569,6 +588,7 @@ function PersonaPayloadEditor({
   onCommit,
   onApplyField,
   onRevertField,
+  showAdvancedFields,
 }: {
   persona: Persona;
   draft: PersonaPayloadDraft;
@@ -576,6 +596,7 @@ function PersonaPayloadEditor({
   onCommit?: (draft: PersonaPayloadDraft) => void;
   onApplyField?: (field: LocalField) => void;
   onRevertField?: (field: LocalField) => void;
+  showAdvancedFields: boolean;
 }) {
   const { data: sectionCatalog = [] } = useQuery<ContextSectionCatalogEntry[]>({ queryKey: ["/api/personas/section-catalog"] });
   const { data: toolCatalog = [] } = useQuery<ToolCatalogEntry[]>({ queryKey: ["/api/personas/tool-catalog"] });
@@ -608,7 +629,7 @@ function PersonaPayloadEditor({
       </>
     ) : undefined;
   return (
-    <div className="space-y-1">
+    <div>
       <PersonaProseEditor
         value={draft.description}
         changed={persona.changedFields?.includes("description")}
@@ -619,6 +640,56 @@ function PersonaPayloadEditor({
         placeholder="Add description"
         actionLabel="Description actions"
       />
+      <ProfileTreeRow label="Memory" icon={mark("memoryGraphTokenBudget")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("memoryGraphTokenBudget")} menuVisibility="hover">
+        <Select value={budgetToTier(draft.memoryGraphTokenBudget) || undefined} onValueChange={(value) => commit("memoryGraphTokenBudget", tierToBudget(value))}>
+          <SelectTrigger><SelectValue placeholder="Default" /></SelectTrigger>
+          <SelectContent>
+            {MEMORY_TIERS.map((tier) => (
+              <SelectItem key={tier.value} value={tier.value}>{tier.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Thinking" icon={mark("semanticTier")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("semanticTier")} menuVisibility="hover">
+        <Select value={draft.semanticTier} onValueChange={(value) => commit("semanticTier", value as PersonaPayloadDraft["semanticTier"])}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="max">Max</SelectItem>
+            <SelectItem value="high">High</SelectItem>
+            <SelectItem value="balanced">Balanced</SelectItem>
+            <SelectItem value="fast">Fast</SelectItem>
+          </SelectContent>
+        </Select>
+      </ProfileTreeRow>
+      {showAdvancedFields && (
+        <>
+          <ProfileTreeRow label="Expressions" icon={mark("expressionTags")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("expressionTags")} menuVisibility="hover" expandedContent={<Input value={draft.expressionTags} placeholder="curious, gravitas" onChange={(event) => set("expressionTags", event.target.value)} {...commitInput("expressionTags", persona.expressionTags.join(", "))} />}>
+            <span className="truncate">{draft.expressionTags || "None"}</span>
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Context" icon={mark("contextSections")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("contextSections")} menuVisibility="hover" expandedContent={<div>{sectionCatalog.map((entry) => {
+            const on = entry.id in draft.contextSections ? draft.contextSections[entry.id] : entry.defaultIncluded;
+            return (
+              <button key={entry.id} type="button" className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")} onClick={() => commit("contextSections", { ...draft.contextSections, [entry.id]: !on })}>
+                <span className={cn("flex h-3.5 w-3.5 items-center justify-center rounded-sm border", on && "border-cta bg-cta text-cta-foreground")}>{on && <Check className="h-3 w-3" />}</span>
+                <span className="text-sm">{entry.title}</span>
+              </button>
+            );
+          })}</div>}>
+            <span>{Object.keys(draft.contextSections).length} overrides</span>
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Tools" icon={mark("toolBundle")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("toolBundle")} menuVisibility="hover" expandedContent={<div>{toolCatalog.map((entry) => {
+            const on = entry.isCore || draft.toolBundle.includes(entry.name);
+            return (
+              <button key={entry.name} type="button" disabled={entry.isCore} className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70 disabled:opacity-60")} onClick={() => commit("toolBundle", on ? draft.toolBundle.filter((name) => name !== entry.name) : [...draft.toolBundle, entry.name])}>
+                <span className={cn("flex h-3.5 w-3.5 items-center justify-center rounded-sm border", on && "border-cta bg-cta text-cta-foreground")}>{on && <Check className="h-3 w-3" />}</span>
+                <span className="text-sm">{entry.name}</span>
+              </button>
+            );
+          })}</div>}>
+            <span>{draft.toolBundle.length ? `${draft.toolBundle.length} selected` : "All tools"}</span>
+          </ProfileTreeRow>
+        </>
+      )}
       <PersonaProseEditor
         value={draft.promptOverlay}
         changed={persona.changedFields?.includes("promptOverlay")}
@@ -630,54 +701,6 @@ function PersonaPayloadEditor({
         actionLabel="Prompt actions"
         minHeightClassName="min-h-32"
       />
-      <div className="overflow-hidden">
-        <ProfileTreeRow label="Expressions" icon={mark("expressionTags")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("expressionTags")} menuVisibility="hover" expandedContent={<Input value={draft.expressionTags} placeholder="curious, gravitas" onChange={(event) => set("expressionTags", event.target.value)} {...commitInput("expressionTags", persona.expressionTags.join(", "))} />}>
-          <span className="truncate">{draft.expressionTags || "None"}</span>
-        </ProfileTreeRow>
-        <ProfileTreeRow label="Memory" icon={mark("memoryGraphTokenBudget")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("memoryGraphTokenBudget")} menuVisibility="hover">
-          <Select value={budgetToTier(draft.memoryGraphTokenBudget) || undefined} onValueChange={(value) => commit("memoryGraphTokenBudget", tierToBudget(value))}>
-            <SelectTrigger><SelectValue placeholder="Default" /></SelectTrigger>
-            <SelectContent>
-              {MEMORY_TIERS.map((tier) => (
-                <SelectItem key={tier.value} value={tier.value}>{tier.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </ProfileTreeRow>
-        <ProfileTreeRow label="Thinking" icon={mark("semanticTier")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("semanticTier")} menuVisibility="hover">
-          <Select value={draft.semanticTier} onValueChange={(value) => commit("semanticTier", value as PersonaPayloadDraft["semanticTier"])}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="max">Max</SelectItem>
-              <SelectItem value="high">High</SelectItem>
-              <SelectItem value="balanced">Balanced</SelectItem>
-              <SelectItem value="fast">Fast</SelectItem>
-            </SelectContent>
-          </Select>
-        </ProfileTreeRow>
-        <ProfileTreeRow label="Context" icon={mark("contextSections")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("contextSections")} menuVisibility="hover" expandedContent={<div>{sectionCatalog.map((entry) => {
-          const on = entry.id in draft.contextSections ? draft.contextSections[entry.id] : entry.defaultIncluded;
-          return (
-            <button key={entry.id} type="button" className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")} onClick={() => commit("contextSections", { ...draft.contextSections, [entry.id]: !on })}>
-              <span className={cn("flex h-3.5 w-3.5 items-center justify-center rounded-sm border", on && "border-cta bg-cta text-cta-foreground")}>{on && <Check className="h-3 w-3" />}</span>
-              <span className="text-sm">{entry.title}</span>
-            </button>
-          );
-        })}</div>}>
-          <span>{Object.keys(draft.contextSections).length} overrides</span>
-        </ProfileTreeRow>
-        <ProfileTreeRow label="Tools" icon={mark("toolBundle")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("toolBundle")} menuVisibility="hover" expandedContent={<div>{toolCatalog.map((entry) => {
-          const on = entry.isCore || draft.toolBundle.includes(entry.name);
-          return (
-            <button key={entry.name} type="button" disabled={entry.isCore} className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70 disabled:opacity-60")} onClick={() => commit("toolBundle", on ? draft.toolBundle.filter((name) => name !== entry.name) : [...draft.toolBundle, entry.name])}>
-              <span className={cn("flex h-3.5 w-3.5 items-center justify-center rounded-sm border", on && "border-cta bg-cta text-cta-foreground")}>{on && <Check className="h-3 w-3" />}</span>
-              <span className="text-sm">{entry.name}</span>
-            </button>
-          );
-        })}</div>}>
-          <span>{draft.toolBundle.length ? `${draft.toolBundle.length} selected` : "All tools"}</span>
-        </ProfileTreeRow>
-      </div>
     </div>
   );
 }
@@ -751,6 +774,7 @@ function PersonaTreeItem({
   onUpdate: (data: Record<string, unknown>) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const [draft, setDraft] = useState(() => draftFromPersona(persona));
   useEffect(() => {
     setDraft(draftFromPersona(persona));
@@ -758,6 +782,7 @@ function PersonaTreeItem({
   const sync = usePersonaDefaultSync(onRefresh);
   const showApply = canApply && resolveApplyTargetId(persona) != null;
   const showRevert = showApply && personaBaseline(persona) != null;
+  const collapsedDescription = draft.description.trim();
   const { data: history = [] } = useQuery<Array<{ id: string; changeSummary: string; createdAt: string; createdByUserId: string | null }>>({
     queryKey: ["/api/personas", persona.id, "history"],
     enabled: open,
@@ -788,20 +813,27 @@ function PersonaTreeItem({
           onCommit={(name) => onUpdate({ name })}
         />
         {persona.isDefault && <span className="shrink-0 text-xs text-muted-foreground/70">Default</span>}
-        {showApply && (
-          <PersonaActionsMenu
-            onApplyAll={() => sync.request(() => buildApplyAll(persona, draft))}
-            onRevertAll={showRevert ? () => sync.request(() => buildRevertAll(persona)) : undefined}
-          />
-        )}
         <CollapsibleTrigger asChild>
-          <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground/60" aria-label={open ? "Collapse persona" : "Expand persona"}>
-            <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
+          <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground" aria-label={open ? "Collapse persona" : "Expand persona"}>
+            <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
           </button>
         </CollapsibleTrigger>
+        <PersonaActionsMenu
+          onApplyAll={showApply ? () => sync.request(() => buildApplyAll(persona, draft)) : undefined}
+          onRevertAll={showRevert ? () => sync.request(() => buildRevertAll(persona)) : undefined}
+          showAdvancedFields={showAdvancedFields}
+          onToggleAdvancedFields={() => setShowAdvancedFields((current) => !current)}
+        />
       </div>
+      {!open && collapsedDescription ? (
+        <div className="px-2 pb-1">
+          <div className={cn(PROFILE_DESCRIPTION_TEXT_CLASS, "whitespace-pre-wrap text-white/80")}>
+            {collapsedDescription}
+          </div>
+        </div>
+      ) : null}
       <CollapsibleContent>
-        <div className="space-y-1 px-2 pb-2">
+        <div className="px-2 pb-2">
           <PersonaPayloadEditor
             persona={persona}
             draft={draft}
@@ -809,13 +841,16 @@ function PersonaTreeItem({
             onCommit={(next) => onUpdate(payloadFromDraft(next))}
             onApplyField={showApply ? (field) => sync.request(() => buildApplyField(persona, draft, field)) : undefined}
             onRevertField={showRevert ? (field) => sync.request(() => buildRevertField(persona, field)) : undefined}
+            showAdvancedFields={showAdvancedFields}
           />
           {persona.updateAvailable && (
-            <div className="px-2 text-sm">
-              <p className="font-medium">Update available</p>
-              <div className="mt-1 flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={() => personaAction.mutate({ action: "keep-mine" })}>Keep mine</Button>
-                <Button size="sm" onClick={() => personaAction.mutate({ action: "use-updated-default" })}>Use updated default</Button>
+            <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default")}>
+              <div className="min-w-0 flex-1 text-sm">
+                <p className="font-medium">Update available</p>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => personaAction.mutate({ action: "keep-mine" })}>Keep mine</Button>
+                  <Button size="sm" onClick={() => personaAction.mutate({ action: "use-updated-default" })}>Use updated default</Button>
+                </div>
               </div>
             </div>
           )}
@@ -924,12 +959,14 @@ function CreatePersonaForm({ onSuccess, onClose }: { onSuccess: () => void; onCl
 
 function PlatformPersonaItem({ persona, canApply, onPublished }: { persona: Persona; canApply: boolean; onPublished: () => void }) {
   const [open, setOpen] = useState(false);
+  const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const [draft, setDraft] = useState(() => draftFromPersona(persona));
   useEffect(() => {
     setDraft(draftFromPersona(persona));
   }, [persona]);
   const sync = usePersonaDefaultSync(onPublished);
   const showApply = canApply && resolveApplyTargetId(persona) != null;
+  const collapsedDescription = draft.description.trim();
   const { data: history = [] } = useQuery<Array<{ id: string; payload: Record<string, unknown>; changeSummary: string; createdAt: string }>>({
     queryKey: ["/api/personas", persona.id, "history"],
     enabled: open,
@@ -939,20 +976,32 @@ function PlatformPersonaItem({ persona, canApply, onPublished }: { persona: Pers
       <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "group hover:bg-accent/70")}>
         <PersonaIconDisplay iconName={persona.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-foreground">{persona.name}</span>
-        {showApply && <PersonaActionsMenu onApplyAll={() => sync.request(() => buildApplyAll(persona, draft))} />}
         <CollapsibleTrigger asChild>
-          <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground/60" aria-label={open ? "Collapse persona" : "Expand persona"}>
-            <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
+          <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground" aria-label={open ? "Collapse persona" : "Expand persona"}>
+            <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
           </button>
         </CollapsibleTrigger>
+        <PersonaActionsMenu
+          onApplyAll={showApply ? () => sync.request(() => buildApplyAll(persona, draft)) : undefined}
+          showAdvancedFields={showAdvancedFields}
+          onToggleAdvancedFields={() => setShowAdvancedFields((current) => !current)}
+        />
       </div>
+      {!open && collapsedDescription ? (
+        <div className="px-2 pb-1">
+          <div className={cn(PROFILE_DESCRIPTION_TEXT_CLASS, "whitespace-pre-wrap text-white/80")}>
+            {collapsedDescription}
+          </div>
+        </div>
+      ) : null}
       <CollapsibleContent>
-        <div className="space-y-1 px-2 pb-2">
+        <div className="px-2 pb-2">
           <PersonaPayloadEditor
             persona={persona}
             draft={draft}
             onChange={setDraft}
             onApplyField={showApply ? (field) => sync.request(() => buildApplyField(persona, draft, field)) : undefined}
+            showAdvancedFields={showAdvancedFields}
           />
           {history.length > 0 && history.map((revision) => (
             <div key={revision.id} className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default")}>

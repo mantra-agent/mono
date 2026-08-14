@@ -176,6 +176,23 @@ export function ProfileTreeRow({
               {actionContent}
             </div>
           ) : null}
+          {canExpand ? (
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  "shrink-0 text-muted-foreground/60 hover:bg-accent hover:text-foreground",
+                  usesSessionMenuControls
+                    ? sessionDisclosureControlClassName
+                    : "min-h-11 min-w-11 rounded sm:min-h-5 sm:min-w-5",
+                )}
+                aria-label={`${open ? "Collapse" : "Expand"} ${typeof label === "string" ? label : "profile field"}`}
+              >
+                <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
+              </Button>
+            </CollapsibleTrigger>
+          ) : null}
           {showMenu ? (
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
@@ -197,23 +214,6 @@ export function ProfileTreeRow({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" onCloseAutoFocus={(e) => e.preventDefault()}>{menuContent}</DropdownMenuContent>
             </DropdownMenu>
-          ) : null}
-          {canExpand ? (
-            <CollapsibleTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  "shrink-0 text-muted-foreground/60 hover:bg-accent hover:text-foreground",
-                  usesSessionMenuControls
-                    ? sessionDisclosureControlClassName
-                    : "min-h-11 min-w-11 rounded sm:min-h-5 sm:min-w-5",
-                )}
-                aria-label={`${open ? "Collapse" : "Expand"} ${typeof label === "string" ? label : "profile field"}`}
-              >
-                <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
-              </Button>
-            </CollapsibleTrigger>
           ) : null}
         </div>
         {canExpand && (
