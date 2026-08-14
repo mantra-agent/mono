@@ -31,16 +31,21 @@ interface ActivityDetailPanelProps {
 interface TimelineEvent {
   entry: WellnessLogEntry;
   x: number;
+  left: number;
+  right: number;
   adherence: number;
   isStreakDay: boolean;
   scale: number;
 }
 
-const MIN_HISTORY_INTERVALS = 5;
+/** Fixed 7 cadence segments across the Trends window. */
+const HISTORY_INTERVALS = 7;
 const GRAPH_LEFT = 16;
 const GRAPH_RIGHT = 984;
 const BASELINE_Y = 128;
 const SPIKE_STROKE_WIDTH = 0.75;
+/** Unscaled half-width of a heartbeat path from center to each baseline foot. */
+const SPIKE_HALF_WIDTH = 40;
 /** Base spike size relative to the original path amplitude. */
 const SPIKE_BASE_SCALE = 0.7;
 /** Per-spike variance around SPIKE_BASE_SCALE (±10%). */
@@ -57,11 +62,16 @@ function spikeScaleForId(id: number): number {
   return SPIKE_BASE_SCALE * (1 + variance);
 }
 
-/** Heartbeat path scaled around the baseline at x. Original peak offsets preserved proportionally. */
-function heartbeatPath(x: number, scale: number): string {
+function spikeEdges(x: number, scale: number): { left: number; right: number } {
+  return {
+    left: Math.max(GRAPH_LEFT, x - SPIKE_HALF_WIDTH * scale),
+    right: Math.min(GRAPH_RIGHT, x + SPIKE_HALF_WIDTH * scale),
+  };
+}
+
+/** Heartbeat path scaled around the baseline at x. Feet land on left/right edges. */
+function heartbeatPath(x: number, scale: number, left: number, right: number): string {
   const y = BASELINE_Y;
-  const left = Math.max(GRAPH_LEFT, x - 40 * scale);
-  const right = Math.min(GRAPH_RIGHT, x + 40 * scale);
   return [
     `M ${left} ${y}`,
     `L ${x - 22 * scale} ${y}`,
@@ -103,20 +113,19 @@ function segmentStyle(
   };
 }
 
-function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windowStart, windowEnd }: Omit<ActivityDetailPanelProps, "activityId" | "metricInfo"> & { logs: WellnessLogEntry[] }) {
+function HeartbeatHistory({ logs, category, intervalDays, windowStart, windowEnd }: Omit<ActivityDetailPanelProps, "activityId" | "metricInfo" | "pulseWindowSize"> & { logs: WellnessLogEntry[] }) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const timeline = useMemo(() => {
-    const intervalCount = Math.max(MIN_HISTORY_INTERVALS, pulseWindowSize);
     const intervalMs = Math.max(1, intervalDays) * 86_400_000;
     const now = Date.now();
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
     const domainEnd = todayEnd.getTime();
-    const domainStart = domainEnd - intervalCount * intervalMs;
+    const domainStart = domainEnd - HISTORY_INTERVALS * intervalMs;
     const domainDuration = Math.max(1, domainEnd - domainStart);
     const toX = (timestamp: number) =>
       GRAPH_LEFT + ((timestamp - domainStart) / domainDuration) * (GRAPH_RIGHT - GRAPH_LEFT);
-    const ticks = Array.from({ length: intervalCount + 1 }, (_, index) => ({
+    const ticks = Array.from({ length: HISTORY_INTERVALS + 1 }, (_, index) => ({
       timestamp: domainStart + index * intervalMs,
       x: toX(domainStart + index * intervalMs),
     }));
@@ -134,18 +143,24 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windo
         const isStreakDay = adherence === 100 && previousCompletedAt
           && getWellnessWindowAdherence(category, windowStart, windowEnd, previousCompletedAt, timezone) === 100
           && isConsecutiveCadenceCompletion(previousCompletedAt, completedAt, intervalDays, timezone);
+        const x = toX(completedAt.getTime());
+        const scale = spikeScaleForId(entry.id);
+        const { left, right } = spikeEdges(x, scale);
         return {
           entry,
-          x: toX(completedAt.getTime()),
+          x,
+          left,
+          right,
           adherence,
           isStreakDay,
-          scale: spikeScaleForId(entry.id),
+          scale,
         };
       });
 
     // Stop the living baseline at the current moment inside today's band, not end-of-day.
     const nowX = Math.max(GRAPH_LEFT, Math.min(GRAPH_RIGHT, toX(Math.min(now, domainEnd))));
 
+    // Connectors stop at spike feet so the path + segments read as one contiguous EKG line.
     const connectors: Array<{ key: string; x1: number; x2: number; className: string; opacity: number }> = [];
     if (events.length === 0) {
       const style = segmentStyle(null, null);
@@ -153,22 +168,26 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windo
     } else {
       const first = events[0];
       const last = events[events.length - 1];
-      const lead = segmentStyle(null, first);
-      connectors.push({ key: "lead", x1: GRAPH_LEFT, x2: first.x, ...lead });
+      if (first.left > GRAPH_LEFT) {
+        const lead = segmentStyle(null, first);
+        connectors.push({ key: "lead", x1: GRAPH_LEFT, x2: first.left, ...lead });
+      }
       for (let i = 0; i < events.length - 1; i += 1) {
         const a = events[i];
         const b = events[i + 1];
-        const style = segmentStyle(a, b);
-        connectors.push({ key: `seg-${a.entry.id}-${b.entry.id}`, x1: a.x, x2: b.x, ...style });
+        if (b.left > a.right) {
+          const style = segmentStyle(a, b);
+          connectors.push({ key: `seg-${a.entry.id}-${b.entry.id}`, x1: a.right, x2: b.left, ...style });
+        }
       }
-      if (nowX > last.x) {
+      if (nowX > last.right) {
         const trail = segmentStyle(last, null);
-        connectors.push({ key: "trail", x1: last.x, x2: nowX, ...trail });
+        connectors.push({ key: "trail", x1: last.right, x2: nowX, ...trail });
       }
     }
 
-    return { events, ticks, connectors, nowX, domainEnd };
-  }, [logs, category, pulseWindowSize, intervalDays, windowStart, windowEnd, timezone]);
+    return { events, ticks, connectors, domainEnd };
+  }, [logs, category, intervalDays, windowStart, windowEnd, timezone]);
 
   return (
     <div className="min-w-0 overflow-hidden">
@@ -217,10 +236,10 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windo
             />
           ) : null
         ))}
-        {timeline.events.map(({ entry, x, adherence, isStreakDay, scale }) => (
+        {timeline.events.map(({ entry, x, left, right, adherence, isStreakDay, scale }) => (
           <path
             key={entry.id}
-            d={heartbeatPath(x, scale)}
+            d={heartbeatPath(x, scale, left, right)}
             fill="none"
             className={eventStrokeClass(isStreakDay)}
             strokeWidth={SPIKE_STROKE_WIDTH}
@@ -237,7 +256,7 @@ function HeartbeatHistory({ logs, category, pulseWindowSize, intervalDays, windo
   );
 }
 
-export function ActivityDetailPanel({ activityId, category, pulseWindowSize, intervalDays, windowStart, windowEnd, metricInfo }: ActivityDetailPanelProps) {
+export function ActivityDetailPanel({ activityId, category, intervalDays, windowStart, windowEnd, metricInfo }: ActivityDetailPanelProps) {
   const { data: logs, isLoading: logsLoading } = useQuery<WellnessLogEntry[]>({ queryKey: ["/api/wellness/logs", activityId], queryFn: async () => {
     const response = await fetch(`/api/wellness/logs?activityId=${activityId}&limit=500`, { credentials: "include" });
     if (!response.ok) throw new Error("Failed to load logs");
@@ -249,7 +268,7 @@ export function ActivityDetailPanel({ activityId, category, pulseWindowSize, int
 
   return (
     <div className="space-y-2" data-testid={`detail-panel-${activityId}`}>
-      <HeartbeatHistory logs={displayLogs} category={category} pulseWindowSize={pulseWindowSize} intervalDays={intervalDays} windowStart={windowStart} windowEnd={windowEnd} />
+      <HeartbeatHistory logs={displayLogs} category={category} intervalDays={intervalDays} windowStart={windowStart} windowEnd={windowEnd} />
       {metricInfo?.linkedMetricType && <div className="text-xs text-muted-foreground">Linked to {metricInfo.linkedMetricType}</div>}
     </div>
   );
