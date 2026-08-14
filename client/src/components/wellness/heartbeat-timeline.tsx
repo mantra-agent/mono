@@ -190,12 +190,14 @@ export function buildHeartbeatTimeline(
     .sort((a, b) => new Date(a.completedAt).getTime() - new Date(b.completedAt).getTime())
     .map((entry, index, orderedLogs) => {
       const completedAt = new Date(entry.completedAt);
+      // Window is a UI recommendation only: adherence drives opacity, never green.
       const adherence = getWellnessWindowAdherence(category, windowStart, windowEnd, completedAt, timezone);
       const previousEntry = orderedLogs[index - 1];
       const previousCompletedAt = previousEntry ? new Date(previousEntry.completedAt) : null;
-      const isStreakDay = adherence === 100 && previousCompletedAt
-        && getWellnessWindowAdherence(category, windowStart, windowEnd, previousCompletedAt, timezone) === 100
-        && isConsecutiveCadenceCompletion(previousCompletedAt, completedAt, intervalDays, timezone);
+      const isStreakDay = Boolean(
+        previousCompletedAt
+        && isConsecutiveCadenceCompletion(previousCompletedAt, completedAt, intervalDays, timezone),
+      );
       const x = toX(completedAt.getTime());
       const scale = spikeScaleForId(entry.id);
       const { left, right } = spikeEdges(x, scale);
