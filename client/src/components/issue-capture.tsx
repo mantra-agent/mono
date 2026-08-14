@@ -18,10 +18,59 @@ import { Camera, Loader2, X, ImageIcon, Pencil, Undo2, Check, Upload } from "luc
 
 const log = createLogger("IssueCapture");
 
+/** Minimum distinct quantized colors in a sample grid before a capture counts as real UI. */
+const MIN_CAPTURE_COLOR_VARIETY = 3;
+
 function getCurrentRoute(): string {
   const path = window.location.pathname || "/";
   const hash = window.location.hash;
   return hash ? `${path}${hash}` : path;
+}
+
+/**
+ * html2canvas can succeed with a solid/near-solid frame (often pure black on dark theme)
+ * when the painted DOM tree fails to rasterize. Reject those before they become issue evidence.
+ */
+function assessCaptureVariety(canvas: HTMLCanvasElement): {
+  blank: boolean;
+  uniqueSamples: number;
+  width: number;
+  height: number;
+} {
+  const width = canvas.width;
+  const height = canvas.height;
+  if (width < 2 || height < 2) {
+    return { blank: true, uniqueSamples: 0, width, height };
+  }
+
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) {
+    return { blank: true, uniqueSamples: 0, width, height };
+  }
+
+  const stepX = Math.max(1, Math.floor(width / 24));
+  const stepY = Math.max(1, Math.floor(height / 24));
+  const colors = new Set<string>();
+
+  for (let y = 0; y < height; y += stepY) {
+    for (let x = 0; x < width; x += stepX) {
+      const pixel = ctx.getImageData(x, y, 1, 1).data;
+      // Quantize so anti-alias noise does not inflate variety on a flat frame.
+      colors.add(
+        `${pixel[0] >> 3},${pixel[1] >> 3},${pixel[2] >> 3},${pixel[3] >> 5}`,
+      );
+      if (colors.size >= MIN_CAPTURE_COLOR_VARIETY) {
+        return { blank: false, uniqueSamples: colors.size, width, height };
+      }
+    }
+  }
+
+  return {
+    blank: colors.size < MIN_CAPTURE_COLOR_VARIETY,
+    uniqueSamples: colors.size,
+    width,
+    height,
+  };
 }
 
 const DRAW_COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#ffffff"];
@@ -295,17 +344,41 @@ export function IssueCaptureDialog() {
     setOpen(false);
     await new Promise((r) => setTimeout(r, 400));
     try {
-      const canvas = await html2canvas(document.body, {
+      // Prefer the app root over body so chrome-only / empty paint failures are less likely.
+      const captureRoot =
+        document.getElementById("root") ?? document.documentElement ?? document.body;
+      const canvas = await html2canvas(captureRoot, {
         useCORS: true,
-        scale: window.devicePixelRatio > 1 ? 1 : window.devicePixelRatio,
+        scale: Math.min(window.devicePixelRatio || 1, 1),
         logging: false,
         allowTaint: true,
         foreignObjectRendering: false,
+        backgroundColor: null,
         width: window.innerWidth,
         height: window.innerHeight,
+        windowWidth: window.innerWidth,
+        windowHeight: window.innerHeight,
         x: window.scrollX,
         y: window.scrollY,
+        scrollX: -window.scrollX,
+        scrollY: -window.scrollY,
       });
+      const variety = assessCaptureVariety(canvas);
+      if (variety.blank) {
+        log.warn("Screenshot capture rejected as blank/near-uniform", {
+          uniqueSamples: variety.uniqueSamples,
+          width: variety.width,
+          height: variety.height,
+          route: getCurrentRoute(),
+        });
+        toast({
+          title: "Screenshot came back blank",
+          description: "Automatic capture failed. Use Upload to attach a real screenshot.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       const dataUrl = canvas.toDataURL("image/png", 0.7);
       if (dataUrl && dataUrl.length > 100) {
         setScreenshot(dataUrl);
