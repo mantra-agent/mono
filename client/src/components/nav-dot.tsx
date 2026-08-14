@@ -15,6 +15,8 @@ const STATUS_TEXT: Record<NavDotLevel, string> = {
 /**
  * Returns the icon/text Tailwind classes for the full-color treatment.
  * When a status is present, the parent item's icon and text adopt the status color.
+ * Nav labels must not use attention/unread/pinned: those tokens are text-foreground
+ * and impersonate the selected route. Keep those levels off the sidebar status map.
  */
 export function getStatusClasses(level: NavDotLevel | null): { icon: string; text: string } {
   if (!level) return { icon: "", text: "" };
