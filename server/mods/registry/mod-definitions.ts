@@ -183,7 +183,7 @@ const business: ModDefinition = {
 
 const wellness: ModDefinition = {
   key: "wellness",
-  version: "1.1.0",
+  version: "1.2.0",
   name: "Wellness",
   description: "Wellness activities, routines, health signals, reflection, coaching, and health integrations.",
   outcome: {
@@ -205,6 +205,7 @@ const wellness: ModDefinition = {
       skillRef("wellness.skill.reflect", "reflect"),
       skillRef("wellness.skill.affirmations", "affirmations"),
       skillRef("wellness.skill.coach", "coach"),
+      skillRef("wellness.skill.brief-daily", "brief-daily"),
     ],
     clientRoutes: [clientRoute("wellness.route.wellness", "/wellness", "wellness")],
     navigation: [nav("wellness.nav.wellness", "Tools", "Wellness", "Activity", "navigation.wellness.open", "wellness.route.wellness", 8)],
@@ -225,6 +226,7 @@ const wellness: ModDefinition = {
       timerTemplateRef("wellness.timer.weekly-reflection", "weekly-reflection"),
       timerTemplateRef("wellness.timer.monthly-reflection", "monthly-reflection"),
       timerTemplateRef("wellness.timer.reflect-daily", "reflect-daily"),
+      timerTemplateRef("wellness.timer.daily-brief", "daily-brief"),
     ],
     actions: actionsForOwner("wellness"),
   },
