@@ -1932,7 +1932,9 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
       "ContextBuilder graph memory resolve failed",
     );
     normalized.path = "vnext";
-    log.error(
+    // Degraded path: section still resolves with a placeholder. warn, not error —
+    // log.error would project into application_error_aggregates as a false outage.
+    log.warn(
       "context_builder.graph_memory_failed",
       normalized,
       contextBuilderLogContext({
@@ -2623,7 +2625,9 @@ export class ContextBuilder {
           );
           normalized.sectionId = config.id;
           normalized.elapsedMs = sectionElapsed;
-          log.error(
+          // Per-section timeout recovers with a placeholder; overall build continues.
+          // warn matches Logging Levels: degraded/partial-but-continued is not error.
+          log.warn(
             "context_builder.section_resolve_timeout",
             normalized,
             contextBuilderLogContext({
@@ -2643,7 +2647,9 @@ export class ContextBuilder {
           normalized.sectionId = config.id;
           normalized.elapsedMs = sectionElapsed;
           const safeMessage = normalized.message || "section resolve failed";
-          log.error(
+          // Per-section failure recovers with a placeholder; overall build continues.
+          // warn matches Logging Levels: degraded/partial-but-continued is not error.
+          log.warn(
             "context_builder.section_resolve_failed",
             normalized,
             contextBuilderLogContext({
