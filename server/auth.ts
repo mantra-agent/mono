@@ -174,7 +174,7 @@ async function getIdentityInstanceMetrics(): Promise<Map<string, IdentityInstanc
       GROUP BY instance_id
     `),
     db.execute<{ instance_id: string; count: number }>(sql`
-      SELECT m.instance_id, COALESCE(SUM(c.input_tokens), 0)::int AS count
+      SELECT m.instance_id, COALESCE(SUM(c.input_tokens), 0)::bigint AS count
       FROM api_calls c
       INNER JOIN agent_instance_memberships m
         ON m.user_id = c.owner_user_id
