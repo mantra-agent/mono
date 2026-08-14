@@ -12314,6 +12314,135 @@ const cognitionTools: Record<string, ToolHandler> = {
       return { result: `backup.${action} error: ${err.message}`, error: true };
     }
   },
+
+  async routers(args: Record<string, any>): Promise<ToolHandlerResult> {
+    const action = typeof args.action === "string" ? args.action : "";
+    if (!action) return { result: "Missing action parameter", error: true };
+
+    const allowed = new Set([
+      "list",
+      "get",
+      "list_legacy",
+      "create",
+      "move_connector",
+      "set_account_router",
+    ]);
+    if (!allowed.has(action)) {
+      return {
+        result: `Unknown routers action: ${action}. Available: ${[...allowed].join(", ")}`,
+        error: true,
+      };
+    }
+
+    try {
+      const { requireCurrentPrincipal } = await import("./principal-context");
+      const { principalHasPermission } = await import("./permissions");
+      const principal = requireCurrentPrincipal();
+      const readOk = principalHasPermission(principal, "system:read");
+      const writeOk = principalHasPermission(principal, "system:write");
+      const usersWriteOk = principalHasPermission(principal, "users:write");
+
+      const {
+        listRouters,
+        getRouter,
+        listLegacyModelConnectors,
+        createRouter,
+        moveConnectorToRouter,
+        setAccountRouter,
+      } = await import("./router-storage");
+
+      if (action === "list" || action === "get" || action === "list_legacy") {
+        if (!readOk) {
+          return { result: "Permission denied: system:read required", error: true };
+        }
+        if (action === "list") {
+          const routers = await listRouters();
+          return { result: JSON.stringify({ count: routers.length, routers }, null, 2) };
+        }
+        if (action === "get") {
+          const id = typeof args.id === "string" ? args.id.trim() : "";
+          if (!id) return { result: "Missing id (Router UUID)", error: true };
+          const router = await getRouter(id);
+          if (!router) return { result: `Router ${id} not found`, error: true };
+          return { result: JSON.stringify({ router }, null, 2) };
+        }
+        const connectors = await listLegacyModelConnectors();
+        return {
+          result: JSON.stringify({
+            count: connectors.length,
+            connectors: connectors.map((c) => ({
+              id: c.id,
+              provider: c.provider,
+              label: c.label,
+              status: c.status,
+              priorityPinned: c.priorityPinned,
+              sortOrder: c.sortOrder,
+              hasCredential: Boolean(c.credentialRef),
+              routerId: c.routerId,
+            })),
+          }, null, 2),
+        };
+      }
+
+      if (!writeOk) {
+        return { result: "Permission denied: system:write required", error: true };
+      }
+
+      if (action === "create") {
+        const name = typeof args.name === "string" ? args.name.trim() : "";
+        if (!name) return { result: "Missing name for create", error: true };
+        const router = await createRouter(name);
+        return { result: JSON.stringify({ router }, null, 2) };
+      }
+
+      if (action === "move_connector") {
+        const connectorId = Number(args.connectorId);
+        if (!Number.isFinite(connectorId) || connectorId <= 0) {
+          return { result: "Missing or invalid connectorId", error: true };
+        }
+        let routerId: string | null = null;
+        if (args.routerId === null || args.routerId === undefined || args.routerId === "") {
+          routerId = null;
+        } else if (typeof args.routerId === "string") {
+          routerId = args.routerId.trim() || null;
+        } else {
+          return { result: "routerId must be a UUID string or null", error: true };
+        }
+        const connector = await moveConnectorToRouter(connectorId, routerId);
+        return {
+          result: JSON.stringify({
+            connector: {
+              id: connector.id,
+              provider: connector.provider,
+              label: connector.label,
+              status: connector.status,
+              routerId: connector.routerId,
+              sortOrder: connector.sortOrder,
+              priorityPinned: connector.priorityPinned,
+            },
+          }, null, 2),
+        };
+      }
+
+      if (!usersWriteOk) {
+        return { result: "Permission denied: users:write required for Account router assignment", error: true };
+      }
+      const accountId = typeof args.accountId === "string" ? args.accountId.trim() : "";
+      if (!accountId) return { result: "Missing accountId", error: true };
+      let routerId: string | null = null;
+      if (args.routerId === null || args.routerId === undefined || args.routerId === "") {
+        routerId = null;
+      } else if (typeof args.routerId === "string") {
+        routerId = args.routerId.trim() || null;
+      } else {
+        return { result: "routerId must be a UUID string or null", error: true };
+      }
+      const result = await setAccountRouter(accountId, routerId);
+      return { result: JSON.stringify(result, null, 2) };
+    } catch (err: any) {
+      return { result: `routers.${action} error: ${err.message}`, error: true };
+    }
+  },
 };
 
 const localHandlers: Record<string, ToolHandler> = {
@@ -12350,6 +12479,7 @@ const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   pronunciation: new Set(["add", "update", "remove"]),
   decisions: new Set(["create", "update", "delete", "lock", "reopen", "add_update", "edit_update", "delete_update", "add_link", "remove_link"]),
   plan: new Set(["update_step", "add_steps", "pause", "unlink_session"]),
+  routers: new Set(["create", "move_connector", "set_account_router"]),
 };
 
 const SIDE_EFFECT_ONLY_TOOLS = new Set([

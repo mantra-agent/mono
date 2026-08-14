@@ -126,6 +126,9 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
     get_cloudflare_pages_project: 0,
     poll_cloudflare_pages_deployment: 0,
   }},
+  routers: { default: 2, actions: {
+    list: 0, get: 0, list_legacy: 0,
+  }},
   observe: { default: 1 },
   orient: { default: 1 },
   cognition: { default: 1, actions: { get_emotion: 0, emotion_history: 0, get_persona: 0, list_personas: 0 } },
