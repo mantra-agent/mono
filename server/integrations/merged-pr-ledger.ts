@@ -9,7 +9,7 @@ import { gh, type RepoRef } from "./github-pr";
 const log = createLogger("MergedPrLedger");
 
 /** Bump when CODE repo scope or cursor semantics change so ledgers reseed cleanly. */
-const BACKFILL_SETTING_KEY = "merged_pr_ledger_backfill_v3";
+const BACKFILL_SETTING_KEY = "merged_pr_ledger_backfill_v4";
 const CATCHUP_INTERVAL_MS = 5 * 60_000;
 const SEARCH_PAGE_SIZE = 100;
 const REST_PAGE_SIZE = 100;
@@ -146,7 +146,7 @@ function codeHeatmapRepoPredicate(ref: RepoRef) {
   );
 }
 
-/** Drop rows from other bound repos (lightway/website/…) left by the multi-repo ingest bug. */
+/** Drop leftover rows from other bound repos (lightway/website/…). */
 async function purgeNonCodeHeatmapRows(ref: RepoRef): Promise<number> {
   const { owner, repo } = normalizeOwnerRepo(ref.owner, ref.repo);
   const removed = await db
@@ -157,6 +157,17 @@ async function purgeNonCodeHeatmapRows(ref: RepoRef): Promise<number> {
         ne(mergedPullRequests.repo, repo),
       ),
     )
+    .returning({ id: mergedPullRequests.id });
+  return removed.length;
+}
+
+/**
+ * v3 upserted onto leftover scrape rows, so empty historical windows never
+ * cleared wrong-dated days. A rebuild starts from an empty table.
+ */
+async function wipeLedgerForRebuild(): Promise<number> {
+  const removed = await db
+    .delete(mergedPullRequests)
     .returning({ id: mergedPullRequests.id });
   return removed.length;
 }
@@ -441,9 +452,10 @@ function searchItemToRecord(
   item: GhSearchItem,
   source: MergedPrSource,
 ): MergedPrRecordInput | null {
-  const mergedAt = item.pull_request?.merged_at ?? item.closed_at;
-  if (!mergedAt) return null;
-  if (!item.pull_request) return null;
+  // closed_at is not merge time — using it painted winter/spring CODE cells
+  // for PRs that GitHub never merged on those days.
+  const mergedAt = item.pull_request?.merged_at;
+  if (!mergedAt || !item.pull_request) return null;
   return {
     owner: ref.owner,
     repo: ref.repo,
@@ -719,17 +731,28 @@ async function runSyncLoopBody(): Promise<void> {
       return;
     }
 
-    // One-time cleanup of multi-repo pollution (lightway/website/…) from earlier ingest.
-    const purged = await purgeNonCodeHeatmapRows(ref);
-    if (purged > 0) {
-      log.info("Merge ledger purged non-CODE repo rows", {
+    let state = await readBackfillState();
+
+    // New cursor / never-seeded: wipe leftover scrape dates, then rebuild.
+    if (!state.recentSeeded) {
+      const wiped = await wipeLedgerForRebuild();
+      log.info("Merge ledger wiped for rebuild", {
         owner: ref.owner,
         repo: ref.repo,
-        purged,
+        wiped,
+        cursor: BACKFILL_SETTING_KEY,
       });
+    } else {
+      const purged = await purgeNonCodeHeatmapRows(ref);
+      if (purged > 0) {
+        log.info("Merge ledger purged non-CODE repo rows", {
+          owner: ref.owner,
+          repo: ref.repo,
+          purged,
+        });
+      }
     }
 
-    let state = await readBackfillState();
     const rows = await ledgerRowCount(ref);
 
     // Empty ledger or never-seeded: fill recent history first so CODE paints now.
