@@ -45,7 +45,7 @@ const ADDITIONAL_SKILL_RECOMMENDATIONS: Record<string, string> = {
   "coach": "Coach",
   "curate": "Investigator",
   "research": "Investigator",
-  "scan": "Operator",
+  "scan": "Default",
 };
 
 /**
@@ -114,6 +114,48 @@ export async function seedSkillPersonaRecommendations(): Promise<void> {
           eq(skills.scope, "global"),
           eq(skills.name, "draft"),
           inArray(skills.recommendedPersonaTemplateId, legacyIds),
+        ),
+      );
+  }
+
+  // Operator → Executive recast: maintenance and known-path skills are not
+  // allocate-and-commit work. Move those global recommendations off the
+  // renamed Executive row onto Default when they still point at Operator
+  // or Executive.
+  const maintenanceSkillNames = [
+    "history-rollup",
+    "brief-daily",
+    "autonomy",
+    "enrich-email",
+    "sleep",
+    "goal-manager",
+    "streamline",
+    "scan",
+  ] as const;
+  const legacyExecutiveTemplates = await db
+    .select({ id: personas.id })
+    .from(personas)
+    .where(
+      and(
+        eq(personas.scope, "global"),
+        eq(personas.source, "seed"),
+        eq(personas.isSystem, false),
+        sql`LOWER(${personas.name}) IN ('executive', 'operator')`,
+      ),
+    );
+  if (defaultTemplate && legacyExecutiveTemplates.length > 0) {
+    const executiveIds = legacyExecutiveTemplates.map((row) => row.id);
+    await db
+      .update(skills)
+      .set({
+        recommendedPersonaTemplateId: defaultTemplate.id,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(skills.scope, "global"),
+          inArray(skills.name, [...maintenanceSkillNames]),
+          inArray(skills.recommendedPersonaTemplateId, executiveIds),
         ),
       );
   }
