@@ -17,10 +17,7 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
-import {
-  HIERARCHY_PRIMARY_ACTION_CLASS,
-  HIERARCHY_SECTION_HEADER_CLASS,
-} from "@/components/hierarchy-section-header";
+import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -48,10 +45,11 @@ const MONTH_CELL = "min-w-[2.75rem] px-0 py-1.5 text-center align-middle";
 const YEAR_DIVIDER = "border-l-2 border-border/70";
 /** Thinner than year, brighter than prior /10 so the grid is readable. */
 const MONTH_DIVIDER = "border-l border-border/35";
-const SHEET_HEADER_CLASS = cn(
-  HIERARCHY_SECTION_HEADER_CLASS,
-  "h-auto w-auto justify-center rounded-none px-1 py-1.5",
-);
+/**
+ * SessionMenu section-header typography ONLY — never flex/w-full, which would
+ * turn a table `<th>` into a flex box and collapse the column model.
+ */
+const SHEET_HEADER_CLASS = "text-xs font-bold uppercase tracking-wider text-muted-foreground";
 
 const TEAM_ICONS: Record<JobTeam, ComponentType<LucideProps>> = {
   Executive: Building2,
@@ -282,7 +280,7 @@ export default function BusinessHiringPage() {
             <table className="w-max min-w-full border-collapse text-sm tabular-nums">
               <thead>
                 <tr>
-                  <th className={cn(FROZEN_CELL, SHEET_HEADER_CLASS, "z-20 justify-start border-b")}>Role</th>
+                  <th className={cn(FROZEN_CELL, SHEET_HEADER_CLASS, "z-20 border-b")}>Role</th>
                   {months.map((month, index) => (
                     <th
                       key={month.calendarMonth}
