@@ -1,7 +1,10 @@
 import type { Principal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
 import { chatFileStorage } from "../chat-file-storage";
+import { stripExpressionTags } from "@shared/expression-tags";
 import { SLACK_OUTPUT_CHAR_LIMIT } from "./contracts";
+
+const SLACK_HISTORY_STAMP = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} [^\]]+\]\s*/;
 
 export const SLACK_CHANNEL_PENDING_TEXT =
   "Channel conversations need a team Mantra. Until then, DM me.";
@@ -41,10 +44,14 @@ export async function executeSlackTurn(
       content,
       signal: input.signal,
     });
-    const trimmed = response.replace(/\s+$/g, "").slice(0, SLACK_OUTPUT_CHAR_LIMIT);
+    const trimmed = sanitizeSlackOutbound(response).slice(0, SLACK_OUTPUT_CHAR_LIMIT);
     if (!trimmed) throw new Error("slack_empty_response");
     return trimmed;
   });
+}
+
+function sanitizeSlackOutbound(text: string): string {
+  return stripExpressionTags(text.replace(SLACK_HISTORY_STAMP, "")).replace(/\s+$/g, "").trim();
 }
 
 async function resolveTurnContent(input: SlackChatTurnInput): Promise<string> {
