@@ -75,6 +75,8 @@ export interface SessionGroup {
 
 const SESSION_SECTION_STATE_KEY = "mantra:sessions-menu:section-state";
 const SESSION_SEARCH_DEBOUNCE_MS = 250;
+/** Expanded System/Archive mount budget — search still covers the full set. */
+const SESSION_EXPANSION_PAGE_SIZE = 25;
 
 type SessionSectionState = Record<string, boolean>;
 
@@ -783,6 +785,55 @@ export function SessionGroupSection({
   );
 }
 
+function SessionExpansionLoadMore({
+  onClick,
+  testId,
+}: {
+  onClick: () => void;
+  testId: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="w-full px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-md transition-colors text-center"
+      data-testid={testId}
+    >
+      Load More…
+    </button>
+  );
+}
+
+/** Progressive disclosure window for long Session Menu sections. Search stays full-set. */
+function useSessionExpansionWindow(open: boolean, totalCount: number) {
+  const [visibleCount, setVisibleCount] = useState(SESSION_EXPANSION_PAGE_SIZE);
+
+  useEffect(() => {
+    if (!open) setVisibleCount(SESSION_EXPANSION_PAGE_SIZE);
+  }, [open]);
+
+  useEffect(() => {
+    setVisibleCount((current) => {
+      if (totalCount <= 0) return SESSION_EXPANSION_PAGE_SIZE;
+      return Math.min(Math.max(current, SESSION_EXPANSION_PAGE_SIZE), totalCount);
+    });
+  }, [totalCount]);
+
+  const loadMore = useCallback(() => {
+    setVisibleCount((current) => current + SESSION_EXPANSION_PAGE_SIZE);
+  }, []);
+
+  const boundedVisible = Math.min(visibleCount, Math.max(totalCount, 0));
+  return {
+    visibleCount: boundedVisible,
+    hasMore: totalCount > boundedVisible,
+    loadMore,
+  };
+}
+
 function DeferredSessionGroup({
   label,
   view,
@@ -816,6 +867,18 @@ function DeferredSessionGroup({
     enabled: open,
     staleTime: 30_000,
   });
+  const ordered = useMemo(
+    () => [...data].sort(sortByUpdated),
+    [data],
+  );
+  // Archive is the historical dump that freezes the menu when fully mounted.
+  // Past/Snooze stay unpaged for now; System has its own expansion window.
+  const pageExpansion = view === "archive";
+  const { visibleCount, hasMore, loadMore } = useSessionExpansionWindow(
+    open && pageExpansion,
+    ordered.length,
+  );
+  const visibleSessions = pageExpansion ? ordered.slice(0, visibleCount) : ordered;
   const combined = useMemo(() => {
     const byId = new Map(sessions.map((session) => [session.id, session]));
     for (const session of data) byId.set(session.id, session);
@@ -832,30 +895,40 @@ function DeferredSessionGroup({
         <div className="space-y-0 mt-0">
           {isLoading && data.length === 0 ? (
             <div className="flex items-center px-3 py-1.5"><Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50" /></div>
-          ) : data.map((conv) => (
-            <SessionTreeNode
-              key={conv.id}
-              conv={conv}
-              sessions={combined}
-              depth={0}
-              activeSession={activeSession}
-              liveVoiceConversationId={liveVoiceConversationId}
-              onSelect={onSelect}
-              onDelete={onDelete}
-              onRename={onRename}
-              onArchive={onArchive}
-              onTogglePin={onTogglePin}
-              vaultById={vaultById}
-              activeVaultId={activeVaultId}
-            />
-          ))}
+          ) : (
+            <>
+              {visibleSessions.map((conv) => (
+                <SessionTreeNode
+                  key={conv.id}
+                  conv={conv}
+                  sessions={combined}
+                  depth={0}
+                  activeSession={activeSession}
+                  liveVoiceConversationId={liveVoiceConversationId}
+                  onSelect={onSelect}
+                  onDelete={onDelete}
+                  onRename={onRename}
+                  onArchive={onArchive}
+                  onTogglePin={onTogglePin}
+                  vaultById={vaultById}
+                  activeVaultId={activeVaultId}
+                />
+              ))}
+              {pageExpansion && hasMore && (
+                <SessionExpansionLoadMore
+                  onClick={loadMore}
+                  testId="button-archive-load-more"
+                />
+              )}
+            </>
+          )}
         </div>
       </CollapsibleContent>
     </Collapsible>
   );
 }
 
-/** Autonomous sessions group at the bottom — collapsed by default, shows last 48h with Load More. */
+/** Autonomous sessions group — collapsed by default; newest 25 + Load More. */
 function AutoSessionsGroup({
   sessions,
   activeSession,
@@ -878,7 +951,6 @@ function AutoSessionsGroup({
   activeVaultId: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  const [showAll, setShowAll] = useState(false);
 
   // System holds autonomous work that is not currently in Review.
   // Review outranks System: undismissed error/warning/question/approval leave System.
@@ -893,15 +965,11 @@ function AutoSessionsGroup({
     [sessions]
   );
 
-  // Show only last 48h by default, all when "Load More" is clicked
-  const fortyEightHoursAgo = useMemo(() => Date.now() - 48 * 60 * 60 * 1000, []);
-  const recentAutoSessions = useMemo(() =>
-    allAutoSessions.filter(s => new Date(s.updatedAt || s.createdAt).getTime() > fortyEightHoursAgo),
-    [allAutoSessions, fortyEightHoursAgo]
+  const { visibleCount, hasMore, loadMore } = useSessionExpansionWindow(
+    open,
+    allAutoSessions.length,
   );
-
-  const autoSessions = showAll ? allAutoSessions : recentAutoSessions;
-  const hasOlder = allAutoSessions.length > recentAutoSessions.length;
+  const autoSessions = allAutoSessions.slice(0, visibleCount);
   const hasLive = allAutoSessions.some(s => s.status === "streaming");
 
   if (allAutoSessions.length === 0 && !open) return null;
@@ -933,18 +1001,11 @@ function AutoSessionsGroup({
               activeVaultId={activeVaultId}
             />
           ))}
-          {!showAll && hasOlder && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowAll(true);
-              }}
-              className="w-full px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-md transition-colors text-center"
-              data-testid="button-auto-load-more"
-            >
-              Load More…
-            </button>
+          {hasMore && (
+            <SessionExpansionLoadMore
+              onClick={loadMore}
+              testId="button-auto-load-more"
+            />
           )}
         </div>
       </CollapsibleContent>
