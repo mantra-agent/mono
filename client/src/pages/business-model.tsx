@@ -24,7 +24,9 @@ import type { BusinessBudget } from "@shared/models/business-budgets";
 import {
   aggregateMonths,
   computeProjection,
+  FINANCING_LABELS,
   type Assumptions,
+  type FinancingKey,
   type FinancialModel,
   type PeriodMode,
   type PeriodRow,
@@ -42,7 +44,7 @@ const PERIOD_MODES: { key: PeriodMode; label: string }[] = [
 const ASSUMPTIONS_DISCLOSURE_KEY = "mantra.forecast.assumptions-open.v1";
 const FORECAST_TREE_KEY = "mantra.forecast.tree-open.v1";
 const MAX_ASSUMPTION_PREFERENCES = 64;
-const FORECAST_TREE_ROWS = ["utilization", "accounts", "newAccounts", "users", "expandedUsers", "meetings", "grossProfit", "revenue", "cogs", "opex"] as const;
+const FORECAST_TREE_ROWS = ["utilization", "accounts", "newAccounts", "users", "expandedUsers", "meetings", "grossProfit", "revenue", "cogs", "opex", "staff"] as const;
 type ForecastTreeRow = (typeof FORECAST_TREE_ROWS)[number];
 type ForecastTreeState = Record<ForecastTreeRow, boolean>;
 
@@ -291,8 +293,28 @@ export default function BusinessModelPage() {
     });
   }, [scheduleSave]);
 
+  const updateFinancing = useCallback((key: FinancingKey, amount: number) => {
+    setDraft((current) => {
+      if (!current) return current;
+      const next = {
+        ...current,
+        financingEvents: current.financingEvents.map((event) => event.key === key ? { ...event, amount } : event),
+      };
+      scheduleSave(next);
+      return next;
+    });
+  }, [scheduleSave]);
+
   const projection = useMemo(() => draft && budget && hiring ? computeProjection(draft, rolesData?.roles ?? hiring.roles, budget.departments, hiring.slots) : null, [budget, draft, rolesData, hiring]);
   const periods = useMemo(() => projection ? aggregateMonths(projection.months, period) : [], [projection, period]);
+  const staffRoles = useMemo(() => {
+    if (!draft || !hiring || periods.length === 0) return [];
+    const labels = new Map<string, string>(hiring.roles.map((role) => [role.id, role.title]));
+    for (const cost of draft.operatingCosts) {
+      if (cost.classification === "opex" && (cost.opexCategory ?? "g_and_a") === "staff") labels.set(cost.id, cost.label);
+    }
+    return [...new Set(periods.flatMap((row) => Object.keys(row.staffByRole)))].map((id) => ({ id, label: labels.get(id) ?? id })).sort((left, right) => left.label.localeCompare(right.label));
+  }, [draft, hiring, periods]);
 
   if (error || budgetError) {
     return (
@@ -332,6 +354,11 @@ export default function BusinessModelPage() {
             <Driver label="Tokens per hour"><NumericInput ariaLabel="Tokens used per hour" value={draft.tokensUsedPerHour} min={0} step={10000} onChange={(tokensUsedPerHour) => updateGlobal({ tokensUsedPerHour })} /></Driver>
             <Driver label="Token cost"><NumericInput ariaLabel="Blended token cost per million" value={draft.blendedTokenCostPerMillion} min={0} step={0.25} prefix="$" suffix="/ 1M" onChange={(blendedTokenCostPerMillion) => updateGlobal({ blendedTokenCostPerMillion })} /></Driver>
             <Driver label="Loaded comp multiplier"><NumericInput ariaLabel="Fully loaded staff comp multiplier on base salary plus bonus" value={draft.loadedCostMultiplier} min={0.5} step={0.05} suffix="×" onChange={(loadedCostMultiplier) => updateGlobal({ loadedCostMultiplier })} /></Driver>
+            {draft.financingEvents.map((event) => (
+              <Driver key={event.key} label={FINANCING_LABELS[event.key]}>
+                <NumericInput ariaLabel={`${FINANCING_LABELS[event.key]} investment`} value={event.amount} min={0} step={50000} prefix="$" onChange={(amount) => updateFinancing(event.key, amount)} />
+              </Driver>
+            ))}
           </div>
         </ProfileDetailSection>
       </section>
@@ -386,7 +413,6 @@ export default function BusinessModelPage() {
               {tree.utilization && tree.meetings && <DataRow label="External Meetings" indent={2} periods={periods} render={(row) => fmtMeetings(ceilMeetings(row.meetings) - ceilMeetings(Math.min(row.internalMeetings, ceilMeetings(row.meetings))))} />}
               {tree.utilization && <DataRow label="Hours Used" indent periods={periods} render={(row) => row.hoursUsed >= 0.5 ? fmtWhole(row.hoursUsed) : "—"} />}
               <DataRow label="Gross Profit" periods={periods} render={(row) => tree.grossProfit ? "" : fmtCurrency(row.grossProfit)} onToggle={() => toggleTree("grossProfit")} open={tree.grossProfit} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} emphasize />
-              {tree.grossProfit && <DataRow label="Gross Profit" indent periods={periods} render={(row) => fmtCurrency(row.grossProfit)} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />}
               {tree.grossProfit && <DataRow label="Revenue" indent periods={periods} render={(row) => fmtCurrency(row.totalCashRevenue)} onToggle={() => toggleTree("revenue")} open={tree.revenue} />}
               {tree.grossProfit && tree.revenue && <DataRow label="Starting Cohort" indent={2} periods={periods} render={(row) => fmtCurrency(row.startingCohortRevenue)} />}
               {tree.grossProfit && tree.revenue && <DataRow label="Account Churn" indent={2} periods={periods} render={(row) => row.churnedRevenue > 0 ? fmtCurrency(-row.churnedRevenue) : "—"} tone={() => "text-muted-foreground"} />}
@@ -399,8 +425,12 @@ export default function BusinessModelPage() {
               {tree.grossProfit && tree.cogs && <DataRow label="Tokens Used" indent={2} periods={periods} render={(row) => row.tokensUsed >= 0.5 ? formatTokens(row.tokensUsed) : "—"} />}
               {tree.grossProfit && tree.cogs && <DataRow label="Token Cost" indent={2} periods={periods} render={(row) => row.tokenCost >= 0.5 ? fmtCurrency(-row.tokenCost) : "—"} tone={() => "text-muted-foreground"} />}
               {tree.grossProfit && tree.cogs && <DataRow label="Support" indent={2} periods={periods} render={(row) => row.supportCogs >= 0.5 ? fmtCurrency(-row.supportCogs) : "—"} tone={() => "text-muted-foreground"} />}
+              {tree.grossProfit && <DataRow label="Gross Profit" indent periods={periods} render={(row) => fmtCurrency(row.grossProfit)} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />}
               <DataRow label="OpEx" periods={periods} render={(row) => fmtCurrency(-row.totalOpex)} onToggle={() => toggleTree("opex")} open={tree.opex} emphasize />
-              {tree.opex && <DataRow label="Staff" indent periods={periods} render={(row) => fmtCurrency(-row.staffOpex)} tone={() => "text-muted-foreground"} />}
+              {tree.opex && <DataRow label="Staff" indent periods={periods} render={(row) => tree.staff ? "" : fmtCurrency(-row.staffOpex)} onToggle={() => toggleTree("staff")} open={tree.staff} tone={() => "text-muted-foreground"} />}
+              {tree.opex && tree.staff && staffRoles.map((role) => (
+                <DataRow key={role.id} label={role.label} indent={2} periods={periods} render={(row) => (row.staffByRole[role.id] ?? 0) >= 0.5 ? fmtCurrency(-(row.staffByRole[role.id] ?? 0)) : "—"} tone={() => "text-muted-foreground"} />
+              ))}
               {tree.opex && budget.departments.map((department) => (
                 <DataRow key={department.id} label={department.name} indent periods={periods} render={(row) => fmtCurrency(-(row.departmentOpex[department.id] ?? 0))} tone={() => "text-muted-foreground"} />
               ))}
