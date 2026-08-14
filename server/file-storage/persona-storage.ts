@@ -14,6 +14,7 @@ import {
   combineWithWritableScope,
   ownedInsertValues,
 } from "../scoped-storage";
+import { PERSONA_CONTEXT_MAPS } from "../../shared/persona-context";
 
 const log = createLogger("PersonaStorage");
 // Personas are Instance mind configuration (dual-write with owner_user_id created_by),
@@ -1586,15 +1587,12 @@ class PersonaStorageClass {
           sql`LOWER(${personas.name}) = 'root'`,
         ));
     }
-    const architectMaps: Record<string, Record<string, boolean>> = {
-      architect: { principles: true },
-      engineer: {},
-      coach: { emotions: true, schedule: true, life: true, people: true, principles: true },
-    };
-    for (const [name, contextSections] of Object.entries(architectMaps)) {
+    // Group IDs only. Root owns History/Memory/Current Session separately.
+    // Empty object = Root-only optional context. Shared map is the SSOT.
+    for (const [name, contextSections] of Object.entries(PERSONA_CONTEXT_MAPS)) {
       await db
         .update(personas)
-        .set({ contextSections, updatedAt: new Date() })
+        .set({ contextSections: { ...contextSections }, updatedAt: new Date() })
         .where(and(
           eq(personas.scope, "global"),
           eq(personas.source, "seed"),
