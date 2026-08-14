@@ -1,16 +1,15 @@
-import { and, gte, lt, sql, eq } from "drizzle-orm";
+import { and, gte, lt, ne, or, sql, eq } from "drizzle-orm";
 import { mergedPullRequests } from "@shared/schema";
-import { environmentSourceBindings, providerConnections } from "@shared/models/platforms";
 import { db } from "../db";
 import { createLogger } from "../log";
 import { getSetting, setSetting } from "../system-settings";
-import { resolveGitSource } from "../git-source-resolver";
+import { resolveGitCloneSource, resolveGitSource } from "../git-source-resolver";
 import { gh, type RepoRef } from "./github-pr";
 
 const log = createLogger("MergedPrLedger");
 
-/** Bump when backfill cursor semantics change so stuck empty ledgers reseed. */
-const BACKFILL_SETTING_KEY = "merged_pr_ledger_backfill_v2";
+/** Bump when CODE repo scope or cursor semantics change so ledgers reseed cleanly. */
+const BACKFILL_SETTING_KEY = "merged_pr_ledger_backfill_v3";
 const CATCHUP_INTERVAL_MS = 5 * 60_000;
 const SEARCH_PAGE_SIZE = 100;
 const REST_PAGE_SIZE = 100;
@@ -115,35 +114,51 @@ function daysAgoUtc(days: number): string {
   return utcDateString(date);
 }
 
-async function listBoundGitHubRepos(): Promise<RepoRef[]> {
+/**
+ * CODE heatmap counts Mantra product shipping only — the canonical Web stage
+ * source binding (mantra-agent/mono). Landing-page / personal-site repos must
+ * not inflate day totals.
+ */
+async function resolveCodeHeatmapRepo(): Promise<RepoRef | null> {
   try {
-    const rows = await db
-      .select({
-        owner: environmentSourceBindings.owner,
-        repo: environmentSourceBindings.repo,
-      })
-      .from(environmentSourceBindings)
-      .innerJoin(
-        providerConnections,
-        eq(providerConnections.id, environmentSourceBindings.connectionId),
-      )
-      .where(eq(environmentSourceBindings.provider, "github"));
-    const seen = new Set<string>();
-    const refs: RepoRef[] = [];
-    for (const row of rows) {
-      if (!row.owner || !row.repo) continue;
-      const key = `${row.owner.toLowerCase()}/${row.repo.toLowerCase()}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      refs.push({ owner: row.owner, repo: row.repo });
-    }
-    return refs;
+    const source = await resolveGitCloneSource();
+    if (!source?.owner || !source?.repo) return null;
+    const normalized = normalizeOwnerRepo(source.owner, source.repo);
+    return { owner: normalized.owner, repo: normalized.repo };
   } catch (error) {
-    log.warn("Failed to list GitHub source bindings for merge ledger", {
+    log.warn("Failed to resolve CODE heatmap GitHub repo", {
       error: error instanceof Error ? error.message : String(error),
     });
-    return [];
+    return null;
   }
+}
+
+async function listCodeHeatmapRepos(): Promise<RepoRef[]> {
+  const ref = await resolveCodeHeatmapRepo();
+  return ref ? [ref] : [];
+}
+
+function codeHeatmapRepoPredicate(ref: RepoRef) {
+  const { owner, repo } = normalizeOwnerRepo(ref.owner, ref.repo);
+  return and(
+    eq(mergedPullRequests.owner, owner),
+    eq(mergedPullRequests.repo, repo),
+  );
+}
+
+/** Drop rows from other bound repos (lightway/website/…) left by the multi-repo ingest bug. */
+async function purgeNonCodeHeatmapRows(ref: RepoRef): Promise<number> {
+  const { owner, repo } = normalizeOwnerRepo(ref.owner, ref.repo);
+  const removed = await db
+    .delete(mergedPullRequests)
+    .where(
+      or(
+        ne(mergedPullRequests.owner, owner),
+        ne(mergedPullRequests.repo, repo),
+      ),
+    )
+    .returning({ id: mergedPullRequests.id });
+  return removed.length;
 }
 
 async function resolveRepoToken(ref: RepoRef): Promise<string> {
@@ -256,6 +271,12 @@ export async function recordMergedPullRequestFromGithub(
   source: MergedPrSource = "live",
 ): Promise<void> {
   try {
+    // CODE ledger is Mantra mono only — ignore merges in other bound repos.
+    const codeRef = await resolveCodeHeatmapRepo();
+    if (!codeRef) return;
+    const normalized = normalizeOwnerRepo(ref.owner, ref.repo);
+    if (normalized.owner !== codeRef.owner || normalized.repo !== codeRef.repo) return;
+
     const detail = await gh<GhPullDetail>(
       "GET",
       `/repos/${ref.owner}/${ref.repo}/pulls/${prNumber}`,
@@ -289,11 +310,13 @@ export async function recordMergedPullRequestFromGithub(
   }
 }
 
-/** Chicago-local day counts for Dashboard CODE heatmap. Pure DB read. */
+/** Chicago-local day counts for Dashboard CODE heatmap. Pure DB read of Mantra mono only. */
 export async function queryMergedPrSeries(
   start: Date,
   end: Date,
 ): Promise<Map<string, number>> {
+  const ref = await resolveCodeHeatmapRepo();
+  if (!ref) return new Map();
   const localDate = sql<string>`to_char(${mergedPullRequests.mergedAt} AT TIME ZONE 'America/Chicago', 'YYYY-MM-DD')`;
   const rows = await db
     .select({
@@ -303,6 +326,7 @@ export async function queryMergedPrSeries(
     .from(mergedPullRequests)
     .where(
       and(
+        codeHeatmapRepoPredicate(ref),
         gte(mergedPullRequests.mergedAt, start),
         lt(mergedPullRequests.mergedAt, end),
       ),
@@ -311,13 +335,16 @@ export async function queryMergedPrSeries(
   return new Map(rows.map((row) => [row.date, Number(row.value)]));
 }
 
-/** Half-open [start, end) merge count for work metrics. Pure DB read. */
+/** Half-open [start, end) merge count for work metrics. Pure DB read of Mantra mono only. */
 export async function countMergedPrsInRange(start: Date, end: Date): Promise<number> {
+  const ref = await resolveCodeHeatmapRepo();
+  if (!ref) return 0;
   const [row] = await db
     .select({ value: sql<number>`count(*)::int` })
     .from(mergedPullRequests)
     .where(
       and(
+        codeHeatmapRepoPredicate(ref),
         gte(mergedPullRequests.mergedAt, start),
         lt(mergedPullRequests.mergedAt, end),
       ),
@@ -325,10 +352,11 @@ export async function countMergedPrsInRange(start: Date, end: Date): Promise<num
   return Number(row?.value ?? 0);
 }
 
-async function ledgerRowCount(): Promise<number> {
+async function ledgerRowCount(ref: RepoRef): Promise<number> {
   const [row] = await db
     .select({ value: sql<number>`count(*)::int` })
-    .from(mergedPullRequests);
+    .from(mergedPullRequests)
+    .where(codeHeatmapRepoPredicate(ref));
   return Number(row?.value ?? 0);
 }
 
@@ -517,9 +545,9 @@ async function seedRecentViaRest(
 }
 
 async function runRecentSeed(): Promise<number> {
-  const repos = await listBoundGitHubRepos();
+  const repos = await listCodeHeatmapRepos();
   if (repos.length === 0) {
-    log.warn("Merge ledger recent seed found no bound GitHub repos");
+    log.warn("Merge ledger recent seed found no CODE heatmap GitHub repo");
     return 0;
   }
   const since = new Date(`${daysAgoUtc(CATCHUP_DAYS)}T00:00:00.000Z`);
@@ -567,7 +595,7 @@ async function runRecentSeed(): Promise<number> {
 }
 
 async function runCatchupOnce(): Promise<number> {
-  const repos = await listBoundGitHubRepos();
+  const repos = await listCodeHeatmapRepos();
   if (repos.length === 0) return 0;
   const fromDate = daysAgoUtc(CATCHUP_DAYS);
   const toDate = utcDateString(new Date());
@@ -641,7 +669,7 @@ async function runBackfillStep(): Promise<boolean> {
     status: "running",
   });
 
-  const repos = await listBoundGitHubRepos();
+  const repos = await listCodeHeatmapRepos();
   let inserted = 0;
   for (const ref of repos) {
     try {
@@ -685,8 +713,24 @@ async function runBackfillStep(): Promise<boolean> {
 
 async function runSyncLoopBody(): Promise<void> {
   try {
+    const ref = await resolveCodeHeatmapRepo();
+    if (!ref) {
+      log.warn("Merge ledger sync skipped — no CODE heatmap GitHub repo resolved");
+      return;
+    }
+
+    // One-time cleanup of multi-repo pollution (lightway/website/…) from earlier ingest.
+    const purged = await purgeNonCodeHeatmapRows(ref);
+    if (purged > 0) {
+      log.info("Merge ledger purged non-CODE repo rows", {
+        owner: ref.owner,
+        repo: ref.repo,
+        purged,
+      });
+    }
+
     let state = await readBackfillState();
-    const rows = await ledgerRowCount();
+    const rows = await ledgerRowCount(ref);
 
     // Empty ledger or never-seeded: fill recent history first so CODE paints now.
     if (!state.recentSeeded || rows === 0) {
@@ -700,7 +744,12 @@ async function runSyncLoopBody(): Promise<void> {
         insertedTotal: (state.insertedTotal ?? 0) + seeded,
         status: state.status === "complete" ? "complete" : "running",
       });
-      log.info("Merge ledger recent seed finished", { seeded, priorRows: rows });
+      log.info("Merge ledger recent seed finished", {
+        owner: ref.owner,
+        repo: ref.repo,
+        seeded,
+        priorRows: rows,
+      });
     }
 
     // Always refresh the recent window first (correctness under external merges).
