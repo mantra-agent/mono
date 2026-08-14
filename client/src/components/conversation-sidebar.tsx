@@ -880,10 +880,15 @@ function AutoSessionsGroup({
   const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
 
-  // Filter autonomous sessions from the already-loaded sessions list
+  // System holds autonomous work that is not currently in Review.
+  // Review outranks System: undismissed error/warning/question/approval leave System.
   const allAutoSessions = useMemo(() =>
     sessions
-      .filter(s => s.sessionType === "autonomous")
+      .filter(s =>
+        s.sessionType === "autonomous"
+        && !s.awaitingReview
+        && !s.awaitingQuestionResponse,
+      )
       .sort(sortByUpdated),
     [sessions]
   );
@@ -1091,13 +1096,16 @@ export function ConversationSidebar({
   }, [vaultVisibleSessions]);
 
   // Normal mode hides children under their expandable parents and keeps
-  // autonomous work in SYSTEM. Search results come pre-filtered from the
-  // canonical server boundary and must surface every match as a flat row.
+  // non-review autonomous work in SYSTEM. Autonomous sessions with undismissed
+  // review attention enter ordinary grouping so Review outranks System.
+  // Search results come pre-filtered from the canonical server boundary and
+  // must surface every match as a flat row.
   const filteredConversations = useMemo(() => {
     if (isSearching) return sessionsWithChildCounts;
     return sessionsWithChildCounts.filter(c => {
       if (c.parentSessionId && !c.parentMissing && !c.archivedAt && !c.reminder?.active) return false;
-      return c.sessionType !== "autonomous";
+      if (c.sessionType !== "autonomous") return true;
+      return Boolean(c.awaitingReview || c.awaitingQuestionResponse);
     });
   }, [isSearching, sessionsWithChildCounts]);
 

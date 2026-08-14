@@ -1740,6 +1740,16 @@ export interface IChatFileStorage {
     severity: "warning" | "error" | "warn" | null,
   ): Promise<void>;
   /**
+   * Canonical attention write: persist one system_notice widget and set
+   * session errorSeverity together. Severity alone is not enough for Inbox,
+   * transcript widget, and Session Menu REVIEW to stay in sync.
+   */
+  recordSessionAttention(
+    id: string,
+    notice: import("@shared/models/chat").SystemNotice,
+    options?: { artifactKey?: string },
+  ): Promise<void>;
+  /**
    * Dismiss one system_notice message and recompute session errorSeverity from
    * remaining undismissed notices. Returns false when the message is missing
    * or not a system_notice.
@@ -4586,6 +4596,92 @@ export const chatFileStorage: IChatFileStorage = {
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
       invalidateSessionsCache();
+    });
+  },
+
+  async recordSessionAttention(
+    id: string,
+    notice: import("@shared/models/chat").SystemNotice,
+    options?: { artifactKey?: string },
+  ) {
+    return withConvLock(id, async () => {
+      const data = await readConv(id);
+      if (!data) return;
+
+      const severity: "warning" | "error" =
+        notice.severity === "error" ? "error" : "warning";
+      const normalizedNotice: import("@shared/models/chat").SystemNotice = {
+        ...notice,
+        severity,
+      };
+      if (
+        typeof normalizedNotice.errorType !== "string" ||
+        !normalizedNotice.errorType.trim() ||
+        typeof normalizedNotice.description !== "string" ||
+        !normalizedNotice.description.trim() ||
+        typeof normalizedNotice.actionHint !== "string" ||
+        !normalizedNotice.actionHint.trim()
+      ) {
+        throw new Error("recordSessionAttention requires errorType, description, and actionHint");
+      }
+
+      const artifactKey =
+        typeof options?.artifactKey === "string" && options.artifactKey.trim()
+          ? options.artifactKey.trim()
+          : undefined;
+      if (artifactKey) {
+        const existing = data.messages.find(
+          (message) =>
+            message.role === "system_notice" && message.artifactKey === artifactKey,
+        );
+        if (existing) {
+          // Replay-safe: keep the existing notice identity and only raise
+          // severity when a later attention write is more severe.
+          if (data.errorSeverity === "error" || data.errorSeverity === severity) {
+            return;
+          }
+          data.errorSeverity = severity;
+          data.updatedAt = new Date().toISOString();
+          await writeConv(data);
+          invalidateSessionsCache({
+            action: "updated",
+            sessionId: id,
+            session: convToMeta(data),
+          });
+          return;
+        }
+      }
+
+      const now = new Date().toISOString();
+      const msg: FileMessage = {
+        id: generateId(),
+        sessionId: id,
+        role: "system_notice",
+        content: JSON.stringify(normalizedNotice),
+        thinking: null,
+        toolCalls: null,
+        systemSteps: null,
+        model: null,
+        createdAt: now,
+        updatedAt: now,
+        ...(artifactKey ? { artifactKey } : {}),
+      };
+      data.messages.push(msg);
+      // error outranks warning when multiple undismissed notices coexist.
+      data.errorSeverity =
+        data.errorSeverity === "error" || severity === "error" ? "error" : "warning";
+      data.updatedAt = now;
+      await writeConv(data);
+      invalidateSessionsCache({
+        action: "updated",
+        sessionId: id,
+        session: convToMeta(data),
+      });
+      eventBus.publish({
+        category: "system",
+        event: "data:session_messages_changed",
+        payload: { sessionId: id },
+      });
     });
   },
 
