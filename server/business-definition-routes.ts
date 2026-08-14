@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { z } from "zod";
 import { libraryPages } from "@shared/schema";
 import { requireAuth } from "./auth";
@@ -144,6 +144,33 @@ async function loadNarrativeRefs(pageIds: string[]): Promise<Map<string, Narrati
   return new Map(rows.map((row) => [row.id, row]));
 }
 
+/**
+ * Resolve reference-picker page references to canonical visible library_pages.id.
+ * The universal picker emits slug-or-id references (page.slug || page.id), while
+ * narrative slots persist the canonical UUID, so an assigned slug must be mapped
+ * back to its id before storage. Returns input reference -> canonical id.
+ */
+async function resolveVisiblePageIds(refs: string[]): Promise<Map<string, string>> {
+  const ids = [...new Set(refs.filter(Boolean))];
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select({ id: libraryPages.id, slug: libraryPages.slug })
+    .from(libraryPages)
+    .where(
+      combineWithVisibleScope(
+        requireCurrentPrincipal(),
+        libraryScopeColumns,
+        or(inArray(libraryPages.id, ids), inArray(libraryPages.slug, ids)),
+      ),
+    );
+  const out = new Map<string, string>();
+  for (const row of rows) {
+    if (ids.includes(row.id)) out.set(row.id, row.id);
+    if (row.slug && ids.includes(row.slug)) out.set(row.slug, row.id);
+  }
+  return out;
+}
+
 async function toView(business: Business): Promise<BusinessDefinitionView> {
   const refs = await loadNarrativeRefs(narrativePageIds(business));
   return { ...business, ...narrativePages(business, refs) };
@@ -214,15 +241,24 @@ export function registerBusinessDefinitionRoutes(app: Express): void {
       try {
         await ensureReady();
         const { vaultIds, ...patch } = patchSchema.parse(req.body ?? {});
-        const assignedIds = NARRATIVE_SLOTS
-          .map((slot) => patch[SLOT_COLUMN[slot]])
-          .filter((id): id is string => typeof id === "string" && id.length > 0);
-        if (assignedIds.length > 0) {
-          const refs = await loadNarrativeRefs(assignedIds);
-          const missing = assignedIds.find((id) => !refs.has(id));
-          if (missing) {
-            res.status(404).json({ error: "Library page not found or not visible" });
-            return;
+        // Assigned narrative pages arrive as picker references (slug or id).
+        // Resolve each to its canonical visible library_pages.id before persist;
+        // an unresolvable reference is a 404 rather than a stored dangling ref.
+        const assignedColumns = NARRATIVE_SLOTS
+          .map((slot) => SLOT_COLUMN[slot])
+          .filter((column): column is NarrativeColumn =>
+            typeof patch[column] === "string" && (patch[column] as string).length > 0);
+        if (assignedColumns.length > 0) {
+          const resolved = await resolveVisiblePageIds(
+            assignedColumns.map((column) => patch[column] as string),
+          );
+          for (const column of assignedColumns) {
+            const canonicalId = resolved.get(patch[column] as string);
+            if (!canonicalId) {
+              res.status(404).json({ error: "Library page not found or not visible" });
+              return;
+            }
+            (patch as Record<string, unknown>)[column] = canonicalId;
           }
         }
         let business = Object.keys(patch).length > 0

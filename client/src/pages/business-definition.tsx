@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { createReferenceRef } from "@shared/references";
-import { BookOpen, Building2, ChevronDown, ExternalLink, Loader2, Plus, Shield } from "lucide-react";
+import { BookOpen, Building2, ChevronDown, ExternalLink, Loader2, Plus, Shield, X } from "lucide-react";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -85,27 +85,19 @@ function ScalarField({
   );
 }
 
-function PageAssignControl({
+function NarrativePagePicker({
   label,
   current,
-  excludeIds,
   onAssign,
-  asAction = false,
+  onCancel,
 }: {
   label: string;
   current?: NarrativePageRef | null;
-  excludeIds?: string[];
   onAssign: (pageId: string) => void;
-  asAction?: boolean;
+  onCancel?: () => void;
 }) {
   return (
-    <div
-      className={asAction ? "w-full" : "w-72 p-2"}
-      onClick={(event) => event.stopPropagation()}
-    >
-      {current ? (
-        <p className="mb-2 px-1 text-xs font-medium text-muted-foreground">Change page</p>
-      ) : null}
+    <div className="flex w-full items-center gap-1" onClick={(event) => event.stopPropagation()}>
       <ReferencePicker
         value={current ? [{ type: "page", id: current.id, label: current.title }] : []}
         onChange={(next) => {
@@ -116,11 +108,21 @@ function PageAssignControl({
         mode="single"
         variant="compact"
         placeholder={label}
-        excludeIds={excludeIds}
         showToken={false}
-        className={asAction ? HIERARCHY_PRIMARY_ACTION_CLASS : undefined}
-        testId={asAction ? "picker-business-narrative-assign" : "picker-business-narrative-change"}
+        className={HIERARCHY_PRIMARY_ACTION_CLASS}
+        testId="picker-business-narrative-assign"
       />
+      {onCancel ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 shrink-0 text-muted-foreground/70"
+          onClick={onCancel}
+          aria-label="Cancel"
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -137,6 +139,7 @@ function NarrativeSlot({
   page: NarrativePageRef | null;
 }) {
   const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
   const pageField = `${slot}PageId`;
   const assign = useMutation({
     mutationFn: async (pageId: string | null) => {
@@ -192,14 +195,15 @@ function NarrativeSlot({
       testId={`business-narrative-${slot}`}
       expandedContent={page ? <InlineLibraryPageEditor page={page} /> : undefined}
       menuContent={
-        <>
-          <PageAssignControl
-            label={page ? "Choose a different page" : "Choose an existing page"}
-            current={page}
-            excludeIds={page ? [page.id] : undefined}
-            onAssign={(pageId) => assign.mutate(pageId)}
-          />
-          {page ? (
+        page ? (
+          <>
+            <DropdownMenuItem
+              disabled={busy}
+              onSelect={() => setEditing(true)}
+              data-testid={`menu-business-narrative-change-${slot}`}
+            >
+              Change page
+            </DropdownMenuItem>
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               disabled={busy}
@@ -208,25 +212,29 @@ function NarrativeSlot({
             >
               Clear
             </DropdownMenuItem>
-          ) : (
-            <DropdownMenuItem
-              disabled={busy}
-              onSelect={() => create.mutate()}
-              data-testid={`menu-business-narrative-create-${slot}`}
-            >
-              {create.isPending ? "Creating…" : `Create ${label} page`}
-            </DropdownMenuItem>
-          )}
-        </>
+          </>
+        ) : (
+          <DropdownMenuItem
+            disabled={busy}
+            onSelect={() => create.mutate()}
+            data-testid={`menu-business-narrative-create-${slot}`}
+          >
+            {create.isPending ? "Creating…" : `Create ${label} page`}
+          </DropdownMenuItem>
+        )
       }
     >
-      {page && pageRef ? (
+      {page && pageRef && !editing ? (
         <ReferenceRenderer refValue={pageRef} surface="simple-chip" />
       ) : (
-        <PageAssignControl
+        <NarrativePagePicker
           label={`Choose ${label} page`}
-          asAction
-          onAssign={(pageId) => assign.mutate(pageId)}
+          current={page}
+          onAssign={(pageId) => {
+            assign.mutate(pageId);
+            setEditing(false);
+          }}
+          onCancel={page ? () => setEditing(false) : undefined}
         />
       )}
     </ProfileTreeRow>
