@@ -808,20 +808,11 @@ export function registerPlatformRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/platforms/:id/products", async (req, res) => {
-    try {
-      const platformId = platformIdParam(req.params.id);
-      if (!(await ensurePlatformWritable(platformId))) return res.status(404).json({ error: `Platform ${platformId} not found`, operation: "create_platform_product" });
-      const parsed = insertPlatformProductSchema.parse(req.body);
-      const [created] = await db.insert(platformProducts).values({ ...parsed, platformId }).returning();
-      const defaultEnvironments = ["dev", "stage", "live"].map((name) => ({ productId: created.id, name }));
-      const environments = await db.insert(platformProductEnvironments).values(defaultEnvironments).returning();
-      await db.update(platforms).set({ updatedAt: sql`CURRENT_TIMESTAMP` }).where(writablePlatform(eq(platforms.id, platformId)));
-      res.status(201).json({ ...created, environments });
-    } catch (error: unknown) {
-      const err = routeError(error, "create_platform_product");
-      res.status(400).json({ error: err.message, operation: err.operation });
-    }
+  app.post("/api/platforms/:id/products", async (_req, res) => {
+    res.status(410).json({
+      error: "Create Products on /products. platform_products is frozen.",
+      operation: "create_platform_product",
+    });
   });
 
   app.patch("/api/platforms/:platformId/products/:productId", async (req, res) => {
@@ -847,7 +838,7 @@ export function registerPlatformRoutes(app: Express): void {
       const productId = platformIdParam(req.params.productId);
       if (!(await ensureProductWritable(platformId, productId))) return res.status(404).json({ error: `Product ${productId} not found`, operation: "create_product_environment" });
       const parsed = insertPlatformProductEnvironmentSchema.parse(req.body);
-      const [created] = await db.insert(platformProductEnvironments).values({ ...parsed, productId }).returning();
+      const [created] = await db.insert(platformProductEnvironments).values({ ...parsed, productId, platformId }).returning();
       await db.update(platformProducts).set({ updatedAt: sql`CURRENT_TIMESTAMP` }).where(and(eq(platformProducts.id, productId), eq(platformProducts.platformId, platformId)));
       await db.update(platforms).set({ updatedAt: sql`CURRENT_TIMESTAMP` }).where(writablePlatform(eq(platforms.id, platformId)));
       res.status(201).json(created);

@@ -422,28 +422,6 @@ export default function PlatformsPage() {
     },
   });
 
-  const createProductMutation = useMutation({
-    mutationFn: async ({ platformId, name }: { platformId: number; name: string }) => {
-      const res = await apiRequest("POST", `/api/platforms/${platformId}/products`, { name });
-      return res.json() as Promise<PlatformProduct>;
-    },
-    onSuccess: (product, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/platforms"] });
-      setClosedPlatforms(prev => {
-        const next = new Set(prev);
-        next.delete(variables.platformId);
-        return next;
-      });
-      setClosedProducts(prev => {
-        const next = new Set(prev);
-        next.delete(product.id);
-        return next;
-      });
-      setRenameTarget({ type: "product", id: product.id, platformId: variables.platformId });
-      setRenameValue(product.name);
-    },
-  });
-
   const createEnvironmentMutation = useMutation({
     mutationFn: async ({ platformId, productId, name }: { platformId: number; productId: number; name: string }) => {
       const res = await apiRequest("POST", `/api/platforms/${platformId}/products/${productId}/environments`, { name });
@@ -526,11 +504,6 @@ export default function PlatformsPage() {
   const createNewPlatform = () => {
     if (createPlatformMutation.isPending) return;
     createPlatformMutation.mutate("New Platform");
-  };
-
-  const createNewProduct = (platform: Platform) => {
-    if (createProductMutation.isPending) return;
-    createProductMutation.mutate({ platformId: platform.id, name: "New Product" });
   };
 
   const createNewEnvironment = (platform: Platform, product: PlatformProduct) => {
@@ -633,10 +606,6 @@ export default function PlatformsPage() {
                     <RowMenu label={`Open ${platform.name} actions`}>
                       <DropdownMenuItem onClick={(event) => { event.stopPropagation(); startRenamePlatform(platform); }}>
                         Rename
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={(event) => { event.stopPropagation(); createNewProduct(platform); }} disabled={createProductMutation.isPending}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Add product
                       </DropdownMenuItem>
                       {platform.canManageVaults !== false && vaults.length > 0 && (
                         <DropdownMenuSub>

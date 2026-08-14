@@ -1660,7 +1660,28 @@ export async function runSchemaBootstrap(
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await pool.query(`ALTER TABLE platform_product_environments ADD COLUMN IF NOT EXISTS platform_id INTEGER`);
+    await pool.query(`
+      DO $heal$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'platform_product_environments_platform_id_platforms_id_fk'
+        ) THEN
+          ALTER TABLE platform_product_environments
+            ADD CONSTRAINT platform_product_environments_platform_id_platforms_id_fk
+            FOREIGN KEY (platform_id) REFERENCES platforms(id) ON DELETE CASCADE;
+        END IF;
+      END $heal$;
+    `);
+    await pool.query(`
+      UPDATE platform_product_environments e
+      SET platform_id = pp.platform_id
+      FROM platform_products pp
+      WHERE e.platform_id IS NULL
+        AND e.product_id = pp.id
+    `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_platform_product_environments_product ON platform_product_environments(product_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_platform_product_environments_platform ON platform_product_environments(platform_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_platform_product_environments_updated ON platform_product_environments(updated_at)`);
   });
 

@@ -6712,18 +6712,7 @@ ${refs}` : ""),
 
       // ── create_product_legacy ──
       if (action === "create_product_legacy") {
-        const platformId = positiveId(args.id);
-        if (!platformId) return { result: "Missing positive platform 'id' parameter for create_product_legacy", error: true };
-        const [plat] = await db.select({ id: platformsTable.id }).from(platformsTable).where(writablePlat(eq(platformsTable.id, platformId))).limit(1);
-        if (!plat) return { result: `Platform ${platformId} not found or not writable`, error: true };
-        const parsed = insertPlatformProductSchema.parse({
-          name: typeof args.name === "string" ? args.name : "",
-          description: typeof args.description === "string" ? args.description : "",
-          status: typeof args.status === "string" ? args.status : undefined,
-        });
-        const [created] = await db.insert(platformProducts).values({ ...parsed, platformId }).returning();
-        await db.update(platformsTable).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(writablePlat(eq(platformsTable.id, platformId)));
-        return { result: JSON.stringify({ ...created, environments: [] }, null, 2) };
+        return { result: "create_product_legacy is frozen. Create Products with create_product.", error: true };
       }
 
       // ── update_product_legacy ──
@@ -6751,7 +6740,7 @@ ${refs}` : ""),
         if (!productAccess) return { result: `Product ${productId} not found or not writable`, error: true };
         const prod = productAccess.product;
         const parsed = insertPlatformProductEnvironmentSchema.parse({ name: typeof args.name === "string" ? args.name : "" });
-        const [created] = await db.insert(platformProductEnvironments).values({ ...parsed, productId }).returning();
+        const [created] = await db.insert(platformProductEnvironments).values({ ...parsed, productId, platformId: prod.platformId }).returning();
         await db.update(platformProducts).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(platformProducts.id, productId));
         await db.update(platformsTable).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(writablePlat(eq(platformsTable.id, prod.platformId)));
         return { result: JSON.stringify(created, null, 2) };

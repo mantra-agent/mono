@@ -142,12 +142,15 @@ export const platformProductEnvironments = pgTable(
   {
     id: serial("id").primaryKey(),
     productId: integer("product_id").notNull().references(() => platformProducts.id, { onDelete: "cascade" }),
+    /** Denormalized Platform owner. Nullable during the dual-table freeze; backfilled from platform_products. */
+    platformId: integer("platform_id").references(() => platforms.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
   (table) => [
     index("idx_platform_product_environments_product").on(table.productId),
+    index("idx_platform_product_environments_platform").on(table.platformId),
     index("idx_platform_product_environments_updated").on(table.updatedAt),
   ],
 );
@@ -340,7 +343,7 @@ export const insertFeatureRequestSchema = createInsertSchema(featureRequests)
   .extend({ title: z.string().trim().min(1).max(300), description: z.string().trim().max(5000).optional().default(""), status: z.enum(["backlog", "planned", "completed"]).optional().default("backlog") });
 
 export const insertPlatformProductEnvironmentSchema = createInsertSchema(platformProductEnvironments)
-  .omit({ id: true, productId: true, createdAt: true, updatedAt: true })
+  .omit({ id: true, productId: true, platformId: true, createdAt: true, updatedAt: true })
   .extend({
     name: z.string().trim().min(1, "Environment name is required"),
   });
