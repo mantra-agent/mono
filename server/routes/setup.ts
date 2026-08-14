@@ -159,7 +159,7 @@ export async function registerSetupRoutes(app: Express) {
       twilio: !!(await getSecret("TWILIO_ACCOUNT_SID") && await getSecret("TWILIO_AUTH_TOKEN") && await getSecret("TWILIO_PHONE_NUMBER")),
       deepgram: !!await getSecret("DEEPGRAM_API_KEY"),
       cartesia: !!(await getSecret("CARTESIA_API_KEY") && await getSecret("CARTESIA_VOICE_ID")),
-      sentry: !!(getSecretSync("EXPO_PUBLIC_SENTRY_DSN") && getSecretSync("SENTRY_AUTH_TOKEN") && getSecretSync("SENTRY_ORG") && getSecretSync("SENTRY_PROJECT")),
+      sentry: !!((getSecretSync("SENTRY_DSN") || getSecretSync("EXPO_PUBLIC_SENTRY_DSN")) && getSecretSync("SENTRY_AUTH_TOKEN") && getSecretSync("SENTRY_ORG") && getSecretSync("SENTRY_PROJECT")),
       slack: await (async () => {
         try {
           const { getCurrentPrincipal } = await import("../principal-context");

@@ -137,6 +137,11 @@ const app = express();
 const httpServer = createServer(app);
 installGracefulShutdown();
 
+// Optional Sentry crash capture — fail-open coverage after secrets load + app creation.
+import { initServerSentry, sentryErrorHandler, sentryRequestHandler } from "./sentry-sdk";
+initServerSentry();
+app.use(sentryRequestHandler());
+
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
@@ -150,7 +155,8 @@ const frameAncestors = configuredFrameAncestors || "'self'";
 app.use((_req, res, next) => {
   res.setHeader("Content-Security-Policy", [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' blob: https://apis.google.com",
+    // browser.sentry-cdn.com hosts the official web loader used by client Sentry bootstrap.
+    "script-src 'self' 'unsafe-inline' blob: https://apis.google.com https://browser.sentry-cdn.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' data: https://fonts.gstatic.com",
     "img-src 'self' data: blob: https:",
@@ -487,6 +493,8 @@ app.use((req, res, next) => {
   log(`[startup] routes registered: ${routesMs}ms`, "boot");
   bootTracker.completePhase("routes_auth");
 
+  // Sentry error middleware first (no-op when unconfigured), then product error shape.
+  app.use(sentryErrorHandler());
   app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
     const errorRecord = err && typeof err === "object" ? err as Record<string, unknown> : undefined;
     const rawStatus = errorRecord?.status ?? errorRecord?.statusCode;

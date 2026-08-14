@@ -2,7 +2,6 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { requireAuth, requireAdmin } from "../auth";
 import { createLogger } from "../log";
-import { getSecretSync } from "../secrets-store";
 import {
   enqueueMobileStartupTelemetry,
   listRecentMobileStartupTelemetry,
@@ -135,21 +134,15 @@ export function registerMobileTelemetryRoutes(app: Express) {
       const limit = Math.max(1, Math.min(100, Number(req.query.limit || 25) || 25));
       const events = await listRecentMobileStartupTelemetry(limit);
 
-      const sentryDsn = getSecretSync("EXPO_PUBLIC_SENTRY_DSN") || getSecretSync("SENTRY_DSN");
-      const sentryAuthToken = getSecretSync("SENTRY_AUTH_TOKEN");
-      const sentryOrg = getSecretSync("SENTRY_ORG");
-      const sentryProject = getSecretSync("SENTRY_PROJECT");
-      const sentryConfigured = Boolean(sentryDsn && sentryAuthToken && sentryOrg && sentryProject);
+      const { getSentryFullConfigSync, sentryMissingSecrets, isSentryFullyConfigured } = await import(
+        "../integrations/sentry/config"
+      );
+      const sentryCfg = getSentryFullConfigSync();
       res.json({
         events,
         sentry: {
-          active: sentryConfigured,
-          missing: [
-            ...(sentryDsn ? [] : ["EXPO_PUBLIC_SENTRY_DSN"]),
-            ...(sentryAuthToken ? [] : ["SENTRY_AUTH_TOKEN"]),
-            ...(sentryOrg ? [] : ["SENTRY_ORG"]),
-            ...(sentryProject ? [] : ["SENTRY_PROJECT"]),
-          ],
+          active: isSentryFullyConfigured(sentryCfg),
+          missing: sentryMissingSecrets(sentryCfg),
         },
       });
     } catch (err: any) {

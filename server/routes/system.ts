@@ -35,6 +35,27 @@ function claimClientLogBudget(key: string, count: number): boolean {
 export async function registerSystemRoutes(app: Express, serverStartTime: Date) {
   // Diagnostic detail is intentionally process-local and defaults off on every boot.
 
+  // Public client-safe Sentry bootstrap (DSN only). Covered by /api/public/* policy.
+  app.get("/api/public/sentry-bootstrap", async (_req, res) => {
+    try {
+      const { resolveSentryDsnSync } = await import("../integrations/sentry/config");
+      const dsn = resolveSentryDsnSync();
+      res.setHeader("Cache-Control", "no-store");
+      res.json({
+        dsn,
+        environment:
+          process.env.RAILWAY_ENVIRONMENT_NAME?.trim() ||
+          process.env.NODE_ENV ||
+          "development",
+        release: process.env.RAILWAY_GIT_COMMIT_SHA?.trim() || null,
+      });
+    } catch (err) {
+      log.warn(`Sentry bootstrap failed: ${err instanceof Error ? err.message : String(err)}`);
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ dsn: null, environment: null, release: null });
+    }
+  });
+
   app.use(["/api/logs", "/api/server", "/api/boot-info", "/api/config", "/api/design-doc"], requireAuth, requirePermission("system:read"));
   app.post("/api/config", requirePermission("system:write"));
 
