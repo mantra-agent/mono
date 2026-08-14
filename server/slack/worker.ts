@@ -53,6 +53,8 @@ const needsReauth = new Set<string>();
 let stopped = false;
 let refreshTimer: NodeJS.Timeout | null = null;
 let processing = false;
+// refreshInstallations runs every 30s; emit the missing-identity warn once per boot.
+let missingIdentityWarned = false;
 
 export async function startSlackWorker(): Promise<void> {
   stopped = false;
@@ -73,7 +75,19 @@ export async function stopSlackWorker(): Promise<void> {
 async function refreshInstallations(): Promise<void> {
   if (stopped) return;
   const identity = await getRuntimeIdentity();
-  if (!identity.platformEnvironmentId) return;
+  if (!identity.platformEnvironmentId) {
+    if (!missingIdentityWarned) {
+      missingIdentityWarned = true;
+      log.warn("Slack worker idle: runtime identity has no Platform Environment", {
+        environmentName: identity.environmentName,
+        serviceName: identity.serviceName,
+        servingHost: identity.servingHost,
+        gitCommit: identity.gitCommit,
+      });
+    }
+    return;
+  }
+  missingIdentityWarned = false;
   const installations = await getRuntimeInstallations(identity.platformEnvironmentId);
   const enabled = new Set(installations.map((installation) => installation.id));
   for (const [id, socket] of sockets) {
