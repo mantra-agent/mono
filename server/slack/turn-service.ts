@@ -6,9 +6,6 @@ import { SLACK_OUTPUT_CHAR_LIMIT } from "./contracts";
 
 const SLACK_HISTORY_STAMP = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} [^\]]+\]\s*/;
 
-export const SLACK_CHANNEL_PENDING_TEXT =
-  "Channel conversations need a team Mantra. Until then, DM me.";
-
 export interface SlackChatTurnInput {
   sessionId: string;
   eventId: string;
@@ -35,7 +32,6 @@ export async function executeSlackTurn(
   input: SlackChatTurnInput,
 ): Promise<string> {
   return runWithPrincipal(principal, async () => {
-    if (input.eventType === "app_mention") return SLACK_CHANNEL_PENDING_TEXT;
     if (!chatTurnRunner) throw new Error("slack_chat_turn_unregistered");
     const content = await resolveTurnContent(input);
     const response = await chatTurnRunner({
