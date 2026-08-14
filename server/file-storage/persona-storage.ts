@@ -408,7 +408,6 @@ const SEED_PERSONAS = [
       "",
       "- Stress-test your own designs before presenting them. Where would this break first? Which assumption, if wrong, would invalidate the whole structure?",
       "- Red-team the elegance. Beautiful designs can be fragile. Pressure-test whether the elegance holds under real-world mess or only in the clean-room version.",
-      "- Name the failure mode you are most worried about. Do not hide it in an appendix.",
       "",
       "## Decision Heuristics",
       "",
@@ -448,7 +447,7 @@ const SEED_PERSONAS = [
       "",
       "## Output",
       "",
-      "The cut in one sentence, then the forces it resolves. Name the failure mode you are most worried about.",
+      "The cut in one sentence, then the forces it resolves.",
     ].join("\n"),
     expressionTags: ["gravitas", "curious", "pause"],
     cognitiveOverrides: { memoryGraphTokenBudget: 6000 },
@@ -1931,12 +1930,13 @@ class PersonaStorageClass {
     // in some paths and legacy restores can leave nextval behind MAX(id).
     await this.syncIdSequence();
     const removedLegacyRows = await this.reconcileLegacySeedRows();
+    const linkedOrphans = await this.linkOrphanUserCopiesToSeeds();
     this.invalidateCache();
     await this.updateSeedOverlays();
     await this.syncSelectablePersonaPayloads();
     await this.initializeRevisionLineage();
     log.log(
-      `seedDefaults: ensured ${SEED_PERSONAS.length} seed personas; removed ${removedLegacyRows} legacy scoped seed rows`,
+      `seedDefaults: ensured ${SEED_PERSONAS.length} seed personas; removed ${removedLegacyRows} legacy scoped seed rows; linked ${linkedOrphans} orphan user copies`,
     );
   }
 
@@ -2074,6 +2074,60 @@ class PersonaStorageClass {
       removed += legacyIds.length;
     }
     return removed;
+  }
+
+  /**
+   * Same-name user copies without templatePersonaId cannot Apply to Default.
+   * Attach each orphan to its global seed. Skip when another copy already
+   * owns that seed so we never mint a second lineage per owner.
+   */
+  private async linkOrphanUserCopiesToSeeds(): Promise<number> {
+    let linked = 0;
+    for (const seed of SEED_PERSONAS) {
+      if ((seed as { isSystem?: boolean }).isSystem) continue;
+      const canonical = await this.getGlobalSeedByName(seed.name);
+      if (!canonical) continue;
+      const orphans = await db
+        .select({
+          id: personas.id,
+          ownerUserId: personas.ownerUserId,
+          accountId: personas.accountId,
+        })
+        .from(personas)
+        .where(
+          and(
+            eq(personas.source, "user"),
+            sql`${personas.templatePersonaId} IS NULL`,
+            sql`LOWER(${personas.name}) = LOWER(${canonical.name})`,
+          ),
+        );
+      for (const orphan of orphans) {
+        if (orphan.ownerUserId == null || orphan.accountId == null) continue;
+        const [alreadyLinked] = await db
+          .select({ id: personas.id })
+          .from(personas)
+          .where(
+            and(
+              eq(personas.source, "user"),
+              eq(personas.templatePersonaId, canonical.id),
+              eq(personas.ownerUserId, orphan.ownerUserId),
+              eq(personas.accountId, orphan.accountId),
+            ),
+          )
+          .limit(1);
+        if (alreadyLinked) continue;
+        await db
+          .update(personas)
+          .set({ templatePersonaId: canonical.id, updatedAt: new Date() })
+          .where(eq(personas.id, orphan.id));
+        linked++;
+      }
+    }
+    if (linked > 0) {
+      this.invalidateCache();
+      log.log(`linkOrphanUserCopiesToSeeds: attached ${linked} user copies`);
+    }
+    return linked;
   }
 
   /** Resolve a user-facing global seed template by name (excludes system seeds). */
