@@ -200,6 +200,7 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "per-session",
     priority: 2,
     includedIn: ["full", "world"],
+    rootOwned: true,
   },
   {
     id: "world_model.people.partner.identity",
@@ -209,6 +210,8 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "rarely",
     priority: 1,
     includedIn: ["full", "world"],
+    rootOwned: true,
+    defaultIncluded: true,
   },
 
   {
@@ -247,6 +250,15 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     sourceType: "dynamic",
     freshnessPolicy: "per-session",
     priority: 3,
+    includedIn: ["full", "world"],
+  },
+  {
+    id: "world_model.people.partner.goals.this_quarter",
+    title: "This Quarter",
+    parentId: "world_model.people.partner.goals",
+    sourceType: "dynamic",
+    freshnessPolicy: "per-session",
+    priority: 4,
     includedIn: ["full", "world"],
   },
 

@@ -98,8 +98,6 @@ const SECTION_GROUPS: SectionGroup[] = [
     label: "Partner",
     sections: [
       { id: "world_model.people.partner.identity", label: "Identity", defaultIncluded: true },
-      { id: "world_model.people.partner.goals", label: "Goals" },
-      { id: "world_model.people.partner.goals", label: "Goals", defaultIncluded: true },
     ],
   },
   {
@@ -109,8 +107,12 @@ const SECTION_GROUPS: SectionGroup[] = [
     ],
   },
   {
-    label: "Work",
+    label: "Schedule",
     sections: [
+      { id: "world_model.people.partner.goals.today", label: "Today" },
+      { id: "world_model.people.partner.goals.this_week", label: "This Week" },
+      { id: "world_model.people.partner.goals.this_month", label: "This Month" },
+      { id: "world_model.people.partner.goals.this_quarter", label: "This Quarter" },
       { id: "world_model.active_work", label: "Active Work" },
       { id: "world_model.decisions", label: "Decisions" },
     ],

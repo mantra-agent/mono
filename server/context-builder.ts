@@ -290,6 +290,7 @@ const sectionResolvers: Record<string, SectionResolver> = {
   "world_model.people.partner.goals.today": resolveGoalsToday,
   "world_model.people.partner.goals.this_week": resolveGoalsThisWeek,
   "world_model.people.partner.goals.this_month": resolveGoalsThisMonth,
+  "world_model.people.partner.goals.this_quarter": resolveGoalsThisQuarter,
   "world_model.people.others": resolveOtherPeople,
   "world_model.active_work": async () => "",
   "world_model.active_work.tasks": resolveActiveTasks,
@@ -1060,6 +1061,18 @@ async function resolveGoalsThisMonth(): Promise<string> {
   }
 
   return parts.join("\n\n");
+}
+
+async function resolveGoalsThisQuarter(): Promise<string> {
+  try {
+    const goals = await goalsService.listByHorizon("this_quarter");
+    if (goals.length === 0) return "No quarterly goals set.";
+    const tree = renderGoalTree(goals, "this_quarter");
+    return tree ? `Quarterly goals:\n${tree}` : "No quarterly goals set.";
+  } catch (err) {
+    log.warn(`resolveGoalsThisQuarter failed: ${safeStringify(err, { maxBytes: 4 * 1024, label: "ctx.resolveGoalsThisQuarter.err" })}`);
+    return "No quarterly goals available.";
+  }
 }
 
 const HORIZON_LABELS: Record<string, string> = {
@@ -2364,6 +2377,9 @@ export class ContextBuilder {
       }
       if (sectionId === "world_model.people.partner.goals.this_month") {
         return "ctx_pri_month";
+      }
+      if (sectionId === "world_model.people.partner.goals.this_quarter") {
+        return "ctx_pri_quarter";
       }
 
       if (sectionId === "world_model.people.self.principles") {
