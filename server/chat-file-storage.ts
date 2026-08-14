@@ -1477,6 +1477,7 @@ export interface IChatFileStorage {
       ftueRecapMeetingSessionId?: string;
       personaId?: number | null;
       agenda?: SessionAgenda;
+      protectTitle?: boolean;
     },
   ): Promise<FileSession>;
   createSessionOnce(
@@ -1491,6 +1492,7 @@ export interface IChatFileStorage {
       ftueRecapMeetingSessionId?: string;
       personaId?: number | null;
       agenda?: SessionAgenda;
+      protectTitle?: boolean;
     },
   ): Promise<{ outcome: "created" | "existing"; session: FileSession }>;
   updatePageContext(id: string, pageContext: PageContext): Promise<void>;
@@ -2089,6 +2091,7 @@ export const chatFileStorage: IChatFileStorage = {
       ftueRecapMeetingSessionId?: string;
       personaId?: number | null;
       agenda?: SessionAgenda;
+      protectTitle?: boolean;
     },
   ) {
     const id = generateId();
@@ -2101,6 +2104,7 @@ export const chatFileStorage: IChatFileStorage = {
     const data: SessionData = {
       id,
       title,
+      ...(options?.protectTitle ? { manualTitle: true } : {}),
       status: "saved",
       sessionKey: sessionKey || null,
       modelTier: normalizeSessionModelTierOverride(modelTier),
@@ -2140,6 +2144,7 @@ export const chatFileStorage: IChatFileStorage = {
       ftueRecapMeetingSessionId?: string;
       personaId?: number | null;
       agenda?: SessionAgenda;
+      protectTitle?: boolean;
     },
   ) {
     const normalizedSessionKey = sessionKey.trim();

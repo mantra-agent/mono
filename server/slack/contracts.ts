@@ -1,15 +1,12 @@
 export const SLACK_INPUT_CHAR_LIMIT = 4_000;
-export const SLACK_HISTORY_MESSAGE_LIMIT = 12;
-export const SLACK_HISTORY_CHAR_LIMIT = 16_000;
 export const SLACK_OUTPUT_CHAR_LIMIT = 8_000;
-export const SLACK_OUTPUT_TOKEN_LIMIT = 2_000;
 export const SLACK_EVENT_DEADLINE_MS = 120_000;
 export const SLACK_ACK_TARGET_MS = 2_000;
 export const SLACK_QUEUE_LIMIT = 100;
 
-export const SLACK_PROGRESS_TEXT = "Working…";
+export const SLACK_PROGRESS_TEXT = "Thinking…";
 export const SLACK_FAILURE_TEXT = "I couldn't complete that request. Please try mentioning me again.";
-export const SLACK_SETUP_TEXT = "This Slack user is not mapped to a TIVE Mantra account yet. Ask your Mantra administrator to complete the pilot mapping.";
+export const SLACK_SETUP_TEXT = "This Slack user is not mapped to a Mantra account yet. Ask your Mantra administrator to complete the mapping.";
 
 export type SlackIngressType = "message.im" | "app_mention";
 export type SlackEventStatus = "received" | "ignored" | "queued" | "processing" | "completed" | "failed" | "delivery_failed" | "blocked";

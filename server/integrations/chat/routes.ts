@@ -3574,6 +3574,61 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
   }
 
+  const { registerSlackChatTurnRunner } = await import("../../slack/turn-service");
+  registerSlackChatTurnRunner(async ({ sessionId, eventId, content, signal }) => {
+    const session = await chatStorage.getSession(sessionId);
+    if (!session) throw new Error("slack_session_unavailable");
+    const sessionKey = session.sessionKey || `slack:${sessionId}`;
+    const lease = chatRunLifecycle.begin(sessionId, sessionKey);
+    const abortRun = () => { chatRunLifecycle.cancel(sessionId); };
+    if (signal.aborted) {
+      abortRun();
+      throw new Error("slack_turn_deadline");
+    }
+    signal.addEventListener("abort", abortRun, { once: true });
+    await chatStorage.updateSessionStatus(sessionId, "streaming").catch((err) =>
+      chatLog.warn(`slack status update to streaming failed sessionId=${sessionId}`, err),
+    );
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        let settled = false;
+        const finish = (status: "completed" | "failed", response?: string, error?: string) => {
+          if (settled) return;
+          settled = true;
+          if (status === "completed" && response?.trim()) resolve(response);
+          else reject(new Error(error || "slack_empty_response"));
+        };
+        processChatStream(
+          sessionKey,
+          sessionId,
+          content,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          async (response) => { finish("completed", response); },
+          undefined,
+          lease,
+          undefined,
+          async (result) => {
+            if (result.status === "completed") finish("completed", undefined, "slack_empty_response");
+            else finish("failed", undefined, result.error || "slack_turn_failed");
+          },
+          undefined,
+          `slack:${eventId}`,
+        ).catch((error) => {
+          if (error instanceof ChatRunInvalidatedError) {
+            finish("failed", undefined, `slack_turn_${error.reason}`);
+            return;
+          }
+          finish("failed", undefined, error instanceof Error ? error.message : "slack_turn_failed");
+        });
+      });
+    } finally {
+      signal.removeEventListener("abort", abortRun);
+    }
+  });
+
   app.post(
     "/api/sessions/:id/messages",
     async (req: Request, res: Response) => {
