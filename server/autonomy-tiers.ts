@@ -63,6 +63,19 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   tasks: { default: 1 },
   work: { default: 1, actions: { status: 0, list_projects: 0, get_project: 0, list_tasks: 0, read_file: 0 } },
   jobs: { default: 1, actions: { list: 0, get: 0 } },
+  // Company CRM and Exec pipeline are principal-scoped internal records.
+  // Unknown tools default to tier 2 and vanish from autonomous schemas,
+  // which previously aborted daytime scans on the first tools.get miss.
+  companies: { default: 1, actions: { list: 0, get: 0 } },
+  exec: {
+    default: 1,
+    actions: {
+      list_skills: 0, get_skill: 0, list_experience: 0, get_experience: 0,
+      list_opportunities: 0, get_opportunity: 0, list_opportunity_activities: 0,
+      list_passions: 0, get_passion: 0, list_metrics: 0, list_education: 0,
+      get_opportunity_artifacts: 0,
+    },
+  },
   decisions: { default: 1, actions: { list: 0, get: 0 } },
   scenarios: { default: 1, actions: {
     list_scenarios: 0, get_scenario: 0, get_move_tree: 0, get_move: 0, get_move_path: 0,

@@ -113,8 +113,10 @@ export function inputFailure(code: ToolFailureCode, detail?: string): ToolFailur
 
 /**
  * Authority / credential walls the caller cannot restore inside this run.
- * Do not use for missing optional integration readiness (`integration_not_configured`) —
- * that is `inputFailure` so the model can pivot without run-terminal quarantine.
+ * Do not use for missing optional integration readiness (`integration_not_configured`)
+ * or working-set / origin policy misses (`tools_authority_denied`,
+ * `tool_authority_denied`) — those are `inputFailure` so the model can pivot
+ * without run-terminal quarantine.
  */
 export function permissionFailure(code: ToolFailureCode, detail?: string): ToolFailure {
   return makeFailure("permission", code, false, detail ? { detail } : undefined);
@@ -140,12 +142,14 @@ export function internalFailure(code: ToolFailureCode, detail?: string): ToolFai
 /**
  * Categorical authority denials decided before handler execution
  * (dispatch-time authorization / Build Mod gates). Always non-retryable.
+ * These are origin/working-set misses the model can work around with a
+ * different tool or action — not credential walls — so they stay input.
  */
 export function authorityDenialFailure(
   code: "tool_authority_denied" | "build_mod_inactive",
   detail?: string,
 ): ToolFailure {
-  return makeFailure("permission", code, false, detail ? { detail } : undefined);
+  return makeFailure("input", code, false, detail ? { detail } : undefined);
 }
 
 export function scratchEditFailure(

@@ -250,8 +250,10 @@ export class ToolOperationRecovery {
    *   and remember the fingerprint so an identical retry quarantines.
    *
    * Quarantine is operation-local for input failures (including shell_policy_denied
-   * exact-repeats): AgentExecutor must refuse the repeat without stopping the run.
-   * Only permission quarantine is run-terminal — authority cannot be restored in-run.
+   * exact-repeats and working-set / origin-policy misses such as
+   * tools_authority_denied): AgentExecutor must refuse the repeat without
+   * stopping the run. Only permission quarantine is run-terminal —
+   * credential and named-permission walls cannot be restored in-run.
    */
   private classifyDeterministicFailure(
     toolName: string,
