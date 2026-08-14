@@ -94,8 +94,10 @@ import { useUiInteraction, useUiInteractionTarget } from "@/hooks/use-ui-interac
 import {
   getUiInteractionTargetHref,
   getUiInteractionTargetPermission,
+  getUiInteractionTargetDescription,
   type UiInteractionTarget,
 } from "@shared/ui-interaction";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ResolvedProductComposition } from "@shared/models/product-composition";
 
 interface NavItem {
@@ -105,6 +107,7 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   permission?: string;
   titleTone?: "default" | "muted";
+  description?: string;
 }
 
 function navItem(
@@ -119,6 +122,7 @@ function navItem(
     url: getUiInteractionTargetHref(target),
     icon,
     permission: getUiInteractionTargetPermission(target),
+    description: getUiInteractionTargetDescription(target),
     ...(titleTone ? { titleTone } : {}),
   };
 }
@@ -226,6 +230,7 @@ function mergeResolvedNavigation(
       url,
       icon,
       permission: getUiInteractionTargetPermission(target),
+      description: getUiInteractionTargetDescription(target),
     });
   }
 
@@ -643,7 +648,7 @@ interface SemanticNavButtonProps {
 
 function SemanticNavButton({ item, onNavigate, className, children }: SemanticNavButtonProps) {
   const targetRef = useUiInteractionTarget(item.target);
-  return (
+  const button = (
     <button
       ref={targetRef}
       type="button"
@@ -653,6 +658,15 @@ function SemanticNavButton({ item, onNavigate, className, children }: SemanticNa
     >
       {children}
     </button>
+  );
+
+  if (!item.description) return button;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent side="right">{item.description}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -754,6 +768,7 @@ export function NavPage() {
   }, [filteredSections, guidedSectionLabel, guidedTarget, hasPermission, resolvedNavSections]);
 
   return (
+    <TooltipProvider delayDuration={300} disableHoverableContent>
     <div
       className="flex-1 overflow-y-auto bg-background scrollbar-thin"
       data-testid="nav-page"
@@ -876,6 +891,7 @@ export function NavPage() {
 
 
     </div>
+    </TooltipProvider>
   );
 }
 
