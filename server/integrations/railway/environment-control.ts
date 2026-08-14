@@ -143,6 +143,14 @@ export async function resolveEnvironmentDeploymentId(
   return deployments[0]?.id ?? null;
 }
 
+/** Newest Railway deploy still in BUILDING/DEPLOYING/WAITING/QUEUED/INITIALIZING, if any. */
+export async function findInFlightEnvironmentDeployment(
+  control: RailwayEnvironmentControl,
+): Promise<RailwayDeployment | null> {
+  const deployments = await fetchEnvironmentDeployments(control, 5);
+  return deployments.find((deployment) => IN_FLIGHT_STATUSES.has((deployment.status || "").toUpperCase())) ?? null;
+}
+
 /**
  * Resolve a Railway deployment that can accept deploymentRestart.
  * Newest deploy is often BUILDING during Stage autodeploy storms; restart those fails with

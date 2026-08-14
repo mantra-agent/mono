@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { createLogger } from "./log";
 import { getSetting, setSetting } from "./system-settings";
 import { resolveGitSource } from "./git-source-resolver";
-import { getBranchHead, type RepoRef } from "./integrations/github-pr";
+import { compareRefs, getBranchHead, type RepoRef } from "./integrations/github-pr";
 
 const log = createLogger("StageSync");
 
@@ -56,6 +56,58 @@ function boundedSha(value: string): string {
   const sha = value.trim().toLowerCase();
   if (!/^[a-f0-9]{7,64}$/.test(sha)) throw new Error("Stage sync commit identity is invalid");
   return sha;
+}
+
+function optionalSha(value: string | null | undefined): string | null {
+  const sha = (value || "").trim().toLowerCase();
+  return /^[a-f0-9]{7,64}$/.test(sha) ? sha : null;
+}
+
+/** Prefix-safe SHA equality — Railway image SHAs and markers may be abbreviated. */
+function shaEquals(left: string, right: string): boolean {
+  const a = left.trim().toLowerCase();
+  const b = right.trim().toLowerCase();
+  const n = Math.min(a.length, b.length);
+  return n >= 7 && a.slice(0, n) === b.slice(0, n);
+}
+
+/**
+ * Railway image SHA is a monotonic floor. Warm apply may land a SHA at or
+ * ahead of the image; it must never pin the workspace behind it. Last night's
+ * freeze: localActive == dbTarget == dc20522 while imageSha == 8de87c0, so
+ * already_active no-op'd and every cold rebuild remounted the stale volume.
+ */
+async function raiseTargetToImageFloor(input: {
+  owner: string;
+  repo: string;
+  targetRaw: string;
+  imageSha: string;
+}): Promise<{ target: string; raised: boolean; compare: string }> {
+  const image = optionalSha(input.imageSha);
+  const target = optionalSha(input.targetRaw);
+  if (!image) {
+    if (!target) return { target: "", raised: false, compare: "no_image_no_target" };
+    return { target, raised: false, compare: "no_image" };
+  }
+  if (!target) return { target: image, raised: true, compare: "no_target" };
+  if (shaEquals(target, image)) return { target, raised: false, compare: "identical" };
+  try {
+    const cmp = await compareRefs({ owner: input.owner, repo: input.repo }, target, image);
+    // compare(target...image): ahead = image descended from target → raise.
+    // behind = target already ahead of image → keep the warm SHA.
+    // diverged = do not pin the volume behind the running image.
+    if (cmp.status === "ahead" || cmp.status === "diverged") {
+      return { target: image, raised: true, compare: cmp.status };
+    }
+    return { target, raised: false, compare: cmp.status };
+  } catch (error) {
+    // Ancestry unknown and the two SHAs differ: never pin behind the image.
+    log.warn(
+      `stage_sync_compare_failed target=${target.slice(0, 7)} image=${image.slice(0, 7)} `
+      + `error=${error instanceof Error ? error.message : String(error)}`,
+    );
+    return { target: image, raised: true, compare: "compare_failed" };
+  }
 }
 
 async function hashFile(filePath: string): Promise<string> {
@@ -208,7 +260,9 @@ async function isWarmStageEnabled(environmentId: number): Promise<{ enabled: boo
  * (and best-effort STAGE_SYNC_TARGET_SHA), then restarts Stage. This downloads that
  * commit into /app (lockfile-safe) and requests a planned wrapper restart so tsx/Vite
  * load the new tree. Target identity is DB-first because Railway restart often keeps
- * a stale env snapshot from the prior SUCCESS image.
+ * a stale env snapshot from the prior SUCCESS image. The Railway image SHA is a
+ * monotonic floor so a cold autodeploy of newer code cannot be pinned behind a
+ * stale volume marker / durable target.
  */
 export async function maybeApplyPendingStageSync(input: {
   environmentId: number | null;
@@ -247,16 +301,23 @@ export async function maybeApplyPendingStageSync(input: {
   const localActive = await readLocalActiveSyncSha();
   const imageSha = (process.env.RAILWAY_GIT_COMMIT_SHA || "").trim().toLowerCase();
   const seedActive = localActive
-    || (existing?.activeCommitSha && /^[a-f0-9]{7,64}$/i.test(existing.activeCommitSha) ? existing.activeCommitSha.toLowerCase() : null)
-    || (/^[a-f0-9]{7,64}$/i.test(imageSha) ? imageSha : null);
+    || optionalSha(existing?.activeCommitSha)
+    || optionalSha(imageSha);
+  const floor = await raiseTargetToImageFloor({
+    owner: input.owner,
+    repo: input.repo,
+    targetRaw,
+    imageSha,
+  });
   log.info(
     `stage_sync_targets dbTarget=${existing?.targetCommitSha ? existing.targetCommitSha.slice(0, 7) : "none"} `
     + `dbStatus=${existing?.status ?? "none"} dbActive=${existing?.activeCommitSha ? existing.activeCommitSha.slice(0, 7) : "none"} `
     + `envTarget=${envTarget ? envTarget.slice(0, 7) : "none"} localActive=${localActive ? localActive.slice(0, 7) : "none"} `
-    + `imageSha=${imageSha ? imageSha.slice(0, 7) : "none"} chosen=${targetRaw ? targetRaw.slice(0, 7) : "none"}`,
+    + `imageSha=${imageSha ? imageSha.slice(0, 7) : "none"} chosen=${floor.target ? floor.target.slice(0, 7) : "none"} `
+    + `floorRaised=${floor.raised} floorCompare=${floor.compare}`,
   );
 
-  if (!targetRaw) {
+  if (!floor.target) {
     if (seedActive) {
       const status = await writeStageSyncStatus(input.environmentId, {
         activeCommitSha: seedActive,
@@ -270,8 +331,14 @@ export async function maybeApplyPendingStageSync(input: {
     return { applied: false, restartRequested: false, status: existing };
   }
 
-  const targetSha = boundedSha(targetRaw);
-  if (localActive && localActive === targetSha) {
+  const targetSha = boundedSha(floor.target);
+  if (floor.raised) {
+    log.info(
+      `stage_sync_image_floor raised=${targetSha.slice(0, 7)} prior=${targetRaw ? targetRaw.slice(0, 7) : "none"} `
+      + `compare=${floor.compare} environmentId=${input.environmentId}`,
+    );
+  }
+  if (localActive && shaEquals(localActive, targetSha)) {
     const status = await writeStageSyncStatus(input.environmentId, {
       activeCommitSha: localActive,
       targetCommitSha: targetSha,
@@ -406,6 +473,7 @@ export async function queueStageSyncLatest(input: {
     resolveRailwayEnvironmentControl,
     setStageSyncTargetVariable,
     restartEnvironment,
+    findInFlightEnvironmentDeployment,
   } = await import("./integrations/railway/environment-control");
 
   const control = await resolveRailwayEnvironmentControl(source.environmentId);
@@ -415,6 +483,20 @@ export async function queueStageSyncLatest(input: {
     reason: `Queued ${commitSha.slice(0, 7)} from ${input.reason}`,
   });
   await setStageSyncTargetVariable(control, commitSha);
+  const inFlight = await findInFlightEnvironmentDeployment(control);
+  if (inFlight) {
+    log.info(
+      `stage_sync_queued sha=${commitSha.slice(0, 7)} environmentId=${source.environmentId} `
+      + `reason=${input.reason} deferred=in_flight_deploy deploymentId=${inFlight.id}`,
+    );
+    return {
+      triggered: true,
+      reason: "queued_awaiting_deploy",
+      environmentId: source.environmentId,
+      targetCommitSha: commitSha,
+      deploymentId: inFlight.id,
+    };
+  }
   const restart = await restartEnvironment(control);
   log.info(`stage_sync_queued sha=${commitSha.slice(0, 7)} environmentId=${source.environmentId} reason=${input.reason}`);
   return {
