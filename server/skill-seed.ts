@@ -75,6 +75,49 @@ export async function seedSkillPersonaRecommendations(): Promise<void> {
     );
   const templateIds = new Map(templates.map((row) => [row.name, row.id]));
 
+  // Creative → Visionary recast: draft was never finished-encounter work. Move
+  // the global draft recommendation off the renamed Visionary row onto Default
+  // when it still points at that legacy Creative/Visionary template.
+  const [defaultTemplate] = await db
+    .select({ id: personas.id })
+    .from(personas)
+    .where(
+      and(
+        eq(personas.scope, "global"),
+        eq(personas.source, "seed"),
+        eq(personas.isSystem, false),
+        sql`LOWER(${personas.name}) = 'default'`,
+      ),
+    )
+    .limit(1);
+  const legacyVisionaryTemplates = await db
+    .select({ id: personas.id })
+    .from(personas)
+    .where(
+      and(
+        eq(personas.scope, "global"),
+        eq(personas.source, "seed"),
+        eq(personas.isSystem, false),
+        sql`LOWER(${personas.name}) IN ('visionary', 'creative')`,
+      ),
+    );
+  if (defaultTemplate && legacyVisionaryTemplates.length > 0) {
+    const legacyIds = legacyVisionaryTemplates.map((row) => row.id);
+    await db
+      .update(skills)
+      .set({
+        recommendedPersonaTemplateId: defaultTemplate.id,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(skills.scope, "global"),
+          eq(skills.name, "draft"),
+          inArray(skills.recommendedPersonaTemplateId, legacyIds),
+        ),
+      );
+  }
+
   let applied = 0;
   for (const [skillName, personaName] of recommendations) {
     const templateId = templateIds.get(personaName);
