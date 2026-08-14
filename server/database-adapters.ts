@@ -18,6 +18,17 @@ export interface ManagedDatabasePool {
 
 const managedPools = new Map<DatabaseWorkload, ManagedDatabasePool>();
 
+// Set the moment any managed pool begins closing (graceful shutdown). Best-effort
+// telemetry writes read this and no-op before touching a pool, so a queued serial
+// drain cannot fault against an ended pool and self-amplify into a log-rate flood
+// that starves boot/shutdown evidence. Fail loudly, degrade gracefully.
+let databasePoolsClosing = false;
+
+/** True once graceful shutdown has begun ending managed database pools. */
+export function areDatabasePoolsClosing(): boolean {
+  return databasePoolsClosing;
+}
+
 export function createManagedDatabasePool(
   workload: DatabasePoolWorkload,
   config: PoolConfig,
@@ -33,6 +44,7 @@ export function createManagedDatabasePool(
     workload,
     pool,
     async close() {
+      databasePoolsClosing = true;
       await pool.end();
     },
   };
@@ -58,6 +70,7 @@ export function createDedicatedDatabaseClient(
 }
 
 export async function closeManagedDatabasePools(): Promise<void> {
+  databasePoolsClosing = true;
   const entries = [...managedPools.values()];
   managedPools.clear();
   const results = await Promise.allSettled(entries.map((adapter) => adapter.close()));
