@@ -75,6 +75,35 @@ const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
 const ZOOM_STEP = 0.15;
 
+type CodedError = Error & { code: string };
+
+function httpFailureCode(prefix: "OPEN" | "CONTENT", status: number): string {
+  if (status === 400) return `${prefix}_HTTP_400`;
+  if (status === 403) return `${prefix}_HTTP_403`;
+  if (status === 404) return `${prefix}_HTTP_404`;
+  if (status === 415) return `${prefix}_HTTP_415`;
+  if (status === 502) return `${prefix}_HTTP_502`;
+  if (status >= 500) return `${prefix}_HTTP_500`;
+  return `${prefix}_HTTP`;
+}
+
+function codedError(message: string, code: string, cause?: unknown): CodedError {
+  const error = (cause === undefined ? new Error(message) : new Error(message, { cause })) as CodedError;
+  error.code = code;
+  return error;
+}
+
+function asCodedError(err: unknown, fallbackMessage: string, fallbackCode: string): CodedError {
+  if (err instanceof Error) {
+    const existing = (err as Error & { code?: string }).code;
+    if (typeof existing === "string" && /^[A-Z][A-Z0-9_]{1,47}$/.test(existing)) {
+      return err as CodedError;
+    }
+    return codedError(err.message || fallbackMessage, fallbackCode, err);
+  }
+  return codedError(fallbackMessage, fallbackCode, err);
+}
+
 function openBody(source: PdfOpenSource): Record<string, string> {
   switch (source.kind) {
     case "document":
@@ -230,8 +259,9 @@ export function PdfViewer({ source, className, onTitle, sourceContext }: PdfView
         });
         if (!openRes.ok) {
           const payload = await openRes.json().catch(() => ({}));
-          throw new Error(
+          throw codedError(
             typeof payload?.error === "string" ? payload.error : `Open failed (${openRes.status})`,
+            httpFailureCode("OPEN", openRes.status),
           );
         }
         const opened = (await openRes.json()) as OpenResponse;
@@ -247,22 +277,41 @@ export function PdfViewer({ source, className, onTitle, sourceContext }: PdfView
         });
         if (!contentRes.ok) {
           const payload = await contentRes.json().catch(() => ({}));
-          throw new Error(
+          throw codedError(
             typeof payload?.error === "string"
               ? payload.error
               : `Content failed (${contentRes.status})`,
+            httpFailureCode("CONTENT", contentRes.status),
           );
         }
         const bytes = new Uint8Array(await contentRes.arrayBuffer());
         if (cancelled) return;
 
-        const pdfjs = await loadPdfJs();
-        pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc();
-        pdfjsRef.current = pdfjs;
+        let pdfjs;
+        try {
+          pdfjs = await loadPdfJs();
+          pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc();
+          pdfjsRef.current = pdfjs;
+        } catch (err) {
+          throw codedError(
+            err instanceof Error ? err.message : "Failed to load PDF renderer",
+            "PDFJS_LOAD",
+            err,
+          );
+        }
 
         docRef.current?.destroy();
-        const loadingTask = pdfjs.getDocument({ data: bytes });
-        const doc = await loadingTask.promise;
+        let doc;
+        try {
+          const loadingTask = pdfjs.getDocument({ data: bytes });
+          doc = await loadingTask.promise;
+        } catch (err) {
+          throw codedError(
+            err instanceof Error ? err.message : "Failed to parse PDF",
+            "PDFJS_PARSE",
+            err,
+          );
+        }
         if (cancelled) {
           doc.destroy();
           return;
@@ -270,12 +319,20 @@ export function PdfViewer({ source, className, onTitle, sourceContext }: PdfView
         docRef.current = doc;
         setPageCount(doc.numPages);
         setStatus("ready");
-        await paintPage(1, "fit-width", 1);
+        try {
+          await paintPage(1, "fit-width", 1);
+        } catch (err) {
+          throw codedError(
+            err instanceof Error ? err.message : "Failed to render page",
+            "PAINT",
+            err,
+          );
+        }
       } catch (err) {
         if (cancelled || controller.signal.aborted) return;
-        const message = err instanceof Error ? err.message : "Failed to open PDF";
-        log.error("PDF viewer open failed", { message, sourceKey });
-        setError(message);
+        const failure = asCodedError(err, "Failed to open PDF", "OPEN_UNKNOWN");
+        log.error("PDF viewer open failed", failure);
+        setError(failure.message);
         setStatus("error");
       }
     }
@@ -295,9 +352,9 @@ export function PdfViewer({ source, className, onTitle, sourceContext }: PdfView
   useEffect(() => {
     if (status !== "ready") return;
     void paintPage(pageNumber, zoomMode, zoom).catch((err) => {
-      const message = err instanceof Error ? err.message : "Failed to render page";
-      log.error("PDF page render failed", { message, pageNumber });
-      setError(message);
+      const failure = asCodedError(err, "Failed to render page", "PAINT");
+      log.error("PDF page render failed", failure);
+      setError(failure.message);
       setStatus("error");
     });
   }, [pageNumber, zoomMode, status]); // eslint-disable-line react-hooks/exhaustive-deps -- zoom handled via mode/buttons
