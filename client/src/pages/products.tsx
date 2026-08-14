@@ -89,7 +89,7 @@ function ProductDescriptionEditor({
         onBlur={save}
         placeholder="Add description"
         className={cn(
-          "min-h-24 w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
+          "h-20 w-full resize-none overflow-y-auto border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
           PROFILE_DESCRIPTION_TEXT_CLASS,
         )}
         data-testid={`textarea-product-description-${product.id}`}
