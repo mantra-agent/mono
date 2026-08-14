@@ -1,3 +1,10 @@
+<!-- 2026-08-14 Account lifecycle discriminant:
+- Assets/data: A01/A06/A07 Account workspace, User login, Agent Instance status, and `session` rows (S2 customer identity + S1 operational access).
+- Flow/threat: authenticated Accounts admin -> Suspend/Archive/Delete. A second writable Agent status, a soft User leftover, or foundation replay after wipe would resurrect a deleted customer or leave a paused mind still answering (STRIDE elevation/tampering/repudiation; IAM-01/DATA-01).
+- Deterministic controls/owner: `accounts.status` is the only writable product discriminant (`active|suspended|archived`). `setAccountLifecycleStatus` / `deleteAccountPermanently` in `server/principal.ts` are the sole mutation paths (`users:write`). Suspend/archive revoke sessions and derive non-quarantined Instances (`paused`/`archived`). Delete requires `DELETE {owner email}'s account`, then wipes the Account and — when that User has no remaining membership — the User login so foundation cannot mint a replacement. Login/`requireAuth`/identity-scoped jobs fail closed unless the personal Account is `active`. Quarantine remains a system Instance flag. Owner: Core Identity. Severity: high confidentiality and integrity. SLA: immediate.
+- Residual/rollback: residual risk is incomplete cascade on tables that only SET NULL to `accounts.id`. Revert schema status, mutation routes, admin trees, and this finding together.
+-->
+
 <!-- 2026-08-13 Identity tree last-login and Instance metrics:
 - Assets/data: A01/A06/A07 admin identity graph, `session` login stamps, `memory_vnext_claims`, `timers`, and `api_calls` input tokens (S1 operational identity/usage metadata).
 - Flow/threat: authenticated Users/Agents admin trees -> last login plus per-Instance timer/claim/token counts. An unscoped or Account-only count would leak another Instance's mind size or spend, and last-active chat work is not a login (STRIDE information disclosure; DATA-01/IAM-01).

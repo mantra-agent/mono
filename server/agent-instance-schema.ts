@@ -60,12 +60,9 @@ export async function ensureAgentInstanceSchema(pool: ConnectionPool): Promise<v
           ALTER TABLE agent_instances ADD CONSTRAINT agent_instances_created_by_user_id_fkey
             FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL;
         END IF;
-        IF NOT EXISTS (
-          SELECT 1 FROM pg_constraint WHERE conname = 'agent_instances_status_check'
-        ) THEN
-          ALTER TABLE agent_instances ADD CONSTRAINT agent_instances_status_check
-            CHECK (status IN ('active', 'quarantined'));
-        END IF;
+        ALTER TABLE agent_instances DROP CONSTRAINT IF EXISTS agent_instances_status_check;
+        ALTER TABLE agent_instances ADD CONSTRAINT agent_instances_status_check
+          CHECK (status IN ('active', 'paused', 'archived', 'quarantined'));
       END $migration$
     `);
 
@@ -164,6 +161,13 @@ export async function ensureAgentInstanceSchema(pool: ConnectionPool): Promise<v
     await client.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS entitlement`);
     await client.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS model_access`);
     await client.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS stripe_customer_id`);
+    await client.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`);
+    await client.query(`ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_status_check`);
+    await client.query(`
+      ALTER TABLE accounts ADD CONSTRAINT accounts_status_check
+        CHECK (status IN ('active', 'suspended', 'archived'))
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status)`);
 
     await client.query(`
       COMMENT ON TABLE agent_instances IS
