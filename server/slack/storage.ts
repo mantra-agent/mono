@@ -4,7 +4,7 @@ import { db, runWithDatabaseTransaction } from "../db";
 import { chatFileStorage } from "../chat-file-storage";
 import type { Principal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
-import { deriveUserFirstName } from "@shared/identity-name";
+import { resolveCurrentProfileIdentity } from "../profile-identity";
 import { users } from "@shared/schema";
 import type { AdmittedSlackEvent, SlackEventStatus } from "./contracts";
 
@@ -306,7 +306,7 @@ export async function resolveSessionBinding(principal: Principal, installation: 
   return runWithPrincipal(sessionPrincipal, async () => {
     const title = isMention
       ? `Slack Channel: ${formatSlackChannelTitle(installation.allowedChannelName, event.channelId)}`
-      : `Slack DM: ${await resolveSlackSpeakerName(principal)}`;
+      : `Slack DM: ${await resolveSlackSpeakerName()}`;
     const session = await chatFileStorage.createSessionOnce(title, externalKey, undefined, {
       sessionType: "user",
       protectTitle: true,
@@ -336,7 +336,7 @@ export async function acceptCanonicalTurn(principal: Principal, event: ClaimedSl
     const speaker = event.eventType === "app_mention"
       ? {
           key: `slack:${event.slackUserId}`,
-          label: await resolveSlackSpeakerName(principal),
+          label: await resolveSlackSpeakerName(),
         }
       : undefined;
     const accepted = await chatFileStorage.createUserMessageOnce(
@@ -358,24 +358,9 @@ export async function acceptCanonicalTurn(principal: Principal, event: ClaimedSl
   });
 }
 
-async function resolveSlackSpeakerName(principal: Principal): Promise<string> {
-  const { peopleStorage } = await import("../people-storage");
-  if (principal.userId) {
-    const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, principal.userId)).limit(1);
-    if (user?.email) {
-      try {
-        const person = await peopleStorage.getPersonByEmail(user.email);
-        const name = person?.name?.trim();
-        if (name && !name.includes("@")) return deriveUserFirstName({ preferredName: name }, "User");
-      } catch {
-        // Invalid email shape — fall through to the account self Person.
-      }
-    }
-  }
-  const self = (await peopleStorage.listPeople()).find((entry) => entry.cabinetLevel === "user");
-  const selfName = self?.name?.trim();
-  if (selfName && !selfName.includes("@")) return deriveUserFirstName({ preferredName: selfName }, "User");
-  return "User";
+async function resolveSlackSpeakerName(): Promise<string> {
+  const identity = await resolveCurrentProfileIdentity();
+  return identity.userName || identity.userFirstName;
 }
 
 export async function settleEvent(eventId: string, status: SlackEventStatus, input: { response?: string; deliveryState?: string; deliveryTs?: string; failureCode?: string } = {}): Promise<void> {
