@@ -565,6 +565,21 @@ async function ensurePersonalAgentInstance(
   return instanceId;
 }
 
+export async function renameAccount(
+  accountId: string,
+  name: string,
+): Promise<{ accountId: string; name: string }> {
+  const next = name.replace(/\s+/g, " ").trim().slice(0, 120);
+  if (!next) throw new Error("Account name is required");
+  const [updated] = await db
+    .update(accounts)
+    .set({ name: next, updatedAt: sql`CURRENT_TIMESTAMP` })
+    .where(eq(accounts.id, accountId))
+    .returning({ id: accounts.id, name: accounts.name });
+  if (!updated) throw new Error("Account not found");
+  return { accountId: updated.id, name: updated.name };
+}
+
 export async function setAccountLifecycleStatus(
   accountId: string,
   status: AccountStatus,

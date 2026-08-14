@@ -41,6 +41,7 @@ import {
   getPrincipal,
   recordPrivilegedAccess,
   requirePrincipal,
+  renameAccount,
   setAccountLifecycleStatus,
   setServiceSessionPrincipal,
   type Principal,
@@ -78,6 +79,10 @@ const deleteUserSchema = z.object({
 
 const accountStatusSchema = z.object({
   status: z.enum(ACCOUNT_STATUSES),
+});
+
+const accountNameSchema = z.object({
+  name: z.string().trim().min(1).max(120),
 });
 
 const deleteAccountSchema = z.object({
@@ -1519,7 +1524,7 @@ export function setupAuth(app: Express) {
     requirePermission("users:read"),
     async (_req: Request, res: Response) => {
       try {
-        const [accountRows, membershipRows, instanceRows, instanceMembershipRows, userRows, instanceMetrics] = await Promise.all([
+        const [accountRows, membershipRows, instanceRows, instanceMembershipRows, userRows, instanceMetrics, lastActiveByUser] = await Promise.all([
           db.select({
             id: accounts.id,
             name: accounts.name,
@@ -1560,10 +1565,29 @@ export function setupAuth(app: Express) {
             .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
             .orderBy(asc(users.email), asc(users.id)),
           getIdentityInstanceMetrics(),
+          getAdminUserActivity(),
         ]);
 
+        const memberIdsByAccount = new Map<string, string[]>();
+        for (const membership of membershipRows) {
+          const list = memberIdsByAccount.get(membership.accountId) ?? [];
+          list.push(membership.userId);
+          memberIdsByAccount.set(membership.accountId, list);
+        }
+
         res.json({
-          accounts: accountRows,
+          accounts: accountRows.map((account) => {
+            const memberIds = memberIdsByAccount.get(account.id) ?? [];
+            if (account.ownerUserId && !memberIds.includes(account.ownerUserId)) {
+              memberIds.push(account.ownerUserId);
+            }
+            let lastActiveAt: string | null = null;
+            for (const userId of memberIds) {
+              const at = lastActiveByUser.get(userId);
+              if (at && (!lastActiveAt || at > lastActiveAt)) lastActiveAt = at;
+            }
+            return { ...account, lastActiveAt };
+          }),
           memberships: membershipRows,
           instances: instanceRows.map((instance) => {
             const metrics = instanceMetrics.get(instance.id);
@@ -1591,6 +1615,36 @@ export function setupAuth(app: Express) {
           stack: err instanceof Error ? err.stack : undefined,
         });
         res.status(500).json({ error: "Failed to fetch identity graph" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/auth/accounts/:id/name",
+    requireAuth,
+    requirePermission("users:write"),
+    async (req: Request, res: Response) => {
+      try {
+        const accountId = req.params.id as string;
+        const parsed = accountNameSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ error: "Name must be 1–120 characters" });
+        }
+        const result = await renameAccount(accountId, parsed.data.name);
+        await recordPrivilegedAccess({
+          principal: getPrincipal(req)!,
+          action: "account_rename",
+          reason: "admin account name",
+          metadata: { accountId, name: result.name },
+        });
+        res.json(result);
+      } catch (error) {
+        log.error("Failed to rename account", {
+          accountId: req.params.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        const message = error instanceof Error ? error.message : "Failed to rename account";
+        res.status(message === "Account not found" ? 404 : 500).json({ error: message });
       }
     },
   );

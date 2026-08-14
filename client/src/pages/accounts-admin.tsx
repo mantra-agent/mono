@@ -1,12 +1,14 @@
 import { useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Building2, ChevronRight, Loader2, MoreHorizontal } from "lucide-react";
+import { Building2, ChevronRight, Clock, Loader2, MoreHorizontal } from "lucide-react";
+import { EditableSessionTitle } from "@/components/editable-session-title";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import {
   HIERARCHY_SECTION_HEADER_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -15,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { usePageLoadActivity } from "@/hooks/use-page-activity";
+import { formatDateTime as formatDateTimeInTimezone, useTimezone } from "@/hooks/use-timezone";
 import { useToast } from "@/hooks/use-toast";
 import {
   accountDeleteConfirmation,
@@ -46,12 +49,22 @@ function ownerEmail(account: IdentityGraphAccount, users: IdentityGraphUser[]): 
     ?? "unknown";
 }
 
+function accountChip(account: Pick<IdentityGraphAccount, "id" | "name">): string {
+  return createReferenceRef({
+    type: "account",
+    id: account.id,
+    metadata: { label: account.name },
+  }).canonical;
+}
+
 function AccountRow({
   account,
   users,
   instances,
   defaultOpen,
   canWrite,
+  timezone,
+  onRename,
   onStatus,
   onDelete,
 }: {
@@ -60,6 +73,8 @@ function AccountRow({
   instances: IdentityGraphInstance[];
   defaultOpen: boolean;
   canWrite: boolean;
+  timezone: string;
+  onRename: (account: IdentityGraphAccount, name: string) => void;
   onStatus: (account: IdentityGraphAccount, status: AccountLifecycleStatus) => void;
   onDelete: (account: IdentityGraphAccount, email: string) => void;
 }) {
@@ -78,12 +93,20 @@ function AccountRow({
     }));
     return [...userRefs, ...instanceRefs];
   }, [users, instances]);
+  const lastActive = account.lastActiveAt
+    ? formatDateTimeInTimezone(account.lastActiveAt, timezone, { year: "numeric" })
+    : "No activity yet";
 
   return (
     <div className="min-w-0" data-testid={`account-row-${account.id}`}>
       <div className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent/70">
         <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-foreground">{account.name}</span>
+        <EditableSessionTitle
+          title={account.name}
+          canEdit={canWrite}
+          onCommit={(name) => onRename(account, name)}
+          className="min-w-0 flex-1 truncate font-normal text-foreground"
+        />
         <span className="ml-1 flex w-5 shrink-0 items-center justify-center">
           <button
             type="button"
@@ -128,24 +151,31 @@ function AccountRow({
         ) : null}
       </div>
       {open ? (
-        children.length === 0 ? (
-          <HierarchyTreeRow continues={false} indent="icon" connectorAnchor="first-row-center">
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">No members or agents.</div>
-          </HierarchyTreeRow>
-        ) : (
-          children.map((ref, index) => (
-            <HierarchyTreeRow
-              key={ref.canonical}
-              continues={index < children.length - 1}
-              indent="icon"
-              connectorAnchor="first-row-center"
-            >
-              <div className="flex min-h-8 items-center px-1 py-0.5">
-                <ReferenceRenderer refValue={ref} surface="simple-row" className="max-w-full" />
-              </div>
+        <>
+          {children.length === 0 ? (
+            <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">No members or agents.</div>
             </HierarchyTreeRow>
-          ))
-        )
+          ) : (
+            children.map((ref) => (
+              <HierarchyTreeRow
+                key={ref.canonical}
+                continues
+                indent="icon"
+                connectorAnchor="first-row-center"
+              >
+                <div className="flex min-h-8 items-center px-1 py-0.5">
+                  <ReferenceRenderer refValue={ref} surface="simple-row" className="max-w-full" />
+                </div>
+              </HierarchyTreeRow>
+            ))
+          )}
+          <HierarchyTreeRow continues={false} indent="icon" connectorAnchor="first-row-center">
+            <ProfileTreeRow label="Last Active" icon={<Clock className="h-3.5 w-3.5" />} hasValue={!!account.lastActiveAt} showEmpty>
+              <span className={account.lastActiveAt ? "text-foreground" : "text-muted-foreground"}>{lastActive}</span>
+            </ProfileTreeRow>
+          </HierarchyTreeRow>
+        </>
       ) : null}
     </div>
   );
@@ -158,9 +188,10 @@ export default function AccountsAdminPage() {
   const { data, isLoading } = useIdentityGraph(canRead);
   const [search, setSearch] = useState("");
   const [archiveOpen, setArchiveOpen] = useState(false);
-  const [pendingArchive, setPendingArchive] = useState<IdentityGraphAccount | null>(null);
+  const [pendingStatus, setPendingStatus] = useState<{ account: IdentityGraphAccount; status: "suspended" | "archived" } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ account: IdentityGraphAccount; email: string } | null>(null);
   const [confirmation, setConfirmation] = useState("");
+  const { timezone } = useTimezone();
   const { toast } = useToast();
   usePageHeader({ title: "Accounts" });
   usePageLoadActivity("page:accounts", isLoading);
@@ -208,36 +239,55 @@ export default function AccountsAdminPage() {
   };
 
   const statusMutation = useMutation({
-    mutationFn: async ({ accountId, status }: { accountId: string; status: AccountLifecycleStatus }) => {
-      await apiRequest("PATCH", `/api/auth/accounts/${accountId}/status`, { status });
+    mutationFn: async ({ account, status }: { account: IdentityGraphAccount; status: AccountLifecycleStatus }) => {
+      await apiRequest("PATCH", `/api/auth/accounts/${account.id}/status`, { status });
+      return { account, status };
     },
-    onSuccess: async (_result, variables) => {
+    onSuccess: async (result) => {
       await invalidate();
-      setPendingArchive(null);
-      toast({ title: variables.status === "active" ? "Account restored" : `Account ${variables.status}` });
+      setPendingStatus(null);
+      const verb = result.status === "active"
+        ? "restored"
+        : result.status === "suspended"
+          ? "suspended"
+          : "archived";
+      toast({ title: `${accountChip(result.account)} ${verb}` });
     },
     onError: (error: Error) => toast({ title: "Could not update account", description: error.message, variant: "destructive" }),
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: async ({ accountId, confirmation: typed }: { accountId: string; confirmation: string }) => {
-      await apiRequest("DELETE", `/api/auth/accounts/${accountId}`, { confirmation: typed });
+  const renameMutation = useMutation({
+    mutationFn: async ({ account, name }: { account: IdentityGraphAccount; name: string }) => {
+      await apiRequest("PATCH", `/api/auth/accounts/${account.id}/name`, { name });
+      return { account, name };
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      await invalidate();
+      toast({ title: `Renamed ${accountChip({ id: result.account.id, name: result.name })}` });
+    },
+    onError: (error: Error) => toast({ title: "Could not rename account", description: error.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async ({ account, confirmation: typed }: { account: IdentityGraphAccount; confirmation: string }) => {
+      await apiRequest("DELETE", `/api/auth/accounts/${account.id}`, { confirmation: typed });
+      return account;
+    },
+    onSuccess: async (account) => {
       await invalidate();
       setPendingDelete(null);
       setConfirmation("");
-      toast({ title: "Account deleted" });
+      toast({ title: `Deleted ${accountChip(account)}` });
     },
     onError: (error: Error) => toast({ title: "Could not delete account", description: error.message, variant: "destructive" }),
   });
 
   const requestStatus = (account: IdentityGraphAccount, status: AccountLifecycleStatus) => {
-    if (status === "archived") {
-      setPendingArchive(account);
+    if (status === "suspended" || status === "archived") {
+      setPendingStatus({ account, status });
       return;
     }
-    statusMutation.mutate({ accountId: account.id, status });
+    statusMutation.mutate({ account, status });
   };
 
   if (!canRead) {
@@ -300,6 +350,8 @@ export default function AccountsAdminPage() {
                           instances={instances}
                           defaultOpen={Boolean(search.trim())}
                           canWrite={canWrite}
+                          timezone={timezone}
+                          onRename={(next, name) => renameMutation.mutate({ account: next, name })}
                           onStatus={requestStatus}
                           onDelete={(next, email) => setPendingDelete({ account: next, email })}
                         />
@@ -313,24 +365,28 @@ export default function AccountsAdminPage() {
         </div>
       </div>
 
-      <AlertDialog open={!!pendingArchive} onOpenChange={(open) => { if (!open && !statusMutation.isPending) setPendingArchive(null); }}>
+      <AlertDialog open={!!pendingStatus} onOpenChange={(open) => { if (!open && !statusMutation.isPending) setPendingStatus(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Archive account</AlertDialogTitle>
+            <AlertDialogTitle>
+              {pendingStatus?.status === "suspended" ? `Suspend ${pendingStatus.account.name}` : `Archive ${pendingStatus?.account.name ?? "account"}`}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {pendingArchive?.name} stays in the database but leaves ordinary queries. Its agents pause and access turns off.
+              {pendingStatus?.status === "suspended"
+                ? `${pendingStatus.account.name} loses access immediately. Its agents pause until you restore it.`
+                : `${pendingStatus?.account.name ?? "This account"} stays in the database but leaves ordinary queries. Its agents pause and access turns off.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={statusMutation.isPending}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              disabled={statusMutation.isPending || !pendingArchive}
+              disabled={statusMutation.isPending || !pendingStatus}
               onClick={(event) => {
                 event.preventDefault();
-                if (pendingArchive) statusMutation.mutate({ accountId: pendingArchive.id, status: "archived" });
+                if (pendingStatus) statusMutation.mutate(pendingStatus);
               }}
             >
-              {statusMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Archive"}
+              {statusMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : pendingStatus?.status === "suspended" ? "Suspend" : "Archive"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -339,9 +395,9 @@ export default function AccountsAdminPage() {
       <AlertDialog open={!!pendingDelete} onOpenChange={(open) => { if (!open && !deleteMutation.isPending) { setPendingDelete(null); setConfirmation(""); } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete account</AlertDialogTitle>
+            <AlertDialogTitle>Delete {pendingDelete?.account.name ?? "account"}</AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently wipes {pendingDelete?.email ?? "this customer"} and cannot be recovered. Type <span className="font-mono text-foreground">{expectedDelete}</span> to continue.
+              This permanently wipes {pendingDelete?.account.name ?? "this account"} ({pendingDelete?.email ?? "this customer"}) and cannot be recovered. Type <span className="font-mono text-foreground">{expectedDelete}</span> to continue.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Input
@@ -358,7 +414,7 @@ export default function AccountsAdminPage() {
               disabled={confirmation !== expectedDelete || deleteMutation.isPending || !pendingDelete}
               onClick={(event) => {
                 event.preventDefault();
-                if (pendingDelete) deleteMutation.mutate({ accountId: pendingDelete.account.id, confirmation });
+                if (pendingDelete) deleteMutation.mutate({ account: pendingDelete.account, confirmation });
               }}
               data-testid="button-delete-account-confirm"
             >

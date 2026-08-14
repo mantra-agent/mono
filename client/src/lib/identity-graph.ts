@@ -9,6 +9,7 @@ export interface IdentityGraphAccount {
   ownerUserId: string | null;
   createdAt: string;
   updatedAt: string;
+  lastActiveAt: string | null;
 }
 
 export type AccountLifecycleStatus = "active" | "suspended" | "archived";
