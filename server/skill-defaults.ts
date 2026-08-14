@@ -29,7 +29,7 @@ import {
     scoreThreshold?: number | null;
     whenToUse?: string;
     outputSpec?: string;
-    recommendedPersona?: "Strategist" | "Coach" | "Operator" | "Creative" | "Companion" | "Architect" | "Investigator" | "Engineer";
+    recommendedPersona?: "Default" | "Strategist" | "Coach" | "Operator" | "Visionary" | "Companion" | "Architect" | "Investigator" | "Engineer";
 
     pinnedToContext?: boolean;
     sessionType?: "autonomous" | "agent";
@@ -496,7 +496,7 @@ Return a compact operational report:
   },
   {
     name: "draft",
-    recommendedPersona: "Creative",
+    recommendedPersona: "Default",
     description: "Draft writing in the current user's canonical voice. Resolves the user's writing standard from active Rules and Library, applies the correct register, runs the standard's required sweep, and persists through the native draft surface when available.",
     category: "communication",
     activity: ACTIVITY_WORK,
