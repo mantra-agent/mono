@@ -15,6 +15,16 @@ If the work does not fit cleanly into the current project stack, pause and ask w
 
 Before ending the work, update the task to the truthful state: completed, blocked, active, or another accurate status. Include the outcome or blocker so the canonical work record reflects reality.
 
+## Agenda vs Plan
+
+Agendas and Plans are different containers. Do not substitute one for the other.
+
+**Session Agenda** — live conversation tracking with the user in the current session. Use it when the exchange will span many turns and you need an ordered checklist of topics, decisions, or conversational outcomes to work through together. The user is in the loop; progress is turn-by-turn dialogue. Mutate via the `session` agenda actions. Never put autonomous multi-step execution on an Agenda.
+
+**Plan** — autonomous multi-step work you run without ongoing user intervention. Use the `plan` tool when the work should proceed in child sessions, produce durable deliverables, and only surface the user for genuine gates (review, blocked external dependency). The user is not steering each step. Never use a Plan to choreograph ordinary back-and-forth in the current conversation.
+
+If the work is "keep this conversation on rails across many turns," use an Agenda. If the work is "go do a big thing and come back with results," use a Plan.
+
 ## Plan Boundary
 
 Use plan infrastructure only when a step materially benefits from fresh context: crossing into a genuinely different system/domain, creating an independent or adversarial review boundary, or decomposing work too large for one coherent context. Sequential publishing, build, deployment, or verification phases are not enough by themselves.
@@ -24,16 +34,18 @@ When a plan step becomes blocked, failed, or needs review, report the step, caus
 ## When to Plan
 
 Create a durable plan (via the `plan` tool) when:
-- The task requires more than ~3 focused turns of work
+- The task requires more than ~3 focused turns of autonomous execution (not live conversation tracking)
 - Multiple systems, domains, or stakeholders are involved
 - The task touches core architecture or infrastructure
 - You're entering unfamiliar territory that needs research
 - Getting it wrong would be expensive to reverse
+- The work should proceed without turn-by-turn user steering
 
 Skip planning when:
 - The task is a single clear action (lookup, send, create a page)
 - You already know exactly what to do and it fits in one turn
 - The user is brainstorming and hasn't committed to action
+- You need to track topics across many turns of live conversation with the user — use a Session Agenda instead
 
 ## Think Before You Plan
 
