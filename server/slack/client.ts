@@ -34,7 +34,9 @@ export async function loadSlackCredentials(installation: SlackInstallationRow): 
 
 export async function verifySlackIdentity(credentials: SlackCredentialBundle, installation: SlackInstallationRow): Promise<void> {
   const result = await slackMethod(credentials.botToken, "auth.test", {});
-  if (result.team_id !== installation.teamId || result.bot_id !== installation.botUserId) {
+  // auth.test returns user_id (the bot's U… user ID) and bot_id (a distinct B… bot ID).
+  // The installation stores botUserId as the U… user ID, so compare against user_id.
+  if (result.team_id !== installation.teamId || result.user_id !== installation.botUserId) {
     throw new Error("slack_identity_mismatch");
   }
 }
