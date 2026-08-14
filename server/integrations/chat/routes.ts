@@ -569,6 +569,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         }
       }
 
+      // System-notice error/warning REVIEW is an operator diagnostic, not an
+      // ordinary user attention. Only principals holding system:read see the
+      // error/warning rows (or the underlying errorSeverity the client falls
+      // back to); everyone still sees question/plan/email review normally.
+      const canSeeSystemAttention = principal.permissions.includes("system:read");
       const sessions = filtered.map((s) => {
         const reviewKinds = [
           ...(s.awaitingQuestionResponse ? (["question"] as const) : []),
@@ -576,13 +581,19 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           ...(emailReviewKindsBySession.get(s.id) ?? []),
           // errorSeverity is the durable undismissed system-notice flag. Opening
           // the session must not clear it; only explicit notice dismiss does.
-          ...(s.errorSeverity === "error" ? (["error"] as const) : []),
-          ...(s.errorSeverity === "warning" || s.errorSeverity === "warn"
+          ...(canSeeSystemAttention && s.errorSeverity === "error"
+            ? (["error"] as const)
+            : []),
+          ...(canSeeSystemAttention &&
+          (s.errorSeverity === "warning" || s.errorSeverity === "warn")
             ? (["warning"] as const)
             : []),
         ];
         return {
           ...s,
+          // Hide the raw severity flag from non-admins so the client REVIEW
+          // fallback and title coloring cannot resurface it.
+          errorSeverity: canSeeSystemAttention ? s.errorSeverity : null,
           awaitingReview: reviewKinds.length > 0 || undefined,
           reviewKinds: reviewKinds.length > 0 ? Array.from(new Set(reviewKinds)) : undefined,
           status: s.status === "streaming" && !isLiveSessionStatus(s) ? "saved" : s.status,
