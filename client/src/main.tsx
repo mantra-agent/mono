@@ -1,7 +1,13 @@
 import { createRoot } from "react-dom/client";
 import "./index.css";
+import { installFirstPartyVoiceWorklets } from "./lib/first-party-voice-worklets";
 import { getProvisionalOnboardingToken } from "./lib/immersive-entrance";
 import { installSpaVersionSkewGuard } from "./lib/spa-version-skew";
+
+// Own AudioWorklet module URLs before any voice session can start — including
+// the provisional immersive-orb entrance, which mounts VoiceSessionProvider
+// outside the full App tree. Must stay synchronous at module evaluation.
+installFirstPartyVoiceWorklets();
 
 const root = createRoot(document.getElementById("root")!);
 // The standalone lightweight root serves the Recall meeting-bot visualizer
