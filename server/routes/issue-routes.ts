@@ -5,6 +5,7 @@ import { documentStorage } from "../memory";
 import { requireAuth, requireAdmin } from "../auth";
 import {
   dismissPlatformApplicationError,
+  dismissPlatformApplicationErrorsByIdentity,
   getPlatformApplicationError,
   listPlatformApplicationErrors,
 } from "../error-telemetry";
@@ -229,7 +230,9 @@ export function registerIssueRoutes(app: Express) {
         ].join("\n"),
       });
 
-      await dismissPlatformApplicationError(principal, fingerprint);
+      // One Issue owns the identity; clear every active fingerprint sibling so
+      // Errors and Open do not double-count the same defect.
+      await dismissPlatformApplicationErrorsByIdentity(principal, error.errorIdentity);
       res.status(201).json(issue);
     } catch (error) {
       if (isIssueCreateValidationError(error)) {
