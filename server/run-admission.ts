@@ -301,6 +301,9 @@ export class RunAdmissionController {
           externalRunId: request.runId,
           resourcePool: request.resourcePool,
           queueAgeMs: Date.now() - expired.queuedAt,
+          globalActive: this.latestCapacitySnapshot?.globalActive,
+          poolActive: this.latestCapacitySnapshot?.poolActive,
+          protectedInteractiveReserve: this.latestCapacitySnapshot?.protectedInteractiveReserve,
         });
         reject(new Error("admission_timeout"));
       }, timeout) : null;

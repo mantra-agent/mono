@@ -498,7 +498,9 @@ function saturationReason(
   }
   if (snapshot.globalActive >= snapshot.globalLimit) return "global_saturated";
   if (
-    resourcePool !== "realtime_agent" && resourcePool !== "interactive_agent" &&
+    resourcePool !== "realtime_agent" &&
+    resourcePool !== "interactive_agent" &&
+    resourcePool !== "isolated_execution" &&
     snapshot.globalActive >= snapshot.globalLimit - snapshot.protectedInteractiveReserve
   ) {
     return "interactive_reserve_protected";
@@ -744,8 +746,8 @@ export async function claimNextRuntimeRun(
     `);
 
     // Candidate selection below determines the account, but global and pool
-    // saturation can be decided now. Non-interactive pools may not consume the
-    // still-unused interactive reserve.
+    // saturation can be decided now. Background and short-worker pools may not
+    // consume the still-unused interactive reserve; isolated-execution is exempt.
     const globalSnapshot = await readCapacitySnapshot(tx, policyVersion, policy, resourcePool, "__candidate__", false);
     const globalReason = saturationReason(resourcePool, {
       ...globalSnapshot,
@@ -1057,7 +1059,7 @@ export async function cancelLegacyRuntimeCapacityRequest(
   const boundedRequestId = boundedText(admissionRequestId, "admissionRequestId", 200);
   const idempotencyKey = `legacy-capacity/${boundedRequestId}`;
   await runWithPrincipal(principal, () => db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
-    const [run] = await tx.select().from(runtimeRuns).where(runWritable(principal, and(
+    const [run] = await tx.select().from(runtimeRuns).where(scopeWritable(principal, and(
       eq(runtimeRuns.kind, LEGACY_CAPACITY_HANDLER_KEY),
       eq(runtimeRuns.idempotencyKey, idempotencyKey),
     ))).limit(1).for("update");
