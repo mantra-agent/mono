@@ -1685,6 +1685,54 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_platform_product_environments_updated ON platform_product_environments(updated_at)`);
   });
 
+  await heal("environment product remount", async () => {
+    const { rows: environmentFks } = await pool.query(`
+      SELECT c.conname
+      FROM pg_constraint c
+      JOIN pg_class t ON t.oid = c.conrelid
+      JOIN pg_class f ON f.oid = c.confrelid
+      WHERE t.relname = 'platform_product_environments'
+        AND f.relname = 'platform_products'
+        AND c.contype = 'f'
+    `);
+    for (const row of environmentFks) {
+      await pool.query(`ALTER TABLE platform_product_environments DROP CONSTRAINT ${row.conname}`);
+    }
+    await pool.query(`
+      UPDATE platform_product_environments e
+      SET product_id = pr.id
+      FROM platform_products pp
+      JOIN platforms p ON p.id = pp.platform_id
+      LEFT JOIN vaults v ON v.id = p.vault_id
+      JOIN products pr
+        ON pr.account_id = COALESCE(p.account_id, v.account_id)
+       AND lower(pr.name) = lower(pp.name)
+      WHERE e.product_id = pp.id
+        AND e.product_id IS DISTINCT FROM pr.id
+    `);
+    const { rows: orphans } = await pool.query(`
+      SELECT e.id
+      FROM platform_product_environments e
+      LEFT JOIN products pr ON pr.id = e.product_id
+      WHERE pr.id IS NULL
+    `);
+    if (orphans.length > 0) {
+      throw new Error("environment product remount left orphan product_id values");
+    }
+    await pool.query(`
+      DO $heal$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'platform_product_environments_product_id_products_id_fk'
+        ) THEN
+          ALTER TABLE platform_product_environments
+            ADD CONSTRAINT platform_product_environments_product_id_products_id_fk
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT;
+        END IF;
+      END $heal$;
+    `);
+  });
+
 
   await heal("environment configuration tables", async () => {
     await pool.query(`
@@ -1933,9 +1981,7 @@ export async function runSchemaBootstrap(
       SELECT pr.id, eca.kind, eca.library_page_id
       FROM environment_context_artifacts eca
       JOIN platform_product_environments ppe ON ppe.id = eca.environment_id
-      JOIN platform_products pp ON pp.id = ppe.product_id
-      JOIN product_platform_associations ppa ON ppa.platform_id = pp.platform_id
-      JOIN products pr ON pr.id = ppa.product_id AND lower(pr.name) = lower(pp.name)
+      JOIN products pr ON pr.id = ppe.product_id
       ON CONFLICT DO NOTHING
     `);
   });
@@ -6368,6 +6414,53 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_workflow_runs_library_page ON workflow_runs(linked_library_page_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_workflow_runs_owner_updated ON workflow_runs(owner_user_id, updated_at)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_workflow_runs_account_updated ON workflow_runs(account_id, updated_at)`);
+
+    const { rows: workflowProductFks } = await pool.query(`
+      SELECT c.conname
+      FROM pg_constraint c
+      JOIN pg_class t ON t.oid = c.conrelid
+      JOIN pg_class f ON f.oid = c.confrelid
+      WHERE t.relname = 'workflow_runs'
+        AND f.relname = 'platform_products'
+        AND c.contype = 'f'
+    `);
+    for (const row of workflowProductFks) {
+      await pool.query(`ALTER TABLE workflow_runs DROP CONSTRAINT ${row.conname}`);
+    }
+    await pool.query(`
+      UPDATE workflow_runs wr
+      SET linked_product_id = pr.id
+      FROM platform_products pp
+      JOIN platforms p ON p.id = pp.platform_id
+      LEFT JOIN vaults v ON v.id = p.vault_id
+      JOIN products pr
+        ON pr.account_id = COALESCE(p.account_id, v.account_id)
+       AND lower(pr.name) = lower(pp.name)
+      WHERE wr.linked_product_id = pp.id
+        AND wr.linked_product_id IS DISTINCT FROM pr.id
+    `);
+    const { rows: workflowOrphans } = await pool.query(`
+      SELECT wr.id
+      FROM workflow_runs wr
+      LEFT JOIN products pr ON pr.id = wr.linked_product_id
+      WHERE wr.linked_product_id IS NOT NULL
+        AND pr.id IS NULL
+    `);
+    if (workflowOrphans.length > 0) {
+      throw new Error("workflow linked_product remount left orphan linked_product_id values");
+    }
+    await pool.query(`
+      DO $heal$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'workflow_runs_linked_product_id_products_id_fk'
+        ) THEN
+          ALTER TABLE workflow_runs
+            ADD CONSTRAINT workflow_runs_linked_product_id_products_id_fk
+            FOREIGN KEY (linked_product_id) REFERENCES products(id) ON DELETE SET NULL;
+        END IF;
+      END $heal$;
+    `);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS workflow_stage_attempts (

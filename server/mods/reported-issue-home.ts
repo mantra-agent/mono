@@ -3,7 +3,6 @@ import { createReferenceRef, type ReferenceRef } from "@shared/references";
 import {
   documentStoreDocuments,
   platformProductEnvironments,
-  platformProducts,
   platforms,
   reportedIssueHomeDismissals,
   userProfiles,
@@ -103,8 +102,7 @@ async function listVisibleReportedIssueEnvironmentIds(): Promise<number[]> {
   const visibleEnvironments = await db
     .select({ id: platformProductEnvironments.id })
     .from(platformProductEnvironments)
-    .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-    .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
+    .innerJoin(platforms, eq(platformProductEnvironments.platformId, platforms.id))
     .where(visiblePlatform());
   return visibleEnvironments.map((row) => row.id);
 }

@@ -21,7 +21,7 @@ import {
   environmentSourceBindings,
   patchBuildLifecycleConfigSchema,
   platformProductEnvironments,
-  platformProducts,
+  products,
   platforms,
   providerConnections,
   upsertBuildLifecycleConfigSchema,
@@ -87,7 +87,7 @@ function patchValues(input: PatchBuildLifecycleConfig) {
 
 export type EnvironmentBuildLifecycleContext = {
   platform: typeof platforms.$inferSelect;
-  product: typeof platformProducts.$inferSelect;
+  product: typeof products.$inferSelect;
   environment: typeof platformProductEnvironments.$inferSelect;
   config: EnvironmentBuildLifecycleConfig | null;
 };
@@ -152,8 +152,7 @@ export async function updateEnvironmentBuildLifecycleConfig(configId: number, in
     .select({ config: environmentBuildLifecycleConfigs, environmentId: environmentBuildLifecycleConfigs.environmentId })
     .from(environmentBuildLifecycleConfigs)
     .innerJoin(platformProductEnvironments, eq(environmentBuildLifecycleConfigs.environmentId, platformProductEnvironments.id))
-    .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-    .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
+    .innerJoin(platforms, eq(platformProductEnvironments.platformId, platforms.id))
     .where(and(eq(environmentBuildLifecycleConfigs.id, configId), writablePlatform()))
     .limit(1);
   if (!existing) throw new Error(`Build lifecycle config ${configId} not found or not writable`);

@@ -141,8 +141,8 @@ export const platformProductEnvironments = pgTable(
   "platform_product_environments",
   {
     id: serial("id").primaryKey(),
-    productId: integer("product_id").notNull().references(() => platformProducts.id, { onDelete: "cascade" }),
-    /** Denormalized Platform owner. Nullable during the dual-table freeze; backfilled from platform_products. */
+    productId: integer("product_id").notNull().references(() => products.id, { onDelete: "restrict" }),
+    /** Denormalized Platform owner. Stamped on create; Environments parent Products, not leftover platform_products. */
     platformId: integer("platform_id").references(() => platforms.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
