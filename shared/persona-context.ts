@@ -30,7 +30,7 @@ export const CONTEXT_GROUP_DEFINITIONS: readonly ContextGroupDefinition[] = [
     id: "schedule",
     title: "Schedule",
     description: "Today/week/month goals plus active work and open decisions",
-    recommendedFor: "Operator, Coach, Default",
+    recommendedFor: "Operator, Producer, Coach, Default",
     tokenCost: "medium",
     sectionIds: [
       "world_model.people.partner.goals.today",
@@ -75,6 +75,29 @@ export const CONTEXT_GROUP_DEFINITIONS: readonly ContextGroupDefinition[] = [
 export const CONTEXT_GROUP_SECTION_IDS: ReadonlySet<string> = new Set(
   CONTEXT_GROUP_DEFINITIONS.flatMap((group) => [...group.sectionIds]),
 );
+
+/**
+ * Canonical optional context maps for selectable personas after the Root ∪
+ * five-group cut. Keys are lowercase persona names. Values use group IDs only.
+ * Empty object means Root-owned context only (History, Memory, Current Session).
+ * Executive is intentionally absent until that rename ships; Operator remains
+ * the known-path seat.
+ */
+export const PERSONA_CONTEXT_MAPS: Readonly<Record<string, Readonly<Record<string, boolean>>>> = {
+  architect: { principles: true },
+  engineer: {},
+  operator: { schedule: true },
+  producer: { schedule: true },
+  default: { schedule: true },
+  coach: { emotions: true, schedule: true, life: true, people: true, principles: true },
+  companion: { emotions: true, life: true, people: true },
+  strategist: { principles: true, life: true, schedule: true },
+  investigator: { people: true, life: true },
+  persuader: { people: true },
+  visionary: {},
+  creative: {},
+  router: {},
+};
 
 export function sectionIdsForEnabledGroups(flags: Record<string, boolean> | null | undefined): string[] {
   if (!flags) return [];
