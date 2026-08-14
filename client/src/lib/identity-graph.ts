@@ -5,9 +5,27 @@ export interface IdentityGraphAccount {
   id: string;
   name: string;
   kind: string;
+  status: string;
   ownerUserId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type AccountLifecycleStatus = "active" | "suspended" | "archived";
+export type AgentLifecycleStatus = "active" | "paused" | "archived";
+
+export function accountSection(status: string | null | undefined): AccountLifecycleStatus {
+  if (status === "suspended" || status === "archived") return status;
+  return "active";
+}
+
+export function agentSection(status: string | null | undefined): AgentLifecycleStatus {
+  if (status === "paused" || status === "archived") return status;
+  return "active";
+}
+
+export function accountDeleteConfirmation(email: string): string {
+  return `DELETE ${email}'s account`;
 }
 
 export interface IdentityGraphMembership {

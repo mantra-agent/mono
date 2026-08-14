@@ -1340,12 +1340,14 @@ export async function runSchemaBootstrap(
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid()::text,
         kind TEXT NOT NULL DEFAULT 'personal',
         name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
         owner_user_id VARCHAR REFERENCES users(id) ON DELETE SET NULL,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_accounts_owner_user ON accounts(owner_user_id)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_kind_owner_unique ON accounts(kind, owner_user_id)`);
 
@@ -1923,12 +1925,14 @@ export async function runSchemaBootstrap(
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid()::text,
         kind TEXT NOT NULL DEFAULT 'personal',
         name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
         owner_user_id VARCHAR REFERENCES users(id) ON DELETE SET NULL,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`);
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_accounts_kind ON accounts(kind)`,
     );
@@ -1997,6 +2001,7 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS entitlement`);
     await pool.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS model_access`);
     await pool.query(`ALTER TABLE accounts DROP COLUMN IF EXISTS stripe_customer_id`);
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`);
     await pool.query(`ALTER TABLE agent_profiles ALTER COLUMN agent_name SET DEFAULT 'Mantra'`);
     await pool.query(`
       UPDATE agent_profiles
