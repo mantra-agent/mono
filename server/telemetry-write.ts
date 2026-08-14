@@ -6,6 +6,7 @@
  * Durable correctness writes (ACL, settings, billing) must not use this module.
  */
 import { withQueryAttributionAsync } from "./db";
+import { areDatabasePoolsClosing } from "./database-adapters";
 import { createLogger } from "./log";
 import { createSerialAsyncDelivery } from "./utils/serial-async-delivery";
 
@@ -18,6 +19,12 @@ type TelemetryWriteJob = {
 
 const telemetryLogSink = createSerialAsyncDelivery<TelemetryWriteJob>(
   async (job) => {
+    // Once graceful shutdown has begun ending the DB pools, best-effort telemetry
+    // must not touch a pool. Writing to an ended pool throws, and the failure is
+    // itself an application error that re-enqueues here — a self-amplifying flood
+    // that trips the provider log-rate limiter and starves shutdown/boot evidence.
+    // Degrade gracefully: drop the sample silently.
+    if (areDatabasePoolsClosing()) return;
     await withQueryAttributionAsync("log-sink", job.run, job.label);
   },
   {
