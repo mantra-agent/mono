@@ -29,7 +29,7 @@ import {
     scoreThreshold?: number | null;
     whenToUse?: string;
     outputSpec?: string;
-    recommendedPersona?: "Default" | "Strategist" | "Coach" | "Operator" | "Visionary" | "Companion" | "Architect" | "Investigator" | "Engineer";
+    recommendedPersona?: "Default" | "Strategist" | "Coach" | "Operator" | "Visionary" | "Companion" | "Architect" | "Investigator" | "Engineer" | "Producer" | "Persuader";
 
     pinnedToContext?: boolean;
     sessionType?: "autonomous" | "agent";
