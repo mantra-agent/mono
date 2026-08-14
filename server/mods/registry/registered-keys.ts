@@ -102,6 +102,7 @@ export const REGISTERED_ICON_KEYS = [
   "Clock",
   "Globe",
   "User",
+  "UserPlus",
   "Heart",
   "DatabaseZap",
   "Share2",

@@ -351,74 +351,79 @@ export default function BusinessHiringPage() {
             </button>
           )}
           {data.roles.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">Create a Job Role first in Roles.</div> : null}
-          <div className="overflow-x-auto border-y border-border/20 scrollbar-visible">
-            <table className="w-max min-w-full border-collapse text-sm tabular-nums">
-              <thead>
-                <tr>
-                  <th className={cn(FROZEN_CELL, SHEET_HEADER_CLASS, "relative z-20 border-b")} style={frozenStyle}>
-                    Role
-                    <div
-                      role="separator"
-                      aria-orientation="vertical"
-                      aria-label="Resize role column"
-                      aria-valuemin={ROLE_COL_MIN}
-                      aria-valuemax={ROLE_COL_MAX}
-                      aria-valuenow={roleColWidth}
-                      onMouseDown={startRoleColResize}
-                      className="absolute inset-y-0 -right-1.5 z-30 w-3 cursor-col-resize"
-                      data-testid="handle-hiring-role-resize"
-                    >
-                      <span className="pointer-events-none absolute inset-y-1 left-1/2 w-px -translate-x-1/2 bg-border/40" />
-                    </div>
-                  </th>
-                  {months.map((month, index) => (
-                    <th
-                      key={month.calendarMonth}
-                      className={cn(
-                        MONTH_CELL,
-                        SHEET_HEADER_CLASS,
-                        "border-b",
-                        isYearStart(month.calendarMonth, index) ? YEAR_DIVIDER : MONTH_DIVIDER,
-                        month.calendarMonth === currentCalendarMonth() && "text-foreground",
-                      )}
-                    >
-                      <div>{monthShort(month.calendarMonth)}</div>
-                      {index === 0 || isYearStart(month.calendarMonth, index) ? (
-                        <div className="text-2xs font-normal normal-case tracking-normal text-muted-foreground/70">
-                          {month.calendarMonth.slice(0, 4)}
-                        </div>
-                      ) : null}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((slot) => (
-                  <RoleRow
-                    key={slot.id}
-                    slot={slot}
-                    role={roleById.get(slot.roleId)}
-                    months={months}
-                    businessId={selectedId}
-                    frozenStyle={frozenStyle}
-                  />
-                ))}
-                {adding ? (
-                  <AddRoleRow
-                    roles={data.roles}
-                    months={months}
-                    businessId={selectedId}
-                    onDone={() => setAdding(false)}
-                    frozenStyle={frozenStyle}
-                  />
-                ) : null}
-                {rows.length === 0 && !adding ? (
+          {/* Outer relative hosts the full-height resize handle so it stays on the frozen edge while the sheet scrolls. */}
+          <div className="relative border-y border-border/20">
+            <div className="overflow-x-auto scrollbar-visible">
+              <table className="w-max min-w-full border-collapse text-sm tabular-nums">
+                <thead>
                   <tr>
-                    <td colSpan={months.length + 1} className="px-2 py-1.5 text-sm text-muted-foreground">{query ? "No matching roles." : "No approved roles yet."}</td>
+                    {/* sticky only — never add relative here; it overrides sticky and the ROLE header slides. */}
+                    <th className={cn(FROZEN_CELL, SHEET_HEADER_CLASS, "z-20 border-b")} style={frozenStyle}>
+                      Role
+                    </th>
+                    {months.map((month, index) => (
+                      <th
+                        key={month.calendarMonth}
+                        className={cn(
+                          MONTH_CELL,
+                          SHEET_HEADER_CLASS,
+                          "border-b",
+                          isYearStart(month.calendarMonth, index) ? YEAR_DIVIDER : MONTH_DIVIDER,
+                          month.calendarMonth === currentCalendarMonth() && "text-foreground",
+                        )}
+                      >
+                        <div>{monthShort(month.calendarMonth)}</div>
+                        {index === 0 || isYearStart(month.calendarMonth, index) ? (
+                          <div className="text-2xs font-normal normal-case tracking-normal text-muted-foreground/70">
+                            {month.calendarMonth.slice(0, 4)}
+                          </div>
+                        ) : null}
+                      </th>
+                    ))}
                   </tr>
-                ) : null}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {rows.map((slot) => (
+                    <RoleRow
+                      key={slot.id}
+                      slot={slot}
+                      role={roleById.get(slot.roleId)}
+                      months={months}
+                      businessId={selectedId}
+                      frozenStyle={frozenStyle}
+                    />
+                  ))}
+                  {adding ? (
+                    <AddRoleRow
+                      roles={data.roles}
+                      months={months}
+                      businessId={selectedId}
+                      onDone={() => setAdding(false)}
+                      frozenStyle={frozenStyle}
+                    />
+                  ) : null}
+                  {rows.length === 0 && !adding ? (
+                    <tr>
+                      <td colSpan={months.length + 1} className="px-2 py-1.5 text-sm text-muted-foreground">{query ? "No matching roles." : "No approved roles yet."}</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize role column"
+              aria-valuemin={ROLE_COL_MIN}
+              aria-valuemax={ROLE_COL_MAX}
+              aria-valuenow={roleColWidth}
+              onMouseDown={startRoleColResize}
+              className="absolute inset-y-0 z-30 w-3 -translate-x-1/2 cursor-col-resize"
+              style={{ left: roleColWidth }}
+              data-testid="handle-hiring-role-resize"
+            >
+              <span className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border/40" />
+            </div>
           </div>
         </>
       )}
