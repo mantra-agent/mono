@@ -487,8 +487,23 @@ export function registerRuntimeProofPathHandlers(): void {
     requiredCapabilities: ["skill:execute", "timer:skill"],
     authorize: authorizeTimerSkill,
     execute: executeTimerSkill,
-    async projectTerminal({ tx, principal, input, receipt }) {
-      requireUserPrincipal(principal);
+    async projectTerminal({ tx, principal, run, input, receipt }) {
+      // Source Timer rows are owned by the Runtime run identity. The named
+      // runtime-authority-recovery system principal may terminalize when the
+      // owning user principal can no longer be restored (archived/suspended/
+      // deleted accounts). Never invent user authority; only project from the
+      // immutable run owner/account fence.
+      if (principal.actorType === "user") {
+        requireUserPrincipal(principal);
+        if (principal.userId !== run.ownerUserId || principal.accountId !== run.accountId) {
+          throw new Error("Timer Runtime terminal projection principal/run mismatch");
+        }
+      } else if (principal.actorType !== "system" || principal.jobName !== "runtime-authority-recovery") {
+        throw new Error("Timer Runtime terminal projection requires owning user or runtime-authority-recovery");
+      }
+      if (!run.ownerUserId || !run.accountId) {
+        throw new Error("Timer Runtime terminal projection missing run owner identity");
+      }
       const status = mapRuntimeOutcomeToTimerStatus(receipt.outcome);
       const error = status === "success" ? null : receipt.reasonCode;
       const completedAt = new Date(receipt.terminalAt);
@@ -506,8 +521,8 @@ export function registerRuntimeProofPathHandlers(): void {
       }).where(and(
         eq(responsibilityRuns.runId, input.timerRunId),
         eq(responsibilityRuns.responsibilityId, input.timerId),
-        eq(responsibilityRuns.ownerUserId, principal.userId!),
-        eq(responsibilityRuns.accountId, principal.accountId!),
+        eq(responsibilityRuns.ownerUserId, run.ownerUserId),
+        eq(responsibilityRuns.accountId, run.accountId),
       )).returning({ runId: responsibilityRuns.runId });
       if (updated.length !== 1) {
         throw new Error(`Timer Runtime terminal projection could not resolve source run ${input.timerRunId}`);

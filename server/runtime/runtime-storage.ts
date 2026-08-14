@@ -967,7 +967,12 @@ export async function startRuntimeAttempt(
     parsedInput = handler.inputSchema.parse(snapshot.run.input);
     authorization = await runWithPrincipal(principal, () => handler.authorize(principal, parsedInput));
   } catch (error) {
-    const reasonCode = error && typeof error === "object" && "code" in error ? String(error.code) : "authority_subject_missing";
+    // Prefer structured AccountLifecycleError codes (account_archived /
+    // account_suspended) over the generic fallback so thrashing runs leave a
+    // truthful blocked reason instead of authority_subject_missing.
+    const reasonCode = error && typeof error === "object" && "code" in error && typeof (error as { code?: unknown }).code === "string"
+      ? String((error as { code: string }).code)
+      : "authority_subject_missing";
     const recoveryPrincipal = createNamedSystemPrincipal("runtime-authority-recovery");
     await terminalizeWithoutDecision(recoveryPrincipal, snapshot.run.id, snapshot.attempt.id, {
       outcome: "blocked",
