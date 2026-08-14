@@ -75,6 +75,11 @@ Before creating a plan, work through these silently:
 ## During Execution
 
 - The plan tool spawns child sessions per step with fresh context
+- **Choose wait mode once — never poll.** `plan.execute` is either blocking or non-blocking; pick deliberately and stop watching.
+  - **Wait for the result in this turn** → create/execute with `blocking: true`. The runtime holds this session until the Plan finishes (or hits a real gate). Do not call `plan.get`, `session.get`, `session.list`, or `system.active_runs` in a loop “to see if it’s done.”
+  - **Fire and move on** → create/execute with `blocking: false` (default for larger Plans). Hand off immediately: tell the user the Plan is running, point at `@plan:…`, and continue other work or end the turn. Do not poll for completion. Completion, failures, and `needs_review` surface through Plan/Runtime checkpoints, the Plan page, and ordinary attention — not through the orchestrator spinning on status reads.
+  - **Forbidden:** any multi-call wait loop after `plan.execute` (`plan.get` / child `session.get` / `active_runs` / sleep-and-recheck). That burns the parent turn, races the executor, and duplicates Runtime’s job.
+  - Re-enter a running Plan only for a concrete reason: user asked status, a child messaged the parent, you must `add_steps` / `pause` / recover a failed step, or you are answering a human review gate. One targeted read is fine; polling is not.
 - If plan creation or execution infrastructure fails, preserve the intended execution semantics. For a single independent engineering mission, `session.spawn_child` with `delegation=engineering` is a valid fallback; for multi-step work, repair/retry the plan path so ordering, checkpoints, and step outcomes remain durable. Never rely on free-text instructions to grant authority.
 - Progress checkpoints to a Library page automatically
 - If a step fails: assess whether to retry, skip, or pause for input
