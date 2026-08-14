@@ -1,3 +1,10 @@
+<!-- 2026-08-14 Orphan persona copies regain seed lineage:
+- Assets/data: A04/A06 selectable Persona identity (S2 mind configuration). templatePersonaId is lineage, not a new seat.
+- Flow/threat: user copies created before copy-on-write can lack templatePersonaId. Apply to Default then hides, so operators mint a second seed or publish the leftover Persuader row (STRIDE spoofing/elevation analogue; AGENT-03).
+- Deterministic controls/owner: seedDefaults attaches each same-name user orphan to its existing global seed after leftover scoped seeds are retired. Skip when that owner already has a lineage copy. Architect seed no longer requires naming the failure mode. Owner: Core Persona/Context. Severity: medium integrity. SLA: immediate.
+- Residual/rollback: historical sessions stay pinned to the user row. Revert linkOrphanUserCopiesToSeeds, the Architect overlay trim, and this finding together.
+-->
+
 <!-- 2026-08-14 Environment product remount:
 - Assets/data: A01/A03/A07 Build Product intent in `products` and Environment ownership in `platform_product_environments` (S1/S2 deployment identity).
 - Flow/threat: Environment create/list/resolve still parented on leftover `platform_products` IDs after Product intent moved to `products`. Name-matched dual identity lets source, Railway, Cloudflare, Expo, Issues, and workflows attach to the wrong Product, and leftover create/delete can invent a second authority (STRIDE tampering/repudiation; DATA-01/AGENT-03).
