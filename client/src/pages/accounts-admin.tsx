@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Building2, ChevronRight, Clock, Loader2, MoreHorizontal } from "lucide-react";
+import { Building2, ChevronRight, Clock, Loader2, MoreHorizontal, Route } from "lucide-react";
 import { EditableSessionTitle } from "@/components/editable-session-title";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
@@ -9,6 +9,7 @@ import {
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -67,6 +68,7 @@ function AccountRow({
   onRename,
   onStatus,
   onDelete,
+  onAssignRouter,
 }: {
   account: IdentityGraphAccount;
   users: IdentityGraphUser[];
@@ -77,6 +79,7 @@ function AccountRow({
   onRename: (account: IdentityGraphAccount, name: string) => void;
   onStatus: (account: IdentityGraphAccount, status: AccountLifecycleStatus) => void;
   onDelete: (account: IdentityGraphAccount, email: string) => void;
+  onAssignRouter: (account: IdentityGraphAccount, routerId: string) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const email = ownerEmail(account, users);
@@ -170,6 +173,64 @@ function AccountRow({
               </HierarchyTreeRow>
             ))
           )}
+          <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+            <div className="group/router flex w-full min-w-0 items-stretch">
+              <div className="min-w-0 flex-1">
+                <ProfileTreeRow
+                  label="Router"
+                  icon={<Route className="h-3.5 w-3.5" />}
+                  hasValue={Boolean(account.router)}
+                  showEmpty
+                >
+                  {account.router ? (
+                    <ReferenceRenderer
+                      refValue={createReferenceRef({
+                        type: "router",
+                        id: account.router.id,
+                        metadata: { label: account.router.name },
+                      })}
+                      surface="simple-row"
+                      className="max-w-full"
+                    />
+                  ) : (
+                    <span className="text-muted-foreground">Legacy</span>
+                  )}
+                </ProfileTreeRow>
+              </div>
+              {canWrite ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="mt-1 mr-1 flex h-7 w-5 shrink-0 items-center justify-center rounded p-0.5 opacity-0 transition-opacity hover:bg-accent/60 group-hover/router:opacity-100 data-[state=open]:opacity-100"
+                      aria-label="Change router"
+                    >
+                      <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-72 p-2">
+                    <p className="mb-2 px-1 text-xs font-medium text-muted-foreground">Assign Router</p>
+                    <ReferencePicker
+                      value={
+                        account.router
+                          ? [{ type: "router", id: account.router.id, label: account.router.name } satisfies ReferencePickerValue]
+                          : []
+                      }
+                      onChange={(next) => {
+                        const selected = next[0];
+                        if (selected) onAssignRouter(account, selected.id);
+                      }}
+                      types={["router"]}
+                      mode="single"
+                      variant="compact"
+                      placeholder="Choose router"
+                      showToken={false}
+                    />
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+            </div>
+          </HierarchyTreeRow>
           <HierarchyTreeRow continues={false} indent="icon" connectorAnchor="first-row-center">
             <ProfileTreeRow label="Last Active" icon={<Clock className="h-3.5 w-3.5" />} hasValue={!!account.lastActiveAt} showEmpty>
               <span className={account.lastActiveAt ? "text-foreground" : "text-muted-foreground"}>{lastActive}</span>
@@ -254,6 +315,18 @@ export default function AccountsAdminPage() {
       toast({ title: `${accountChip(result.account)} ${verb}` });
     },
     onError: (error: Error) => toast({ title: "Could not update account", description: error.message, variant: "destructive" }),
+  });
+
+  const routerMutation = useMutation({
+    mutationFn: async ({ account, routerId }: { account: IdentityGraphAccount; routerId: string }) => {
+      await apiRequest("PATCH", `/api/auth/accounts/${account.id}/router`, { routerId });
+      return { account, routerId };
+    },
+    onSuccess: async () => {
+      await invalidate();
+      toast({ title: "Router assigned" });
+    },
+    onError: (error: Error) => toast({ title: "Could not assign router", description: error.message, variant: "destructive" }),
   });
 
   const renameMutation = useMutation({
@@ -354,6 +427,7 @@ export default function AccountsAdminPage() {
                           onRename={(next, name) => renameMutation.mutate({ account: next, name })}
                           onStatus={requestStatus}
                           onDelete={(next, email) => setPendingDelete({ account: next, email })}
+                          onAssignRouter={(next, routerId) => routerMutation.mutate({ account: next, routerId })}
                         />
                       );
                     })

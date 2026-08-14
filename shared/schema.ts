@@ -165,6 +165,8 @@ export const accounts = pgTable("accounts", {
   name: text("name").notNull(),
   status: text("status").notNull().default("active"),
   ownerUserId: varchar("owner_user_id").references(() => users.id, { onDelete: "set null" }),
+  /** Nullable during parallel cutover. NULL = legacy unnamed global connector chain. */
+  routerId: uuid("router_id"),
   metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -173,6 +175,7 @@ export const accounts = pgTable("accounts", {
   statusIdx: index("idx_accounts_status").on(table.status),
   ownerIdx: index("idx_accounts_owner_user").on(table.ownerUserId),
   kindOwnerUnique: uniqueIndex("idx_accounts_kind_owner_unique").on(table.kind, table.ownerUserId),
+  routerIdx: index("idx_accounts_router").on(table.routerId),
 }));
 
 export const memberships = pgTable("memberships", {

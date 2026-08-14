@@ -53,6 +53,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.prompts.open": { href: "/system?tab=prompts", permission: "build:read", description: "Edit internal prompt templates." },
   "navigation.context.open": { href: "/brain?tab=context", permission: "system:read", description: "Inspect how context is assembled." },
   "navigation.router.open": { href: "/system?tab=inference", permission: "system:read", description: "Review model routing and inference." },
+  "navigation.routers.open": { href: "/system?tab=routers", permission: "system:read", description: "Manage named LLM router pools." },
   "navigation.models.open": { href: "/brain?tab=model", permission: "system:read", description: "Configure your models." },
   "navigation.cost.open": { href: "/system?tab=cost", permission: "system:read", description: "Track your usage and cost." },
   "navigation.audiences.open": { href: "/audiences", permission: "system:read", description: "Manage your audiences." },

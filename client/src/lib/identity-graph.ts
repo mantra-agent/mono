@@ -1,12 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 
+export interface IdentityGraphRouter {
+  id: string;
+  name: string;
+  isDefault: boolean;
+}
+
 export interface IdentityGraphAccount {
   id: string;
   name: string;
   kind: string;
   status: string;
   ownerUserId: string | null;
+  routerId?: string | null;
+  router?: IdentityGraphRouter | null;
   createdAt: string;
   updatedAt: string;
   lastActiveAt: string | null;

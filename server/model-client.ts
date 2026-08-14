@@ -749,6 +749,7 @@ async function recordInference(params: {
         connectorId: params.routing.connectorId,
         connectorLabel: params.routing.connectorLabel,
         connectorOrder: params.routing.connectorOrder,
+        routerId: params.routing.routerId ?? null,
         status: params.status,
         routing: auditRouting(params.routing),
         error: params.error,

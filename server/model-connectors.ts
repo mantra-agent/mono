@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "./db";
 import { createLogger } from "./log";
 import { requireCurrentPrincipal } from "./principal-context";
@@ -50,6 +50,8 @@ export interface ModelConnector {
   credentialRef: string | null;
   lastVerifiedAt: string | null;
   config: ModelConnectorConfig;
+  /** Null = legacy global chain during parallel cutover. */
+  routerId?: string | null;
 }
 
 function normalizeModelId(provider: ModelConnectorProvider, modelString: string): string {
@@ -253,10 +255,26 @@ export function parseModelConnectorConfig(provider: string, value: unknown): Mod
   return validateOpenAIConnectorConfig(parsedProvider, parsed);
 }
 
-export async function listModelConnectors(): Promise<ModelConnector[]> {
+export async function listModelConnectors(options?: {
+  /** When set, only connectors in this exclusive Router pool. */
+  routerId?: string;
+  /** When true, only legacy NULL-router connectors (global chain). */
+  legacyOnly?: boolean;
+}): Promise<ModelConnector[]> {
   const principal = requireCurrentPrincipal();
+  const routerFilter = options?.routerId
+    ? eq(providerConnections.routerId, options.routerId)
+    : options?.legacyOnly
+      ? isNull(providerConnections.routerId)
+      : undefined;
   const rows = await db.select().from(providerConnections).where(
-    combineWithVisibleScope(principal, scopeColumns, eq(providerConnections.connectorKind, "model")),
+    combineWithVisibleScope(
+      principal,
+      scopeColumns,
+      routerFilter
+        ? and(eq(providerConnections.connectorKind, "model"), routerFilter)
+        : eq(providerConnections.connectorKind, "model"),
+    ),
   ).orderBy(
     desc(providerConnections.priorityPinned),
     asc(providerConnections.sortOrder),
@@ -272,6 +290,7 @@ export async function listModelConnectors(): Promise<ModelConnector[]> {
     credentialRef: row.credentialRef,
     lastVerifiedAt: row.lastVerifiedAt instanceof Date ? row.lastVerifiedAt.toISOString() : row.lastVerifiedAt ? String(row.lastVerifiedAt) : null,
     config: parseModelConnectorConfig(row.provider, row.connectorConfig),
+    routerId: row.routerId ?? null,
   }));
 }
 
@@ -328,7 +347,8 @@ export async function updateModelConnector(
 
 export async function reorderModelConnectors(ids: number[]): Promise<ModelConnector[]> {
   const principal = requireCurrentPrincipal();
-  const connectors = await listModelConnectors();
+  // Models tab reorders only the legacy global chain (router_id IS NULL).
+  const connectors = await listModelConnectors({ legacyOnly: true });
   const byId = new Map(connectors.map((connector) => [connector.id, connector]));
   const visibleIds = new Set(connectors.map((connector) => connector.id));
   if (ids.length !== visibleIds.size || new Set(ids).size !== ids.length || ids.some((id) => !visibleIds.has(id))) {
@@ -346,11 +366,12 @@ export async function reorderModelConnectors(ids: number[]): Promise<ModelConnec
         and(
           eq(providerConnections.id, id),
           eq(providerConnections.connectorKind, "model"),
+          isNull(providerConnections.routerId),
         ),
       );
     }
   });
-  return listModelConnectors();
+  return listModelConnectors({ legacyOnly: true });
 }
 
 function splitModel(value: string): { provider: ModelConnectorProvider; modelId: string } | null {

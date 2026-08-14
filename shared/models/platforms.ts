@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { vaults } from "./vaults";
@@ -207,6 +207,24 @@ export const environmentPromotionReleases = pgTable(
 
 export type EnvironmentPromotionRelease = typeof environmentPromotionReleases.$inferSelect;
 
+/** Named exclusive pool of model connectors. System-scoped catalog — not user/Vault owned. */
+export const routers = pgTable(
+  "routers",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    name: text("name").notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_routers_name_unique").on(table.name),
+  ],
+);
+
+export type Router = typeof routers.$inferSelect;
+export type InsertRouter = typeof routers.$inferInsert;
+
 export const providerConnections = pgTable(
   "provider_connections",
   {
@@ -223,6 +241,8 @@ export const providerConnections = pgTable(
     sortOrder: integer("sort_order").notNull().default(0),
     /** When true, this connector stays ahead of unpinned peers regardless of relative sortOrder. */
     priorityPinned: boolean("priority_pinned").notNull().default(false),
+    /** Nullable during parallel cutover. NULL = legacy global chain membership. */
+    routerId: uuid("router_id").references(() => routers.id, { onDelete: "restrict" }),
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
@@ -234,6 +254,7 @@ export const providerConnections = pgTable(
     index("idx_provider_connections_provider").on(table.provider),
     index("idx_provider_connections_kind_order").on(table.connectorKind, table.sortOrder),
     index("idx_provider_connections_scope_owner").on(table.scope, table.ownerUserId),
+    index("idx_provider_connections_router").on(table.routerId),
   ],
 );
 

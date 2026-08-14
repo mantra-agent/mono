@@ -16,6 +16,7 @@ import { resolveRailwayEnvironmentControl } from "./integrations/railway/environ
 import { initTimezone, getTimezone } from "./timezone";
 import { initProfiles } from "./job-profiles";
 import { ensureGrokSubscriptionConnector, migrateLegacyModelProfiles } from "./model-connectors";
+import { ensureDefaultRouter } from "./router-storage";
 import { spawn } from "child_process";
 import { resolve as resolvePath } from "path";
 import { createLogger } from "./log";
@@ -460,6 +461,7 @@ app.use((req, res, next) => {
   await initProfiles();
   await migrateLegacyModelProfiles();
   await ensureGrokSubscriptionConnector();
+  await ensureDefaultRouter();
   const profilesMs = Date.now() - tProfiles0;
   bootPhases.push({ name: "Model Profiles", durationMs: profilesMs });
   log(`[startup] model profiles loaded: ${profilesMs}ms`, "boot");

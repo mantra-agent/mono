@@ -56,6 +56,7 @@ export const REFERENCE_TYPES = [
   "account",
   "user",
   "agent_instance",
+  "router",
 ] as const;
 
 export type KnownReferenceType = typeof REFERENCE_TYPES[number];
@@ -187,6 +188,10 @@ export const REFERENCE_REGISTRY: Readonly<Record<KnownReferenceType, ReferenceTy
   agent_instance: definition("agent_instance", "uuid", UUID_PATTERN, {
     aliases: ["agent", "instance"],
     route: id => `/system?tab=agents&agent=${encodeURIComponent(id)}`,
+    capabilities: ["open"],
+  }),
+  router: definition("router", "uuid", UUID_PATTERN, {
+    route: id => `/system?tab=routers&router=${encodeURIComponent(id)}`,
     capabilities: ["open"],
   }),
 };

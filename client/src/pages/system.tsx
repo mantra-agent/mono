@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useLocation } from "wouter";
-import { ScrollText, DollarSign, Loader2, Wrench, ClipboardCheck, Brain, Zap, GitBranch, Cpu, Gauge, Users, FileText, KeyRound, Building2, Bot } from "lucide-react";
+import { ScrollText, DollarSign, Loader2, Wrench, ClipboardCheck, Brain, Zap, GitBranch, Cpu, Gauge, Users, FileText, KeyRound, Building2, Bot, Route } from "lucide-react";
 import { ProcessesCard } from "@/components/processes-card";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useAuth } from "@/hooks/use-auth";
@@ -15,6 +15,7 @@ const PerformanceContent = lazyWithRetry(() => import("@/pages/performance-scree
 const UsersContent = lazyWithRetry(() => import("@/pages/users-admin"));
 const AccountsContent = lazyWithRetry(() => import("@/pages/accounts-admin"));
 const AgentsContent = lazyWithRetry(() => import("@/pages/agents-admin"));
+const RoutersContent = lazyWithRetry(() => import("@/pages/routers-admin"));
 const SecretsContent = lazyWithRetry(() => import("@/pages/secrets-admin"));
 
 const InferenceContent = lazyWithRetry(() => import("@/pages/inference"));
@@ -37,6 +38,7 @@ const systemTabs = [
   { value: "tools", label: "Tools", icon: <Wrench className="h-3.5 w-3.5" />, testId: "tab-system-tools" },
   { value: "prompts", label: "Prompts", icon: <FileText className="h-3.5 w-3.5" />, testId: "tab-system-prompts" },
   { value: "inference", label: "Inference", icon: <Brain className="h-3.5 w-3.5" />, testId: "tab-system-inference" },
+  { value: "routers", label: "Routers", icon: <Route className="h-3.5 w-3.5" />, testId: "tab-system-routers" },
   { value: "cost", label: "Cost", icon: <DollarSign className="h-3.5 w-3.5" />, testId: "tab-system-cost" },
   { value: "events", label: "Events", icon: <Zap className="h-3.5 w-3.5" />, testId: "tab-system-events" },
   { value: "hooks", label: "Hooks", icon: <GitBranch className="h-3.5 w-3.5" />, testId: "tab-system-hooks" },
@@ -105,7 +107,8 @@ export default function SystemPage() {
           : activeTab === "accounts" ? "Accounts"
             : activeTab === "agents" ? "Agents"
               : activeTab === "users" ? "Users"
-                : "System",
+                : activeTab === "routers" ? "Routers"
+                  : "System",
     tabs,
     activeTab,
     onTabChange: setActiveTab,
@@ -117,6 +120,7 @@ export default function SystemPage() {
         {activeTab === "accounts" && <AccountsContent />}
         {activeTab === "agents" && <AgentsContent />}
         {activeTab === "users" && <UsersContent />}
+        {activeTab === "routers" && <RoutersContent />}
         {activeTab === "secrets" && (
           <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin">
             <SecretsContent />

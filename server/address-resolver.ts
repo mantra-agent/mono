@@ -32,6 +32,7 @@ import {
   productPlatformAssociations,
   products,
   platforms,
+  routers,
   principleRevisions,
   principles,
   projects,
@@ -788,6 +789,26 @@ const adapters: AddressResolverAdapter[] = [
         ? [[requestedAddress(ref), resolved(ref, {
           label: row.name,
           summary: row.status,
+          updatedAt: row.updatedAt,
+        })]]
+        : [];
+    }));
+  }),
+  simpleAdapter("router", async (principal, refs) => {
+    if (!principalHasPermission(principal, "system:read")) return resultMap(refs, "unauthorized");
+    const rows = await db.select({
+      id: routers.id,
+      name: routers.name,
+      isDefault: routers.isDefault,
+      updatedAt: routers.updatedAt,
+    }).from(routers).where(inArray(routers.id, refs.map(ref => ref.id)));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => {
+      const row = byId.get(ref.id);
+      return row
+        ? [[requestedAddress(ref), resolved(ref, {
+          label: row.name,
+          summary: row.isDefault ? "Default" : undefined,
           updatedAt: row.updatedAt,
         })]]
         : [];
