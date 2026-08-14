@@ -1920,7 +1920,38 @@ export const TOOL_ALIASES: Record<string, string> = {
   projects: "work",        // Domain 2: Work → Projects
   observations: "cognition", // Domain 6 compatibility → canonical Cognition
   create: "content",       // Domain 10: Content → Create
+  // Models often emit cognition actions as bare tool names (prompt says
+  // `set_emotion` / `observe`). Rewrite to the registered cognition umbrella
+  // and inject action at executeTool so schema validation still requires it.
+  set_emotion: "cognition",
+  get_emotion: "cognition",
+  emotion_history: "cognition",
+  observe: "cognition",
+  get_profile: "cognition",
+  update_profile: "cognition",
+  get_persona: "cognition",
+  list_personas: "cognition",
+  resolve_toolset: "cognition",
+  create_persona: "cognition",
+  update_persona: "cognition",
+  update_global_persona_template: "cognition",
 };
+
+/** Cognition action names that models sometimes emit as top-level tool names. */
+export const COGNITION_ACTION_TOOL_ALIASES = new Set([
+  "set_emotion",
+  "get_emotion",
+  "emotion_history",
+  "observe",
+  "get_profile",
+  "update_profile",
+  "get_persona",
+  "list_personas",
+  "resolve_toolset",
+  "create_persona",
+  "update_persona",
+  "update_global_persona_template",
+]);
 
 function normalizeCategory(cat: string): string {
   const lower = cat.toLowerCase().trim();
