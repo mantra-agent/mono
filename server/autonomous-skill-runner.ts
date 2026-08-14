@@ -1707,14 +1707,34 @@ async function runSkillPipeline(
 
     if (result.status === "degraded") {
       const reason = result.degradationReason || "executor_degraded";
-      const budgetExhausted = reason === "iteration_budget_exhausted" || reason === "tool_call_budget_exhausted";
       const responseLimit = result.responseGenerationLimit;
       const responseLimitDetail = responseLimit
         ? ` The final response used ${responseLimit.finalResponseOutputTokens} of ${responseLimit.configuredOutputTokens} configured output tokens.`
         : "";
-      const degradedNotice = budgetExhausted
-        ? "The executor reached its bounded work budget. Completed work remains saved; continue in a later run."
-        : `The model reached its response generation limit before producing final text.${responseLimitDetail} Completed tool work remains saved.`;
+      // One discriminant per decision: key the persisted notice off
+      // degradationReason. Generation-limit copy is reserved for
+      // empty_response_output_limit and must carry the bounded token
+      // numbers when present — never as a fallback for empty_response.
+      const degradedNotice =
+        reason === "iteration_budget_exhausted" || reason === "tool_call_budget_exhausted"
+          ? "The executor reached its bounded work budget. Completed work remains saved; continue in a later run."
+          : reason === "empty_response_output_limit"
+            ? `The model reached its response generation limit before producing final text.${responseLimitDetail} Completed tool work remains saved.`
+            : reason === "empty_response"
+              ? "The model finished without returning any visible text. Completed tool work remains saved."
+              : reason === "tool_failure_recovered"
+                ? "A tool returned a non-retryable failure. Completed work before the failure was preserved."
+                : "This autonomous run finished in a degraded state. Completed work remains saved.";
+      const degradedSummary =
+        reason === "iteration_budget_exhausted" || reason === "tool_call_budget_exhausted"
+          ? "Executor work budget exhausted; completed work remains saved."
+          : reason === "empty_response_output_limit"
+            ? "Executor reached the response generation limit; completed work remains saved."
+            : reason === "empty_response"
+              ? "Executor completed without final text; completed work remains saved."
+              : reason === "tool_failure_recovered"
+                ? "A tool failed; completed work before the failure remains saved."
+                : "Executor finished degraded; completed work remains saved.";
       await persistExecutorResult(sessionId, result, degradedNotice, false, deferSettlementRelease).catch((e: unknown) => {
         logger.error(`[SkillChat] [${sessionId}] Failed to persist degraded result: ${e instanceof Error ? e.message : String(e)}`);
       });
@@ -1728,9 +1748,7 @@ async function runSkillPipeline(
       return {
         sessionId,
         status: "degraded",
-        summary: budgetExhausted
-          ? "Executor work budget exhausted; completed work remains saved."
-          : "Executor completed without final text; completed work remains saved.",
+        summary: degradedSummary,
         error: reason,
         durationMs,
         childMissionOutcome: result.childMissionOutcome,
