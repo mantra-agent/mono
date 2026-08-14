@@ -75,9 +75,7 @@ import { cn } from "@/lib/utils";
 import { useWorkActivity } from "./thought-indicator";
 import { useGoalsActivity } from "./goals-activity-indicator";
 import { useSystemActivity } from "./system-alert-indicator";
-import { useWellnessAlerts } from "@/hooks/use-wellness-alerts";
 import { useCommsActivity } from "@/hooks/use-comms-activity";
-import { useOrientationActivity } from "@/hooks/use-orientation-activity";
 import { useEnvActivity } from "@/hooks/use-env-activity";
 import { useProductComposition } from "@/hooks/use-product-composition";
 import { openIssueCaptureDialog } from "@/components/issue-capture";
@@ -677,18 +675,14 @@ export function NavPage() {
   const workActive = useWorkActivity();
   const goalsActive = useGoalsActivity();
   const systemActive = useSystemActivity();
-  const { needsAttention: wellnessNeedsAttention } = useWellnessAlerts();
   const commsActive = useCommsActivity();
-  const worldActive = useOrientationActivity();
   const envActive = useEnvActivity();
 
   const statusMap: Record<string, NavDotLevel | null> = {
     Brain: workActive ? "active" : null,
     Goals: goalsActive ? "attention" : null,
     System: systemActive ? "error" : null,
-    Wellness: wellnessNeedsAttention ? "attention" : null,
     Email: commsActive,
-    News: worldActive,
     Build: envActive,
   };
 
