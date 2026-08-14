@@ -38,6 +38,29 @@ interface TimelineEvent {
   scale: number;
 }
 
+interface EventPaint {
+  isStreakDay: boolean;
+  opacity: number;
+}
+
+type ConnectorSegment =
+  | {
+      key: string;
+      x1: number;
+      x2: number;
+      kind: "solid";
+      className: string;
+      opacity: number;
+    }
+  | {
+      key: string;
+      x1: number;
+      x2: number;
+      kind: "blend";
+      from: EventPaint;
+      to: EventPaint;
+    };
+
 /** Fixed 7 cadence segments across the Trends window. */
 const HISTORY_INTERVALS = 7;
 const GRAPH_LEFT = 16;
@@ -92,25 +115,60 @@ function eventOpacity(adherence: number): number {
   return Math.max(0.12, adherence / 100);
 }
 
-/** Connector inherits green only when both ends are streak days; opacity is the weaker end. */
-function segmentStyle(
-  left: Pick<TimelineEvent, "adherence" | "isStreakDay"> | null,
-  right: Pick<TimelineEvent, "adherence" | "isStreakDay"> | null,
-): { className: string; opacity: number } {
-  if (!left && !right) {
-    return { className: "stroke-muted-foreground/40", opacity: 0.35 };
+function eventPaint(event: Pick<TimelineEvent, "adherence" | "isStreakDay">): EventPaint {
+  return { isStreakDay: event.isStreakDay, opacity: eventOpacity(event.adherence) };
+}
+
+/** Token stroke for gradient stops — matches stroke-success / stroke-foreground. */
+function paintStopColor(isStreakDay: boolean, opacity: number): string {
+  const token = isStreakDay ? "var(--success)" : "var(--foreground)";
+  return `hsl(${token} / ${opacity.toFixed(3)})`;
+}
+
+/** Open-ended connectors keep a single solid stroke from the adjacent spike (or muted empty). */
+function openEndedSegment(
+  key: string,
+  x1: number,
+  x2: number,
+  neighbor: Pick<TimelineEvent, "adherence" | "isStreakDay"> | null,
+): ConnectorSegment {
+  if (!neighbor) {
+    return { key, x1, x2, kind: "solid", className: "stroke-muted-foreground/40", opacity: 0.35 };
   }
-  if (!left && right) {
-    return { className: eventStrokeClass(right.isStreakDay), opacity: eventOpacity(right.adherence) };
-  }
-  if (left && !right) {
-    return { className: eventStrokeClass(left.isStreakDay), opacity: eventOpacity(left.adherence) };
-  }
-  const bothStreak = Boolean(left?.isStreakDay && right?.isStreakDay);
   return {
-    className: eventStrokeClass(bothStreak),
-    opacity: Math.min(eventOpacity(left!.adherence), eventOpacity(right!.adherence)),
+    key,
+    x1,
+    x2,
+    kind: "solid",
+    className: eventStrokeClass(neighbor.isStreakDay),
+    opacity: eventOpacity(neighbor.adherence),
   };
+}
+
+/**
+ * Mid connectors blend naturally when the two spike colors differ.
+ * Same-color pairs stay a single solid stroke at the weaker opacity.
+ */
+function midSegment(
+  key: string,
+  x1: number,
+  x2: number,
+  left: Pick<TimelineEvent, "adherence" | "isStreakDay">,
+  right: Pick<TimelineEvent, "adherence" | "isStreakDay">,
+): ConnectorSegment {
+  const from = eventPaint(left);
+  const to = eventPaint(right);
+  if (from.isStreakDay === to.isStreakDay) {
+    return {
+      key,
+      x1,
+      x2,
+      kind: "solid",
+      className: eventStrokeClass(from.isStreakDay),
+      opacity: Math.min(from.opacity, to.opacity),
+    };
+  }
+  return { key, x1, x2, kind: "blend", from, to };
 }
 
 function HeartbeatHistory({ logs, category, intervalDays, windowStart, windowEnd }: Omit<ActivityDetailPanelProps, "activityId" | "metricInfo" | "pulseWindowSize"> & { logs: WellnessLogEntry[] }) {
@@ -161,33 +219,33 @@ function HeartbeatHistory({ logs, category, intervalDays, windowStart, windowEnd
     const nowX = Math.max(GRAPH_LEFT, Math.min(GRAPH_RIGHT, toX(Math.min(now, domainEnd))));
 
     // Connectors stop at spike feet so the path + segments read as one contiguous EKG line.
-    const connectors: Array<{ key: string; x1: number; x2: number; className: string; opacity: number }> = [];
+    const connectors: ConnectorSegment[] = [];
     if (events.length === 0) {
-      const style = segmentStyle(null, null);
-      connectors.push({ key: "empty", x1: GRAPH_LEFT, x2: nowX, ...style });
+      connectors.push(openEndedSegment("empty", GRAPH_LEFT, nowX, null));
     } else {
       const first = events[0];
       const last = events[events.length - 1];
       if (first.left > GRAPH_LEFT) {
-        const lead = segmentStyle(null, first);
-        connectors.push({ key: "lead", x1: GRAPH_LEFT, x2: first.left, ...lead });
+        connectors.push(openEndedSegment("lead", GRAPH_LEFT, first.left, first));
       }
       for (let i = 0; i < events.length - 1; i += 1) {
         const a = events[i];
         const b = events[i + 1];
         if (b.left > a.right) {
-          const style = segmentStyle(a, b);
-          connectors.push({ key: `seg-${a.entry.id}-${b.entry.id}`, x1: a.right, x2: b.left, ...style });
+          connectors.push(midSegment(`seg-${a.entry.id}-${b.entry.id}`, a.right, b.left, a, b));
         }
       }
       if (nowX > last.right) {
-        const trail = segmentStyle(last, null);
-        connectors.push({ key: "trail", x1: last.right, x2: nowX, ...trail });
+        connectors.push(openEndedSegment("trail", last.right, nowX, last));
       }
     }
 
     return { events, ticks, connectors, domainEnd };
   }, [logs, category, intervalDays, windowStart, windowEnd, timezone]);
+
+  const blendGradients = timeline.connectors.filter(
+    (segment): segment is Extract<ConnectorSegment, { kind: "blend" }> => segment.kind === "blend",
+  );
 
   return (
     <div className="min-w-0 overflow-hidden">
@@ -198,6 +256,24 @@ function HeartbeatHistory({ logs, category, intervalDays, windowStart, windowEnd
         role="img"
         aria-label="Activity timeline with ideal cadence ticks and completion heartbeats through now"
       >
+        {blendGradients.length > 0 ? (
+          <defs>
+            {blendGradients.map(({ key, x1, x2, from, to }) => (
+              <linearGradient
+                key={`grad-${key}`}
+                id={`trends-seg-${key}`}
+                gradientUnits="userSpaceOnUse"
+                x1={x1}
+                y1={BASELINE_Y}
+                x2={x2}
+                y2={BASELINE_Y}
+              >
+                <stop offset="0%" stopColor={paintStopColor(from.isStreakDay, from.opacity)} />
+                <stop offset="100%" stopColor={paintStopColor(to.isStreakDay, to.opacity)} />
+              </linearGradient>
+            ))}
+          </defs>
+        ) : null}
         {timeline.ticks.map(({ timestamp, x }) => {
           const date = new Date(timestamp);
           const label = `${date.getMonth() + 1}/${date.getDate()}`;
@@ -220,22 +296,48 @@ function HeartbeatHistory({ logs, category, intervalDays, windowStart, windowEnd
             </g>
           );
         })}
-        {timeline.connectors.map(({ key, x1, x2, className, opacity }) => (
-          x2 > x1 ? (
+        {/* Structural x-axis: full graph width, behind the living heartbeat. */}
+        <line
+          x1={GRAPH_LEFT}
+          y1={BASELINE_Y}
+          x2={GRAPH_RIGHT}
+          y2={BASELINE_Y}
+          className="stroke-muted-foreground/25"
+          strokeWidth={SPIKE_STROKE_WIDTH}
+          vectorEffect="non-scaling-stroke"
+        />
+        {timeline.connectors.map((segment) => {
+          if (segment.x2 <= segment.x1) return null;
+          if (segment.kind === "blend") {
+            return (
+              <line
+                key={segment.key}
+                x1={segment.x1}
+                y1={BASELINE_Y}
+                x2={segment.x2}
+                y2={BASELINE_Y}
+                stroke={`url(#trends-seg-${segment.key})`}
+                strokeWidth={SPIKE_STROKE_WIDTH}
+                vectorEffect="non-scaling-stroke"
+                strokeLinecap="round"
+              />
+            );
+          }
+          return (
             <line
-              key={key}
-              x1={x1}
+              key={segment.key}
+              x1={segment.x1}
               y1={BASELINE_Y}
-              x2={x2}
+              x2={segment.x2}
               y2={BASELINE_Y}
-              className={className}
+              className={segment.className}
               strokeWidth={SPIKE_STROKE_WIDTH}
               vectorEffect="non-scaling-stroke"
               strokeLinecap="round"
-              style={{ opacity }}
+              style={{ opacity: segment.opacity }}
             />
-          ) : null
-        ))}
+          );
+        })}
         {timeline.events.map(({ entry, x, left, right, adherence, isStreakDay, scale }) => (
           <path
             key={entry.id}
