@@ -47,15 +47,26 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
   const pinned = Boolean(session?.personaPinnedByUser);
   const activePersonaId = session?.personaId ?? persona?.id ?? null;
 
-  // Only load the persona list when the menu opens.
-  const { data: personas } = useQuery<PersonaOption[]>({ queryKey: ["/api/personas"], enabled: open });
+  // Load personas when the menu opens, or when we need the session seat icon
+  // before the turn snapshot / stream model_info arrives.
+  const needsSessionPersonaFallback = !persona && activePersonaId != null;
+  const { data: personas } = useQuery<PersonaOption[]>({
+    queryKey: ["/api/personas"],
+    enabled: open || needsSessionPersonaFallback,
+  });
+  const sessionPersona = needsSessionPersonaFallback
+    ? personas?.find((p) => p.id === activePersonaId) ?? null
+    : null;
+  const displayPersona = persona ?? (sessionPersona
+    ? { id: sessionPersona.id, name: sessionPersona.name, icon: sessionPersona.icon }
+    : null);
 
-  const PersonaIcon = resolvePersonaIcon(persona?.icon);
-  const personaLabel = persona?.name || "Choosing seat";
+  const PersonaIcon = resolvePersonaIcon(displayPersona?.icon);
+  const personaLabel = displayPersona?.name || "Choosing seat";
   const radioValue = pinned && activePersonaId != null ? String(activePersonaId) : "auto";
   // The message snapshot is historical; session pin state is current. Only show
   // the current pin when this turn's persona still matches the pinned persona.
-  const showPinnedIcon = pinned && persona?.id === activePersonaId;
+  const showPinnedIcon = pinned && displayPersona?.id === activePersonaId;
   const formatTokensK = (n: number) =>
     n >= 1000 ? `${(n / 1000).toFixed(n < 100_000 ? 1 : 0)}k` : `${n}`;
   // Hover and ring share the usable hard-input envelope 1:1.

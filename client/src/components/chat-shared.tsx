@@ -79,6 +79,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useQuery } from "@tanstack/react-query";
+import { isSessionOrientationEstablished } from "@shared/session-orientation";
+import type { ChatSession } from "@shared/models/chat";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
@@ -939,6 +941,9 @@ function CompactingStep({ step }: { step: ExecutionStep }) {
 }
 
 const THINKING_LABEL = "Thinking...";
+const ORIENTING_LABEL = "Orienting...";
+const ThinkingStatusLabelContext = createContext(THINKING_LABEL);
+
 function ThinkingWaveText({ label = THINKING_LABEL }: { label?: string }) {
   return (
     <span
@@ -963,11 +968,21 @@ export function ActiveThinkingStatus({
   startTime,
   testId,
   showTimer = true,
+  label,
 }: {
-  startTime: number;
+  startTime: number | Date | null;
   testId?: string;
   showTimer?: boolean;
+  label?: string;
 }) {
+  const contextLabel = useContext(ThinkingStatusLabelContext);
+  const resolvedLabel = label ?? contextLabel ?? THINKING_LABEL;
+  const timerStart =
+    startTime instanceof Date
+      ? startTime.getTime()
+      : typeof startTime === "number"
+        ? startTime
+        : null;
   return (
     <div
       className="flex items-center gap-1.5 text-active animate-pulse"
@@ -977,15 +992,20 @@ export function ActiveThinkingStatus({
         <Brain className="h-3 w-3" />
         <span className="absolute inset-0 rounded-full animate-ping bg-active/20" />
       </div>
-      <ThinkingWaveText />
-      {showTimer && <ThinkingTimer startTime={startTime} />}
+      <ThinkingWaveText label={resolvedLabel} />
+      {showTimer && timerStart != null && <ThinkingTimer startTime={timerStart} />}
     </div>
   );
 }
 
 function isGenericThinkingContent(content: string): boolean {
   const normalized = content.trim();
-  return normalized === THINKING_LABEL || normalized === "Thinking…";
+  return (
+    normalized === THINKING_LABEL ||
+    normalized === "Thinking…" ||
+    normalized === ORIENTING_LABEL ||
+    normalized === "Orienting…"
+  );
 }
 
 function ThinkingNarrative({ step }: { step: ExecutionStep }) {
@@ -2735,6 +2755,28 @@ export const ChatTurn = memo(function ChatTurn({
   const isUser = message.role === "user";
   const isSystemPrompt = message.role === "system_prompt";
   const isVoiceMessage = message.voice?.source === "elevenlabs-voice";
+  // Session list is already warm from the shell; read without a second fetch so
+  // live drafts can resolve the current seat before stream persona arrives.
+  const { data: sessions } = useQuery<ChatSession[]>({
+    queryKey: ["/api/sessions"],
+    enabled: false,
+  });
+  const { data: personas } = useQuery<Array<{ id: number; name: string; icon: string }>>({
+    queryKey: ["/api/personas"],
+    staleTime: 60_000,
+  });
+  const sessionMeta = sessions?.find((s) => s.id === message.sessionId);
+  const sessionPersona = useMemo(() => {
+    if (!sessionMeta?.personaId || !personas?.length) return null;
+    const match = personas.find((p) => p.id === sessionMeta.personaId);
+    return match ? { id: match.id, name: match.name, icon: match.icon } : null;
+  }, [sessionMeta?.personaId, personas]);
+  // Prefer the frozen turn persona; fall back to the session seat so a new turn
+  // does not flash the root/Bot icon while stream model_info is still in flight.
+  const displayPersona = message.persona ?? streaming?.persona ?? sessionPersona;
+  const thinkingStatusLabel = isSessionOrientationEstablished(sessionMeta)
+    ? THINKING_LABEL
+    : ORIENTING_LABEL;
   const effectiveApiCallCount =
     message.apiCallCount ?? streaming?.apiCallCount ?? null;
   const effectiveCost = message.cost ?? streaming?.cost ?? null;
@@ -3149,10 +3191,11 @@ export const ChatTurn = memo(function ChatTurn({
   }
 
   const isErrorMessage = !isUser && !isSystemPrompt && !!message.isError;
-  const PersonaIcon = resolvePersonaIcon(message.persona?.icon);
-  const personaLabel = message.persona?.name || "Choosing seat";
+  const PersonaIcon = resolvePersonaIcon(displayPersona?.icon);
+  const personaLabel = displayPersona?.name || "Choosing seat";
 
   return (
+    <ThinkingStatusLabelContext.Provider value={thinkingStatusLabel}>
     <div
       ref={turnRootRef}
       className="flex gap-3 items-start"
@@ -3165,7 +3208,7 @@ export const ChatTurn = memo(function ChatTurn({
       ) : (
         <AgentPersonaControl
           sessionId={message.sessionId}
-          persona={message.persona}
+          persona={displayPersona}
           contextPressure={
             layer >= 2
               ? (streaming?.contextPressure ?? message.contextPressure ?? null)
@@ -3352,5 +3395,6 @@ export const ChatTurn = memo(function ChatTurn({
         </div>
       </div>
     </div>
+    </ThinkingStatusLabelContext.Provider>
   );
 });
