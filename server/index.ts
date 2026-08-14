@@ -344,7 +344,17 @@ app.use((req, res, next) => {
   const t0 = Date.now();
   const bootPhases: { name: string; durationMs: number }[] = [];
 
-  // Resolve runtime identity first: which platform/env/host this process IS.
+  await timezoneReady;
+
+  bootTracker.startPhase("database");
+  const tMigrate0 = Date.now();
+  // Schema convergence (including remount heal) must finish before runtime
+  // identity resolves. Identity caches platformEnvironmentId for the process
+  // lifetime; resolving against pre-heal hosting rows can permanently pin null
+  // and silence environment-bound workers such as Slack.
+  await convergeBootSchema();
+
+  // Resolve runtime identity after heal: which platform/env/host this process IS.
   // The async Platforms lookup is cached for the process lifetime, adopts the
   // hosting binding's publicUrl as the canonical public base URL and logs
   // loudly when the runtime binding cannot be resolved.
@@ -352,11 +362,6 @@ app.use((req, res, next) => {
   const runtimeIdentity = await resolveRuntimeIdentity();
   log(`[startup] ${describeRuntimeIdentity(runtimeIdentity)}`, "boot");
 
-  await timezoneReady;
-
-  bootTracker.startPhase("database");
-  const tMigrate0 = Date.now();
-  await convergeBootSchema();
   registerRuntimeProofPathHandlers();
   registerLegacyCapacityHandler();
   // Validate the code-owned first-party Mod registry before accepting requests.
