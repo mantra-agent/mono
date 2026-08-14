@@ -168,6 +168,7 @@ export default function BusinessModelPage() {
   const [utilizationOpen, setUtilizationOpen] = useState(true);
   const [accountsOpen, setAccountsOpen] = useState(true);
   const [usersOpen, setUsersOpen] = useState(true);
+  const [meetingsOpen, setMeetingsOpen] = useState(true);
   const [grossProfitOpen, setGrossProfitOpen] = useState(true);
   const [revenueOpen, setRevenueOpen] = useState(true);
   const [cogsOpen, setCogsOpen] = useState(true);
@@ -260,15 +261,17 @@ export default function BusinessModelPage() {
             <Driver label="Starting users"><NumericInput ariaLabel="Starting users" value={draft.startingUsers} min={0} step={1} onChange={(startingUsers) => updateGlobal({ startingUsers })} /></Driver>
             <Driver label="Q1 new accounts"><NumericInput ariaLabel="Quarter one new accounts" value={draft.quarterOneNewAccounts} min={0} step={1} onChange={(quarterOneNewAccounts) => updateGlobal({ quarterOneNewAccounts })} /></Driver>
             <Driver label="Users per new account"><NumericInput ariaLabel="Average users per new account" value={draft.averageUsersPerNewAccount} min={1} step={1} onChange={(averageUsersPerNewAccount) => updateGlobal({ averageUsersPerNewAccount })} /></Driver>
-            <Driver label="New account growth"><NumericInput ariaLabel="New account growth every 90 days" value={draft.accountExpansion90d} min={0} step={0.05} suffix="× / 90d" onChange={(accountExpansion90d) => updateGlobal({ accountExpansion90d })} /></Driver>
             <Driver label="Annual account churn"><NumericInput ariaLabel="Annual account churn" value={draft.annualAccountChurnPct} min={0} step={1} suffix="%" onChange={(annualAccountChurnPct) => updateGlobal({ annualAccountChurnPct })} /></Driver>
-            <Driver label="User expansion"><NumericInput ariaLabel="Annual user expansion within existing accounts" value={draft.annualExistingAccountUserGrowthPct} min={0} step={5} suffix="% / yr" onChange={(annualExistingAccountUserGrowthPct) => updateGlobal({ annualExistingAccountUserGrowthPct })} /></Driver>
             <Driver label="User contraction"><NumericInput ariaLabel="Annual user contraction within existing accounts" value={draft.annualExistingAccountUserContractionPct} min={0} step={5} suffix="% / yr" onChange={(annualExistingAccountUserContractionPct) => updateGlobal({ annualExistingAccountUserContractionPct })} /></Driver>
             <Driver label="Account upgrades"><NumericInput ariaLabel="Annual account upgrade rate" value={draft.annualAccountUpgradePct} min={0} step={5} suffix="% / yr" onChange={(annualAccountUpgradePct) => updateGlobal({ annualAccountUpgradePct })} /></Driver>
             <Driver label="Base plan"><NumericInput ariaLabel="Base plan monthly price" value={draft.maxSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} /></Driver>
             <Driver label="Upgraded plan"><NumericInput ariaLabel="Upgraded plan monthly price" value={draft.maxPlusSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxPlusSubscriptionMonthly) => updateGlobal({ maxPlusSubscriptionMonthly })} /></Driver>
             <Driver label="Additional user"><NumericInput ariaLabel="Additional user monthly price" value={draft.participantSeatMonthly} min={0} step={25} prefix="$" suffix="/ mo" onChange={(participantSeatMonthly) => updateGlobal({ participantSeatMonthly })} /></Driver>
             <Driver label="Hours per user"><NumericInput ariaLabel="Hours used per active user per month" value={draft.hoursUsedPerActiveUser} min={0} step={1} suffix="/ mo" onChange={(hoursUsedPerActiveUser) => updateGlobal({ hoursUsedPerActiveUser })} /></Driver>
+            <Driver label="Meetings per hour"><NumericInput ariaLabel="Meetings per hour used" value={draft.meetingsPerHour} min={0} step={0.05} onChange={(meetingsPerHour) => updateGlobal({ meetingsPerHour })} /></Driver>
+            <Driver label="Internal meeting share"><NumericInput ariaLabel="Share of meetings that are internal" value={draft.internalMeetingSharePct} min={0} step={5} suffix="%" onChange={(internalMeetingSharePct) => updateGlobal({ internalMeetingSharePct })} /></Driver>
+            <Driver label="Accounts per external meeting"><NumericInput ariaLabel="New accounts per external meeting" value={draft.newAccountsPerExternalMeeting} min={0} step={0.01} onChange={(newAccountsPerExternalMeeting) => updateGlobal({ newAccountsPerExternalMeeting })} /></Driver>
+            <Driver label="Users per internal meeting"><NumericInput ariaLabel="Expanded users per internal meeting" value={draft.expandedUsersPerInternalMeeting} min={0} step={0.01} onChange={(expandedUsersPerInternalMeeting) => updateGlobal({ expandedUsersPerInternalMeeting })} /></Driver>
             <Driver label="Tokens per hour"><NumericInput ariaLabel="Tokens used per hour" value={draft.tokensUsedPerHour} min={0} step={10000} onChange={(tokensUsedPerHour) => updateGlobal({ tokensUsedPerHour })} /></Driver>
             <Driver label="Token cost"><NumericInput ariaLabel="Blended token cost per million" value={draft.blendedTokenCostPerMillion} min={0} step={0.25} prefix="$" suffix="/ 1M" onChange={(blendedTokenCostPerMillion) => updateGlobal({ blendedTokenCostPerMillion })} /></Driver>
             <Driver label="Loaded comp multiplier"><NumericInput ariaLabel="Fully loaded staff comp multiplier on base salary plus bonus" value={draft.loadedCostMultiplier} min={0.5} step={0.05} suffix="×" onChange={(loadedCostMultiplier) => updateGlobal({ loadedCostMultiplier })} /></Driver>
@@ -314,11 +317,16 @@ export default function BusinessModelPage() {
               <DataRow label="Utilization" periods={periods} render={(row) => utilizationOpen ? "" : fmtHours(row.hoursUsed)} onToggle={() => setUtilizationOpen((open) => !open)} open={utilizationOpen} tone={() => "text-foreground"} emphasize />
               {utilizationOpen && <DataRow label="Accounts" indent periods={periods} render={(row) => Math.round(row.activeAccounts).toLocaleString()} onToggle={() => setAccountsOpen((open) => !open)} open={accountsOpen} />}
               {utilizationOpen && accountsOpen && <DataRow label="New Accounts" indent={2} periods={periods} render={(row) => row.newAccounts >= 0.05 ? `+${trimNum(row.newAccounts)}` : "—"} />}
+              {utilizationOpen && accountsOpen && <DataRow label="From External Meetings" indent={3} periods={periods} render={(row) => row.newAccountsFromMeetings >= 0.05 ? `+${trimNum(row.newAccountsFromMeetings)}` : "—"} />}
               {utilizationOpen && accountsOpen && <DataRow label="Churned Accounts" indent={2} periods={periods} render={(row) => row.churnedAccounts >= 0.05 ? `-${trimNum(row.churnedAccounts)}` : "—"} tone={() => "text-muted-foreground"} />}
               {utilizationOpen && <DataRow label="Users" indent periods={periods} render={(row) => Math.round(row.activeUsers).toLocaleString()} onToggle={() => setUsersOpen((open) => !open)} open={usersOpen} />}
               {utilizationOpen && usersOpen && <DataRow label="New Users" indent={2} periods={periods} render={(row) => row.newUsers >= 0.05 ? `+${trimNum(row.newUsers)}` : "—"} />}
               {utilizationOpen && usersOpen && <DataRow label="Expanded Users" indent={2} periods={periods} render={(row) => row.expandedUsers >= 0.05 ? `+${trimNum(row.expandedUsers)}` : "—"} />}
+              {utilizationOpen && usersOpen && <DataRow label="From Internal Meetings" indent={3} periods={periods} render={(row) => row.expandedUsersFromMeetings >= 0.05 ? `+${trimNum(row.expandedUsersFromMeetings)}` : "—"} />}
               {utilizationOpen && usersOpen && <DataRow label="Contracted Users" indent={2} periods={periods} render={(row) => row.contractedUsers >= 0.05 ? `-${trimNum(row.contractedUsers)}` : "—"} tone={() => "text-muted-foreground"} />}
+              {utilizationOpen && <DataRow label="Meetings" indent periods={periods} render={(row) => meetingsOpen ? "" : (row.meetings >= 0.05 ? trimNum(row.meetings) : "—")} onToggle={() => setMeetingsOpen((open) => !open)} open={meetingsOpen} />}
+              {utilizationOpen && meetingsOpen && <DataRow label="Internal Meetings" indent={2} periods={periods} render={(row) => row.internalMeetings >= 0.05 ? trimNum(row.internalMeetings) : "—"} />}
+              {utilizationOpen && meetingsOpen && <DataRow label="External Meetings" indent={2} periods={periods} render={(row) => row.externalMeetings >= 0.05 ? trimNum(row.externalMeetings) : "—"} />}
               {utilizationOpen && <DataRow label="Hours Used" indent periods={periods} render={(row) => row.hoursUsed >= 0.05 ? trimNum(row.hoursUsed) : "—"} />}
               <DataRow label="Gross Profit" periods={periods} render={(row) => grossProfitOpen ? "" : fmtCurrency(row.grossProfit)} onToggle={() => setGrossProfitOpen((open) => !open)} open={grossProfitOpen} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} emphasize />
               {grossProfitOpen && <DataRow label="Gross Profit" indent periods={periods} render={(row) => fmtCurrency(row.grossProfit)} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />}
@@ -376,7 +384,7 @@ function DataRow({ label, periods, render, tone, emphasize, indent, onToggle, op
   const indentLevel = indent === true ? 1 : indent === false || indent == null ? 0 : indent;
   return (
     <tr className="h-8 border-t border-border/10">
-      <td className={cn("sticky left-0 z-10 h-8 border-r border-border/20 bg-background px-3 py-0 text-left text-muted-foreground", emphasize && "font-medium text-foreground", indentLevel > 0 && "text-muted-foreground/80", indentLevel === 1 && "pl-6", indentLevel >= 2 && "pl-9")}>
+      <td className={cn("sticky left-0 z-10 h-8 border-r border-border/20 bg-background px-3 py-0 text-left text-muted-foreground", emphasize && "font-medium text-foreground", indentLevel > 0 && "text-muted-foreground/80", indentLevel === 1 && "pl-6", indentLevel === 2 && "pl-9", indentLevel >= 3 && "pl-12")}>
         {onToggle ? <button type="button" onClick={onToggle} className={cn("flex h-8 items-center gap-1 text-left hover:text-foreground", emphasize && "text-foreground")}><ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />{label}</button> : label}
       </td>
       {periods.map((row) => <td key={row.key} className={cn("h-8 px-2 py-0 text-right text-foreground", indentLevel > 0 && "text-muted-foreground/80", tone?.(row))}>{render(row)}</td>)}
