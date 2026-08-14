@@ -7735,7 +7735,7 @@ ${refs}` : ""),
         return {
           result: `Tool unavailable under current execution authority: ${toolName}`,
           error: true,
-          failure: permissionFailure("tools_authority_denied", toolName),
+          failure: inputFailure("tools_authority_denied", toolName),
         };
       }
 
