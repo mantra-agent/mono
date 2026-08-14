@@ -10,7 +10,7 @@ import { getSecretSync } from "../secrets-store";
 import { getProviderCredential } from "../provider-credential-store";
 import { getLatestDeploymentByToken } from "../integrations/railway/client";
 import { getCloudflareLatestDeployment } from "../services/provider-connection-service";
-import { environmentHostingBindings, environmentRuntimeVariables, environmentSourceBindings, environmentCapabilityBindings, environmentContextArtifacts, insertPlatformProductEnvironmentSchema, insertPlatformProductSchema, insertPlatformSchema, platformProductEnvironments, productPlatformAssociations, products, platforms, providerConnections, upsertSourceBindingSchema, upsertHostingBindingSchema, upsertCapabilityBindingSchema, upsertContextArtifactSchema, type EnvironmentSourceBinding, type EnvironmentHostingBinding, type EnvironmentRuntimeVariable, type ProviderConnection, type EnvironmentCapabilityBinding } from "@shared/models/platforms";
+import { environmentHostingBindings, environmentRuntimeVariables, environmentSourceBindings, environmentCapabilityBindings, insertPlatformProductEnvironmentSchema, insertPlatformProductSchema, insertPlatformSchema, platformProductEnvironments, productPlatformAssociations, products, platforms, providerConnections, upsertSourceBindingSchema, upsertHostingBindingSchema, upsertCapabilityBindingSchema, type EnvironmentSourceBinding, type EnvironmentHostingBinding, type EnvironmentRuntimeVariable, type ProviderConnection, type EnvironmentCapabilityBinding } from "@shared/models/platforms";
 import { encrypt, getEncryptionKey } from "../encryption";
 import { getCloudflarePagesProjectTruth, triggerCloudflarePagesProductionDeployment, retryCloudflarePagesDeployment, cancelCloudflarePagesDeployment, repairCloudflarePagesProject, type CloudflareProjectRepair } from "../platforms/cloudflare-pages-service";
 import { deleteEnvironmentBuildLifecycleConfigs, disableEnvironmentBuildLifecycleConfig, getEnvironmentBuildLifecycleConfig, getEnvironmentBuildStatus, listEnvironmentBuildWorkflows, setEnvironmentBuildLifecycleConfig, startEnvironmentBuildWorkflow } from "../platforms/build-lifecycle-service";
@@ -26,7 +26,6 @@ import {
   visiblePlatform,
   writablePlatform,
 } from "../platforms/platform-access";
-import { libraryPages } from "@shared/models/info";
 import { requireModRouteGroup } from "../mods/mod-access";
 const requireActiveBuild = requireModRouteGroup("build.platforms");
 
@@ -35,12 +34,6 @@ const providerConnectionScopeColumns = { scope: providerConnections.scope, owner
 
 function visibleProviderConnection(predicate?: SQL): SQL {
   return combineWithVisibleScope(requireCurrentPrincipal(), providerConnectionScopeColumns, predicate);
-}
-
-const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
-
-function visibleLibrary(predicate?: SQL): SQL {
-  return combineWithVisibleScope(requireCurrentPrincipal(), libraryScopeColumns, predicate);
 }
 
 
@@ -212,7 +205,6 @@ export function registerPlatformRoutes(app: Express): void {
       let runtimeRows: EnvironmentRuntimeVariable[] = [];
       let connectionRows: ProviderConnection[] = [];
       let capabilityRows: EnvironmentCapabilityBinding[] = [];
-      let contextArtifactRows: { id: number; environmentId: number; kind: string; libraryPageId: string; createdAt: Date | null; updatedAt: Date | null; pageTitle: string | null }[] = [];
       try {
         sourceRows = await db
           .select()
@@ -239,25 +231,6 @@ export function registerPlatformRoutes(app: Express): void {
           ));
       } catch (err) {
         log.debug("Binding table query failed; returning unbound environment", { error: err instanceof Error ? err.message : String(err) });
-      }
-
-      // Context artifacts in a separate try/catch so binding failures don't silently kill artifact loading
-      try {
-        contextArtifactRows = await db
-          .select({
-            id: environmentContextArtifacts.id,
-            environmentId: environmentContextArtifacts.environmentId,
-            kind: environmentContextArtifacts.kind,
-            libraryPageId: environmentContextArtifacts.libraryPageId,
-            createdAt: environmentContextArtifacts.createdAt,
-            updatedAt: environmentContextArtifacts.updatedAt,
-            pageTitle: libraryPages.title,
-          })
-          .from(environmentContextArtifacts)
-          .leftJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
-          .where(and(eq(environmentContextArtifacts.environmentId, environmentId), visibleLibrary()));
-      } catch (err) {
-        log.warn("Context artifact query failed", { error: err instanceof Error ? err.message : String(err), environmentId });
       }
 
       const inferred = emptyEnvironmentBindings(row.platform_product_environments.name);
@@ -299,15 +272,6 @@ export function registerPlatformRoutes(app: Express): void {
           secretEnvelope: undefined,
           hasSecret: !!r.secretEnvelope,
           connection: r.connectionId ? connectionRows.find(c => c.id === r.connectionId) || null : null,
-        })),
-        contextArtifacts: contextArtifactRows.map(r => ({
-          id: r.id,
-          environmentId: r.environmentId,
-          kind: r.kind,
-          libraryPageId: r.libraryPageId,
-          pageTitle: r.pageTitle || "Untitled",
-          createdAt: r.createdAt,
-          updatedAt: r.updatedAt,
         })),
         services: {
           database: variables.find(variable => variable.key === "DATABASE_URL") || null,
@@ -1037,123 +1001,5 @@ export function registerPlatformRoutes(app: Express): void {
     }
   });
 
-  // ── Context Artifacts ──
-
-  // List context artifacts for an environment
-  app.get("/api/platforms/environments/:environmentId/context-artifacts", async (req, res) => {
-    try {
-      const environmentId = platformIdParam(req.params.environmentId);
-      if (!(await getVisibleEnvironment(environmentId))) {
-        return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "list_context_artifacts" });
-      }
-      const rows = await db
-        .select({
-          id: environmentContextArtifacts.id,
-          environmentId: environmentContextArtifacts.environmentId,
-          kind: environmentContextArtifacts.kind,
-          libraryPageId: environmentContextArtifacts.libraryPageId,
-          createdAt: environmentContextArtifacts.createdAt,
-          updatedAt: environmentContextArtifacts.updatedAt,
-          pageTitle: libraryPages.title,
-        })
-        .from(environmentContextArtifacts)
-        .leftJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
-        .where(and(eq(environmentContextArtifacts.environmentId, environmentId), visibleLibrary()));
-
-      res.json(rows.map(r => ({
-        id: r.id,
-        environmentId: r.environmentId,
-        kind: r.kind,
-        libraryPageId: r.libraryPageId,
-        pageTitle: r.pageTitle || "Untitled",
-        createdAt: r.createdAt,
-        updatedAt: r.updatedAt,
-      })));
-    } catch (error: unknown) {
-      const err = routeError(error, "list_context_artifacts");
-      res.status(500).json({ error: err.message, operation: err.operation });
-    }
-  });
-
-  // Upsert context artifact for an environment
-  app.put("/api/platforms/environments/:environmentId/context-artifacts", async (req, res) => {
-    try {
-      const environmentId = platformIdParam(req.params.environmentId);
-      const env = await ensureEnvironmentWritable(environmentId);
-      if (!env) return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "save_context_artifact" });
-
-      const parsed = upsertContextArtifactSchema.parse(req.body);
-
-      // Verify library page exists
-      const [page] = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(visibleLibrary(eq(libraryPages.id, parsed.libraryPageId))).limit(1);
-      if (!page) return res.status(404).json({ error: `Library page ${parsed.libraryPageId} not found`, operation: "save_context_artifact" });
-
-      // Prevent duplicate: same environment + kind + libraryPageId
-      const [existingDup] = await db
-        .select({ id: environmentContextArtifacts.id })
-        .from(environmentContextArtifacts)
-        .where(and(
-          eq(environmentContextArtifacts.environmentId, environmentId),
-          eq(environmentContextArtifacts.kind, parsed.kind),
-          eq(environmentContextArtifacts.libraryPageId, parsed.libraryPageId),
-        ))
-        .limit(1);
-
-      if (existingDup) {
-        // Already linked — return existing without error
-        return res.json({ ...existingDup, kind: parsed.kind, libraryPageId: parsed.libraryPageId, pageTitle: page.title || "Untitled", environmentId });
-      }
-
-      const [saved] = await db
-        .insert(environmentContextArtifacts)
-        .values({ environmentId, kind: parsed.kind, libraryPageId: parsed.libraryPageId })
-        .returning();
-
-      res.json({ ...saved, pageTitle: page.title || "Untitled" });
-    } catch (error: unknown) {
-      const err = routeError(error, "save_context_artifact");
-      res.status(400).json({ error: err.message, operation: err.operation });
-    }
-  });
-
-  // Delete context artifact by ID or by (kind + libraryPageId) for an environment
-  app.delete("/api/platforms/environments/:environmentId/context-artifacts/:kindOrId", async (req, res) => {
-    try {
-      const environmentId = platformIdParam(req.params.environmentId);
-      const kindOrId = req.params.kindOrId;
-      const env = await ensureEnvironmentWritable(environmentId);
-      if (!env) return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "delete_context_artifact" });
-
-      // Try numeric ID first
-      const numericId = parseInt(kindOrId, 10);
-      let deleted;
-      if (!isNaN(numericId)) {
-        [deleted] = await db
-          .delete(environmentContextArtifacts)
-          .where(and(
-            eq(environmentContextArtifacts.id, numericId),
-            eq(environmentContextArtifacts.environmentId, environmentId),
-          ))
-          .returning({ id: environmentContextArtifacts.id });
-      }
-
-      // Fallback: delete by kind (backward compat — deletes first match)
-      if (!deleted) {
-        [deleted] = await db
-          .delete(environmentContextArtifacts)
-          .where(and(
-            eq(environmentContextArtifacts.environmentId, environmentId),
-            eq(environmentContextArtifacts.kind, kindOrId),
-          ))
-          .returning({ id: environmentContextArtifacts.id });
-      }
-
-      if (!deleted) return res.status(404).json({ error: `Context artifact '${kindOrId}' not found for environment ${environmentId}`, operation: "delete_context_artifact" });
-
-      res.json({ success: true });
-    } catch (error: unknown) {
-      const err = routeError(error, "delete_context_artifact");
-      res.status(500).json({ error: err.message, operation: err.operation });
-    }
-  });
+  // Environment Context is retired. Product owns context on /products.
 }

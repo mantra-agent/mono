@@ -123,7 +123,7 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
     list_environments: 0, get_environment: 0, get_environment_status: 0,
     list_products: 0,
     get_build_lifecycle: 0, get_build_status: 0, list_environment_workflows: 0,
-    get_context_artifacts: 0, get_cloudflare_pages_project: 0,
+    get_cloudflare_pages_project: 0,
     poll_cloudflare_pages_deployment: 0,
   }},
   observe: { default: 1 },

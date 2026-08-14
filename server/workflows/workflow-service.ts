@@ -500,8 +500,8 @@ async function resolveGoverningArtifacts(environmentId: number | null, stageKey:
   if (!environmentId) return [];
   const relevantKinds = BUILD_STAGE_ARTIFACT_KINDS[stageKey] || [];
   if (relevantKinds.length === 0) return [];
-  const { listVisibleEnvironmentContextPages } = await import("../platforms/context-artifact-access");
-  const rows = await listVisibleEnvironmentContextPages(relevantKinds, environmentId);
+  const { listVisibleProductContextPages } = await import("../platforms/context-artifact-access");
+  const rows = await listVisibleProductContextPages(relevantKinds, environmentId);
   return rows.map((row) => ({
     kind: row.kind,
     libraryPageId: row.libraryPageId,

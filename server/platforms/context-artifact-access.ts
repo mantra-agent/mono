@@ -4,11 +4,16 @@ import { requireCurrentPrincipal } from "../principal-context";
 import { combineWithVisibleScope } from "../scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import {
-  environmentContextArtifacts,
   platformProductEnvironments,
-  platforms,
+  productContextArtifacts,
+  products,
 } from "@shared/models/platforms";
-import { visiblePlatform } from "./platform-access";
+
+const productScopeColumns = {
+  scope: products.scope,
+  ownerUserId: products.ownerUserId,
+  accountId: products.accountId,
+};
 
 const libraryScopeColumns = {
   scope: libraryPages.scope,
@@ -17,27 +22,41 @@ const libraryScopeColumns = {
   vaultId: libraryPages.vaultId,
 };
 
-export async function listVisibleEnvironmentContextPages(kinds: string[], environmentId?: number) {
+/**
+ * Product-owned context pages visible to the current principal.
+ * When environmentId is set, returns only artifacts for that Environment's parent Product.
+ * Environment Context is retired; this is the sole coding/workflow context reader.
+ */
+export async function listVisibleProductContextPages(kinds: string[], environmentId?: number) {
   if (kinds.length === 0) return [];
   const principal = requireCurrentPrincipal();
+  const environmentFilter = environmentId === undefined
+    ? undefined
+    : inArray(
+      productContextArtifacts.productId,
+      db
+        .select({ productId: platformProductEnvironments.productId })
+        .from(platformProductEnvironments)
+        .where(eq(platformProductEnvironments.id, environmentId)),
+    );
+
   return db
     .select({
-      environmentId: environmentContextArtifacts.environmentId,
-      kind: environmentContextArtifacts.kind,
+      productId: productContextArtifacts.productId,
+      kind: productContextArtifacts.kind,
       libraryPageId: libraryPages.id,
       title: libraryPages.title,
       slug: libraryPages.slug,
       content: libraryPages.plainTextContent,
     })
-    .from(environmentContextArtifacts)
-    .innerJoin(platformProductEnvironments, eq(environmentContextArtifacts.environmentId, platformProductEnvironments.id))
-    .innerJoin(platforms, eq(platformProductEnvironments.platformId, platforms.id))
-    .innerJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
+    .from(productContextArtifacts)
+    .innerJoin(products, eq(productContextArtifacts.productId, products.id))
+    .innerJoin(libraryPages, eq(productContextArtifacts.libraryPageId, libraryPages.id))
     .where(and(
-      inArray(environmentContextArtifacts.kind, kinds),
-      environmentId === undefined ? undefined : eq(environmentContextArtifacts.environmentId, environmentId),
-      visiblePlatform(),
+      inArray(productContextArtifacts.kind, kinds),
+      environmentFilter,
+      combineWithVisibleScope(principal, productScopeColumns),
       combineWithVisibleScope(principal, libraryScopeColumns),
     ))
-    .orderBy(environmentContextArtifacts.environmentId, environmentContextArtifacts.kind, libraryPages.title);
+    .orderBy(productContextArtifacts.productId, productContextArtifacts.kind, libraryPages.title);
 }
