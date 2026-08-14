@@ -233,13 +233,32 @@ export function classifyGitHubApiStatus(status: number): ToolFailure | null {
  */
 export function classifyGitError(err: unknown): ToolFailure | null {
   if (err instanceof ToolFailureError) return err.failure;
-  const e = (err ?? {}) as { stderr?: unknown; message?: unknown };
+  const e = (err ?? {}) as {
+    stderr?: unknown;
+    message?: unknown;
+    code?: unknown;
+    killed?: unknown;
+    signal?: unknown;
+  };
   const haystack = [
     typeof e.stderr === "string" ? e.stderr : "",
     typeof e.message === "string" ? e.message : "",
+    typeof e.code === "string" ? e.code : "",
   ]
     .join("\n")
     .trim();
+
+  // Process budget — execFile timeout/SIGTERM. Progress stderr like
+  // "Cloning into..." is not auth evidence.
+  if (
+    e.killed === true ||
+    e.code === "ETIMEDOUT" ||
+    (typeof e.signal === "string" && /^(?:SIGTERM|SIGKILL)$/i.test(e.signal)) ||
+    /ETIMEDOUT|command timed out|killed \(timeout\)/i.test(haystack)
+  ) {
+    return transientFailure("git_network", "git process timeout/killed");
+  }
+
   if (!haystack) return null;
 
   // Auth / permission walls — credentials wrong, revoked, or prompts disabled.
