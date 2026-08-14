@@ -18,7 +18,7 @@ export const CONTEXT_GROUP_DEFINITIONS: readonly ContextGroupDefinition[] = [
     id: "emotions",
     title: "Emotions",
     description: "Emotional guidance, current state, and expression tags",
-    recommendedFor: "Companion, Coach, Persuader",
+    recommendedFor: "Companion, Coach, Advocate",
     tokenCost: "small",
     sectionIds: [
       "world_model.people.self.emotional_guidance",
@@ -47,7 +47,7 @@ export const CONTEXT_GROUP_DEFINITIONS: readonly ContextGroupDefinition[] = [
     id: "people",
     title: "People",
     description: "Other contacts and relationship context",
-    recommendedFor: "Companion, Persuader, Coach",
+    recommendedFor: "Companion, Advocate, Coach",
     tokenCost: "large",
     sectionIds: ["world_model.people.others"],
   },
@@ -79,7 +79,7 @@ export const CONTEXT_GROUP_SECTION_IDS: ReadonlySet<string> = new Set(
  * Empty object means Root-owned context only (History, Memory, Current Session,
  * partner Identity). Life is retired: Identity is Root; goals through quarter
  * live on Schedule. Development owns CODING.md. Longer horizons load via tools.
- * operator/creative remain rename aliases. There is no Default seat.
+ * operator/creative/persuader remain rename aliases. There is no Default seat.
  */
 export const PERSONA_CONTEXT_MAPS: Readonly<Record<string, Readonly<Record<string, boolean>>>> = {
   architect: { principles: true, development: true },
@@ -92,6 +92,7 @@ export const PERSONA_CONTEXT_MAPS: Readonly<Record<string, Readonly<Record<strin
   strategist: { principles: true, schedule: true },
   investigator: { people: true, schedule: true },
   persuader: { people: true, emotions: true },
+  advocate: { people: true, emotions: true },
   visionary: {},
   creative: {},
   router: {},
