@@ -2712,3 +2712,15 @@ Git clone crosses B03/B08 and F11 over A08/S0-S2: it invokes a credentialed exte
 **Deterministic controls:** `product-storage.ts` remains the sole ordinary mutation boundary. Create defaults omitted Vault to the current Principal's `activeVaultId`; explicit `null` stays unassigned and visible. Create/update independently require a live same-account Vault when a Vault ID is present. Product list visibility stays principal/account scoped and is not Vault-filtered. Named `build:write`, Build composition, and existing Product routes remain independent. Logs retain bounded status/error context only.
 
 **Evidence:** `shared/models/platforms.ts`, `server/product-storage.ts`, `server/schema-bootstrap.ts`, `server/AGENTS.md` Build Product boundary, `client/src/pages/products.tsx`. **Residual risk:** existing Products are backfilled to the account default Vault when one exists; a Product with no default Vault remains unassigned until an owner sets one. Revert the column, heal, storage check, and this finding together.
+
+## 11.34 Identity stock Metrics, August 14, 2026
+
+**Status:** Closed in source; production build required before release. **Severity:** High without controls; Low residual. **Owner:** Core Metrics + Identity. **SLA:** Immediate.
+
+**Assets/data:** A01 identity `accounts` / `users` rows (S1 operational counts), A07 derived Metric/KPI observations. Responses contain counts only.
+
+**Flow/threat:** authenticated Metrics/KPI read → `sampleIdentityStock` / `sampleIdentityRange` → query-time overlay on durable `accounts` and `registered-users` definitions. Binding those stocks to Forecast Starting Accounts / Starting Users would treat every active identity account as a paying Max logo (STRIDE tampering / data-integrity; DATA-01/OBS-01). Writing manual samples would invent a second source of truth.
+
+**Deterministic controls:** Identity tables remain the sole source. Accounts count `status = active` only. Users count registered `users` rows. Slugs stay off the Forecast catalog (`paying-accounts`, `users`, `new-users`) and off presence adapters (`current-users`, `active-users`). Overlay is query-time and writes no `metric_samples`. Existing Metrics authorization, platform-instrument gate, and Business visibility remain independent. Model Starting Accounts / Starting Users stay unbound.
+
+**Evidence:** `server/identity-metrics.ts`, `server/metrics-storage.ts`, `server/AGENTS.md` Metrics integrity boundary. **Residual risk:** identity stock is not a commercial cohort. Binding it later still requires a paying-account object that does not exist.

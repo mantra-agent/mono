@@ -120,7 +120,11 @@ const CURRENT_METRIC_DEFINITIONS = [
   { key: "shippedPrs", slug: "shipped-prs", name: "Shipped PRs", unit: "" },
   { key: "meetings", slug: "meetings", name: "Meetings", unit: "" },
   { key: "newUsers", slug: "new-users", name: "New Users", unit: "users" },
+  { key: "accounts", slug: "accounts", name: "Accounts", unit: "accounts" },
+  { key: "registeredUsers", slug: "registered-users", name: "Users", unit: "users" },
 ] as const;
+
+const IDENTITY_STOCK_SLUGS = new Set<string>(["accounts", "registered-users"]);
 
 function virtualCurrentMetric(
   businessId: string,
@@ -211,6 +215,41 @@ async function latestSampleFor(
     .orderBy(desc(metricSamples.observedAt))
     .limit(1);
   return row ? mapSample(row) : null;
+}
+
+async function overlayIdentityStockSample(metric: Metric): Promise<Metric> {
+  if (!IDENTITY_STOCK_SLUGS.has(metric.slug) || !metric.businessId) return metric;
+  const principal = getCurrentPrincipal();
+  if (!principal?.accountId) return metric;
+  const [business] = await db.select({
+    id: businesses.id,
+    isPlatformInstrument: businesses.isPlatformInstrument,
+  })
+    .from(businesses)
+    .where(visibleBusinessPredicate(principal, eq(businesses.id, metric.businessId)))
+    .limit(1);
+  if (!business?.isPlatformInstrument) return metric;
+  const { sampleIdentityStock } = await import("./identity-metrics");
+  const stock = await sampleIdentityStock();
+  const observedAt = new Date().toISOString();
+  const value = metric.slug === "accounts" ? stock.accounts : stock.registeredUsers;
+  const sample: MetricSample = {
+    id: `query_${metric.businessId}_${metric.slug}_${observedAt}`,
+    metricId: metric.id,
+    accountId: principal.accountId,
+    vaultId: metric.vaultId ?? principal.activeVaultId ?? null,
+    value,
+    unit: metric.unit || (metric.slug === "accounts" ? "accounts" : "users"),
+    observedAt,
+    sourceRef: `internal/${metric.slug}-query-v1`,
+    evidence: metric.slug === "accounts"
+      ? "Count of identity accounts with status=active."
+      : "Count of registered users in the identity graph.",
+    periodStart: null,
+    periodEnd: null,
+    createdAt: observedAt,
+  };
+  return { ...metric, latestSample: sample };
 }
 
 export interface InternalBusinessMetricDefinition {
@@ -358,7 +397,9 @@ export const metricsStorage = {
       .orderBy(asc(metrics.name));
 
     const out: Metric[] = [];
-    for (const { metric } of rows) out.push(mapMetric(metric, await latestSampleFor(metric.id, range)));
+    for (const { metric } of rows) {
+      out.push(await overlayIdentityStockSample(mapMetric(metric, await latestSampleFor(metric.id, range))));
+    }
     return out;
   },
 
@@ -371,7 +412,7 @@ export const metricsStorage = {
       .where(visibleBusinessPredicate(principal, eq(metrics.id, id)))
       .limit(1);
     if (!result?.metric) throw Object.assign(new Error("Metric not found"), { status: 404 });
-    return mapMetric(result.metric, await latestSampleFor(result.metric.id));
+    return overlayIdentityStockSample(mapMetric(result.metric, await latestSampleFor(result.metric.id)));
   },
 
   async create(input: MetricCreate): Promise<Metric> {
@@ -524,26 +565,34 @@ export const metricsStorage = {
     const currentSeries = CURRENT_METRIC_DEFINITIONS.map((definition) => {
       const existing = bySlug.get(definition.slug);
       if (existing) bySlug.delete(definition.slug);
+      const isIdentityStock = IDENTITY_STOCK_SLUGS.has(definition.slug);
       const coverage: MetricCoverage = definition.key === "newUsers"
         ? {
             status: "partial",
             availableFrom: current.newUsersCoverage.availableFrom,
             reason: "Historical signup provenance is incomplete.",
           }
-        : rangeCoverage;
+        : isIdentityStock
+          ? { status: "finalized" }
+          : rangeCoverage;
+      const observedAt = isIdentityStock ? new Date().toISOString() : end.toISOString();
       const sample: MetricSample = {
-        id: `query_${businessId}_${definition.slug}_${start.getTime()}_${end.getTime()}`,
+        id: `query_${businessId}_${definition.slug}_${isIdentityStock ? observedAt : `${start.getTime()}_${end.getTime()}`}`,
         metricId: existing?.id ?? `metric_current_${businessId}_${definition.slug.replace(/-/g, "_")}`,
         accountId: principal.accountId!,
         vaultId: existing?.vaultId ?? principal.activeVaultId ?? null,
         value: Number(current[definition.key]),
         unit: definition.unit,
-        observedAt: end.toISOString(),
+        observedAt,
         sourceRef: `internal/${definition.slug}-query-v1`,
-        evidence: "Resolved from the owning product system for the selected range.",
-        periodStart: start.toISOString(),
-        periodEnd: end.toISOString(),
-        createdAt: end.toISOString(),
+        evidence: isIdentityStock
+          ? (definition.slug === "accounts"
+            ? "Count of identity accounts with status=active."
+            : "Count of registered users in the identity graph.")
+          : "Resolved from the owning product system for the selected range.",
+        periodStart: isIdentityStock ? null : start.toISOString(),
+        periodEnd: isIdentityStock ? null : end.toISOString(),
+        createdAt: observedAt,
       };
       const metric = existing
         ? { ...existing, latestSample: sample }

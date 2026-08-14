@@ -1,5 +1,5 @@
-import { and, count, gte, isNotNull, lt, min } from "drizzle-orm";
-import { users } from "@shared/schema";
+import { and, count, eq, gte, isNotNull, lt, min } from "drizzle-orm";
+import { accounts, users } from "@shared/schema";
 import { db } from "./db";
 
 export interface NewUsersCoverage {
@@ -8,17 +8,46 @@ export interface NewUsersCoverage {
   historicalRows: "unclassified";
 }
 
-export interface IdentityRangeSample {
+export interface IdentityStockSample {
+  accounts: number;
+  registeredUsers: number;
+}
+
+export interface IdentityRangeSample extends IdentityStockSample {
   newUsers: number;
   newUsersCoverage: NewUsersCoverage;
 }
 
 /**
+ * Point-in-time identity stocks. Accounts are ordinary live rows
+ * (`status = active`). Users are every registered login. Archived and
+ * suspended accounts are excluded; presence and password-signup provenance
+ * are different quantities.
+ */
+export async function sampleIdentityStock(): Promise<IdentityStockSample> {
+  const [[accountStock], [userStock]] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(accounts)
+      .where(eq(accounts.status, "active")),
+    db
+      .select({ value: count() })
+      .from(users),
+  ]);
+
+  return {
+    accounts: Number(accountStock?.value ?? 0),
+    registeredUsers: Number(userStock?.value ?? 0),
+  };
+}
+
+/**
  * Authentication-owned aggregate of proven password signups in one half-open
- * interval. NULL provenance is historical uncertainty, never zero evidence.
+ * interval, plus the current identity stocks. NULL signup provenance is
+ * historical uncertainty, never zero evidence. Stocks ignore the interval.
  */
 export async function sampleIdentityRange(start: Date, end: Date): Promise<IdentityRangeSample> {
-  const [[range], [coverage]] = await Promise.all([
+  const [[range], [coverage], stock] = await Promise.all([
     db
       .select({ value: count() })
       .from(users)
@@ -31,10 +60,12 @@ export async function sampleIdentityRange(start: Date, end: Date): Promise<Ident
       .select({ availableFrom: min(users.passwordSignupAt) })
       .from(users)
       .where(isNotNull(users.passwordSignupAt)),
+    sampleIdentityStock(),
   ]);
 
   const availableFrom = coverage?.availableFrom;
   return {
+    ...stock,
     newUsers: Number(range?.value ?? 0),
     newUsersCoverage: {
       status: "partial",
