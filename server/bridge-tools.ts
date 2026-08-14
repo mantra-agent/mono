@@ -4365,7 +4365,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const all = await fileRuleStorage.getAll();
           if (all.length === 0) return { result: "No personal Rules saved yet." };
           const lines = all.map((rule) =>
-            `- [${rule.id}] ${rule.rule} (source: ${rule.source}, scope: ${rule.scope}${rule.context ? `, context: ${rule.context}` : ""}${rule.tags.length > 0 ? `, tags: ${rule.tags.join(", ")}` : ""})`,
+            `- [${rule.id}] ${rule.rule}${rule.tags.length > 0 ? ` (tags: ${rule.tags.join(", ")})` : ""}`,
           );
           return { result: `${all.length} personal Rules:
 ${lines.join("\n")}` };
@@ -4379,9 +4379,6 @@ ${lines.join("\n")}` };
             result: [
               `**Rule**: ${rule.rule}`,
               `ID: ${rule.id}`,
-              `Source: ${rule.source}`,
-              `Scope: ${rule.scope}`,
-              `Context: ${rule.context || "N/A"}`,
               `Tags: ${rule.tags.length > 0 ? rule.tags.join(", ") : "none"}`,
             ].join("\n"),
           };
@@ -4397,22 +4394,16 @@ ${lines.join("\n")}` };
           }
           const rule = await fileRuleStorage.create({
             rule: ruleText,
-            source: args.source,
-            scope: args.scope,
-            context: args.context,
             tags: args.tags,
           });
-          eventBus.publish({ category: "agent", event: "data:rule_created", payload: { id: rule.id, rule: rule.rule, scope: rule.scope } });
-          return { result: `Personal Rule saved: "${rule.rule}" (ID: ${rule.id}, scope: ${rule.scope})` };
+          eventBus.publish({ category: "agent", event: "data:rule_created", payload: { id: rule.id, rule: rule.rule } });
+          return { result: `Personal Rule saved: "${rule.rule}" (ID: ${rule.id})` };
         }
         case "update": {
           const id = args.id;
           if (!id) return { result: "Missing Rule id", error: true };
           const updates: Record<string, unknown> = {};
           if (typeof args.rule === "string" && args.rule.trim()) updates.rule = args.rule.trim();
-          if (args.source) updates.source = args.source;
-          if (args.scope) updates.scope = args.scope;
-          if (typeof args.context === "string" && args.context.trim()) updates.context = args.context.trim();
           if (Array.isArray(args.tags) && args.tags.length > 0) updates.tags = args.tags;
           const updated = await fileRuleStorage.update(id, updates);
           if (!updated) return { result: `Rule ${id} not found`, error: true };

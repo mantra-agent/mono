@@ -589,30 +589,21 @@ async function genLife(dir: string): Promise<{ count: number }> {
       await writeFile(dir, "life/principles.md", `# Principles\n\n_Could not read principles document: ${principlesErr?.message}_`);
     }
 
-    // Rules — document-backed via fileRuleStorage, grouped by scope
+    // Rules — document-backed via fileRuleStorage
     const rules = await fileRuleStorage.getAll();
-    const alwaysRules = rules.filter(r => r.scope === "always");
-    const contextualRules = rules.filter(r => r.scope !== "always");
 
     function formatRule(r: any): string {
       return (
         `### Rule\n\n` +
         `${r.rule ?? ""}\n\n` +
-        (r.context ? `_Context: ${r.context}_\n\n` : "") +
-        (r.source !== "manual" ? `- Source: ${r.source}` : "") +
-        (r.tags?.length ? `${r.source !== "manual" ? " | " : "- "}Tags: ${r.tags.join(", ")}` : "") +
+        (r.tags?.length ? `- Tags: ${r.tags.join(", ")}` : "") +
         "\n"
       );
     }
 
     const rulesMd =
       `# Rules\n\n` +
-      (alwaysRules.length
-        ? `## Always Apply\n\n` + alwaysRules.map(formatRule).join("\n") + "\n"
-        : "") +
-      (contextualRules.length
-        ? `## Contextual\n\n` + contextualRules.map(formatRule).join("\n")
-        : "");
+      (rules.length ? rules.map(formatRule).join("\n") : "_No personal Rules defined._\n");
     await writeFile(dir, "life/rules.md", rulesMd);
 
     count = rules.length + 1; // +1 for principles

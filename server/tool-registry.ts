@@ -1428,10 +1428,7 @@ export const TOOLS: Record<string, ToolMeta> = {
       properties: {
         action: { type: "string", enum: ["list", "get", "save", "create", "update", "delete"], description: "Action" },
         id: { type: "string", description: "Rule ID (required for get, update, delete)" },
-        rule: { type: "string", description: "The explicit personal behavioral command (required for save/create)" },
-        source: { type: "string", enum: ["correction", "reflection", "manual"], description: "How the user established this Rule (default: manual)" },
-        scope: { type: "string", enum: ["always", "contextual"], description: "Whether the Rule always applies or only in a named context (default: contextual)" },
-        context: { type: "string", description: "When the Rule applies (required in substance for contextual Rules)" },
+        rule: { type: "string", description: "The explicit personal behavioral command (required for save/create). Any conditions or context under which the Rule applies must be stated within the Rule text itself." },
         tags: { type: "array", items: { type: "string", description: "A category tag" }, description: "Tags for categorization" },
       },
       required: ["action"],

@@ -930,10 +930,7 @@ async function resolveActiveRules(): Promise<string> {
     const rules = await fileRuleStorage.getAll();
     if (rules.length === 0) return "No personal Rules defined yet.";
 
-    const lines = rules.map((rule) => {
-      const scope = rule.scope === "always" ? " [always]" : rule.context ? ` [context: ${rule.context}]` : "";
-      return `- ${rule.rule}${scope}`;
-    });
+    const lines = rules.map((rule) => `- ${rule.rule}`);
     let linkedPages = "";
     try {
       linkedPages = await resolveRuleLinkedPages(rules.map((rule) => rule.rule));

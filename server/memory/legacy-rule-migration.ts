@@ -16,9 +16,6 @@ const SYSTEM_JOB = "personal-rule-audit-migration";
 interface RetainedRuleTemplate {
   id: string;
   rule: string;
-  source: "correction";
-  scope: "always" | "contextual";
-  context: string;
   tags: string[];
 }
 
@@ -26,17 +23,11 @@ const RETAINED_RULES: RetainedRuleTemplate[] = [
   {
     id: "mr7bmhm3utqm73",
     rule: "Agent should take the right approach when more than 80% confident, avoiding questions asked only for permission or reassurance. Questions are reserved for genuine forks where a wrong choice would be expensive or hard to reverse.",
-    source: "correction",
-    scope: "always",
-    context: "",
     tags: ["decision-making", "communication", "autonomy"],
   },
   {
     id: "mr7blzb8qgewyd",
     rule: "Never say things like \"I'm not in a rush\" or \"no pressure\" in strategic communications. Stated calm signals anxiety. Convey confidence structurally through tone, brevity, and restraint.",
-    source: "correction",
-    scope: "contextual",
-    context: "strategic communications",
     tags: ["communication", "strategy", "voice", "strategic-communications"],
   },
 ];
