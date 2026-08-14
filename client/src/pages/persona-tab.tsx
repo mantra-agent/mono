@@ -550,7 +550,7 @@ function PersonaPayloadEditor({
         minHeightClassName="min-h-32"
       />
       <div className="overflow-hidden">
-        <ProfileTreeRow label="Expressions" icon={mark("expressionTags")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("expressionTags")} menuVisibility="hover" expandedContent={<Input value={draft.expressionTags} onChange={(event) => set("expressionTags", event.target.value)} {...commitInput("expressionTags", persona.expressionTags.join(", "))} />}>
+        <ProfileTreeRow label="Expressions" icon={mark("expressionTags")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("expressionTags")} menuVisibility="hover" expandedContent={<Input value={draft.expressionTags} placeholder="curious, gravitas" onChange={(event) => set("expressionTags", event.target.value)} {...commitInput("expressionTags", persona.expressionTags.join(", "))} />}>
           <span className="truncate">{draft.expressionTags || "None"}</span>
         </ProfileTreeRow>
         <ProfileTreeRow
@@ -846,7 +846,7 @@ function CreatePersonaForm({ onSuccess, onClose }: { onSuccess: () => void; onCl
             <SelectItem value="fast">Fast</SelectItem>
           </SelectContent>
         </Select>
-        <Input value={expressionTags} onChange={(event) => setExpressionTags(event.target.value)} placeholder="Expressions" className="h-8 text-sm" />
+        <Input value={expressionTags} onChange={(event) => setExpressionTags(event.target.value)} placeholder="curious, gravitas" className="h-8 text-sm" />
         <div className="flex gap-2">
           <Button size="sm" onClick={() => mutation.mutate()} disabled={mutation.isPending || !name}>
             {mutation.isPending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
