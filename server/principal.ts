@@ -1,4 +1,9 @@
 import { sql, eq, and, isNotNull, asc } from "drizzle-orm";
+import {
+  ACCOUNT_STATUSES,
+  derivedInstanceStatus,
+  type AccountStatus,
+} from "@shared/schema";
 import { type Request, type Response, type NextFunction } from "express";
 import { ADVISORY_LOCK_NS, acquireAdvisoryTransactionLock, db, type DrizzleTx } from "./db";
 import { createLogger } from "./log";
@@ -20,6 +25,16 @@ import { deriveUserFirstName } from "@shared/identity-name";
 import { PERSONAL_VAULT_COLOR, vaults } from "@shared/models/vaults";
 
 const log = createLogger("principal");
+
+export class AccountLifecycleError extends Error {
+  readonly code: "account_suspended" | "account_archived";
+
+  constructor(code: "account_suspended" | "account_archived", message: string) {
+    super(message);
+    this.name = "AccountLifecycleError";
+    this.code = code;
+  }
+}
 
 export type ActorType = "user" | "service" | "system";
 export type PrincipalRole = "owner" | "admin" | "member" | "viewer" | "service" | "system";
@@ -213,11 +228,43 @@ export async function createUserSessionPrincipal(user: User): Promise<Principal>
 }
 
 export async function resolveUserIdentityFoundation(userId: string): Promise<UserIdentityFoundation> {
-  const foundation = await tryResolveUserIdentityFoundation(userId);
-  if (!foundation) {
+  const [row] = await db
+    .select({
+      accountId: accounts.id,
+      accountStatus: accounts.status,
+      role: memberships.role,
+      activeVaultId: users.activeVaultId,
+      visibleVaultIds: users.visibleVaultIds,
+      instanceId: agentInstanceMemberships.instanceId,
+    })
+    .from(accounts)
+    .innerJoin(memberships, eq(memberships.accountId, accounts.id))
+    .innerJoin(users, eq(users.id, memberships.userId))
+    .leftJoin(
+      agentInstanceMemberships,
+      and(
+        eq(agentInstanceMemberships.accountId, accounts.id),
+        eq(agentInstanceMemberships.userId, userId),
+      ),
+    )
+    .where(and(eq(accounts.kind, "personal"), eq(accounts.ownerUserId, userId), eq(memberships.userId, userId)))
+    .limit(1);
+  if (!row?.accountId || !row.activeVaultId || !row.instanceId) {
     throw new Error(`Identity foundation missing for user ${userId}`);
   }
-  return foundation;
+  if (row.accountStatus === "suspended") {
+    throw new AccountLifecycleError("account_suspended", "This account is suspended.");
+  }
+  if (row.accountStatus === "archived") {
+    throw new AccountLifecycleError("account_archived", "This account is archived.");
+  }
+  return {
+    accountId: row.accountId,
+    role: normalizeRole(row.role),
+    activeVaultId: row.activeVaultId,
+    visibleVaultIds: row.visibleVaultIds ?? [],
+    instanceId: row.instanceId,
+  };
 }
 
 /** Soft resolve for background loops that must skip orphan users without ERROR thrash. */
@@ -242,7 +289,12 @@ export async function tryResolveUserIdentityFoundation(
         eq(agentInstanceMemberships.userId, userId),
       ),
     )
-    .where(and(eq(accounts.kind, "personal"), eq(accounts.ownerUserId, userId), eq(memberships.userId, userId)))
+    .where(and(
+      eq(accounts.kind, "personal"),
+      eq(accounts.ownerUserId, userId),
+      eq(memberships.userId, userId),
+      eq(accounts.status, "active"),
+    ))
     .limit(1);
   if (!existing?.accountId || !existing.activeVaultId || !existing.instanceId) {
     return null;
@@ -281,6 +333,7 @@ export async function listUsersWithIdentityFoundation(): Promise<
         eq(accounts.id, memberships.accountId),
         eq(accounts.kind, "personal"),
         eq(accounts.ownerUserId, users.id),
+        eq(accounts.status, "active"),
       ),
     )
     .innerJoin(
@@ -510,6 +563,70 @@ async function ensurePersonalAgentInstance(
     });
 
   return instanceId;
+}
+
+export async function setAccountLifecycleStatus(
+  accountId: string,
+  status: AccountStatus,
+): Promise<{ accountId: string; status: AccountStatus; instanceStatus: ReturnType<typeof derivedInstanceStatus> }> {
+  if (!ACCOUNT_STATUSES.includes(status)) {
+    throw new Error(`Invalid account status ${status}`);
+  }
+  const instanceStatus = derivedInstanceStatus(status);
+  return db.transaction(async (tx) => {
+    const [account] = await tx
+      .select({ id: accounts.id, ownerUserId: accounts.ownerUserId })
+      .from(accounts)
+      .where(eq(accounts.id, accountId))
+      .limit(1);
+    if (!account) throw new Error("Account not found");
+
+    await tx
+      .update(accounts)
+      .set({ status, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(accounts.id, accountId));
+
+    await tx
+      .update(agentInstances)
+      .set({ status: instanceStatus, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(and(
+        eq(agentInstances.accountId, accountId),
+        sql`${agentInstances.status} IS DISTINCT FROM 'quarantined'`,
+      ));
+
+    if (account.ownerUserId) {
+      await tx.execute(sql`DELETE FROM "session" WHERE sess->>'userId' = ${account.ownerUserId}`);
+    }
+    return { accountId, status, instanceStatus };
+  });
+}
+
+export async function deleteAccountPermanently(accountId: string): Promise<{ accountId: string; userId: string | null }> {
+  return db.transaction(async (tx) => {
+    const [account] = await tx
+      .select({ id: accounts.id, ownerUserId: accounts.ownerUserId })
+      .from(accounts)
+      .where(eq(accounts.id, accountId))
+      .limit(1);
+    if (!account) throw new Error("Account not found");
+
+    const ownerUserId = account.ownerUserId;
+    if (ownerUserId) {
+      await tx.execute(sql`DELETE FROM "session" WHERE sess->>'userId' = ${ownerUserId}`);
+    }
+    await tx.delete(accounts).where(eq(accounts.id, accountId));
+    if (ownerUserId) {
+      const remaining = await tx
+        .select({ id: memberships.id })
+        .from(memberships)
+        .where(eq(memberships.userId, ownerUserId))
+        .limit(1);
+      if (remaining.length === 0) {
+        await tx.delete(users).where(eq(users.id, ownerUserId));
+      }
+    }
+    return { accountId, userId: ownerUserId };
+  });
 }
 
 async function ensureProfileRows(

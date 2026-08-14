@@ -31,17 +31,21 @@ import { getAvatarObjectPath, replaceProfileAvatar } from "./profile-avatar";
 import { z } from "zod";
 import { asc, eq, sql } from "drizzle-orm";
 import {
+  AccountLifecycleError,
   attachUserPrincipal,
   createServicePrincipal,
   createUserPrincipalFromUser,
+  deleteAccountPermanently,
   ensureUserIdentityFoundation,
   resolveUserIdentityFoundation,
   getPrincipal,
   recordPrivilegedAccess,
   requirePrincipal,
+  setAccountLifecycleStatus,
   setServiceSessionPrincipal,
   type Principal,
 } from "./principal";
+import { ACCOUNT_STATUSES, accounts, derivedInstanceStatus } from "@shared/schema";
 import { PERMISSIONS, getUserEffectivePermissions, listUserPermissionOverrides, requirePermission, setUserPermissionOverrides } from "./permissions";
 import { runWithPrincipal } from "./principal-context";
 import { MEETING_JOIN_POLICIES, getMeetingJoinPolicy, setMeetingJoinPolicy } from "./meeting/join-policy";
@@ -69,6 +73,14 @@ const claimSchema = z.object({
 });
 
 const deleteUserSchema = z.object({
+  confirmation: z.string(),
+});
+
+const accountStatusSchema = z.object({
+  status: z.enum(ACCOUNT_STATUSES),
+});
+
+const deleteAccountSchema = z.object({
   confirmation: z.string(),
 });
 
@@ -563,6 +575,7 @@ async function completeUserAuth(
   identityName?: string,
 ) {
   await ensureUserIdentityFoundation(user, { identityName });
+  await resolveUserIdentityFoundation(user.id);
   await regenerateSession(req);
   delete req.session.servicePrincipal;
   req.session.userId = user.id;
@@ -664,8 +677,15 @@ async function resolveRequestPrincipal(req: Request): Promise<PrincipalResolutio
       authTrace(req, "resolve-principal:clearing-stale-service-principal", { userId: user.id });
       delete req.session.servicePrincipal;
     }
-    const principal = await attachUserPrincipal(req, user);
-    return { kind: "user", principal };
+    try {
+      const principal = await attachUserPrincipal(req, user);
+      return { kind: "user", principal };
+    } catch (error) {
+      if (error instanceof AccountLifecycleError) {
+        return { kind: "invalid", reason: error.code };
+      }
+      throw error;
+    }
   }
 
   if (req.session.servicePrincipal?.actorType === "service") {
@@ -815,6 +835,9 @@ export function setupAuth(app: Express) {
       const principal = await completeUserAuth(req, res, user, "login");
       res.json(userResponse(user, principal));
     } catch (error: any) {
+      if (error instanceof AccountLifecycleError) {
+        return res.status(403).json({ error: error.message, code: error.code });
+      }
       log.error("[AuthLogin] Login failed", {
         emailHash: typeof req.body?.email === "string" ? shortHash(req.body.email.trim().toLowerCase()) : undefined,
         error: error instanceof Error ? error.message : String(error),
@@ -1449,12 +1472,16 @@ export function setupAuth(app: Express) {
           try {
             identityAccountId = (await resolveUserIdentityFoundation(u.id)).accountId;
           } catch (err) {
-            identityIncomplete = true;
-            log.warn("admin users list: identity foundation missing, returning degraded row", {
-              userId: u.id,
-              email: u.email,
-              error: err instanceof Error ? err.message : String(err),
-            });
+            if (err instanceof AccountLifecycleError) {
+              identityAccountId = null;
+            } else {
+              identityIncomplete = true;
+              log.warn("admin users list: identity foundation missing, returning degraded row", {
+                userId: u.id,
+                email: u.email,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
           }
           return {
             id: u.id,
@@ -1497,6 +1524,7 @@ export function setupAuth(app: Express) {
             id: accounts.id,
             name: accounts.name,
             kind: accounts.kind,
+            status: accounts.status,
             ownerUserId: accounts.ownerUserId,
             createdAt: accounts.createdAt,
             updatedAt: accounts.updatedAt,
@@ -1536,8 +1564,13 @@ export function setupAuth(app: Express) {
           memberships: membershipRows,
           instances: instanceRows.map((instance) => {
             const metrics = instanceMetrics.get(instance.id);
+            const account = accountRows.find((row) => row.id === instance.accountId);
+            const projected = instance.status === "quarantined"
+              ? "quarantined"
+              : derivedInstanceStatus(account?.status);
             return {
               ...instance,
+              status: projected,
               managedTimerCount: metrics?.managedTimerCount ?? 0,
               claimCount: metrics?.claimCount ?? 0,
               inputTokens7d: metrics?.inputTokens7d ?? 0,
@@ -1552,6 +1585,90 @@ export function setupAuth(app: Express) {
           stack: err instanceof Error ? err.stack : undefined,
         });
         res.status(500).json({ error: "Failed to fetch identity graph" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/auth/accounts/:id/status",
+    requireAuth,
+    requirePermission("users:write"),
+    async (req: Request, res: Response) => {
+      try {
+        const accountId = req.params.id as string;
+        const parsed = accountStatusSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ error: "Status must be active, suspended, or archived" });
+        }
+        const [account] = await db
+          .select({ id: accounts.id, ownerUserId: accounts.ownerUserId })
+          .from(accounts)
+          .where(eq(accounts.id, accountId))
+          .limit(1);
+        if (!account) return res.status(404).json({ error: "Account not found" });
+        const principal = getPrincipal(req);
+        if (account.ownerUserId && account.ownerUserId === principal?.userId) {
+          return res.status(400).json({ error: "Cannot change the status of your own account" });
+        }
+        const result = await setAccountLifecycleStatus(accountId, parsed.data.status);
+        await recordPrivilegedAccess({
+          principal: principal!,
+          action: `account_${parsed.data.status}`,
+          reason: "admin account lifecycle",
+          metadata: { accountId, status: result.status, instanceStatus: result.instanceStatus },
+        });
+        res.json(result);
+      } catch (error) {
+        log.error("Failed to update account status", {
+          accountId: req.params.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        res.status(500).json({ error: "Failed to update account status" });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/auth/accounts/:id",
+    requireAuth,
+    requirePermission("users:write"),
+    async (req: Request, res: Response) => {
+      try {
+        const accountId = req.params.id as string;
+        const [account] = await db
+          .select({
+            id: accounts.id,
+            ownerUserId: accounts.ownerUserId,
+          })
+          .from(accounts)
+          .where(eq(accounts.id, accountId))
+          .limit(1);
+        if (!account) return res.status(404).json({ error: "Account not found" });
+        const principal = getPrincipal(req);
+        if (account.ownerUserId && account.ownerUserId === principal?.userId) {
+          return res.status(400).json({ error: "Cannot delete your own account" });
+        }
+        const owner = account.ownerUserId ? await storage.getUser(account.ownerUserId) : null;
+        const ownerEmail = owner?.email ?? "unknown";
+        const expectedConfirmation = `DELETE ${ownerEmail}'s account`;
+        const parsed = deleteAccountSchema.safeParse(req.body);
+        if (!parsed.success || parsed.data.confirmation !== expectedConfirmation) {
+          return res.status(400).json({ error: `Type ${expectedConfirmation} to confirm deletion` });
+        }
+        const result = await deleteAccountPermanently(accountId);
+        await recordPrivilegedAccess({
+          principal: principal!,
+          action: "account_delete",
+          reason: "admin account wipe",
+          metadata: { accountId, userId: result.userId, ownerEmail },
+        });
+        res.json({ ok: true, ...result });
+      } catch (error) {
+        log.error("Failed to delete account", {
+          accountId: req.params.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        res.status(500).json({ error: "Failed to delete account" });
       }
     },
   );

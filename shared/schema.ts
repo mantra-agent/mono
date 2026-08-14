@@ -146,16 +146,30 @@ export const invitedSubjects = pgTable("invited_subjects", {
 export type InvitedSubject = typeof invitedSubjects.$inferSelect;
 export type InsertInvitedSubject = typeof invitedSubjects.$inferInsert;
 
+export const ACCOUNT_STATUSES = ["active", "suspended", "archived"] as const;
+export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
+
+export const INSTANCE_STATUSES = ["active", "paused", "archived", "quarantined"] as const;
+export type InstanceStatus = (typeof INSTANCE_STATUSES)[number];
+
+export function derivedInstanceStatus(accountStatus: string | null | undefined): Exclude<InstanceStatus, "quarantined"> {
+  if (accountStatus === "archived") return "archived";
+  if (accountStatus === "suspended") return "paused";
+  return "active";
+}
+
 export const accounts = pgTable("accounts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   kind: text("kind").notNull().default("personal"),
   name: text("name").notNull(),
+  status: text("status").notNull().default("active"),
   ownerUserId: varchar("owner_user_id").references(() => users.id, { onDelete: "set null" }),
   metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => ({
   kindIdx: index("idx_accounts_kind").on(table.kind),
+  statusIdx: index("idx_accounts_status").on(table.status),
   ownerIdx: index("idx_accounts_owner_user").on(table.ownerUserId),
   kindOwnerUnique: uniqueIndex("idx_accounts_kind_owner_unique").on(table.kind, table.ownerUserId),
 }));

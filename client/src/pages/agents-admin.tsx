@@ -13,14 +13,22 @@ import { useAuth } from "@/hooks/use-auth";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { usePageLoadActivity } from "@/hooks/use-page-activity";
 import {
+  agentSection,
   matchesIdentityQuery,
   useIdentityGraph,
+  type AgentLifecycleStatus,
   type IdentityGraphAccount,
   type IdentityGraphInstance,
   type IdentityGraphUser,
 } from "@/lib/identity-graph";
 import { cn } from "@/lib/utils";
 import { createReferenceRef } from "@shared/references";
+
+const AGENT_SECTIONS: Array<{ id: AgentLifecycleStatus; label: string; defaultOpen: boolean }> = [
+  { id: "active", label: "ACTIVE", defaultOpen: true },
+  { id: "paused", label: "PAUSED", defaultOpen: true },
+  { id: "archived", label: "ARCHIVED", defaultOpen: false },
+];
 
 function AgentRow({
   instance,
@@ -55,16 +63,20 @@ function AgentRow({
 
   return (
     <div className="min-w-0" data-testid={`agent-row-${instance.id}`}>
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/70"
-      >
-        <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
+      <div className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent/70">
         <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-foreground">{instance.name}</span>
-        <span className="shrink-0 text-xs capitalize text-muted-foreground">{instance.status}</span>
-      </button>
+        <span className="ml-1 flex w-5 shrink-0 items-center justify-center">
+          <button
+            type="button"
+            className="rounded p-0.5 hover:bg-accent/60"
+            onClick={() => setOpen((value) => !value)}
+            aria-label={open ? "Collapse" : "Expand"}
+          >
+            <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-90")} />
+          </button>
+        </span>
+      </div>
       {open ? (
         <>
           {children.length === 0 ? (
@@ -86,17 +98,17 @@ function AgentRow({
             ))
           )}
           <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
-            <ProfileTreeRow label="# of Managed Timers" icon={<Timer className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <ProfileTreeRow label="Timers" icon={<Timer className="h-3.5 w-3.5" />} hasValue showEmpty>
               <span className="text-foreground">{(instance.managedTimerCount ?? 0).toLocaleString()}</span>
             </ProfileTreeRow>
           </HierarchyTreeRow>
           <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
-            <ProfileTreeRow label="# of Claims (in their brain)" icon={<Brain className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <ProfileTreeRow label="User Memory" icon={<Brain className="h-3.5 w-3.5" />} hasValue showEmpty>
               <span className="text-foreground">{(instance.claimCount ?? 0).toLocaleString()}</span>
             </ProfileTreeRow>
           </HierarchyTreeRow>
           <HierarchyTreeRow continues={false} indent="icon" connectorAnchor="first-row-center">
-            <ProfileTreeRow label="# of Input Tokens (7 day rolling)" icon={<Clock className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <ProfileTreeRow label="Tokens Used" icon={<Clock className="h-3.5 w-3.5" />} hasValue showEmpty>
               <span className="text-foreground">{(instance.inputTokens7d ?? 0).toLocaleString()}</span>
             </ProfileTreeRow>
           </HierarchyTreeRow>
@@ -132,6 +144,7 @@ export default function AgentsAdminPage() {
   const instances = useMemo(() => {
     const rows = data?.instances ?? [];
     return rows.filter((instance) => {
+      if (instance.status === "quarantined") return false;
       const account = accountsById.get(instance.accountId) ?? null;
       const members = (membersByInstance.get(instance.id) ?? [])
         .map((userId) => usersById.get(userId))
@@ -139,10 +152,8 @@ export default function AgentsAdminPage() {
       return matchesIdentityQuery(
         search,
         instance.name,
-        instance.status,
         instance.id,
         account?.name,
-        account?.kind,
         ...members.map((user) => user.email),
       );
     });
@@ -170,34 +181,39 @@ export default function AgentsAdminPage() {
             clearTestId="button-clear-agent-search"
             ariaLabel="Search agents"
           />
-          <Collapsible defaultOpen>
-            <CollapsibleTrigger className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}>
-              <ChevronRight className="h-3 w-3 shrink-0 rotate-90" />
-              Agents <span className="font-normal">({instances.length})</span>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              {instances.length === 0 ? (
-                <div className="px-2 py-1.5 text-sm text-muted-foreground">No agents.</div>
-              ) : (
-                instances.map((instance) => {
-                  const account = accountsById.get(instance.accountId) ?? null;
-                  const members = (membersByInstance.get(instance.id) ?? [])
-                    .map((userId) => usersById.get(userId))
-                    .filter((user): user is IdentityGraphUser => Boolean(user))
-                    .sort((a, b) => a.email.localeCompare(b.email));
-                  return (
-                    <AgentRow
-                      key={instance.id}
-                      instance={instance}
-                      account={account}
-                      users={members}
-                      defaultOpen={Boolean(search.trim())}
-                    />
-                  );
-                })
-              )}
-            </CollapsibleContent>
-          </Collapsible>
+          {AGENT_SECTIONS.map((section) => {
+            const rows = instances.filter((instance) => agentSection(instance.status) === section.id);
+            return (
+              <Collapsible key={section.id} defaultOpen={section.defaultOpen}>
+                <CollapsibleTrigger className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}>
+                  <ChevronRight className="h-3 w-3 shrink-0 transition-transform [[data-state=open]_&]:rotate-90" />
+                  {section.label}
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  {rows.length === 0 ? (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">No agents.</div>
+                  ) : (
+                    rows.map((instance) => {
+                      const account = accountsById.get(instance.accountId) ?? null;
+                      const members = (membersByInstance.get(instance.id) ?? [])
+                        .map((userId) => usersById.get(userId))
+                        .filter((user): user is IdentityGraphUser => Boolean(user))
+                        .sort((a, b) => a.email.localeCompare(b.email));
+                      return (
+                        <AgentRow
+                          key={instance.id}
+                          instance={instance}
+                          account={account}
+                          users={members}
+                          defaultOpen={Boolean(search.trim())}
+                        />
+                      );
+                    })
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
+            );
+          })}
         </div>
       </div>
     </div>
