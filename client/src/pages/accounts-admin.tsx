@@ -19,10 +19,12 @@ import { useToast } from "@/hooks/use-toast";
 import {
   accountDeleteConfirmation,
   accountSection,
+  accountTreeSection,
   IDENTITY_GRAPH_QUERY_KEY,
   matchesIdentityQuery,
   useIdentityGraph,
   type AccountLifecycleStatus,
+  type AccountTreeSection,
   type IdentityGraphAccount,
   type IdentityGraphInstance,
   type IdentityGraphUser,
@@ -31,8 +33,9 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { createReferenceRef } from "@shared/references";
 
-const ACCOUNT_SECTIONS: Array<{ id: AccountLifecycleStatus; label: string; defaultOpen: boolean; lazy: boolean }> = [
-  { id: "active", label: "ACTIVE", defaultOpen: true, lazy: false },
+const ACCOUNT_SECTIONS: Array<{ id: AccountTreeSection; label: string; defaultOpen: boolean; lazy: boolean }> = [
+  { id: "registered", label: "REGISTERED", defaultOpen: true, lazy: false },
+  { id: "activated", label: "ACTIVATED", defaultOpen: true, lazy: false },
   { id: "suspended", label: "SUSPENDED", defaultOpen: true, lazy: false },
   { id: "archived", label: "ARCHIVED", defaultOpen: false, lazy: true },
 ];
@@ -262,7 +265,10 @@ export default function AccountsAdminPage() {
             ariaLabel="Search accounts"
           />
           {ACCOUNT_SECTIONS.map((section) => {
-            const rows = accounts.filter((account) => accountSection(account.status) === section.id);
+            const rows = accounts.filter((account) => {
+              const owner = usersById.get(account.ownerUserId ?? "");
+              return accountTreeSection(account.status, owner?.onboardingStatus) === section.id;
+            });
             const open = section.lazy ? archiveOpen : section.defaultOpen;
             return (
               <Collapsible

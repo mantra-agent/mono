@@ -1,3 +1,10 @@
+<!-- 2026-08-14 Accounts REGISTERED vs ACTIVATED:
+- Assets/data: A01/A07 Account admin tree plus owner `user_profiles.onboarding_status` (S1 operational identity; not a new Account field).
+- Flow/threat: Accounts admin -> section active Accounts by registered vs finished onboarding. Treating timer/memory counts or a second Account column as the cut would mis-section accounts that have a user-created timer, lagging reconcile, or unfinished FTUE (STRIDE spoofing/tampering analogue; IAM-01).
+- Deterministic controls/owner: Account `status` remains the only writable access discriminant. Active Accounts section as REGISTERED or ACTIVATED from the owner's `user_profiles.onboarding_status === "completed"`. Identity-graph users project that column (`users:read`); `/api/onboarding/complete` remains the sole completed writer. Timer counts stay derived evidence, not the cut. Owner: Core Identity. Severity: medium integrity. SLA: immediate.
+- Residual/rollback: Accounts without an owner profile stay REGISTERED. Revert the graph projection, tree sections, and this finding together.
+-->
+
 <!-- 2026-08-14 Persona overlays are job cards:
 - Assets/data: A04/A06 selectable Persona prompt overlays and session-pinned revisions (S2 identity/config). No new principal, Vault, secret, or tool authority.
 - Flow/threat: boot reconciles seed overlays from SEED_PERSONAS; user copies stay owner-scoped revisions. A method-list overlay lets seats collapse into each other (Architect debugs, Companion coaches, Persuader invents the idea). Prompt text never grants tools or scope (STRIDE spoofing/elevation analogue; AGENT-03).

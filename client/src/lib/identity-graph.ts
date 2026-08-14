@@ -12,11 +12,20 @@ export interface IdentityGraphAccount {
 }
 
 export type AccountLifecycleStatus = "active" | "suspended" | "archived";
+export type AccountTreeSection = "registered" | "activated" | "suspended" | "archived";
 export type AgentLifecycleStatus = "active" | "paused" | "archived";
 
 export function accountSection(status: string | null | undefined): AccountLifecycleStatus {
   if (status === "suspended" || status === "archived") return status;
   return "active";
+}
+
+export function accountTreeSection(
+  status: string | null | undefined,
+  ownerOnboardingStatus: string | null | undefined,
+): AccountTreeSection {
+  if (status === "suspended" || status === "archived") return status;
+  return ownerOnboardingStatus === "completed" ? "activated" : "registered";
 }
 
 export function agentSection(status: string | null | undefined): AgentLifecycleStatus {
@@ -60,6 +69,7 @@ export interface IdentityGraphUser {
   email: string;
   role: string;
   createdAt: string;
+  onboardingStatus: string;
 }
 
 export interface IdentityGraphResponse {
