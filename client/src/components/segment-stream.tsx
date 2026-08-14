@@ -159,7 +159,7 @@ export interface SegmentStreamProps {
   contentCompact?: boolean;
   planSessionId?: string;
   renderAfterTimelineSegment?: (sourceIndex: number) => ReactNode;
-  ActiveThinkingStatusComponent: ComponentType<{ startTime: Date | null; showTimer?: boolean }>;
+  ActiveThinkingStatusComponent: ComponentType<{ startTime: Date | null; showTimer?: boolean; label?: string }>;
   ExecutionTimelineComponent: ComponentType<{ steps: ExecutionStep[]; compact?: boolean; layer: VisibilityLayer; planSessionId?: string }>;
   MarkdownContentComponent: ComponentType<{ content: string; className?: string; compact?: boolean }>;
   getThinkingStartTime: (segments: MessageSegment[]) => Date | null;

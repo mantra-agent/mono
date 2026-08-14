@@ -800,6 +800,8 @@ export function MessageList({
         toolCalls: null,
         systemSteps: null,
         model: null,
+        // Prefer stream persona when present; ChatTurn falls back to the
+        // session seat so the avatar does not flash root/Bot before model_info.
         persona: effectiveStreaming.persona || null,
         createdAt: draftCreatedAt,
         // Thread canonical turnId from server projection when available.
