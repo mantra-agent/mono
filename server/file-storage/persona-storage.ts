@@ -193,6 +193,15 @@ const SEED_PERSONAS = [
     ].join("\n"),
     expressionTags: [] as string[],
     cognitiveOverrides: {},
+    contextSections: {
+      "world_model.people.self.persona": true,
+      "world_model.people.self.chat_instructions": true,
+      "world_model.people.self.rules": true,
+      history: true,
+      memory: true,
+      "memory.graph": true,
+      session_context: true,
+    } as Record<string, boolean>,
     isDefault: false,
     isActive: false,
     isSystem: true,
@@ -717,6 +726,16 @@ class PersonaStorageClass {
         persona.isSystem &&
         persona.name.toLowerCase() === name.toLowerCase(),
     ) ?? null;
+  }
+
+  /** Session-pinned Root payload when available; otherwise the live Root seed. */
+  async resolveRootPayload(rootRevisionId?: string | null): Promise<PersonaRevisionPayload | null> {
+    if (rootRevisionId) {
+      const revision = await this.getRevision(rootRevisionId);
+      if (revision?.payload) return sanitizeRevisionPayload(revision.payload);
+    }
+    const root = await this.getSystemSeedByName("Root");
+    return root ? revisionPayload(root) : null;
   }
 
   /** Complete visible inventory for the Brain management surface. */
@@ -1473,6 +1492,33 @@ class PersonaStorageClass {
           accountId: null,
         })
         .onConflictDoNothing();
+    }
+    const rootSeed = SEED_PERSONAS.find((seed) => seed.name === "Root") as { contextSections?: Record<string, boolean> } | undefined;
+    if (rootSeed?.contextSections) {
+      await db
+        .update(personas)
+        .set({ contextSections: rootSeed.contextSections, updatedAt: new Date() })
+        .where(and(
+          eq(personas.scope, "global"),
+          eq(personas.source, "seed"),
+          eq(personas.isSystem, true),
+          sql`LOWER(${personas.name}) = 'root'`,
+        ));
+    }
+    const architectMaps: Record<string, Record<string, boolean>> = {
+      architect: { principles: true },
+      engineer: {},
+      coach: { emotions: true, schedule: true, life: true, people: true, principles: true },
+    };
+    for (const [name, contextSections] of Object.entries(architectMaps)) {
+      await db
+        .update(personas)
+        .set({ contextSections, updatedAt: new Date() })
+        .where(and(
+          eq(personas.scope, "global"),
+          eq(personas.source, "seed"),
+          sql`LOWER(${personas.name}) = ${name}`,
+        ));
     }
     // onConflictDoNothing still advances the serial sequence on failed attempts
     // in some paths and legacy restores can leave nextval behind MAX(id).

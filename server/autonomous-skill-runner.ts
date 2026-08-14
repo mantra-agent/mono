@@ -409,7 +409,7 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
     skillId: "reflect",
     label: "Reflect",
     callType: "internal",
-    includeSections: ["world_model.people.self.principles", "world_model.calendar", "world_model.active_work.tasks", "world_model.active_work.projects", "thoughts"],
+    includeSections: ["world_model.people.self.principles", "world_model.calendar", "world_model.active_work.tasks", "world_model.active_work.projects"],
     activity: ACTIVITY_THINKING,
     temperature: 0.6,
     timeoutMs: 10 * 60 * 1000,

@@ -187,9 +187,6 @@ export async function preOrientFtueVoiceSession(chatSessionId: string | null): P
       "world_model.active_work": false,
       "world_model.decisions": false,
       "memory": false,
-      "thoughts": false,
-      "capabilities.skills": false,
-      "capabilities.library": false,
     });
 
     const { personaStorage } = await import("../file-storage/persona-storage");

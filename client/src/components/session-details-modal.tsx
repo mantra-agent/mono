@@ -125,9 +125,7 @@ const SECTION_GROUPS: SectionGroup[] = [
     label: "Context",
     sections: [
       { id: "session_context", label: "Session Context" },
-      { id: "thoughts", label: "Observations" },
       { id: "world_model.people.self.principles", label: "Principles" },
-      { id: "world_model.people.self.journal", label: "Journal" },
       { id: "world_model.people.self.rules", label: "Rules", defaultIncluded: true },
     ],
   },
@@ -136,8 +134,6 @@ const SECTION_GROUPS: SectionGroup[] = [
     sections: [
       { id: "capabilities.code_instructions", label: "Code Instructions", bootstrap: true },
       { id: "capabilities.goals_instructions", label: "Goals Instructions", bootstrap: true },
-      { id: "capabilities.skills", label: "Skills" },
-      { id: "capabilities.library", label: "Library" },
     ],
   },
 ];

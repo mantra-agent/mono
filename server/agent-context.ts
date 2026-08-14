@@ -9,6 +9,9 @@ import { createLogger } from "./log";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { isRecapFtueSession } from "./ftue-session";
 import { getContextPressureThresholds } from "./context-budget";
+import { CONTEXT_GROUPS, sectionIdsForEnabledGroups, sectionIdsForDisabledGroups, unionRootContextSections } from "../shared/persona-context";
+
+const CONTEXT_GROUP_IDS = new Set<string>(CONTEXT_GROUPS);
 
 const log = createLogger("AgentContext");
 
@@ -669,20 +672,16 @@ export async function assembleContext(options: {
     try {
       const { SPINE_SECTIONS, getBootstrapSectionIds, getDefaultIncludedSectionIds } = await import("./context-spine-config");
       const { expandSemanticContextFlags, expandDisabledSemanticContextFlags, isSemanticContextFlag } = await import("./context-instruction-groups");
-      const { resolveSessionPersona } = await import("./session-persona");
+      const { resolveSessionPersonaComposition } = await import("./session-persona");
       const { chatFileStorage } = await import("./chat-file-storage");
-      // Persona is the default source of truth for which optional context sections load.
-      // Programmatic sessions (skills, autonomous jobs, voice prep) may still set explicit
-      // session context flags that override the persona bundle. The agent's orient tool no
-      // longer writes session flags, so interactive sessions are governed purely by persona.
-      // persistFallback is false: context scoping is a read path and must not mutate the
-      // session — context-builder's own persona resolve owns any fallback persist.
-      const activePersona = await resolveSessionPersona(sessionId, { persistFallback: false });
-      const personaBundle = activePersona?.contextSections ?? null;
+      // Root ∪ selected persona is the source of truth for which optional context
+      // sections load. Root-on flags cannot be turned off. Programmatic sessions
+      // may still set explicit session flags that overlay the persona bundle.
+      const { contextSections: personaBundle } = await resolveSessionPersonaComposition(sessionId, { persistFallback: false });
       const sessionFlags = await chatFileStorage.readSessionContextFlags(sessionId);
       const contextFlags: Record<string, boolean> | null =
-        personaBundle || sessionFlags
-          ? { ...(personaBundle ?? {}), ...(sessionFlags ?? {}) }
+        Object.keys(personaBundle).length > 0 || sessionFlags
+          ? { ...personaBundle, ...(sessionFlags ?? {}) }
           : null;
       const bootstrapIds = getBootstrapSectionIds();
 
@@ -698,14 +697,20 @@ export async function assembleContext(options: {
         // where the flag is false or absent. Semantic flags such as
         // instructions.coding expand to concrete section IDs, so orientation can
         // express intent without exposing raw section plumbing.
-        const semanticIncludes = new Set(expandSemanticContextFlags(contextFlags));
-        const semanticExcludes = new Set(expandDisabledSemanticContextFlags(contextFlags));
+        const semanticIncludes = new Set([
+          ...expandSemanticContextFlags(contextFlags),
+          ...sectionIdsForEnabledGroups(contextFlags),
+        ]);
+        const semanticExcludes = new Set([
+          ...expandDisabledSemanticContextFlags(contextFlags),
+          ...sectionIdsForDisabledGroups(contextFlags),
+        ]);
         const defaultIds = getDefaultIncludedSectionIds();
         const concreteIncludes = new Set(Object.entries(contextFlags)
-          .filter(([id, enabled]) => enabled && !isSemanticContextFlag(id))
+          .filter(([id, enabled]) => enabled && !isSemanticContextFlag(id) && !CONTEXT_GROUP_IDS.has(id))
           .map(([id]) => id));
         const explicitExcludes = new Set(Object.entries(contextFlags)
-          .filter(([id, enabled]) => enabled === false && !isSemanticContextFlag(id))
+          .filter(([id, enabled]) => enabled === false && !isSemanticContextFlag(id) && !CONTEXT_GROUP_IDS.has(id))
           .map(([id]) => id));
         const includedByFlags = (sectionId: string) => {
           if (concreteIncludes.has(sectionId)) return true;

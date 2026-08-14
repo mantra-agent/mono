@@ -113,6 +113,7 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "per-session",
     priority: 1.51,
     includedIn: ["full", "world"],
+    rootOwned: true,
     defaultIncluded: true,
   },
   {
@@ -126,7 +127,6 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "real-time",
     priority: 1.55,
     includedIn: ["full", "world"],
-    defaultIncluded: true,
   },
   {
     id: "world_model.people.self.emotional_state",
@@ -137,7 +137,6 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "real-time",
     priority: 1.6,
     includedIn: ["full", "world"],
-    defaultIncluded: true,
   },
   {
     id: "world_model.people.self.emotional_expression",
@@ -148,7 +147,6 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "per-session",
     priority: 1.65,
     includedIn: ["full", "world"],
-    defaultIncluded: true,
   },
   {
     id: "world_model.people.self.general_instructions",
@@ -168,6 +166,7 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "rarely",
     priority: 2.6,
     includedIn: ["full", "world"],
+    rootOwned: true,
   },
 
   {
@@ -181,16 +180,6 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
   },
 
   {
-    id: "world_model.people.self.journal",
-    title: "Journal",
-    parentId: "world_model.people.self",
-    sourceType: "dynamic",
-    freshnessPolicy: "per-session",
-    priority: 5.5,
-    includedIn: [],
-  },
-
-  {
     id: "world_model.people.self.rules",
     layer: "kernel",
     title: "Active Rules",
@@ -199,6 +188,7 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "per-session",
     priority: 6,
     includedIn: ["full", "world"],
+    rootOwned: true,
     defaultIncluded: true,
   },
 
@@ -210,7 +200,6 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "per-session",
     priority: 2,
     includedIn: ["full", "world"],
-    defaultIncluded: true,
   },
   {
     id: "world_model.people.partner.identity",
@@ -220,28 +209,17 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "rarely",
     priority: 1,
     includedIn: ["full", "world"],
-    defaultIncluded: true,
   },
 
   {
     id: "world_model.people.partner.goals",
+    layer: "state",
     title: "Goals",
     parentId: "world_model.people.partner",
     sourceType: "dynamic",
-    freshnessPolicy: "per-session",
+    freshnessPolicy: "real-time",
     priority: 3,
     includedIn: ["full", "world"],
-  },
-  {
-    id: "world_model.people.partner.goals",
-    layer: "state",
-    title: "Goals by Horizon",
-    parentId: "world_model.people.partner",
-    sourceType: "dynamic",
-    freshnessPolicy: "real-time",
-    priority: 4,
-    includedIn: ["full", "world"],
-    defaultIncluded: true,
   },
   {
     id: "world_model.people.partner.goals.today",
@@ -251,7 +229,6 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "real-time",
     priority: 1,
     includedIn: ["full", "world"],
-    defaultIncluded: true,
   },
   {
     id: "world_model.people.partner.goals.this_week",
@@ -261,7 +238,6 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "per-session",
     priority: 2,
     includedIn: ["full", "world"],
-    defaultIncluded: true,
   },
 
   {
@@ -272,7 +248,6 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "per-session",
     priority: 3,
     includedIn: ["full", "world"],
-    defaultIncluded: true,
   },
 
   {
@@ -356,6 +331,7 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "real-time",
     priority: 8.5,
     includedIn: ["full", "world"],
+    rootOwned: true,
     defaultIncluded: true,
     maxDefaultTokens: 2400,
   },
@@ -368,6 +344,7 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "per-session",
     priority: 2,
     includedIn: ["full", "world"],
+    rootOwned: true,
   },
   {
     id: "memory.graph",
@@ -378,6 +355,7 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     priority: 4,
     includedIn: ["full", "world"],
     bootstrap: true,
+    rootOwned: true,
   },
   {
     id: "session_context",
@@ -387,16 +365,7 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "per-session",
     priority: 2.4,
     includedIn: ["full"],
-  },
-
-  {
-    id: "thoughts",
-    title: "Observations",
-    parentId: null,
-    sourceType: "dynamic",
-    freshnessPolicy: "per-session",
-    priority: 2.5,
-    includedIn: ["full", "world"],
+    rootOwned: true,
   },
 
 
@@ -477,28 +446,6 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     includedIn: ["full"],
     bootstrap: true,
   },
-  {
-    id: "capabilities.skills",
-    title: "Skills",
-    parentId: "capabilities",
-    sourceType: "dynamic",
-    freshnessPolicy: "per-session",
-    priority: 2,
-    includedIn: ["full"],
-  },
-  {
-    id: "capabilities.library",
-    layer: "reference",
-    instructionGroupId: "library_artifact_instructions",
-    referenceOnly: true,
-    maxDefaultTokens: 400,
-    title: "Library",
-    parentId: "capabilities",
-    sourceType: "dynamic",
-    freshnessPolicy: "per-session",
-    priority: 3,
-    includedIn: ["full"],
-  },
 ];
 
 export function cacheTtlFromFreshness(policy: string): number {
@@ -550,7 +497,17 @@ export function getAllSectionIds(): string[] {
 
 /** Returns sections that are always included and cannot be excluded by context flags. */
 export function getBootstrapSections(): SpineSectionConfig[] {
-  return SPINE_SECTIONS.filter(s => s.bootstrap === true);
+  return SPINE_SECTIONS.filter(s => s.bootstrap === true || s.rootOwned === true);
+}
+
+/** Returns sections Root always owns. Selectable personas cannot turn these off. */
+export function getRootOwnedSections(): SpineSectionConfig[] {
+  return SPINE_SECTIONS.filter(s => s.rootOwned === true);
+}
+
+/** Returns Root-owned section IDs. */
+export function getRootOwnedSectionIds(): Set<string> {
+  return new Set(getRootOwnedSections().map(s => s.id));
 }
 
 /** Returns section IDs that are always included (bootstrap). */

@@ -24,13 +24,6 @@ export const INSTRUCTION_GROUPS: ContextInstructionGroup[] = [
     includeWhen: "Use for life goals across all horizons, FTUE goal capture, planning, reviews, and goal mutation.",
   },
   {
-    id: "library_artifact_instructions",
-    title: "Library Artifact Instructions",
-    flag: "instructions.library_artifact",
-    sectionIds: ["capabilities.library"],
-    includeWhen: "Use when creating specs, reports, drafts, shareable artifacts, or durable Library pages.",
-  },
-  {
     id: "tool_reference",
     title: "Tool Reference",
     flag: "references.tools",
@@ -90,7 +83,6 @@ export function expandDisabledSemanticContextFlags(flags: ContextFlags | null): 
 
 const FLAG_ALIASES: Record<string, string[]> = {
   "instructions.coding": ["code", "coding", "debug", "debugging", "implementation", "repo", "build", "deployment", "system"],
-  "instructions.library_artifact": ["spec", "artifact", "library", "report", "draft", "writing", "document", "find", "search", "save", "edit", "organize", "organization", "placement", "folder"],
   "context.active_work": ["planning", "review", "goals", "work", "execution", "project"],
   "context.relationships": ["people", "relationship", "relationships", "contact", "outreach", "coaching"],
   "context.memory": ["memory", "context", "continuity", "retrieval", "compaction"],

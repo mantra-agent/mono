@@ -127,6 +127,8 @@ export interface SpineSectionConfig {
   cacheTtlMs?: number;
   /** If true, this section is always included and cannot be excluded by context flags. */
   bootstrap?: boolean;
+  /** If true, Root owns this section. It always loads and cannot be turned off by a selectable persona. */
+  rootOwned?: boolean;
   /** If true, this section is included by default (when no explicit context flags are set). */
   defaultIncluded?: boolean;
   /** Context architecture layer used for routing, observability, and UI grouping. */

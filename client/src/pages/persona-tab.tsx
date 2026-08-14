@@ -425,6 +425,7 @@ interface ContextSectionCatalogEntry {
   recommendedFor: string;
   tokenCost: "small" | "medium" | "large";
   defaultIncluded: boolean;
+  lockedByRoot?: boolean;
 }
 
 interface ToolCatalogEntry {
@@ -600,6 +601,10 @@ function PersonaPayloadEditor({
 }) {
   const { data: sectionCatalog = [] } = useQuery<ContextSectionCatalogEntry[]>({ queryKey: ["/api/personas/section-catalog"] });
   const { data: toolCatalog = [] } = useQuery<ToolCatalogEntry[]>({ queryKey: ["/api/personas/tool-catalog"] });
+  const { data: allPersonas = [] } = useQuery<Persona[]>({ queryKey: ["/api/personas/management"] });
+  const rootPersona = allPersonas.find((entry) => entry.isSystem && entry.name === "Root");
+  const rootContextOn = new Set(Object.entries(rootPersona?.contextSections || {}).filter(([, on]) => on).map(([id]) => id));
+  const rootToolsOn = new Set(rootPersona?.toolBundle || []);
   const set = <K extends keyof PersonaPayloadDraft>(key: K, value: PersonaPayloadDraft[K]) => onChange({ ...draft, [key]: value });
   const commit = <K extends keyof PersonaPayloadDraft>(key: K, value: PersonaPayloadDraft[K]) => {
     const next = { ...draft, [key]: value };
@@ -667,22 +672,29 @@ function PersonaPayloadEditor({
             <span className="truncate">{draft.expressionTags || "None"}</span>
           </ProfileTreeRow>
           <ProfileTreeRow label="Context" icon={mark("contextSections")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("contextSections")} menuVisibility="hover" expandedContent={<div>{sectionCatalog.map((entry) => {
-            const on = entry.id in draft.contextSections ? draft.contextSections[entry.id] : entry.defaultIncluded;
+            const locked = Boolean(entry.lockedByRoot) || rootContextOn.has(entry.id);
+            const on = locked || (entry.id in draft.contextSections ? draft.contextSections[entry.id] : entry.defaultIncluded);
             return (
-              <button key={entry.id} type="button" className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")} onClick={() => commit("contextSections", { ...draft.contextSections, [entry.id]: !on })}>
-                <span className={cn("flex h-3.5 w-3.5 items-center justify-center rounded-sm border", on && "border-cta bg-cta text-cta-foreground")}>{on && <Check className="h-3 w-3" />}</span>
+              <button key={entry.id} type="button" disabled={locked && !persona.isSystem} className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70 disabled:opacity-60")} onClick={() => {
+                if (locked && !persona.isSystem) return;
+                commit("contextSections", { ...draft.contextSections, [entry.id]: !on });
+              }}>
+                <span className={cn("flex h-3.5 w-3.5 items-center justify-center rounded-sm border", on && "border-cta bg-cta text-cta-foreground", locked && "border-muted-foreground/50 bg-muted text-muted-foreground")}>{on && <Check className="h-3 w-3" />}</span>
                 <span className="text-sm">{entry.title}</span>
+                {locked && <span className="ml-auto text-xs text-muted-foreground">Root</span>}
               </button>
             );
           })}</div>}>
             <span>{Object.keys(draft.contextSections).length} overrides</span>
           </ProfileTreeRow>
           <ProfileTreeRow label="Tools" icon={mark("toolBundle")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("toolBundle")} menuVisibility="hover" expandedContent={<div>{toolCatalog.map((entry) => {
-            const on = entry.isCore || draft.toolBundle.includes(entry.name);
+            const locked = entry.isCore || rootToolsOn.has(entry.name);
+            const on = locked || draft.toolBundle.includes(entry.name);
             return (
-              <button key={entry.name} type="button" disabled={entry.isCore} className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70 disabled:opacity-60")} onClick={() => commit("toolBundle", on ? draft.toolBundle.filter((name) => name !== entry.name) : [...draft.toolBundle, entry.name])}>
-                <span className={cn("flex h-3.5 w-3.5 items-center justify-center rounded-sm border", on && "border-cta bg-cta text-cta-foreground")}>{on && <Check className="h-3 w-3" />}</span>
+              <button key={entry.name} type="button" disabled={locked} className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70 disabled:opacity-60")} onClick={() => commit("toolBundle", on ? draft.toolBundle.filter((name) => name !== entry.name) : [...draft.toolBundle, entry.name])}>
+                <span className={cn("flex h-3.5 w-3.5 items-center justify-center rounded-sm border", on && "border-cta bg-cta text-cta-foreground", locked && "border-muted-foreground/50 bg-muted text-muted-foreground")}>{on && <Check className="h-3 w-3" />}</span>
                 <span className="text-sm">{entry.name}</span>
+                {locked && <span className="ml-auto text-xs text-muted-foreground">{entry.isCore ? "Core" : "Root"}</span>}
               </button>
             );
           })}</div>}>
