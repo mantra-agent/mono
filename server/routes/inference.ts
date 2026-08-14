@@ -948,7 +948,8 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
 
   app.get("/api/models/connectors", requirePermission("system:read"), async (_req, res) => {
     try {
-      res.json({ connectors: await listModelConnectors() });
+      // Models tab remains the legacy global-chain view during parallel cutover.
+      res.json({ connectors: await listModelConnectors({ legacyOnly: true }) });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

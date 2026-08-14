@@ -35,6 +35,10 @@ export const REFERENCE_TYPE_LABELS: Record<string, string> = {
   reddit_post: "Reddit",
   rss_item: "RSS",
   pr: "PR",
+  router: "Router",
+  account: "Account",
+  user: "User",
+  agent_instance: "Agent",
 };
 
 interface LibraryPageResult {
@@ -315,7 +319,7 @@ export async function loadReferenceSuggestions(
 
   logger.debug("search", { query, allowedTypes, triggerChar });
 
-  const [library, people, tags, companies, goals, tasks, projects, metrics, kpis, businessPlans, wellnessActivities] =
+  const [library, people, tags, companies, goals, tasks, projects, metrics, kpis, businessPlans, wellnessActivities, routers] =
     await Promise.all([
       allow("page") && query
         ? fetchJson<unknown>(`/api/info/library?search=${encoded}`, signal)
@@ -356,6 +360,9 @@ export async function loadReferenceSuggestions(
         : Promise.resolve(null),
       allow("wellness_activity")
         ? fetchJson<unknown>(`/api/wellness/activities`, signal)
+        : Promise.resolve(null),
+      allow("router")
+        ? fetchJson<unknown>("/api/routers", signal)
         : Promise.resolve(null),
     ]);
 
@@ -537,6 +544,21 @@ export async function loadReferenceSuggestions(
           description: activity.category ? `Wellness · ${activity.category}` : "Wellness activity",
         },
         { rankAt: activity.updatedAt },
+      ),
+    );
+  }
+
+  for (const router of asItemArray<{ id: string; name: string; isDefault?: boolean; updatedAt?: string }>(routers, ["routers"])) {
+    if (!router?.id) continue;
+    suggestions.push(
+      withRankMeta(
+        {
+          type: "router",
+          id: router.id,
+          label: router.name || router.id,
+          description: router.isDefault ? "Default Router" : "Router",
+        },
+        { rankAt: router.updatedAt },
       ),
     );
   }

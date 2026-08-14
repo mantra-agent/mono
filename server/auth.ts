@@ -22,6 +22,7 @@ import {
   loginSchema,
   memberships,
   registerSchema,
+  routers,
   userProfiles,
   users,
   type User,
@@ -1524,13 +1525,14 @@ export function setupAuth(app: Express) {
     requirePermission("users:read"),
     async (_req: Request, res: Response) => {
       try {
-        const [accountRows, membershipRows, instanceRows, instanceMembershipRows, userRows, instanceMetrics, lastActiveByUser] = await Promise.all([
+        const [accountRows, membershipRows, instanceRows, instanceMembershipRows, userRows, instanceMetrics, lastActiveByUser, routerRows] = await Promise.all([
           db.select({
             id: accounts.id,
             name: accounts.name,
             kind: accounts.kind,
             status: accounts.status,
             ownerUserId: accounts.ownerUserId,
+            routerId: accounts.routerId,
             createdAt: accounts.createdAt,
             updatedAt: accounts.updatedAt,
           }).from(accounts).orderBy(asc(accounts.name), asc(accounts.id)),
@@ -1566,8 +1568,14 @@ export function setupAuth(app: Express) {
             .orderBy(asc(users.email), asc(users.id)),
           getIdentityInstanceMetrics(),
           getAdminUserActivity(),
+          db.select({
+            id: routers.id,
+            name: routers.name,
+            isDefault: routers.isDefault,
+          }).from(routers),
         ]);
 
+        const routersById = new Map(routerRows.map((row) => [row.id, row]));
         const memberIdsByAccount = new Map<string, string[]>();
         for (const membership of membershipRows) {
           const list = memberIdsByAccount.get(membership.accountId) ?? [];
@@ -1586,7 +1594,14 @@ export function setupAuth(app: Express) {
               const at = lastActiveByUser.get(userId);
               if (at && (!lastActiveAt || at > lastActiveAt)) lastActiveAt = at;
             }
-            return { ...account, lastActiveAt };
+            const router = account.routerId ? routersById.get(account.routerId) ?? null : null;
+            return {
+              ...account,
+              lastActiveAt,
+              router: router
+                ? { id: router.id, name: router.name, isDefault: router.isDefault === true }
+                : null,
+            };
           }),
           memberships: membershipRows,
           instances: instanceRows.map((instance) => {
@@ -1645,6 +1660,36 @@ export function setupAuth(app: Express) {
         });
         const message = error instanceof Error ? error.message : "Failed to rename account";
         res.status(message === "Account not found" ? 404 : 500).json({ error: message });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/auth/accounts/:id/router",
+    requireAuth,
+    requirePermission("users:write"),
+    async (req: Request, res: Response) => {
+      try {
+        const accountId = req.params.id as string;
+        const parsed = z.object({
+          routerId: z.string().uuid().nullable(),
+        }).safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ error: "routerId must be a UUID or null" });
+        }
+        const { setAccountRouter } = await import("./router-storage");
+        const result = await setAccountRouter(accountId, parsed.data.routerId);
+        await recordPrivilegedAccess({
+          principal: getPrincipal(req)!,
+          action: "account_router_assign",
+          reason: "admin account router assignment",
+          metadata: { accountId, routerId: result.routerId },
+        });
+        res.json(result);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to assign router";
+        const status = message === "Account not found" || message === "Router not found" ? 404 : 400;
+        res.status(status).json({ error: message });
       }
     },
   );

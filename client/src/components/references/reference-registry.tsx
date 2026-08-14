@@ -330,6 +330,11 @@ const registry: Record<string, RegistryEntry> = {
     fallbackLabel: ref => metadataString(ref, "label") || `Agent ${ref.id.slice(0, 8)}`,
     href: ref => metadataString(ref, "href") || `/system?tab=agents&agent=${encodeURIComponent(ref.id)}`,
   },
+  router: {
+    Icon: Route,
+    fallbackLabel: ref => metadataString(ref, "label") || `Router ${ref.id.slice(0, 8)}`,
+    href: ref => metadataString(ref, "href") || `/system?tab=routers&router=${encodeURIComponent(ref.id)}`,
+  },
 };
 
 export function resolveReference(ref: ReferenceRef): ClientResolvedReference {

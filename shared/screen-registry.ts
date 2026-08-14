@@ -17,6 +17,7 @@ export const SCREEN_REGISTRY = {
   models: { label: "Models", path: "/brain?tab=model" },
   prompts: { label: "Prompts", path: "/system?tab=prompts" },
   inference: { label: "Inference", path: "/system?tab=inference" },
+  routers: { label: "Routers", path: "/system?tab=routers" },
   cost: { label: "Cost", path: "/system?tab=cost" },
   database: { label: "Database", path: "/database" },
 } as const;

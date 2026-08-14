@@ -17,6 +17,7 @@ import {
   agentInstances,
   agentInstanceMemberships,
   privilegedAccessAudit,
+  routers,
   type User,
 } from "@shared/schema";
 import { getUserEffectivePermissions, type Permission } from "./permissions";
@@ -388,14 +389,28 @@ export async function ensureUserIdentityFoundation(
       .where(and(eq(accounts.kind, "personal"), eq(accounts.ownerUserId, user.id)))
       .limit(1);
 
-    const accountId = existingAccount?.id ?? (await tx
-      .insert(accounts)
-      .values({ kind: "personal", name: firstName, ownerUserId: user.id })
-      .onConflictDoUpdate({
-        target: [accounts.kind, accounts.ownerUserId],
-        set: { updatedAt: sql`CURRENT_TIMESTAMP` },
-      })
-      .returning({ id: accounts.id }))[0]?.id;
+    let accountId = existingAccount?.id ?? null;
+    if (!accountId) {
+      // New Accounts receive Default Router when one exists (parallel cutover: existing stay NULL).
+      const [defaultRouter] = await tx
+        .select({ id: routers.id })
+        .from(routers)
+        .where(eq(routers.isDefault, true))
+        .limit(1);
+      accountId = (await tx
+        .insert(accounts)
+        .values({
+          kind: "personal",
+          name: firstName,
+          ownerUserId: user.id,
+          routerId: defaultRouter?.id ?? null,
+        })
+        .onConflictDoUpdate({
+          target: [accounts.kind, accounts.ownerUserId],
+          set: { updatedAt: sql`CURRENT_TIMESTAMP` },
+        })
+        .returning({ id: accounts.id }))[0]?.id ?? null;
+    }
     if (!accountId) throw new Error(`Failed to resolve personal account for user ${user.id}`);
 
     const membershipRole = "owner";

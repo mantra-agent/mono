@@ -1765,6 +1765,32 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE provider_connections ADD COLUMN IF NOT EXISTS priority_pinned BOOLEAN NOT NULL DEFAULT FALSE`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_provider_connections_kind_order ON provider_connections(connector_kind, sort_order)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_provider_connections_kind_pin_order ON provider_connections(connector_kind, priority_pinned DESC, sort_order)`);
+
+    // LLM Router foundation — named exclusive connector pools (parallel cutover: nullable FKs).
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS routers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL,
+        is_default BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_routers_name_unique ON routers (name)`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_routers_one_default
+        ON routers ((is_default))
+        WHERE is_default = TRUE
+    `);
+    await pool.query(`ALTER TABLE provider_connections ADD COLUMN IF NOT EXISTS router_id UUID REFERENCES routers(id) ON DELETE RESTRICT`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_provider_connections_router ON provider_connections (router_id) WHERE router_id IS NOT NULL`);
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS router_id UUID REFERENCES routers(id) ON DELETE RESTRICT`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_accounts_router ON accounts (router_id) WHERE router_id IS NOT NULL`);
+    await pool.query(`
+      INSERT INTO routers (name, is_default)
+      SELECT 'Default', TRUE
+      WHERE NOT EXISTS (SELECT 1 FROM routers WHERE is_default = TRUE)
+    `);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS semantic_tier TEXT`);
     // routing_examples was a dead orientation-only signal that never survived
     // copy-on-write; drop the column rather than keep reconciling empty arrays.
