@@ -126,7 +126,6 @@ function searchableText(section: SectionConfig, item: OrientationRecord): string
     formatValue(item.rule),
     formatValue(item.tags),
     formatValue(item.layer1),
-    formatValue(item.layer2),
     formatValue(item.autoTags),
     formatValue(item.manualTags),
     formatValue(item.relatedIds),
@@ -373,7 +372,6 @@ function RuleDetails({ item }: { item: OrientationRecord }) {
 function PrincipleDetails({ item }: { item: OrientationRecord }) {
   const id = String(item.id ?? "");
   const [layer1, setLayer1] = useState(text(item.layer1));
-  const [layer2, setLayer2] = useState(text(item.layer2));
   const autoTags = asStringArray(item.autoTags);
   const manualTags = asStringArray(item.manualTags);
   const tags = uniqueTags(manualTags, autoTags);
@@ -397,28 +395,15 @@ function PrincipleDetails({ item }: { item: OrientationRecord }) {
     updateMutation.mutate({ layer1: next });
   };
 
-  const commitLayer2 = () => {
-    const next = layer2.trim();
-    if (next === text(item.layer2)) return;
-    updateMutation.mutate({ layer2: next });
-  };
-
   return (
     <div className="space-y-0.5">
       <SummaryTextArea
         value={layer1}
         onChange={setLayer1}
         onCommit={commitLayer1}
-        placeholder="Layer 1"
+        placeholder="Principle"
         testId={`input-principle-layer1-${id}`}
-      />
-      <SummaryTextArea
-        value={layer2}
-        onChange={setLayer2}
-        onCommit={commitLayer2}
-        placeholder="Layer 2"
-        testId={`input-principle-layer2-${id}`}
-        minHeightClass="min-h-24"
+        minHeightClass="min-h-32"
       />
 
       <OrientationTagRow
