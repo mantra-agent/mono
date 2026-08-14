@@ -191,6 +191,7 @@ export const REGISTERED_SKILL_KEYS = [
   "reflect",
   "affirmations",
   "coach",
+  "brief-daily",
 ] as const;
 export type RegisteredSkillKey = (typeof REGISTERED_SKILL_KEYS)[number];
 
@@ -223,6 +224,7 @@ export const REGISTERED_TIMER_TEMPLATE_KEYS = [
   "weekly-reflection",
   "monthly-reflection",
   "reflect-daily",
+  "daily-brief",
 ] as const;
 export type RegisteredTimerTemplateKey = (typeof REGISTERED_TIMER_TEMPLATE_KEYS)[number];
 

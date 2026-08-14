@@ -91,6 +91,27 @@ export const WELLNESS_MANAGED_TIMER_DEFINITIONS: readonly WellnessManagedTimerDe
     enabled: true,
     timezone: "__USER_TZ__",
   },
+  {
+    contributionId: "wellness.timer.daily-brief",
+    systemKey: "daily-brief",
+    legacyNames: ["Morning Brief", "Daily Brief"],
+    legacySkillIds: ["brief-daily"],
+    name: "Morning Brief",
+    description:
+      "Assembles a morning briefing from calendar, priorities, tasks, email, finance, people, and yesterday's journal",
+    type: "skill",
+    skillId: "brief-daily",
+    prompt: "",
+    schedules: [
+      {
+        id: "sys-skill-brief-daily-1",
+        frequency: "daily",
+        timeOfDay: "05:00",
+      },
+    ],
+    enabled: true,
+    timezone: "__USER_TZ__",
+  },
 ] as const;
 
 const resourceScope = {

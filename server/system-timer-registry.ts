@@ -98,10 +98,10 @@ function materializeDefinition(
   };
 }
 
-// Wellness cadence Timers (weekly/monthly/daily reflection) materialize through
-// server/mods/wellness-managed-resources.ts under Wellness installation ownership.
-// They are intentionally absent from this platform registry so disable/reinstall
-// cannot re-project them while Wellness is inactive.
+// Wellness cadence Timers (weekly/monthly/daily reflection plus Daily Brief)
+// materialize through server/mods/wellness-managed-resources.ts under Wellness
+// installation ownership. They are intentionally absent from this platform
+// registry so disable/reinstall cannot re-project them while Wellness is inactive.
 export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
   {
     legacyMatch: (t) => t.type === "skill" && t.skillId === "history-rollup",
@@ -149,22 +149,6 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     prompt: "",
     schedules: [
       { id: "sys-skill-sleep-1", frequency: "daily", timeOfDay: "02:00" },
-    ],
-    enabled: true,
-    timezone: "__USER_TZ__",
-  },
-  {
-    legacyMatch: (t) => t.type === "skill" && t.skillId === "brief-daily",
-
-    systemKey: "daily-brief",
-    name: "Morning Brief",
-    description:
-      "Assembles a morning briefing from calendar, priorities, tasks, email, finance, people, and yesterday's journal",
-    type: "skill",
-    skillId: "brief-daily",
-    prompt: "",
-    schedules: [
-      { id: "sys-skill-brief-daily-1", frequency: "daily", timeOfDay: "05:00" },
     ],
     enabled: true,
     timezone: "__USER_TZ__",
