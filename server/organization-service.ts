@@ -37,13 +37,15 @@ export class OrganizationService {
         createdByUserId: organizations.createdByUserId,
         createdAt: organizations.createdAt,
         updatedAt: organizations.updatedAt,
-        memberCount: sql<number>`(SELECT COUNT(*)::int FROM organization_members om WHERE om.organization_id = ${organizations.id})`,
+        // Qualify outer organizations.id — bare ${organizations.id} emits "id", which binds to
+        // organization_members.id (serial) inside the subquery and fails with integer = text.
+        memberCount: sql<number>`(SELECT COUNT(*)::int FROM organization_members om WHERE om.organization_id = "organizations"."id")`,
       })
       .from(organizations)
       .where(
         or(
           eq(organizations.ownerUserId, principal.userId),
-          sql`EXISTS (SELECT 1 FROM organization_members om WHERE om.organization_id = ${organizations.id} AND om.user_id = ${principal.userId})`,
+          sql`EXISTS (SELECT 1 FROM organization_members om WHERE om.organization_id = "organizations"."id" AND om.user_id = ${principal.userId})`,
         ),
       )
       .orderBy(organizations.name);
