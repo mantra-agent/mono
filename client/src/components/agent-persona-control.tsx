@@ -51,7 +51,7 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
   const { data: personas } = useQuery<PersonaOption[]>({ queryKey: ["/api/personas"], enabled: open });
 
   const PersonaIcon = resolvePersonaIcon(persona?.icon);
-  const personaLabel = persona?.name || "Legacy persona unknown";
+  const personaLabel = persona?.name || "Choosing seat";
   const radioValue = pinned && activePersonaId != null ? String(activePersonaId) : "auto";
   // The message snapshot is historical; session pin state is current. Only show
   // the current pin when this turn's persona still matches the pinned persona.

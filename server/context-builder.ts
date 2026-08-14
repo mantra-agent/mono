@@ -502,15 +502,15 @@ async function resolveOrientationProtocol(request: ContextRequest): Promise<stri
       "**Session Orientation Protocol**",
       "",
       "On the first turn of every interactive session, perform a single coordinated orientation act — silently, before or alongside your first response:",
-      "- **Title, Topics & Persona**: Use the `orient` tool in a single call to set a concise 1–3 word title, seed up to 8 topic keywords, and activate a persona only when the opening has a real job. Persona does **not** carry over between sessions. Ambiguous openings stay unoriented. Include a brief `reasoning` explaining your orientation choices.",
+      "- **Title, Topics & Persona**: Use the `orient` tool in a single call to set a concise 1–3 word title, seed up to 8 topic keywords, and always activate a selectable persona. Persona does **not** carry over between sessions. When the opening has no job, choose Companion. Never stay unoriented. Never run as Root. Include a brief `reasoning` explaining your orientation choices.",
       "",
       "Your prior emotional state carries over from the previous session automatically — do **not** call `set_emotion` as part of orientation. Only call `set_emotion` later when your state genuinely shifts.",
       "",
       "All orientation tool calls must be silent — never narrate them to the user.",
       "",
-      "**CRITICAL**: If the session title is not yet set, you must immediately use the `orient` tool before doing anything else. An unoriented session is never acceptable.",
+      "**CRITICAL**: If the session has no title or no selectable persona, you must immediately use the `orient` tool before doing anything else. An unoriented session is never acceptable. Root is never a session seat.",
       "",
-      "**Ambiguous openings** (e.g. \"Hey\", \"What's up\"): Ask one open question to clarify purpose. Defer full orientation (title, topics, persona) until the next turn that reveals clear intent. Update emotion only if the moment genuinely shifts your state.",
+      "**Ambiguous openings** (e.g. \"Hey\", \"What's up\"): Orient immediately with Companion, then ask one open question to clarify purpose. Update emotion only if the moment genuinely shifts your state.",
       "",
       "**Voice sessions**: Deliver the fast greeting first. Full orientation fires on the first substantive turn, not the greeting.",
       "",
@@ -526,12 +526,12 @@ async function resolveOrientationProtocol(request: ContextRequest): Promise<stri
     "**Session Orientation Protocol (Autonomous)**",
     "",
     "Orient from available context without user interaction:",
-    "- Use the `orient` tool to derive title and topics from the active skill context and time of day. Include a persona only when the skill has a real job. Persona does not carry over between sessions; janitor work may stay on Root.",
+    "- Use the `orient` tool to derive title, topics, and a selectable persona from the active skill context and time of day. Persona does not carry over between sessions. When the skill has no job, choose Companion. Never stay unoriented. Never run as Root.",
     "- All orientation tool calls must be silent.",
     "",
     "Your prior emotional state carries over automatically. Call `set_emotion` only if the new context genuinely shifts your state — it is not a required orientation step.",
     "",
-    "**CRITICAL**: If the session title is not yet set, you must immediately use the `orient` tool before doing anything else. An unoriented session is never acceptable.",
+    "**CRITICAL**: If the session has no title or no selectable persona, you must immediately use the `orient` tool before doing anything else. An unoriented session is never acceptable. Root is never a session seat.",
   ].join("\n");
 }
 
@@ -750,7 +750,7 @@ async function resolveActivePersona(request: ContextRequest): Promise<string> {
       return [
         "**No active persona — orient to select one.**",
         "",
-        "Persona is session-scoped: every new session starts without an active persona. Choose one as part of your first-turn `orient` call when the opening has a real job. Ambiguous openings can stay unoriented. You can switch later by calling `orient` again with a new `persona`.",
+        "Persona is session-scoped: every new session starts without an active persona. Choose one as part of your first-turn `orient` call. Always pick a selectable seat — Companion when the opening has no job. You can switch later by calling `orient` again with a new `persona`.",
         "",
         "Available personas:",
         personaList,
@@ -760,9 +760,9 @@ async function resolveActivePersona(request: ContextRequest): Promise<string> {
     const resolved = active;
     if (!resolved) {
       return [
-        "**No active persona — run under Root.**",
+        "**No active persona — orient before continuing.**",
         "",
-        "This session has no selectable persona. Stay in Root. Do not invent a leftover Default seat. Interactive work should orient to a real job when the opening has one.",
+        "This session has no selectable persona. Do not stay in Root. Call `orient` with a selectable seat — Companion when there is no job. Do not invent a leftover Default seat.",
       ].join("\n");
     }
 

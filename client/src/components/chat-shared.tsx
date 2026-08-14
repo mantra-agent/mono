@@ -3150,7 +3150,7 @@ export const ChatTurn = memo(function ChatTurn({
 
   const isErrorMessage = !isUser && !isSystemPrompt && !!message.isError;
   const PersonaIcon = resolvePersonaIcon(message.persona?.icon);
-  const personaLabel = message.persona?.name || "Legacy persona unknown";
+  const personaLabel = message.persona?.name || "Choosing seat";
 
   return (
     <div

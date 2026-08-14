@@ -23,7 +23,7 @@ export async function resolveSessionPersona(
         return { ...persona, ...(revision.payload as PersonaRevisionPayload), currentRevisionId: revision.id };
       }
       if (persona) return persona;
-      log.warn(`session=${sessionId} references missing personaId=${session.personaId}; leaving session unoriented`);
+      log.warn(`session=${sessionId} references missing personaId=${session.personaId}; leaving session unbound so orientation can retry`);
     }
     return null;
   }

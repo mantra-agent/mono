@@ -1029,8 +1029,19 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       return { result: "No orientation parameters provided. Pass at least one of: title, topics, persona.", error: true };
     }
 
-    // First-turn enforcement: a meaningful title is required. Persona is optional
-    // so an ambiguous opening can stay unoriented instead of minting a leftover job.
+    const { chatFileStorage } = await import("./chat-file-storage");
+    const { hasRealSessionTitle } = await import("./session-orientation");
+    const existingSession = await chatFileStorage.getSession(sessionId);
+    const alreadyTitled = hasRealSessionTitle(existingSession?.title);
+    if (!alreadyTitled && (!hasTitle || !hasPersona)) {
+      return {
+        result: "First-turn orientation requires a title and a selectable persona. Use Companion when the opening has no job. Root is never a session seat.",
+        error: true,
+      };
+    }
+
+    // First-turn enforcement: a meaningful title and a selectable persona are
+    // required. Title-only is not orientation. Root is never a session seat.
 
     let validatedTitle: string | undefined;
     if (hasTitle) {
@@ -1052,16 +1063,17 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (!isNaN(numId) && String(numId) === String(args.persona)) {
         const p = await personaStorage.getById?.(numId) ?? (await personaStorage.list()).find(x => x.id === numId);
         if (!p) return { result: `Persona with id ${numId} not found`, error: true };
+        if (p.isSystem) return { result: `${p.name} is not a selectable session seat`, error: true };
         resolvedPersona = { id: p.id, name: p.name };
       } else {
         const found = await personaStorage.getByName(args.persona);
         if (!found) return { result: `Persona "${args.persona}" not found`, error: true };
+        if (found.isSystem) return { result: `${found.name} is not a selectable session seat`, error: true };
         resolvedPersona = { id: found.id, name: found.name };
       }
     }
 
     const results: string[] = [];
-    const { chatFileStorage } = await import("./chat-file-storage");
 
     if (validatedTitle) {
       const existing = await chatFileStorage.getSession(sessionId);
