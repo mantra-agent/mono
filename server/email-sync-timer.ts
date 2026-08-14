@@ -1,11 +1,12 @@
-import { and, asc, eq, gt } from "drizzle-orm";
-import { users, vaults, type User } from "@shared/schema";
+import { and, asc, eq, gt, isNotNull } from "drizzle-orm";
+import { accounts, agentInstanceMemberships, memberships, users, vaults, type User } from "@shared/schema";
 import { db, pool, withAdmissionTier } from "./db";
 import { createLogger } from "./log";
 import {
+  AccountLifecycleError,
   createUserPrincipalFromUser,
-  resolveUserIdentityFoundation,
   type Principal,
+  type UserIdentityFoundation,
 } from "./principal";
 import { requireCurrentUserPrincipal, runWithPrincipal } from "./principal-context";
 import { getSetting, setSetting } from "./system-settings";
@@ -104,25 +105,85 @@ export interface EmailSyncTimerResult {
   wrapped: boolean;
 }
 
-async function loadUserPage(cursor: string | null): Promise<{ users: User[]; wrapped: boolean }> {
-  const page = await db
-    .select()
-    .from(users)
-    .where(cursor ? gt(users.id, cursor) : undefined)
-    .orderBy(asc(users.id))
-    .limit(USER_PAGE_SIZE);
-  if (page.length > 0 || cursor === null) return { users: page, wrapped: false };
+/**
+ * Page only owners with active personal-account identity foundation.
+ * Suspended/archived/orphan users never enter the round-robin set — that is
+ * the producer filter that prevents AccountLifecycleError ERROR thrash.
+ */
+async function loadUserPage(
+  cursor: string | null,
+): Promise<{ owners: Array<{ user: User; foundation: UserIdentityFoundation }>; wrapped: boolean }> {
+  const selectOwners = (afterId: string | null) =>
+    db
+      .select({
+        user: users,
+        accountId: accounts.id,
+        role: memberships.role,
+        activeVaultId: users.activeVaultId,
+        visibleVaultIds: users.visibleVaultIds,
+        instanceId: agentInstanceMemberships.instanceId,
+      })
+      .from(users)
+      .innerJoin(memberships, eq(memberships.userId, users.id))
+      .innerJoin(
+        accounts,
+        and(
+          eq(accounts.id, memberships.accountId),
+          eq(accounts.kind, "personal"),
+          eq(accounts.ownerUserId, users.id),
+          eq(accounts.status, "active"),
+        ),
+      )
+      .innerJoin(
+        agentInstanceMemberships,
+        and(
+          eq(agentInstanceMemberships.accountId, accounts.id),
+          eq(agentInstanceMemberships.userId, users.id),
+        ),
+      )
+      .where(
+        afterId
+          ? and(isNotNull(users.activeVaultId), gt(users.id, afterId))
+          : isNotNull(users.activeVaultId),
+      )
+      .orderBy(asc(users.id))
+      .limit(USER_PAGE_SIZE);
 
-  const wrapped = await db
-    .select()
-    .from(users)
-    .orderBy(asc(users.id))
-    .limit(USER_PAGE_SIZE);
-  return { users: wrapped, wrapped: true };
+  const mapRows = (
+    rows: Awaited<ReturnType<typeof selectOwners>>,
+  ): Array<{ user: User; foundation: UserIdentityFoundation }> => {
+    const out: Array<{ user: User; foundation: UserIdentityFoundation }> = [];
+    for (const row of rows) {
+      if (!row.accountId || !row.activeVaultId || !row.instanceId) continue;
+      const role =
+        row.role === "owner" || row.role === "admin" || row.role === "member" || row.role === "viewer"
+          ? row.role
+          : "member";
+      out.push({
+        user: row.user,
+        foundation: {
+          accountId: row.accountId,
+          role,
+          activeVaultId: row.activeVaultId,
+          visibleVaultIds: row.visibleVaultIds ?? [],
+          instanceId: row.instanceId,
+        },
+      });
+    }
+    return out;
+  };
+
+  const page = mapRows(await selectOwners(cursor));
+  if (page.length > 0 || cursor === null) return { owners: page, wrapped: false };
+
+  const wrapped = mapRows(await selectOwners(null));
+  return { owners: wrapped, wrapped: true };
 }
 
-async function loadOwnerVaultPrincipals(user: User): Promise<Principal[]> {
-  const foundation = await resolveUserIdentityFoundation(user.id);
+async function loadOwnerVaultPrincipals(
+  user: User,
+  foundation: UserIdentityFoundation,
+): Promise<Principal[]> {
   const ownedVaults = await db
     .select({ id: vaults.id })
     .from(vaults)
@@ -389,7 +450,7 @@ export async function runEmailSyncTimer(): Promise<EmailSyncTimerResult> {
       result.wrapped = page.wrapped;
 
       const ownersWithAccounts = new Set<string>();
-      for (const user of page.users) {
+      for (const { user, foundation } of page.owners) {
         if (Date.now() - cycleStartedAt >= MAX_CYCLE_MS) {
           result.errors.push(`cycle budget exhausted after ${MAX_CYCLE_MS}ms`);
           break;
@@ -397,7 +458,7 @@ export async function runEmailSyncTimer(): Promise<EmailSyncTimerResult> {
         result.ownersScanned++;
         result.cursor = user.id;
         try {
-          const principals = await loadOwnerVaultPrincipals(user);
+          const principals = await loadOwnerVaultPrincipals(user, foundation);
           for (const principal of principals) {
             result.vaultsScanned++;
             const vaultResult = await runWithPrincipal(principal, async () => {
@@ -427,6 +488,15 @@ export async function runEmailSyncTimer(): Promise<EmailSyncTimerResult> {
             }
           }
         } catch (error) {
+          // Race: account archived/suspended between page load and vault work.
+          // Same class as the producer filter — skip without ERROR thrash.
+          if (error instanceof AccountLifecycleError) {
+            log.debug("email_sync_timer.owner_skipped_lifecycle", {
+              ownerUserId: user.id,
+              code: error.code,
+            });
+            continue;
+          }
           const normalized = normalizeEmailSyncTimerError(
             error,
             "owner_pipeline",
