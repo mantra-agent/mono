@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { IssueInlineProfile } from "@/components/issue-inline-profile";
-import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { SimpleTextFrame } from "@/components/home/simple-text-frame";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -10,7 +10,10 @@ import {
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { openIssueCaptureDialog } from "@/components/issue-capture";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
@@ -32,6 +35,7 @@ import {
   FolderOpen,
   Loader2,
   MessageSquare,
+  MoreHorizontal,
   Plus,
   X,
 } from "lucide-react";
@@ -57,25 +61,28 @@ interface AggregatedApplicationError {
   occurrenceCount: number;
 }
 
-interface IssueTreeRowProps {
-  issue: Issue;
-  onCycleStatus: (id: number, nextStatus: IssueStatus) => void;
-  isUpdating: boolean;
-  onDiscuss: () => void;
-  onOpen?: () => void;
-  isOpening?: boolean;
-}
-
-/** Match Home inbox timestamp format, e.g. "Oct 11". */
-function formatIssueListDate(value: Date | string | null | undefined, timezone: string): string {
+/** Match the Home menu timestamp: clock time stacked over an M/D date. */
+function formatStackedTimestamp(value: Date | string | null | undefined, timezone: string): string {
   if (!value) return "";
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("en-US", {
+  const time = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
-    month: "short",
-    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   }).format(date);
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    day: "numeric",
+    month: "numeric",
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${time}\n${get("month")}/${get("day")}`;
+}
+
+function shouldIgnoreRowToggle(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(target.closest('a, button, input, textarea, select, [role="menuitem"]'));
 }
 
 function StatusIcon({ status, className }: { status: IssueStatus; className?: string }) {
@@ -91,6 +98,107 @@ function StatusIcon({ status, className }: { status: IssueStatus; className?: st
   }
 }
 
+/** Shared Home-mirroring row chrome: stacked time, leading control, content, expander, hover-only overflow. */
+function TreeRow({
+  timestamp,
+  control,
+  children,
+  expandedContent,
+  menuContent,
+  menuLabel,
+  testId,
+}: {
+  timestamp: string;
+  control: ReactNode;
+  children: ReactNode;
+  expandedContent?: ReactNode;
+  menuContent: ReactNode;
+  menuLabel: string;
+  testId: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const canExpand = Boolean(expandedContent);
+
+  const toggle = () => {
+    if (canExpand) setExpanded((value) => !value);
+  };
+
+  return (
+    <div className="min-w-0" data-testid={testId}>
+      <div
+        className={cn(
+          "group flex items-center rounded-md py-1 transition-colors duration-200 hover:bg-accent/50",
+          canExpand && "cursor-pointer",
+        )}
+        onClick={(event) => {
+          if (shouldIgnoreRowToggle(event.target)) return;
+          toggle();
+        }}
+        role={canExpand ? "button" : undefined}
+        tabIndex={canExpand ? 0 : undefined}
+        onKeyDown={(event) => {
+          if (!canExpand) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            toggle();
+          }
+        }}
+      >
+        {/* Time column — clock time over M/D date, exactly like the Home menu. */}
+        <span className="w-14 shrink-0 whitespace-pre-line pr-1.5 text-right text-[11px] leading-tight tabular-nums text-muted-foreground">
+          {timestamp}
+        </span>
+
+        {/* Leading control column — sits to the right of the timestamp like Home's check circle. */}
+        <span className="flex w-4 shrink-0 items-center justify-center">{control}</span>
+
+        {/* Content */}
+        <div className="relative min-w-0 flex-1 pl-0.5">{children}</div>
+
+        {/* Expander */}
+        <span className="ml-1 flex w-5 shrink-0 items-center justify-center">
+          {canExpand ? (
+            <button
+              type="button"
+              className="rounded p-0.5 hover:bg-accent/60"
+              onClick={(event) => {
+                event.stopPropagation();
+                toggle();
+              }}
+              aria-label={expanded ? "Collapse" : "Expand"}
+            >
+              <ChevronRight
+                className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", expanded && "rotate-90")}
+              />
+            </button>
+          ) : null}
+        </span>
+
+        {/* Overflow menu — visible only on hover, after the expander. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="flex w-5 shrink-0 items-center justify-center rounded p-0.5 opacity-0 transition-opacity hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+              aria-label={menuLabel}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            {menuContent}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {expanded && expandedContent ? (
+        <div className="pb-2 pl-0 pr-1.5">{expandedContent}</div>
+      ) : null}
+    </div>
+  );
+}
+
 function IssueTreeRow({
   issue,
   onCycleStatus,
@@ -98,58 +206,34 @@ function IssueTreeRow({
   onDiscuss,
   onOpen,
   isOpening,
-}: IssueTreeRowProps) {
+}: {
+  issue: Issue;
+  onCycleStatus: (id: number, nextStatus: IssueStatus) => void;
+  isUpdating: boolean;
+  onDiscuss: () => void;
+  onOpen?: () => void;
+  isOpening?: boolean;
+}) {
   const { timezone } = useTimezone();
   const status = issue.status as IssueStatus;
   const nextStatus = STATUS_CYCLE[(STATUS_CYCLE.indexOf(status) + 1) % STATUS_CYCLE.length];
-  const timestamp = formatIssueListDate(issue.createdAt, timezone);
-  const reporter = typeof issue.reporterEmail === "string" && issue.reporterEmail.trim()
-    ? issue.reporterEmail.trim()
-    : null;
+  const timestamp = formatStackedTimestamp(issue.createdAt, timezone);
 
   return (
-    <ProfileTreeRow
-      label={(
-        <span className="flex min-w-0 flex-col gap-0.5" data-testid={`label-issue-${issue.id}`}>
-          <span className="flex min-w-0 items-center gap-2">
-            {timestamp ? (
-              <span
-                className="w-14 shrink-0 whitespace-nowrap text-right text-[11px] leading-tight tabular-nums text-muted-foreground"
-                title={timestamp}
-              >
-                {timestamp}
-              </span>
-            ) : null}
-            <span
-              className={cn(
-                "min-w-0 flex-1 truncate font-medium text-foreground",
-                status === "resolved" && "text-muted-foreground line-through",
-              )}
-            >
-              {issue.title}
-            </span>
-          </span>
-          {reporter ? (
-            <span
-              className={cn(
-                "truncate text-[11px] leading-tight text-muted-foreground",
-                timestamp ? "pl-[3.75rem]" : undefined,
-              )}
-              title={reporter}
-              data-testid={`text-issue-reporter-${issue.id}`}
-            >
-              Reporter {reporter}
-            </span>
-          ) : null}
-        </span>
-      )}
-      icon={(
+    <TreeRow
+      timestamp={timestamp}
+      testId={`issue-item-${issue.id}`}
+      menuLabel={`Actions for ${issue.title}`}
+      control={
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
-              onClick={() => onCycleStatus(issue.id, nextStatus)}
-              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                onCycleStatus(issue.id, nextStatus);
+              }}
+              className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
               disabled={isUpdating}
               aria-label={`${STATUS_LABELS[status]}. Change status to ${STATUS_LABELS[nextStatus]}`}
               data-testid={`button-cycle-status-${issue.id}`}
@@ -165,15 +249,9 @@ function IssueTreeRow({
             {STATUS_LABELS[status]}
           </TooltipContent>
         </Tooltip>
-      )}
-      hasValue={false}
-      showEmpty
-      mobileLayout="inline"
-      menuVisibility="always"
+      }
       expandedContent={<IssueInlineProfile issueId={issue.id} />}
-      expandedContentClassName="px-2 pb-3 pl-2"
-      testId={`issue-item-${issue.id}`}
-      menuContent={(
+      menuContent={
         <>
           {onOpen ? (
             <DropdownMenuItem
@@ -199,8 +277,18 @@ function IssueTreeRow({
             Discuss
           </DropdownMenuItem>
         </>
-      )}
-    />
+      }
+    >
+      <span
+        className={cn(
+          "block min-w-0 truncate text-sm font-medium text-foreground",
+          status === "resolved" && "text-muted-foreground line-through",
+        )}
+        data-testid={`label-issue-${issue.id}`}
+      >
+        {issue.title}
+      </span>
+    </TreeRow>
   );
 }
 
@@ -223,41 +311,24 @@ function ErrorTreeRow({
   const source = error.sourceFile
     ? `${error.sourceFile}${error.sourceLine ? `:${error.sourceLine}` : ""}`
     : null;
-  const timestamp = formatIssueListDate(error.lastSeenAt, timezone);
+  const timestamp = formatStackedTimestamp(error.lastSeenAt, timezone);
   const details = [
     ["Identity", error.errorIdentity],
     ["Source", source],
     ["Logger / site", [error.sourceSite, error.errorIdentity.split(":", 1)[0]].filter(Boolean).join(" · ")],
-    ["First seen", formatIssueListDate(error.firstSeenAt, timezone)],
-    ["Last seen", timestamp],
+    ["First seen", formatStackedTimestamp(error.firstSeenAt, timezone).replace("\n", " ")],
+    ["Last seen", timestamp.replace("\n", " ")],
     ["Count", error.occurrenceCount.toLocaleString()],
   ].filter((detail): detail is [string, string] => typeof detail[1] === "string" && detail[1].length > 0);
 
   return (
-    <ProfileTreeRow
-      label={(
-        <span className="flex min-w-0 items-center gap-2" data-testid={`label-error-${error.fingerprint}`}>
-          {timestamp ? (
-            <span className="w-14 shrink-0 whitespace-nowrap text-right text-[11px] leading-tight tabular-nums text-muted-foreground">
-              {timestamp}
-            </span>
-          ) : null}
-          <span className="min-w-0 flex-1 truncate font-medium text-foreground">
-            {error.errorIdentity}
-          </span>
-          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-            {error.occurrenceCount.toLocaleString()}
-          </span>
-        </span>
-      )}
-      icon={<CircleX className="h-3.5 w-3.5 text-destructive" />}
-      hasValue={false}
-      showEmpty
-      mobileLayout="inline"
-      menuVisibility="always"
+    <TreeRow
+      timestamp={timestamp}
       testId={`error-item-${error.fingerprint}`}
-      expandedContent={(
-        <dl className="grid gap-1.5 text-xs">
+      menuLabel={`Actions for ${error.errorIdentity}`}
+      control={<CircleX className="h-3.5 w-3.5 text-destructive" />}
+      expandedContent={
+        <dl className="grid gap-1.5 rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-xs">
           {details.map(([label, value]) => (
             <div key={label} className="grid grid-cols-[5rem_minmax(0,1fr)] gap-2">
               <dt className="text-muted-foreground">{label}</dt>
@@ -265,8 +336,8 @@ function ErrorTreeRow({
             </div>
           ))}
         </dl>
-      )}
-      menuContent={(
+      }
+      menuContent={
         <>
           <DropdownMenuItem
             disabled={isOpening}
@@ -301,8 +372,17 @@ function ErrorTreeRow({
             Dismiss
           </DropdownMenuItem>
         </>
-      )}
-    />
+      }
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+          {error.errorIdentity}
+        </span>
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+          {error.occurrenceCount.toLocaleString()}
+        </span>
+      </span>
+    </TreeRow>
   );
 }
 
