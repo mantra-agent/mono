@@ -14,18 +14,22 @@ export function hasRealSessionTitle(title: string | null | undefined): boolean {
   return !LOCATOR_TITLE_PREFIXES.some((prefix) => title.startsWith(prefix));
 }
 
+function hasSelectablePersona(personaId: number | null | undefined): boolean {
+  return typeof personaId === "number" && Number.isInteger(personaId) && personaId > 0;
+}
+
 /**
  * Canonical persisted orientation invariant.
  *
- * A session is established once it has a topic title. Transport locators
- * (`Slack DM:`, `Slack Channel:`) name the conversation, not the job, so they
- * do not seal orientation. Persona is optional: unoriented is a real state
- * when the opening has no job. Legacy sessions that predate persona-owned
- * context are still honored via their persisted context flags.
+ * A session is established only when it has both a topic title and a
+ * selectable persona. Transport locators (`Slack DM:`, `Slack Channel:`)
+ * name the conversation, not the job, so they do not seal orientation.
+ * Title-only never seals: the next turn must still bind a seat.
+ * Root is composition, never a session seat. Unoriented is transient —
+ * bootstrap retries until a selectable persona lands.
  */
 export function isSessionOrientationEstablished(
   session: SessionOrientationSnapshot | null | undefined,
 ): boolean {
-  if (hasRealSessionTitle(session?.title)) return true;
-  return session?.contextFlags != null;
+  return hasRealSessionTitle(session?.title) && hasSelectablePersona(session?.personaId);
 }

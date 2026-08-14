@@ -17,8 +17,9 @@
 // full context on the correct tier. The handoff is invisible to the user.
 //
 // Fail-closed: if the classification call or parse fails, a preselected
-// session persona is preserved; otherwise the session stays unoriented.
-// The session stays untitled so the next turn retries.
+// session persona is preserved; otherwise the session stays untitled and
+// unbound so the next turn retries. A title without a selectable persona
+// is not orientation.
 import { createLogger } from "./log";
 import { chatCompletion } from "./model-client";
 import { resolveModelCandidates, type ModelRoutingDecision } from "./model-routing";
@@ -88,7 +89,7 @@ export interface OrientationBootstrapResult {
 interface BootstrapClassification {
   title: string;
   topics: string[];
-  persona?: string;
+  persona: string;
 }
 
 export function buildBootstrapSystemPrompt(router: PersonaEntry): string {
@@ -107,7 +108,7 @@ export function buildBootstrapSystemPrompt(router: PersonaEntry): string {
     "- Prefer compact noun phrases over meta-descriptions. Do not title the user's request mechanics.",
     "- Examples: 'audit the Session menu UI' -> 'Session Menu Audit'; 'review TIVE pricing' -> 'TIVE Pricing Review'; 'debug duplicate question widgets' -> 'Question Widget Duplication'; 'improve the router that names Sessions' -> 'Session Naming Router'.",
     "- Before returning, apply this test: could this title distinguish the Session from five others involving the same kind of work? If not, make the subject more specific.",
-    '- "persona": the persona name that best fits the opening, or omit it when the opening is ambiguous',
+    '- "persona": the selectable persona name that best fits the opening. Always include it. When the opening has no job, use Companion. Never omit persona. Never use Root, Router, or Default.',
   ].join("\n");
 }
 
@@ -124,6 +125,15 @@ function buildBootstrapUserPrompt(personas: PersonaEntry[], userMessage: string)
   ].join("\n");
 }
 
+function resolveSelectablePersonaName(requested: string, personas: PersonaEntry[]): string | undefined {
+  const selectable = personas.filter((p) => !p.isSystem);
+  const match = requested
+    ? selectable.find((p) => p.name.toLowerCase() === requested.toLowerCase())
+    : undefined;
+  if (match) return match.name;
+  return selectable.find((p) => p.name.toLowerCase() === "companion")?.name;
+}
+
 function parseClassification(raw: string, personas: PersonaEntry[]): BootstrapClassification | null {
   const parsed = safeParseJSON<Record<string, unknown>>(raw, "orientation-bootstrap");
   if (!parsed.ok || typeof parsed.data !== "object" || parsed.data === null) return null;
@@ -134,10 +144,9 @@ function parseClassification(raw: string, personas: PersonaEntry[]): BootstrapCl
     ? obj.topics.filter((t): t is string => typeof t === "string" && !!t.trim()).map((t) => t.trim()).slice(0, 8)
     : [];
   const requested = typeof obj.persona === "string" ? obj.persona.trim() : "";
-  const match = requested
-    ? personas.find((p) => !p.isSystem && p.name.toLowerCase() === requested.toLowerCase())
-    : undefined;
-  return { title, topics, persona: match?.name };
+  const persona = resolveSelectablePersonaName(requested, personas);
+  if (!persona) return null;
+  return { title, topics, persona };
 }
 
 /** Apply orientation through the canonical orient mutation path (same boundary as model-issued orient calls). */
@@ -270,7 +279,7 @@ export async function ensureSessionOriented(options: {
     const applied = await applyOrient(sessionId, sessionKey, {
       title: classification.title,
       topics: classification.topics,
-      ...(classification.persona ? { persona: classification.persona } : {}),
+      persona: classification.persona,
       // The orient handler derives semantic recommendations from title/topics/persona.
       // An explicit empty map means the bootstrap also establishes context scope in
       // this one mutation, even when no optional sections are recommended.
@@ -307,7 +316,7 @@ export async function ensureSessionOriented(options: {
   }
 }
 
-/** Fail closed: preserve a preselected persona, otherwise stay unoriented. Session stays untitled and retries next turn. */
+/** Fail closed: preserve a preselected persona, otherwise stay untitled and unbound so the next turn retries. */
 async function failClosed(
   sessionId: string,
   _sessionKey: string | undefined,
