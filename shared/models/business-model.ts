@@ -587,7 +587,7 @@ export interface MonthRow {
   startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; userContractionRevenue: number; tierExpansionRevenue: number; sameCohortRecurringRevenue: number; cohortNrr: number;
   subscriptionRevenue: number; seatExpansionRevenue: number; overageRevenue: number; productRevenue: number; productArr: number;
   activeSeats: number; requiredTierUpgrades: number; overageDominant: boolean;
-  consultingRevenue: number; totalCashRevenue: number; includedTokenCogs: number; seatCogs: number; overageTokenCogs: number; requiredOverageTokensMillions: number; totalTokenUsageMillions: number; overageGrossMargin: number;
+  consultingRevenue: number; totalCashRevenue: number; includedTokenCogs: number; seatCogs: number; supportCogs: number; overageTokenCogs: number; requiredOverageTokensMillions: number; totalTokenUsageMillions: number; overageGrossMargin: number;
   variableProductCogs: number; fixedProductCogs: number; productCogs: number; consultingCogs: number; productGrossMargin: number; consultingGrossMargin: number; blendedCompanyGrossMargin: number;
   acquisitionSpend: number; blendedCac: number; cacPaybackMonths: number; headcount: number; operatingExpense: number; capex: number;
   grossProfit: number; staffOpex: number; acquisitionOpex: number; budgetOpex: number; departmentOpex: Record<string, number>;
@@ -601,7 +601,7 @@ export interface PeriodRow {
   activeAccounts: number; newAccounts: number; churnedAccounts: number; activeUsers: number; newUsers: number; expandedUsers: number; contractedUsers: number;
   hoursUsed: number; tokensUsed: number; tokenCost: number;
   startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; userContractionRevenue: number; tierExpansionRevenue: number; cohortNrr: number;
-  totalCashRevenue: number; productRevenue: number; consultingRevenue: number; productCogs: number; consultingCogs: number; cogs: number; mrr: number; arr: number; grossProfit: number;
+  totalCashRevenue: number; productRevenue: number; consultingRevenue: number; productCogs: number; supportCogs: number; consultingCogs: number; cogs: number; mrr: number; arr: number; grossProfit: number;
   staffOpex: number; acquisitionOpex: number; budgetOpex: number; departmentOpex: Record<string, number>;
   totalOpex: number; operatingIncome: number;
   acquisitionSpend: number; netCashChange: number; financingCash: number; endingCash: number;
@@ -784,6 +784,7 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     const tokenCost = (tokensUsed / 1_000_000) * assumptions.blendedTokenCostPerMillion;
     const includedTokenCogs = tokenCost;
     const seatCogs = activeSeats * assumptions.seatInferenceAndSupportCost;
+    const supportCogs = activeAccounts * assumptions.supportPerActiveAccount;
     const activeHires = derivedHires.filter((hire) => hire.startMonth <= month);
     const keyHireStaffOpex = activeHires.reduce((sum, hire) => hire.costAllocation === "product_cogs" ? sum : sum + hire.monthlyCost, 0);
     const keyHireDeliveryCogs = activeHires.filter((hire) => hire.costAllocation === "product_cogs").reduce((sum, hire) => sum + hire.monthlyCost, 0);
@@ -792,7 +793,7 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     const fixedProductCogs = assumptions.operatingCosts.filter((cost) => cost.classification === "product_cogs" && activeCost(cost, month)).reduce((sum, cost) => sum + cost.monthlyAmount, 0) + keyHireDeliveryCogs;
     const onboardingCost = month >= assumptions.productizedOnboardingMonth ? assumptions.productizedOnboardingCostPerNewAccount : assumptions.onboardingCostPerNewAccount;
     const variableProductCogs = includedTokenCogs + seatCogs + overageTokenCogs + activeAccounts * (assumptions.infrastructurePerActiveAccount + assumptions.supportPerActiveAccount) + productRevenue * assumptions.paymentProcessingPct / 100 + newAccounts * onboardingCost;
-    const productCogs = variableProductCogs + fixedProductCogs;
+    const productCogs = includedTokenCogs + supportCogs;
     const lane = assumptions.monthlyCashLanes[month - 1];
     const consultingRevenue = lane.consultingRevenue;
     const consultingCogs = lane.consultingCogs;
@@ -805,7 +806,7 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     const totalOpex = staffOpex + budgetOpex;
     const operatingExpense = totalOpex;
     const headcount = assumptions.operatingCosts.filter((cost) => activeCost(cost, month)).reduce((sum, cost) => sum + cost.headcount, 0) + keyHireHeadcount;
-    const grossProfit = totalCashRevenue - productCogs - consultingCogs;
+    const grossProfit = totalCashRevenue - productCogs;
     const operatingIncome = grossProfit - totalOpex;
     const netCashChange = totalCashRevenue - productCogs - consultingCogs - operatingExpense - lane.capex;
     const financingCash = assumptions.financingEvents.filter((event) => event.month === month).reduce((sum, event) => sum + event.amount, 0);
@@ -819,7 +820,7 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
       newUsers, expandedUsers, contractedUsers, existingAccountUsers, activeUsers, hoursUsed, tokensUsed, tokenCost, startingCohortRevenue, churnedRevenue, userExpansionRevenue, userContractionRevenue, tierExpansionRevenue, sameCohortRecurringRevenue, cohortNrr,
       subscriptionRevenue, seatExpansionRevenue, overageRevenue, productRevenue, productArr: productRevenue * 12,
       activeSeats, requiredTierUpgrades, overageDominant: false,
-      consultingRevenue, totalCashRevenue, includedTokenCogs, seatCogs, overageTokenCogs, requiredOverageTokensMillions, totalTokenUsageMillions: tokensUsed / 1_000_000 + requiredOverageTokensMillions, overageGrossMargin,
+      consultingRevenue, totalCashRevenue, includedTokenCogs, seatCogs, supportCogs, overageTokenCogs, requiredOverageTokensMillions, totalTokenUsageMillions: tokensUsed / 1_000_000 + requiredOverageTokensMillions, overageGrossMargin,
       variableProductCogs, fixedProductCogs, productCogs, consultingCogs, productGrossMargin: safeRatio(productRevenue - productCogs, productRevenue), consultingGrossMargin: safeRatio(consultingRevenue - consultingCogs, consultingRevenue),
       blendedCompanyGrossMargin: safeRatio(totalCashRevenue - productCogs - consultingCogs, totalCashRevenue), acquisitionSpend, blendedCac: newAccounts > 0 ? acquisitionSpend / newAccounts : blendedEntryCac,
       cacPaybackMonths: baselineCacPaybackMonths, headcount, operatingExpense, capex: lane.capex, grossProfit, staffOpex, acquisitionOpex, budgetOpex, departmentOpex, totalOpex, operatingIncome, netCashChange, financingCash, endingCash, trailingBurn, runwayMonths: trailingBurn > 0 ? Math.max(0, endingCash) / trailingBurn : Number.POSITIVE_INFINITY,
@@ -1001,8 +1002,9 @@ export function aggregateMonths(months: MonthRow[], mode: PeriodMode): PeriodRow
       productRevenue: sum((row) => row.productRevenue),
       consultingRevenue: sum((row) => row.consultingRevenue),
       productCogs: sum((row) => row.productCogs),
+      supportCogs: sum((row) => row.supportCogs),
       consultingCogs: sum((row) => row.consultingCogs),
-      cogs: sum((row) => row.productCogs + row.consultingCogs),
+      cogs: sum((row) => row.productCogs),
       mrr: last.productRevenue,
       arr: last.productArr,
       grossProfit: sum((row) => row.grossProfit),
