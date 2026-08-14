@@ -35,7 +35,7 @@ import {
   verifySlackIdentity,
   type SlackCredentialBundle,
 } from "./client";
-import { executeSlackTurn, SLACK_CHANNEL_PENDING_TEXT } from "./turn-service";
+import { executeSlackTurn } from "./turn-service";
 
 const log = createLogger("SlackWorker");
 
@@ -160,26 +160,12 @@ async function processEvent(installation: SlackInstallationRow, event: ClaimedSl
     if (!(await installationActive(installation))) throw new Error("slack_mod_or_installation_inactive");
     credentials = await loadSlackCredentials(installation);
     const mapped = await resolveMappedPrincipal(event, installation);
-    if (event.eventType === "app_mention") {
-      const receipt = await postSlackMessage(credentials, {
-        channel: event.channelId,
-        threadTs: event.rootTs,
-        text: SLACK_CHANNEL_PENDING_TEXT,
-        clientMsgId: event.deliveryClientMsgId,
-      });
-      progressTs = receipt.ts;
-      await settleEvent(event.id, "completed", {
-        response: SLACK_CHANNEL_PENDING_TEXT,
-        deliveryState: "final",
-        deliveryTs: receipt.ts,
-      });
-      return;
-    }
     const binding = await resolveSessionBinding(mapped.principal, installation, event, mapped.mappingId);
     await acceptCanonicalTurn(mapped.principal, event, binding.bindingId, binding.sessionId, mapped.mappingId);
     if (!(await installationActive(installation))) throw new Error("slack_mod_or_installation_inactive");
     const receipt = await postSlackMessage(credentials, {
       channel: event.channelId,
+      ...(event.eventType === "app_mention" ? { threadTs: event.rootTs } : {}),
       text: SLACK_PROGRESS_TEXT,
       clientMsgId: event.deliveryClientMsgId,
     });

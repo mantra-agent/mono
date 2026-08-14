@@ -264,11 +264,13 @@ export async function resolveMappedPrincipal(event: ClaimedSlackEvent, installat
 }
 
 export async function resolveSessionBinding(principal: Principal, installation: SlackInstallationRow, event: ClaimedSlackEvent, mappingId: string): Promise<{ bindingId: string; sessionId: string }> {
-  if (event.eventType !== "message.im") throw new Error("slack_channel_session_deferred");
-  const externalKey = `slack:${installation.id}:dm:${event.slackUserId}:${event.channelId}`;
+  const isMention = event.eventType === "app_mention";
+  const externalKey = isMention
+    ? `slack:${installation.id}:mention:${event.slackUserId}:${event.channelId}`
+    : `slack:${installation.id}:dm:${event.slackUserId}:${event.channelId}`;
   return runWithPrincipal(principal, async () => {
     const name = await resolveSlackSpeakerName(principal);
-    const title = `Slack DM: ${name}`;
+    const title = isMention ? `Slack Channel: ${name}` : `Slack DM: ${name}`;
     const session = await chatFileStorage.createSessionOnce(title, externalKey, undefined, {
       sessionType: "user",
       protectTitle: true,
