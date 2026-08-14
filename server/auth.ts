@@ -1,5 +1,53 @@
 import { createLogger } from "./log";
 const log = createLogger("auth");
+
+type AuthErrorCode =
+  | "AUTH_SESSION_SAVE_FAILED"
+  | "AUTH_SESSION_TABLE_ENSURE_FAILED"
+  | "AUTH_SESSION_STORE_ERROR"
+  | "AUTH_LOGIN_FAILED"
+  | "AUTH_REGISTER_FAILED"
+  | "AUTH_CLAIM_RESOLVE_FAILED"
+  | "AUTH_CLAIM_FAILED"
+  | "AUTH_PROFILE_PICTURE_UPLOAD_FAILED"
+  | "AUTH_MEETING_JOIN_POLICY_READ_FAILED"
+  | "AUTH_MEETING_JOIN_POLICY_UPDATE_FAILED"
+  | "AUTH_ADMIN_USERS_LIST_FAILED"
+  | "AUTH_ADMIN_IDENTITY_GRAPH_FAILED"
+  | "AUTH_ACCOUNT_RENAME_FAILED"
+  | "AUTH_ACCOUNT_STATUS_UPDATE_FAILED"
+  | "AUTH_ACCOUNT_DELETE_FAILED"
+  | "AUTH_IDENTITY_FOUNDATION_REPAIR_FAILED"
+  | "AUTH_USER_SESSIONS_LIST_FAILED"
+  | "AUTH_SESSION_DESTROY_AFTER_REVOKE_FAILED"
+  | "AUTH_USER_SESSION_REVOKE_FAILED"
+  | "AUTH_UNCLASSIFIED";
+
+/** Upper-snake machine code for error aggregates (mirrors shared/error-callsite). */
+function toAuthErrorCode(raw: unknown, fallback: AuthErrorCode): string {
+  if (typeof raw !== "string" && typeof raw !== "number") return fallback;
+  const code = String(raw).trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+  const compact = code.replace(/_+/g, "_").replace(/^_|_$/g, "");
+  return /^[A-Z][A-Z0-9_]{1,47}$/.test(compact) ? compact.slice(0, 48) : fallback;
+}
+
+/**
+ * Normalize auth failures into real Error instances with stable product codes.
+ * Auth log.error sites historically stringified `error:` into the message object,
+ * so deriveSafeErrorClassifier never saw a coded Error and SECRET_LIKE whole-
+ * message rejection collapsed every AuthSession/AuthLogin line to UNCLASSIFIED.
+ */
+function attributableAuthError(
+  error: unknown,
+  code: AuthErrorCode,
+): Error & { code: string } {
+  const normalized = error instanceof Error ? error : new Error(String(error));
+  const coded = normalized as Error & { code: string };
+  const stable = toAuthErrorCode(code, "AUTH_UNCLASSIFIED");
+  if (!/^[A-Z][A-Z0-9_]{1,48}$/.test(coded.code ?? "")) coded.code = stable;
+  return coded;
+}
+
 import {
   type Express,
   type Request,
@@ -502,14 +550,16 @@ function saveSession(req: Request, context: string): Promise<void> {
   return new Promise((resolve, reject) => {
     req.session.save((err) => {
       if (err) {
-        log.error("[AuthSession] Session save failed", {
-          context,
-          hasSessionId: !!req.sessionID,
-          hasUserId: !!req.session.userId,
-          userId: req.session.userId,
-          error: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : undefined,
-        });
+        log.error(
+          "[AuthSession] Session save failed",
+          attributableAuthError(err, "AUTH_SESSION_SAVE_FAILED"),
+          {
+            context,
+            hasSessionId: !!req.sessionID,
+            hasUserId: !!req.session.userId,
+            userId: req.session.userId,
+          },
+        );
         reject(err);
         return;
       }
@@ -729,12 +779,14 @@ export function setupAuth(app: Express) {
   })();
 
   const sessionTableReady = Promise.all([ensureSessionTable(pool), capabilityMigrationReady]).catch((error) => {
-    log.error("[AuthSession] Failed to ensure PostgreSQL session table", {
-      tableName: SESSION_TABLE_NAME,
-      createTableIfMissing: false,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    log.error(
+      "[AuthSession] Failed to ensure PostgreSQL session table",
+      attributableAuthError(error, "AUTH_SESSION_TABLE_ENSURE_FAILED"),
+      {
+        tableName: SESSION_TABLE_NAME,
+        createTableIfMissing: false,
+      },
+    );
     throw error;
   });
 
@@ -742,8 +794,14 @@ export function setupAuth(app: Express) {
     pool,
     tableName: SESSION_TABLE_NAME,
     createTableIfMissing: false,
-    errorLog: (...args: unknown[]) =>
-      log.error("[AuthSession] connect-pg-simple error", ...args),
+    errorLog: (...args: unknown[]) => {
+      const firstError = args.find((arg) => arg instanceof Error) ?? args[0];
+      log.error(
+        "[AuthSession] connect-pg-simple error",
+        attributableAuthError(firstError, "AUTH_SESSION_STORE_ERROR"),
+        ...args.filter((arg) => arg !== firstError),
+      );
+    },
   });
 
   log.log("[AuthSession] Configured PostgreSQL session store", {
@@ -844,11 +902,16 @@ export function setupAuth(app: Express) {
       if (error instanceof AccountLifecycleError) {
         return res.status(403).json({ error: error.message, code: error.code });
       }
-      log.error("[AuthLogin] Login failed", {
-        emailHash: typeof req.body?.email === "string" ? shortHash(req.body.email.trim().toLowerCase()) : undefined,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      log.error(
+        "[AuthLogin] Login failed",
+        attributableAuthError(error, "AUTH_LOGIN_FAILED"),
+        {
+          emailHash:
+            typeof req.body?.email === "string"
+              ? shortHash(req.body.email.trim().toLowerCase())
+              : undefined,
+        },
+      );
       res.status(500).json({ error: "Login failed" });
     }
   });
@@ -1026,11 +1089,16 @@ export function setupAuth(app: Express) {
       res.json(userResponse(user, principal));
     } catch (error: any) {
       const message = error instanceof Error ? error.message : String(error);
-      log.error("[AuthRegister] Registration failed", {
-        emailHash: typeof req.body?.email === "string" ? shortHash(req.body.email.trim().toLowerCase()) : undefined,
-        error: message,
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      log.error(
+        "[AuthRegister] Registration failed",
+        attributableAuthError(error, "AUTH_REGISTER_FAILED"),
+        {
+          emailHash:
+            typeof req.body?.email === "string"
+              ? shortHash(req.body.email.trim().toLowerCase())
+              : undefined,
+        },
+      );
       if (message.includes("unique") || message.includes("duplicate key")) {
         return res.status(400).json({ error: "Email already exists" });
       }
@@ -1075,8 +1143,10 @@ export function setupAuth(app: Express) {
         : "";
       res.json({ email, displayName, meetingTitle: resolution.meetingTitle });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      log.error("[AuthClaim] Claim resolve failed", { error: message });
+      log.error(
+        "[AuthClaim] Claim resolve failed",
+        attributableAuthError(error, "AUTH_CLAIM_RESOLVE_FAILED"),
+      );
       res.status(500).json({ error: "Could not resolve invitation" });
     }
   });
@@ -1194,10 +1264,10 @@ export function setupAuth(app: Express) {
       res.json(userResponse(claimResult.user, principal));
     } catch (error: any) {
       const message = error instanceof Error ? error.message : String(error);
-      log.error("[AuthClaim] Claim failed", {
-        error: message,
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      log.error(
+        "[AuthClaim] Claim failed",
+        attributableAuthError(error, "AUTH_CLAIM_FAILED"),
+      );
       if (message.includes("unique") || message.includes("duplicate key")) {
         return res.status(409).json({ error: "An account already exists for this invitation. Please log in." });
       }
@@ -1323,7 +1393,11 @@ export function setupAuth(app: Express) {
       } catch (error) {
         const message = error instanceof Error ? error.message : "Profile picture upload failed";
         if (message.includes("image") || message.includes("Image")) return res.status(400).json({ error: message });
-        log.error("Profile picture upload failed", { errorType: error instanceof Error ? error.name : typeof error });
+        log.error(
+          "Profile picture upload failed",
+          attributableAuthError(error, "AUTH_PROFILE_PICTURE_UPLOAD_FAILED"),
+          { errorType: error instanceof Error ? error.name : typeof error },
+        );
         res.status(500).json({ error: "Profile picture upload failed" });
       }
     });
@@ -1432,7 +1506,10 @@ export function setupAuth(app: Express) {
         const policy = await getMeetingJoinPolicy(principal.userId);
         res.json({ policy, options: MEETING_JOIN_POLICIES });
       } catch (error) {
-        log.error("Failed to read meeting join policy", error);
+        log.error(
+          "Failed to read meeting join policy",
+          attributableAuthError(error, "AUTH_MEETING_JOIN_POLICY_READ_FAILED"),
+        );
         res.status(500).json({ error: "Failed to read meeting join policy" });
       }
     },
@@ -1454,7 +1531,10 @@ export function setupAuth(app: Express) {
         await setMeetingJoinPolicy(principal.userId, parsed.data);
         res.json({ policy: parsed.data });
       } catch (error) {
-        log.error("Failed to update meeting join policy", error);
+        log.error(
+          "Failed to update meeting join policy",
+          attributableAuthError(error, "AUTH_MEETING_JOIN_POLICY_UPDATE_FAILED"),
+        );
         res.status(500).json({ error: "Failed to update meeting join policy" });
       }
     },
@@ -1505,10 +1585,10 @@ export function setupAuth(app: Express) {
         }));
         res.json({ users: rows, waitlist, availablePermissions: PERMISSIONS });
       } catch (err) {
-        log.error("Failed to fetch users for admin list", {
-          error: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : undefined,
-        });
+        log.error(
+          "Failed to fetch users for admin list",
+          attributableAuthError(err, "AUTH_ADMIN_USERS_LIST_FAILED"),
+        );
         res.status(500).json({ error: "Failed to fetch users" });
       }
     },
@@ -1625,10 +1705,10 @@ export function setupAuth(app: Express) {
           })),
         });
       } catch (err) {
-        log.error("Failed to fetch identity graph for admin trees", {
-          error: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : undefined,
-        });
+        log.error(
+          "Failed to fetch identity graph for admin trees",
+          attributableAuthError(err, "AUTH_ADMIN_IDENTITY_GRAPH_FAILED"),
+        );
         res.status(500).json({ error: "Failed to fetch identity graph" });
       }
     },
@@ -1654,10 +1734,11 @@ export function setupAuth(app: Express) {
         });
         res.json(result);
       } catch (error) {
-        log.error("Failed to rename account", {
-          accountId: req.params.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        log.error(
+          "Failed to rename account",
+          attributableAuthError(error, "AUTH_ACCOUNT_RENAME_FAILED"),
+          { accountId: req.params.id },
+        );
         const message = error instanceof Error ? error.message : "Failed to rename account";
         res.status(message === "Account not found" ? 404 : 500).json({ error: message });
       }
@@ -1724,10 +1805,11 @@ export function setupAuth(app: Express) {
         });
         res.json(result);
       } catch (error) {
-        log.error("Failed to update account status", {
-          accountId: req.params.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        log.error(
+          "Failed to update account status",
+          attributableAuthError(error, "AUTH_ACCOUNT_STATUS_UPDATE_FAILED"),
+          { accountId: req.params.id },
+        );
         res.status(500).json({ error: "Failed to update account status" });
       }
     },
@@ -1769,10 +1851,11 @@ export function setupAuth(app: Express) {
         });
         res.json({ ok: true, ...result });
       } catch (error) {
-        log.error("Failed to delete account", {
-          accountId: req.params.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        log.error(
+          "Failed to delete account",
+          attributableAuthError(error, "AUTH_ACCOUNT_DELETE_FAILED"),
+          { accountId: req.params.id },
+        );
         res.status(500).json({ error: "Failed to delete account" });
       }
     },
@@ -1825,11 +1908,14 @@ export function setupAuth(app: Express) {
           sessionsRevoked: true,
         });
       } catch (error) {
-        log.error("Failed to repair user identity foundation", {
-          actorUserId: req.principal?.userId,
-          targetUserId: req.params.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        log.error(
+          "Failed to repair user identity foundation",
+          attributableAuthError(error, "AUTH_IDENTITY_FOUNDATION_REPAIR_FAILED"),
+          {
+            actorUserId: req.principal?.userId,
+            targetUserId: req.params.id,
+          },
+        );
         res.status(500).json({ error: "Failed to repair user setup" });
       }
     },
@@ -1848,10 +1934,11 @@ export function setupAuth(app: Express) {
         const sessions = await listUserSessions(pool, targetId, req.sessionID);
         res.json({ userId: targetId, sessions });
       } catch (error) {
-        log.error("Failed to list user sessions", {
-          targetId: req.params.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        log.error(
+          "Failed to list user sessions",
+          attributableAuthError(error, "AUTH_USER_SESSIONS_LIST_FAILED"),
+          { targetId: req.params.id },
+        );
         res.status(500).json({ error: "Failed to list user sessions" });
       }
     },
@@ -1890,9 +1977,10 @@ export function setupAuth(app: Express) {
         if (sid === req.sessionID) {
           return req.session.destroy((error) => {
             if (error) {
-              log.error("Failed to destroy current session after revoke", {
-                error: error instanceof Error ? error.message : String(error),
-              });
+              log.error(
+                "Failed to destroy current session after revoke",
+                attributableAuthError(error, "AUTH_SESSION_DESTROY_AFTER_REVOKE_FAILED"),
+              );
               return res.status(500).json({ error: "Session revoked but cleanup failed" });
             }
             res.clearCookie(SESSION_COOKIE_NAME);
@@ -1902,10 +1990,11 @@ export function setupAuth(app: Express) {
 
         res.json({ ok: true, revokedCurrent: false });
       } catch (error) {
-        log.error("Failed to revoke user session", {
-          targetId: req.params.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        log.error(
+          "Failed to revoke user session",
+          attributableAuthError(error, "AUTH_USER_SESSION_REVOKE_FAILED"),
+          { targetId: req.params.id },
+        );
         res.status(500).json({ error: "Failed to revoke user session" });
       }
     },

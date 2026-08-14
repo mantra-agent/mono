@@ -152,13 +152,26 @@ function normalizeErrorCode(raw: unknown): string | undefined {
   return /^[A-Z][A-Z0-9_]{1,47}$/.test(compact) ? compact.slice(0, MAX_CODE_LENGTH) : undefined;
 }
 
+/**
+ * Tokenize a log/error message into a short product code.
+ *
+ * SECRET_LIKE must not reject the whole message: auth labels like
+ * "[AuthSession] Session save failed" and executor lines that embed
+ * sessionId collapse every occurrence to UNCLASSIFIED when the full
+ * string is discarded. Strip secret-like spans, then keep ordinary
+ * product tokens (AuthSession, Login, failed, …).
+ */
 function codeFromMessage(message: unknown): string | undefined {
   if (typeof message !== "string") return undefined;
   const trimmed = message.trim();
-  if (!trimmed || SECRET_LIKE.test(trimmed)) return undefined;
-  const tokens = trimmed
+  if (!trimmed) return undefined;
+  // Drop secret-like spans; keep surrounding product labels.
+  const scrubbed = trimmed
+    .replace(SECRET_LIKE, " ")
     .replace(/[^A-Za-z0-9]+/g, " ")
-    .trim()
+    .trim();
+  if (!scrubbed) return undefined;
+  const tokens = scrubbed
     .split(/\s+/)
     .filter((token) => token.length >= 2 && token.length <= 24)
     .slice(0, 4);
