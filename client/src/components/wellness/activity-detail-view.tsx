@@ -307,11 +307,7 @@ export function ActivityDetailView({
         <div className="p-4">
           <ActivityDetailPanel
             activityId={activity.id}
-            category={activity.category}
-            pulseWindowSize={activity.windowSize}
             intervalDays={activity.intervalDays}
-            windowStart={activity.windowStart}
-            windowEnd={activity.windowEnd}
             metricInfo={{
               linkedMetricType: activity.linkedMetricType,
               goodThreshold: activity.goodThreshold,
