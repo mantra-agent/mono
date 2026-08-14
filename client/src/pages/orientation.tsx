@@ -403,7 +403,6 @@ function PrincipleDetails({ item }: { item: OrientationRecord }) {
         onCommit={commitLayer1}
         placeholder="Principle"
         testId={`input-principle-layer1-${id}`}
-        minHeightClass="min-h-32"
       />
 
       <OrientationTagRow
