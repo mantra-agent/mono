@@ -1659,7 +1659,7 @@ export const personEmails = pgTable("person_emails", {
 export type PersonEmail = typeof personEmails.$inferSelect;
 
 export const peopleImportCandidates = pgTable("people_import_candidates", {
-  email: text("email").primaryKey(),
+  email: text("email").notNull(),
   candidate: jsonb("candidate").$type<Record<string, any>>().notNull(),
   decision: text("decision").notNull().default("pending"),
   decidedAt: timestamp("decided_at", { withTimezone: true }),
@@ -1676,6 +1676,9 @@ export const peopleImportCandidates = pgTable("people_import_candidates", {
   index("idx_people_import_candidates_decision_updated").on(table.decision, table.updatedAt),
   index("idx_people_import_candidates_account").on(table.accountId),
   index("idx_people_import_candidates_owner").on(table.ownerUserId, table.principalAccountId),
+  // A candidate is a per-account projection of a sender (mirrors person_emails keyed
+  // (account_id, email)); identity is (principal_account_id, email), never a global email.
+  uniqueIndex("people_import_candidates_account_email_key").on(table.principalAccountId, table.email),
 ]);
 
 export type PeopleImportCandidate = typeof peopleImportCandidates.$inferSelect;

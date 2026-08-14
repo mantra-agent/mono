@@ -5599,7 +5599,7 @@ export async function runSchemaBootstrap(
   await heal("people_import_candidates table + legacy migration", async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS people_import_candidates (
-        email TEXT PRIMARY KEY,
+        email TEXT NOT NULL,
         candidate JSONB NOT NULL,
         decision TEXT NOT NULL DEFAULT 'pending',
         decided_at TIMESTAMPTZ,
@@ -5622,6 +5622,14 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE people_import_candidates ADD COLUMN IF NOT EXISTS principal_account_id TEXT`);
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_people_import_candidates_owner ON people_import_candidates (owner_user_id, principal_account_id)`,
+    );
+    // Reparent candidate identity from a global email PK to account-local (principal_account_id, email).
+    // A candidate is a per-account projection of a sender, so two accounts must each own their own row
+    // for the same address, and upsertCandidates can then write atomically with ON CONFLICT.
+    await pool.query(`ALTER TABLE people_import_candidates DROP CONSTRAINT IF EXISTS people_import_candidates_pkey`);
+    await pool.query(`ALTER TABLE people_import_candidates ALTER COLUMN email SET NOT NULL`);
+    await pool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS people_import_candidates_account_email_key ON people_import_candidates (principal_account_id, email)`,
     );
     await pool.query(`
       CREATE TABLE IF NOT EXISTS people_import_decisions (
