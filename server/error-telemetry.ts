@@ -272,3 +272,25 @@ export async function dismissPlatformApplicationError(
   requireApplicationErrorPermission(principal, "system:write");
   return dismissApplicationError(fingerprint);
 }
+
+/** Dismiss every active aggregate sharing one errorIdentity (asset/site siblings). */
+export async function dismissApplicationErrorsByIdentity(errorIdentity: string): Promise<number> {
+  const identity = errorIdentity.trim().slice(0, MAX_IDENTITY_LENGTH);
+  if (!identity) return 0;
+  await ensureSchema();
+  const result = await pool.query(
+    `UPDATE application_error_aggregates
+     SET dismissed_at = now()
+     WHERE error_identity = $1 AND dismissed_at IS NULL`,
+    [identity],
+  );
+  return result.rowCount ?? 0;
+}
+
+export async function dismissPlatformApplicationErrorsByIdentity(
+  principal: Principal,
+  errorIdentity: string,
+): Promise<number> {
+  requireApplicationErrorPermission(principal, "system:write");
+  return dismissApplicationErrorsByIdentity(errorIdentity);
+}
