@@ -73,6 +73,15 @@ export async function updateSlackMessage(credentials: SlackCredentialBundle, inp
   await slackMethod(credentials.botToken, "chat.update", input);
 }
 
+export async function getSlackChannelName(credentials: SlackCredentialBundle, channelId: string): Promise<string | null> {
+  // One-ID metadata only. Never conversations.list or any workspace catalog.
+  const result = await slackMethod(credentials.botToken, "conversations.info", { channel: channelId });
+  const channel = result.channel;
+  if (!channel || typeof channel !== "object") return null;
+  const name = (channel as Record<string, unknown>).name;
+  return typeof name === "string" && name.trim() ? name.trim() : null;
+}
+
 async function slackMethod(token: string, method: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const response = await providerFetch(`${SLACK_API_ORIGIN}/${method}`, {
     method: "POST",
