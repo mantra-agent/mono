@@ -202,13 +202,6 @@ function ProductRow({
               onSave={(description) => patchProduct.mutate({ description })}
             />
           </HierarchyTreeRow>
-          {product.platforms.length > 0 ? (
-            <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
-              <div className="px-2 py-1 text-xs text-muted-foreground">
-                {product.platforms.map((platform) => platform.platformName).join(", ")}
-              </div>
-            </HierarchyTreeRow>
-          ) : null}
           <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
             <ProfileTreeRow
               label="Vault"
