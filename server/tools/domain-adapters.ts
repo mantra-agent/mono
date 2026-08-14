@@ -114,7 +114,7 @@ export const TOOL_DOMAIN_ADAPTERS: readonly ToolDomainAdapter[] = [
   {
     id: "build-operations",
     owner: "build",
-    tools: ["shell", "python", "npm_dependencies", "web", "railway", "sentry", "meta", "expo", "system", "issues", "hooks", "git", "backup", "platforms"],
+    tools: ["shell", "python", "npm_dependencies", "web", "railway", "sentry", "meta", "expo", "system", "issues", "hooks", "git", "backup", "platforms", "routers"],
     authorizationDependencies: ["agent-authority", "build permissions", "trusted engineering provenance", "Platform access"],
     normalizationExtensions: ["shell policy", "repository path ownership", "Platform Environment identity"],
     artifactKinds: ["pr", "issue", "deployment", "web_article"],
