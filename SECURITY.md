@@ -1,3 +1,10 @@
+<!-- 2026-08-14 Persona overlays are job cards:
+- Assets/data: A04/A06 selectable Persona prompt overlays and session-pinned revisions (S2 identity/config). No new principal, Vault, secret, or tool authority.
+- Flow/threat: boot reconciles seed overlays from SEED_PERSONAS; user copies stay owner-scoped revisions. A method-list overlay lets seats collapse into each other (Architect debugs, Companion coaches, Persuader invents the idea). Prompt text never grants tools or scope (STRIDE spoofing/elevation analogue; AGENT-03).
+- Deterministic controls/owner: SEED_PERSONAS remains the catalog SSOT. Selectable overlays are Job / Failed-if / method / named DNA / Boundaries / Handoffs, plus an output contract only when the seat has a recurring artifact. Root stays voice. Router stays a classifier. Tool bundles, permissions, and Vault scope remain independent. Owner: Core Persona/Context. Severity: medium integrity. SLA: immediate.
+- Residual/rollback: user copies do not inherit overlay rewrites on boot; live seats must be published as owner revisions or they keep the old method lists. Revert the seven seed overlays, this finding, and those live revisions together.
+-->
+
 <!-- 2026-08-14 Slack is transport into ordinary Sessions:
 - Assets/data: A01 mapped Slack identity and user-owned Sessions, A03 encrypted Slack provider credentials, A04 ordinary Agent/tool behavior on DMs, A06 Principal/Vault/session authority, A07 durable event/delivery evidence, A08 Socket/worker availability. Slack IDs and receipts are S1; explicit messages and Sessions are S2; app/bot tokens are S3.
 - Flow/threat: Slack Socket Mode -> Slack Mod durable inbox -> exact admin-created Slack User mapping -> mapped User Principal -> one Session per DM titled `Slack DM: {Name}` -> same `processChatStream` as web -> Slack `Thinking…` then final update. Credible abuse is pouring a personal mind into a public channel, renaming a locator into a topic, treating Slack as a second Agent, or minting a Session per thread (STRIDE information disclosure/elevation/repudiation; IAM-01/DATA-01/AGENT-03/AGENT-04).
