@@ -1857,7 +1857,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   platforms: {
-    description: "Manage platform infrastructure and Product intent — provider connections, environments, bindings, build lifecycle, and canonical Products. create_product writes products; create_product_legacy writes platform_products for Environment ownership only.",
+    description: "Manage platform infrastructure and Product intent — provider connections, environments, bindings, build lifecycle, and canonical Products. create_product writes products. create_product_legacy is frozen; do not invent a second Product table.",
     category: "system",
     parameters: {
       type: "object",
