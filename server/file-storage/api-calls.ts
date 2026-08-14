@@ -288,7 +288,8 @@ export class FileApiCallStorage {
       const full = rowToApiCall(result.rows[0]);
       log.log(`createApiCall id=${full.id} model=${full.model} provider=${full.provider} cost=${full.costTotal}`);
 
-      // Fire-and-forget: write content to S3 if inference debug is enabled
+      // Fire-and-forget optional debug enrichment. Durable api_calls already
+      // committed above — setting/S3 failures must not page ERRORS.
       if (call.requestContent || call.responseContent) {
         getSetting<boolean>(INFERENCE_DEBUG_KEY).then((enabled) => {
           if (!enabled) return;
@@ -298,10 +299,10 @@ export class FileApiCallStorage {
             responseContent: call.responseContent ?? null,
           });
           storageBackend.putObject(key, body, { contentType: "application/json" }).catch((err) => {
-            log.error(`Failed to write inference content to S3 for id=${full.id}:`, err);
+            log.warn(`Failed to write inference content to S3 for id=${full.id}:`, err);
           });
         }).catch((err) => {
-          log.error(`Failed to check inference_debug setting:`, err);
+          log.warn(`Failed to check inference_debug setting:`, err);
         });
       }
 
