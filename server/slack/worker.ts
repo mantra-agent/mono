@@ -38,7 +38,18 @@ import {
 import { executeSlackTurn } from "./turn-service";
 
 const log = createLogger("SlackWorker");
+
+// Connection failures that represent a permanent, unrecoverable installation
+// state: the stored Slack identity no longer matches the installation, so
+// reconnecting cannot succeed without operator reauthorization. These must not
+// be hard-retried on the 30s refresh cadence.
+const PERMANENT_CONNECTION_FAILURES = new Set(["slack_identity_mismatch"]);
+
 const sockets = new Map<string, WebSocket>();
+// Installations parked after a permanent connection failure. Skipped on refresh
+// until the installation is disabled/re-enabled (i.e. reauthorized), which is the
+// only in-process signal that its authorization may have changed.
+const needsReauth = new Set<string>();
 let stopped = false;
 let refreshTimer: NodeJS.Timeout | null = null;
 let processing = false;
@@ -56,6 +67,7 @@ export async function stopSlackWorker(): Promise<void> {
   refreshTimer = null;
   for (const socket of sockets.values()) socket.close(1000, "Mantra shutdown");
   sockets.clear();
+  needsReauth.clear();
 }
 
 async function refreshInstallations(): Promise<void> {
@@ -67,8 +79,12 @@ async function refreshInstallations(): Promise<void> {
   for (const [id, socket] of sockets) {
     if (!enabled.has(id)) { socket.close(1000, "Slack installation disabled"); sockets.delete(id); }
   }
+  // Drop parked installations once disabled/removed so a re-enable (after reauth) retries.
+  for (const id of needsReauth) {
+    if (!enabled.has(id)) needsReauth.delete(id);
+  }
   for (const installation of installations) {
-    if (sockets.has(installation.id)) continue;
+    if (sockets.has(installation.id) || needsReauth.has(installation.id)) continue;
     void connectInstallation(installation);
   }
   void drainQueue(installations);
@@ -86,6 +102,12 @@ async function connectInstallation(installation: SlackInstallationRow): Promise<
     socket.on("error", (error) => log.warn("Slack socket degraded", { installationId: installation.id, errorName: error.name }));
     log.info("Slack socket connected", { installationId: installation.id });
   } catch (error) {
+    const code = error instanceof Error ? error.message : String(error);
+    if (PERMANENT_CONNECTION_FAILURES.has(code)) {
+      needsReauth.add(installation.id);
+      log.warn("Slack installation requires reauthorization; halting reconnect attempts until re-enabled", { installationId: installation.id, reason: code });
+      return;
+    }
     log.error("Slack installation connection failed", error instanceof Error ? error : new Error(String(error)), { installationId: installation.id });
   }
 }
