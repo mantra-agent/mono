@@ -87,7 +87,7 @@ function preserveCoherentDurableSessionSnapshot(oldData: unknown, newData: unkno
     };
   }
 
-  log.info("SESSION:HANDOFF_CACHE_APPLY", {
+  log.debug("SESSION:HANDOFF_CACHE_APPLY", {
     sessionId: oldData.id,
     oldRevision: oldData.durableRevision,
     newRevision: newData.durableRevision,
@@ -107,7 +107,7 @@ export const getQueryFn: <T>(options: {
     const sessionId = sessionDetailId(queryKey);
     const startedAt = Date.now();
     if (sessionId) {
-      log.info("SESSION:HANDOFF_FETCH_START", { sessionId });
+      log.debug("SESSION:HANDOFF_FETCH_START", { sessionId });
     }
 
     try {
@@ -117,7 +117,7 @@ export const getQueryFn: <T>(options: {
 
       if (unauthorizedBehavior === "returnNull" && res.status === 401) {
         if (sessionId) {
-          log.info("SESSION:HANDOFF_FETCH_SETTLE", {
+          log.debug("SESSION:HANDOFF_FETCH_SETTLE", {
             sessionId,
             status: 401,
             durationMs: Date.now() - startedAt,
@@ -130,7 +130,7 @@ export const getQueryFn: <T>(options: {
 
       if (!res.ok) {
         if (sessionId) {
-          log.info("SESSION:HANDOFF_FETCH_SETTLE", {
+          log.debug("SESSION:HANDOFF_FETCH_SETTLE", {
             sessionId,
             status: res.status,
             durationMs: Date.now() - startedAt,
@@ -143,7 +143,7 @@ export const getQueryFn: <T>(options: {
 
       const json = await res.json();
       if (sessionId) {
-        log.info("SESSION:HANDOFF_FETCH_SETTLE", {
+        log.debug("SESSION:HANDOFF_FETCH_SETTLE", {
           sessionId,
           status: res.status,
           durationMs: Date.now() - startedAt,
@@ -153,7 +153,7 @@ export const getQueryFn: <T>(options: {
       return json;
     } catch (error) {
       if (sessionId && !(error instanceof Error && /^\d{3}:/.test(error.message))) {
-        log.info("SESSION:HANDOFF_FETCH_SETTLE", {
+        log.debug("SESSION:HANDOFF_FETCH_SETTLE", {
           sessionId,
           status: 0,
           durationMs: Date.now() - startedAt,

@@ -278,7 +278,7 @@ export function SessionTranscriptPanel({
     const cachedState = queryClient.getQueryState(["/api/sessions", activeSession]);
     const cached = cachedState?.data as { id?: string; messages?: unknown[]; durableRevision?: number } | undefined;
     const hasPrefix = cached?.id === activeSession && Array.isArray(cached.messages) && cached.messages.length > 0;
-    log.info("SESSION:HANDOFF_SELECT", {
+    log.debug("SESSION:HANDOFF_SELECT", {
       sessionId: activeSession,
       cachedMessageCount: Array.isArray(cached?.messages) ? cached.messages.length : 0,
       cachedDurableRevision: typeof cached?.durableRevision === "number" ? cached.durableRevision : null,
@@ -509,7 +509,7 @@ export function SessionTranscriptPanel({
     lastPaintTraceSessionRef.current = activeSession;
     const lastAssistant = [...displayMessages].reverse().find((message) => message.role === "assistant");
     const lastAssistantPrefix = (lastAssistant?.content || "").replace(/\s+/g, " ").trim().slice(0, 48) || null;
-    log.info("SESSION:HANDOFF_FIRST_PAINT", {
+    log.debug("SESSION:HANDOFF_FIRST_PAINT", {
       sessionId: activeSession,
       paintedCount: displayMessages.length,
       lastAssistantPrefix,
