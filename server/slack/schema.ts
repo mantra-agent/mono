@@ -126,7 +126,15 @@ export async function ensureSlackSchema(pool: Pool): Promise<void> {
     );
     ALTER TABLE slack_principal_mappings DROP CONSTRAINT IF EXISTS slack_principal_mappings_ids_check;
     ALTER TABLE slack_principal_mappings ADD CONSTRAINT slack_principal_mappings_ids_check CHECK (
-      team_id ~ '^T[A-Z0-9]{1,31}$' AND slack_user_id ~ '^U[A-Z0-9]{1,31}$'
+      team_id ~ '^T[A-Z0-9]{1,31}
+ AND slack_user_id ~ '^U[A-Z0-9]{1,31}
+
+    );
+    ALTER TABLE slack_installations ADD COLUMN IF NOT EXISTS allowed_channel_name TEXT;
+    ALTER TABLE slack_installations DROP CONSTRAINT IF EXISTS slack_installations_channel_name_check;
+    ALTER TABLE slack_installations ADD CONSTRAINT slack_installations_channel_name_check CHECK (
+      allowed_channel_name IS NULL OR allowed_channel_name ~ '^#?[A-Za-z0-9][A-Za-z0-9_-]{0,79}
+
     );
   `);
 }

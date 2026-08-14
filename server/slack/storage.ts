@@ -19,6 +19,7 @@ export interface SlackInstallationRow {
   ownerUserId: string;
   vaultId: string;
   allowedChannelIds: string[];
+  allowedChannelName: string | null;
   enabled: boolean;
   status: string;
 }
@@ -43,7 +44,7 @@ export function hashSlackContent(value: string): string {
 export async function getRuntimeInstallations(platformEnvironmentId: number): Promise<SlackInstallationRow[]> {
   const result = await db.execute(sql`
     SELECT id, platform_environment_id, provider_connection_id, team_id, api_app_id, bot_user_id,
-           account_id, owner_user_id, vault_id, allowed_channel_ids, enabled, status
+           account_id, owner_user_id, vault_id, allowed_channel_ids, allowed_channel_name, enabled, status
       FROM slack_installations
      WHERE platform_environment_id = ${platformEnvironmentId}
        AND enabled = TRUE
@@ -57,7 +58,7 @@ export async function listOwnedInstallations(principal: Principal): Promise<Slac
   requireUser(principal);
   const result = await db.execute(sql`
     SELECT id, platform_environment_id, provider_connection_id, team_id, api_app_id, bot_user_id,
-           account_id, owner_user_id, vault_id, allowed_channel_ids, enabled, status
+           account_id, owner_user_id, vault_id, allowed_channel_ids, allowed_channel_name, enabled, status
       FROM slack_installations
      WHERE account_id = ${principal.accountId!}
        AND owner_user_id = ${principal.userId!}
@@ -101,17 +102,20 @@ export async function createInstallation(principal: Principal, input: {
   botUserId: string;
   vaultId: string;
   allowedChannelId?: string;
+  allowedChannelName?: string;
 }): Promise<SlackInstallationRow> {
   requireUser(principal);
+  const channelName = normalizeSlackChannelName(input.allowedChannelName);
   const result = await db.execute(sql`
     INSERT INTO slack_installations (
       platform_environment_id, provider_connection_id, team_id, api_app_id, bot_user_id,
-      account_id, owner_user_id, vault_id, allowed_channel_ids, enabled, status,
+      account_id, owner_user_id, vault_id, allowed_channel_ids, allowed_channel_name, enabled, status,
       created_by_user_id, updated_by_user_id
     )
     SELECT ${input.platformEnvironmentId}, pc.id, ${input.teamId}, ${input.apiAppId}, ${input.botUserId},
            ${principal.accountId!}, ${principal.userId!}, v.id,
-           ${input.allowedChannelId ? sql`ARRAY[${input.allowedChannelId}]::text[]` : sql`ARRAY[]::text[]`}, FALSE, 'ready',
+           ${input.allowedChannelId ? sql`ARRAY[${input.allowedChannelId}]::text[]` : sql`ARRAY[]::text[]`},
+           ${channelName}, FALSE, 'ready',
            ${principal.userId!}, ${principal.userId!}
       FROM provider_connections pc
       JOIN vaults v ON v.id = ${input.vaultId}
@@ -124,7 +128,7 @@ export async function createInstallation(principal: Principal, input: {
        AND v.account_id = ${principal.accountId!}
        AND v.is_archived = FALSE
     RETURNING id, platform_environment_id, provider_connection_id, team_id, api_app_id, bot_user_id,
-              account_id, owner_user_id, vault_id, allowed_channel_ids, enabled, status
+              account_id, owner_user_id, vault_id, allowed_channel_ids, allowed_channel_name, enabled, status
   `);
   if (result.rows.length !== 1) throw new Error("Slack installation authority prerequisites are not satisfied");
   return mapInstallation(result.rows[0]);
@@ -140,7 +144,24 @@ export async function setInstallationEnabled(principal: Principal, installationI
        AND account_id = ${principal.accountId!}
        AND owner_user_id = ${principal.userId!}
     RETURNING id, platform_environment_id, provider_connection_id, team_id, api_app_id, bot_user_id,
-              account_id, owner_user_id, vault_id, allowed_channel_ids, enabled, status
+              account_id, owner_user_id, vault_id, allowed_channel_ids, allowed_channel_name, enabled, status
+  `);
+  if (result.rows.length !== 1) throw new Error("Slack installation not found");
+  return mapInstallation(result.rows[0]);
+}
+
+export async function setAllowedChannelName(principal: Principal, installationId: string, allowedChannelName?: string): Promise<SlackInstallationRow> {
+  requireUser(principal);
+  const channelName = normalizeSlackChannelName(allowedChannelName);
+  const result = await db.execute(sql`
+    UPDATE slack_installations
+       SET allowed_channel_name = ${channelName},
+           updated_by_user_id = ${principal.userId!}, updated_at = NOW()
+     WHERE id = ${installationId}
+       AND account_id = ${principal.accountId!}
+       AND owner_user_id = ${principal.userId!}
+    RETURNING id, platform_environment_id, provider_connection_id, team_id, api_app_id, bot_user_id,
+              account_id, owner_user_id, vault_id, allowed_channel_ids, allowed_channel_name, enabled, status
   `);
   if (result.rows.length !== 1) throw new Error("Slack installation not found");
   return mapInstallation(result.rows[0]);
@@ -263,14 +284,29 @@ export async function resolveMappedPrincipal(event: ClaimedSlackEvent, installat
   return { mappingId: String(row.mapping_id), principal };
 }
 
+async function resolveInstallationOwnerPrincipal(installation: SlackInstallationRow): Promise<Principal> {
+  const [owner] = await db.select().from(users).where(eq(users.id, installation.ownerUserId)).limit(1);
+  if (!owner) throw new Error("slack_installation_owner_unavailable");
+  const { createUserSessionPrincipal } = await import("../principal");
+  const principal = await createUserSessionPrincipal(owner);
+  return {
+    ...principal,
+    accountId: installation.accountId,
+    visibleVaultIds: [installation.vaultId],
+    activeVaultId: installation.vaultId,
+  };
+}
+
 export async function resolveSessionBinding(principal: Principal, installation: SlackInstallationRow, event: ClaimedSlackEvent, mappingId: string): Promise<{ bindingId: string; sessionId: string }> {
   const isMention = event.eventType === "app_mention";
   const externalKey = isMention
-    ? `slack:${installation.id}:mention:${event.slackUserId}:${event.channelId}`
+    ? `slack:${installation.id}:channel:${event.channelId}`
     : `slack:${installation.id}:dm:${event.slackUserId}:${event.channelId}`;
-  return runWithPrincipal(principal, async () => {
-    const name = await resolveSlackSpeakerName(principal);
-    const title = isMention ? `Slack Channel: ${name}` : `Slack DM: ${name}`;
+  const sessionPrincipal = isMention ? await resolveInstallationOwnerPrincipal(installation) : principal;
+  return runWithPrincipal(sessionPrincipal, async () => {
+    const title = isMention
+      ? `Slack Channel: ${formatSlackChannelTitle(installation.allowedChannelName, event.channelId)}`
+      : `Slack DM: ${await resolveSlackSpeakerName(principal)}`;
     const session = await chatFileStorage.createSessionOnce(title, externalKey, undefined, {
       sessionType: "user",
       protectTitle: true,
@@ -284,7 +320,7 @@ export async function resolveSessionBinding(principal: Principal, installation: 
         owner_user_id, account_id, vault_id
       ) VALUES (
         ${installation.id}, ${mappingId}, ${externalKey}, ${event.channelId}, ${event.rootTs}, ${session.session.id},
-        ${principal.userId!}, ${principal.accountId!}, ${principal.activeVaultId!}
+        ${sessionPrincipal.userId!}, ${sessionPrincipal.accountId!}, ${sessionPrincipal.activeVaultId!}
       )
       ON CONFLICT (installation_id, external_key)
       DO UPDATE SET updated_at = NOW()
@@ -297,7 +333,22 @@ export async function resolveSessionBinding(principal: Principal, installation: 
 export async function acceptCanonicalTurn(principal: Principal, event: ClaimedSlackEvent, bindingId: string, sessionId: string, mappingId: string): Promise<void> {
   await runWithPrincipal(principal, async () => {
     const clientTurnId = `slack:${event.eventId}`;
-    const accepted = await chatFileStorage.createUserMessageOnce(sessionId, event.body, clientTurnId);
+    const speaker = event.eventType === "app_mention"
+      ? {
+          key: `slack:${event.slackUserId}`,
+          label: await resolveSlackSpeakerName(principal),
+        }
+      : undefined;
+    const accepted = await chatFileStorage.createUserMessageOnce(
+      sessionId,
+      event.body,
+      clientTurnId,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      speaker,
+    );
     if (accepted.outcome === "session_not_found") throw new Error("slack_session_unavailable");
     await db.execute(sql`
       UPDATE slack_events SET mapping_id = ${mappingId}, binding_id = ${bindingId}, session_id = ${sessionId},
@@ -342,12 +393,22 @@ function requireUser(principal: Principal): asserts principal is Principal & { u
   if (principal.actorType !== "user" || !principal.userId || !principal.accountId) throw new Error("Slack storage requires a user principal");
 }
 
+function normalizeSlackChannelName(value?: string): string | null {
+  const cleaned = value?.trim().replace(/^#+/, "").toLowerCase();
+  return cleaned ? `#${cleaned}` : null;
+}
+
+function formatSlackChannelTitle(name: string | null | undefined, channelId: string): string {
+  return name?.trim() || channelId;
+}
+
 function mapInstallation(row: Record<string, unknown>): SlackInstallationRow {
   return {
     id: String(row.id), platformEnvironmentId: Number(row.platform_environment_id), providerConnectionId: Number(row.provider_connection_id),
     teamId: String(row.team_id), apiAppId: String(row.api_app_id), botUserId: String(row.bot_user_id),
     accountId: String(row.account_id), ownerUserId: String(row.owner_user_id), vaultId: String(row.vault_id),
     allowedChannelIds: Array.isArray(row.allowed_channel_ids) ? row.allowed_channel_ids.map(String) : [],
+    allowedChannelName: typeof row.allowed_channel_name === "string" ? row.allowed_channel_name : null,
     enabled: Boolean(row.enabled), status: String(row.status),
   };
 }
