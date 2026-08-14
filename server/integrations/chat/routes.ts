@@ -47,6 +47,7 @@ import { timerStorage } from "../../file-storage";
 import { timerScheduler } from "../../timer-scheduler";
 import { extractSessionReminderId } from "../../session-reminder-metadata";
 import { getPrincipal } from "../../principal";
+import { getPostgresErrorDetails } from "../../postgres-errors";
 import { completeFtueSayHello } from "../../ftue-goals";
 import type { Timer } from "@shared/models/timers";
 import {
@@ -3334,13 +3335,22 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         const rawError =
           (error instanceof Error ? error.message : String(error)) ||
           "unknown error";
+        // Drizzle wraps query failures so error.message is only the SQL text
+        // ("Failed query: update conversation_messages ..."); the real Postgres
+        // cause and SQLSTATE live on error.cause. Unwrap it so the persist_failed
+        // class is diagnosable by sessionId ↔ sqlstate instead of a truncated
+        // SQL dump, and keep the raw query text out of the user-facing notice.
+        const pgDetail = getPostgresErrorDetails(error);
         chatLog.warn(
-          `persist failed after successful executor sessionId=${sessionId}: ${rawError}`,
+          `persist failed after successful executor sessionId=${sessionId} sqlstate=${pgDetail.code} errorType=${pgDetail.errorType}: ${rawError}`,
         );
         const persistNotice: SystemNotice = {
           severity: "warning",
           errorType: "persist_failed",
-          description: `The answer is ready, but saving it failed: ${sanitizeErrorForUser(rawError)}`,
+          description:
+            pgDetail.code !== "unknown"
+              ? `The answer is ready, but saving it failed (database error ${pgDetail.code}).`
+              : `The answer is ready, but saving it failed: ${sanitizeErrorForUser(rawError)}`,
           actionHint: "The live answer is still here. Retry if it disappears after refresh.",
         };
         await chatStorage
