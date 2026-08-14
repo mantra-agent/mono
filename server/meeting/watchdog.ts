@@ -6,14 +6,20 @@ import {
   setMetadata,
 } from "../calendar-metadata";
 import { listAllEvents } from "../google-calendar";
-import { createUserPrincipalFromUser, resolveUserIdentityFoundation } from "../principal";
+import {
+  AccountLifecycleError,
+  createUserPrincipalFromUser,
+  listUsersWithIdentityFoundation,
+  type UserIdentityFoundation,
+} from "../principal";
 import { runWithPrincipal } from "../principal-context";
-import { storage } from "../storage";
+import type { User } from "@shared/schema";
 
 const log = createLogger("meeting-watchdog");
 
 export interface MeetingWatchdogResult {
   ownersScanned: number;
+  ownersSkipped: number;
   eventsScanned: number;
   metadataCreated: number;
   interactionsLogged: number;
@@ -83,10 +89,10 @@ function meetingWatchdogLogContext(options: {
 }
 
 async function processOwnerMeetings(
-  user: Awaited<ReturnType<typeof storage.getUsers>>[number],
+  user: User,
+  foundation: UserIdentityFoundation,
   now: Date,
-): Promise<Omit<MeetingWatchdogResult, "ownersScanned">> {
-  const foundation = await resolveUserIdentityFoundation(user.id);
+): Promise<Omit<MeetingWatchdogResult, "ownersScanned" | "ownersSkipped">> {
   const principal = createUserPrincipalFromUser(user, foundation.accountId, foundation.instanceId);
 
   return runWithPrincipal(principal, async () => {
@@ -216,22 +222,25 @@ async function processOwnerMeetings(
 }
 
 /**
- * Scan recently ended meetings one owner at a time. The scheduler may enumerate
- * users globally, but connected accounts and every sensitive read/write remain
- * inside the exact owner's principal.
+ * Scan recently ended meetings one owner at a time. Identity foundation is the
+ * producer filter — suspended/archived/orphan users never enter the set.
+ * Connected accounts and every sensitive read/write remain inside the exact
+ * owner's principal.
  */
 export async function runMeetingWatchdog(): Promise<MeetingWatchdogResult> {
   const result: MeetingWatchdogResult = {
     ownersScanned: 0,
+    ownersSkipped: 0,
     eventsScanned: 0,
     metadataCreated: 0,
     interactionsLogged: 0,
     errors: [],
   };
 
-  let users;
+  let owners;
   try {
-    users = await storage.getUsers();
+    // Orphan and non-active accounts never enter this set.
+    owners = await listUsersWithIdentityFoundation();
   } catch (value) {
     const error = normalizeMeetingWatchdogError(
       value,
@@ -249,15 +258,25 @@ export async function runMeetingWatchdog(): Promise<MeetingWatchdogResult> {
     throw error;
   }
 
-  for (const user of users) {
+  for (const { user, foundation } of owners) {
     try {
-      const ownerResult = await processOwnerMeetings(user, new Date());
+      const ownerResult = await processOwnerMeetings(user, foundation, new Date());
       result.ownersScanned++;
       result.eventsScanned += ownerResult.eventsScanned;
       result.metadataCreated += ownerResult.metadataCreated;
       result.interactionsLogged += ownerResult.interactionsLogged;
       result.errors.push(...ownerResult.errors);
     } catch (value) {
+      // Race: account archived/suspended between enumeration and principal work.
+      // Skip quietly — same class as the producer filter, not a product defect.
+      if (value instanceof AccountLifecycleError) {
+        result.ownersSkipped++;
+        log.debug("Meeting watchdog skipped owner after account lifecycle change", {
+          ownerUserId: user.id,
+          code: value.code,
+        });
+        continue;
+      }
       const error = normalizeMeetingWatchdogError(
         value,
         "process_owner",
@@ -281,6 +300,7 @@ export async function runMeetingWatchdog(): Promise<MeetingWatchdogResult> {
 
   log.info("Meeting watchdog completed", {
     ownersScanned: result.ownersScanned,
+    ownersSkipped: result.ownersSkipped,
     eventsScanned: result.eventsScanned,
     metadataCreated: result.metadataCreated,
     interactionsLogged: result.interactionsLogged,
