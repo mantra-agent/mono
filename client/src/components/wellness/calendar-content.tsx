@@ -28,15 +28,7 @@ import {
 import { useState, useCallback, useRef, useMemo, useContext, createContext, useEffect } from "react";
 import { useTimezone } from "@/hooks/use-timezone";
 import { ActivityDetailView } from "./activity-detail-view";
-
-interface WellnessLogEntry {
-  id: number;
-  activityId: number;
-  notes: string | null;
-  tier: string | null;
-  metricValue: number | null;
-  completedAt: string;
-}
+import { ActivityHeartbeatSparkline, type WellnessLogEntry } from "./heartbeat-timeline";
 
 function formatLocalDate(d: Date, timezone?: string): string {
   if (timezone) {
@@ -769,7 +761,15 @@ function JournalExpansion({ type }: { type: JournalType }) {
 
 const EXPANDABLE_ACTIVITIES = new Set(["gratitude", "learning", "reflection"]);
 
-function ActivityRow({ activity, onOpenDetails }: { activity: ActivityWithStatus; onOpenDetails: (activity: ActivityWithStatus) => void }) {
+function ActivityRow({
+  activity,
+  logs,
+  onOpenDetails,
+}: {
+  activity: ActivityWithStatus;
+  logs: WellnessLogEntry[];
+  onOpenDetails: (activity: ActivityWithStatus) => void;
+}) {
   const [logCooldown, setLogCooldown] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const { toast } = useToast();
@@ -916,10 +916,20 @@ function ActivityRow({ activity, onOpenDetails }: { activity: ActivityWithStatus
 
         {/* Activity name */}
         <span
-          className={`truncate flex-1 min-w-0 leading-5 ${activity.doneToday ? "text-muted-foreground" : "text-foreground"}`}
+          className={`truncate shrink-0 max-w-[36%] leading-5 ${activity.doneToday ? "text-muted-foreground" : "text-foreground"}`}
         >
           {activity.name}
         </span>
+
+        {/* Quick multi-activity EKG preview (segments + spikes only) */}
+        <ActivityHeartbeatSparkline
+          activityId={activity.id}
+          logs={logs}
+          category={activity.category}
+          intervalDays={activity.intervalDays}
+          windowStart={activity.windowStart}
+          windowEnd={activity.windowEnd}
+        />
 
         {/* Right-side controls */}
         <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
@@ -957,11 +967,13 @@ function ActivityRow({ activity, onOpenDetails }: { activity: ActivityWithStatus
 function CategorySection({
   category,
   activities,
+  logsByActivityId,
   bucket,
   onOpenDetails,
 }: {
   category: string;
   activities: ActivityWithStatus[];
+  logsByActivityId: Map<number, WellnessLogEntry[]>;
   bucket?: BucketPulseRollup;
   onOpenDetails: (activity: ActivityWithStatus) => void;
 }) {
@@ -984,7 +996,12 @@ function CategorySection({
       <CollapsibleContent>
         <div className="space-y-0 mt-0">
           {activities.map((a) => (
-            <ActivityRow key={a.id} activity={a} onOpenDetails={onOpenDetails} />
+            <ActivityRow
+              key={a.id}
+              activity={a}
+              logs={logsByActivityId.get(a.id) ?? []}
+              onOpenDetails={onOpenDetails}
+            />
           ))}
         </div>
       </CollapsibleContent>
@@ -1144,6 +1161,16 @@ export function CalendarContent() {
     enabled: !!activities && activities.length > 0,
   });
 
+  const logsByActivityId = useMemo(() => {
+    const map = new Map<number, WellnessLogEntry[]>();
+    for (const entry of allLogs ?? []) {
+      const bucket = map.get(entry.activityId);
+      if (bucket) bucket.push(entry);
+      else map.set(entry.activityId, [entry]);
+    }
+    return map;
+  }, [allLogs]);
+
   const loadDefaultsMutation = useMutation({
     mutationFn: async () => {
       await apiRequest("POST", "/api/wellness/load-defaults");
@@ -1268,6 +1295,7 @@ export function CalendarContent() {
                 key={cat}
                 category={cat}
                 activities={grouped[cat] ?? []}
+                logsByActivityId={logsByActivityId}
                 bucket={buckets?.[cat]}
                 onOpenDetails={setDetailActivity}
               />
