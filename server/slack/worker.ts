@@ -21,6 +21,7 @@ import {
   claimEvent,
   getRuntimeInstallations,
   queuedCount,
+  rememberAllowedChannelName,
   resolveMappedPrincipal,
   resolveSessionBinding,
   settleEvent,
@@ -28,6 +29,7 @@ import {
   type SlackInstallationRow,
 } from "./storage";
 import {
+  getSlackChannelName,
   loadSlackCredentials,
   openSlackSocket,
   postSlackMessage,
@@ -38,6 +40,25 @@ import {
 import { executeSlackTurn } from "./turn-service";
 
 const log = createLogger("SlackWorker");
+
+async function refreshAllowedChannelName(
+  installation: SlackInstallationRow,
+  credentials: SlackCredentialBundle,
+  channelId: string,
+): Promise<SlackInstallationRow> {
+  if (!installation.allowedChannelIds.includes(channelId)) return installation;
+  try {
+    const name = await getSlackChannelName(credentials, channelId);
+    if (!name) return installation;
+    return await rememberAllowedChannelName(installation.id, channelId, name) ?? installation;
+  } catch (error) {
+    log.warn("Slack channel name lookup failed; keeping cached title", {
+      installationId: installation.id,
+      reason: error instanceof Error ? error.message.slice(0, 80) : "unknown",
+    });
+    return installation;
+  }
+}
 
 // Connection failures that represent a permanent, unrecoverable installation
 // state: the stored Slack identity no longer matches the installation, so
@@ -173,6 +194,9 @@ async function processEvent(installation: SlackInstallationRow, event: ClaimedSl
   try {
     if (!(await installationActive(installation))) throw new Error("slack_mod_or_installation_inactive");
     credentials = await loadSlackCredentials(installation);
+    if (event.eventType === "app_mention") {
+      installation = await refreshAllowedChannelName(installation, credentials, event.channelId);
+    }
     const mapped = await resolveMappedPrincipal(event, installation);
     const binding = await resolveSessionBinding(mapped.principal, installation, event, mapped.mappingId);
     await acceptCanonicalTurn(mapped.principal, event, binding.bindingId, binding.sessionId, mapped.mappingId);
