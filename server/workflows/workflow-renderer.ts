@@ -47,7 +47,18 @@ export type WorkflowRunDetail = {
 };
 
 export function parseWorkflowDefinition(template: WorkflowTemplate): WorkflowTemplateDefinition {
-  const parsed = workflowTemplateDefinitionSchema.safeParse(template.definition || {});
+  const definition = template.definition && typeof template.definition === "object"
+    ? template.definition as Record<string, unknown>
+    : {};
+  const stages = Array.isArray(definition.stages)
+    ? definition.stages.map((stage) => {
+      if (!stage || typeof stage !== "object") return stage;
+      const record = stage as Record<string, unknown>;
+      if (record.persona === "Default") return { ...record, persona: "Engineer" };
+      return record;
+    })
+    : definition.stages;
+  const parsed = workflowTemplateDefinitionSchema.safeParse({ ...definition, stages });
   if (parsed.success) return parsed.data;
   return { stages: [], terminalStatuses: ["completed", "failed", "canceled"] };
 }

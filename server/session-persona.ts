@@ -6,17 +6,10 @@ import { unionRootContextSections, unionRootToolBundle } from "../shared/persona
 
 const log = createLogger("SessionPersona");
 
-function defaultPersona(personas: PersonaEntry[]): PersonaEntry | null {
-  return personas.find((persona) => persona.isDefault)
-    ?? personas.find((persona) => persona.name === "Default")
-    ?? personas[0]
-    ?? null;
-}
-
-/** Resolve the persona that governs one session, migrating legacy active state once. */
+/** Resolve the persona that governs one session. Missing persona stays unset. */
 export async function resolveSessionPersona(
   sessionId?: string | null,
-  options: { persistFallback?: boolean } = {},
+  _options: { persistFallback?: boolean } = {},
 ): Promise<PersonaEntry | null> {
   if (sessionId) {
     const session = await chatFileStorage.getSession(sessionId);
@@ -30,21 +23,12 @@ export async function resolveSessionPersona(
         return { ...persona, ...(revision.payload as PersonaRevisionPayload), currentRevisionId: revision.id };
       }
       if (persona) return persona;
-      log.warn(`session=${sessionId} references missing personaId=${session.personaId}; using compatibility fallback`);
+      log.warn(`session=${sessionId} references missing personaId=${session.personaId}; leaving session unoriented`);
     }
-
-    const personas = await personaStorage.list();
-    const legacyActive = await personaStorage.getActiveOrNull();
-    const fallback = legacyActive ?? defaultPersona(personas);
-    if (fallback && options.persistFallback !== false) {
-      await chatFileStorage.updateSessionPersona(sessionId, fallback.id);
-      log.info(`session=${sessionId} migrated personaId=${fallback.id} source=${legacyActive ? "legacy-active" : "default"}`);
-    }
-    return fallback;
+    return null;
   }
 
-  const personas = await personaStorage.list();
-  return await personaStorage.getActiveOrNull() ?? defaultPersona(personas);
+  return await personaStorage.getActiveOrNull();
 }
 
 export async function resolveSessionPersonaComposition(

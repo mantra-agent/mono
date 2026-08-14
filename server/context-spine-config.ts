@@ -416,7 +416,6 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     freshnessPolicy: "per-session",
     priority: 1.5,
     includedIn: ["full"],
-    bootstrap: true,
   },
   {
     id: "capabilities.planning_instructions",

@@ -30,7 +30,7 @@ export function inferPlanStepPersona(title: string, instructions: string): PlanS
   ];
   if (architectureSignals.some((signal) => signal.test(mission))) return "Architect";
 
-  return "Default";
+  throw new Error("Plan steps require an explicit selectable persona");
 }
 
 export async function resolveExplicitPlanStepPersona(persona: unknown): Promise<PlanStepPersona> {

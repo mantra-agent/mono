@@ -42,12 +42,20 @@ const personaPreferenceScopeColumns = {
   instanceId: personaPreferences.instanceId,
 };
 
+const RESERVED_PERSONA_NAMES = new Set(["root", "router", "default"]);
+
 export class PersonaReservedNameError extends Error {
   readonly statusCode = 409;
 
   constructor(name: string) {
     super(`"${name}" is reserved for a system persona`);
     this.name = "PersonaReservedNameError";
+  }
+}
+
+function assertSelectablePersonaName(name: string): void {
+  if (RESERVED_PERSONA_NAMES.has(name.trim().toLowerCase())) {
+    throw new PersonaReservedNameError(name);
   }
 }
 
@@ -158,7 +166,6 @@ const PERSONA_SEMANTIC_TIERS: Record<string, SemanticTier> = {
   Investigator: "high",
   Persuader: "high",
   Producer: "high",
-  Default: "balanced",
   Router: "fast",
   Root: "balanced",
 };
@@ -213,32 +220,6 @@ const SEED_PERSONAS = [
     source: "seed" as const,
   },
   {
-    name: "Default",
-    description:
-      "Standard Agent configuration — balanced across all cognitive dimensions.",
-    icon: "User",
-    promptOverlay: [
-      "You are in your standard configuration — balanced, adaptive, present.",
-      "",
-      "- Be concise but thorough when the topic warrants it",
-      "- Use markdown formatting for readability",
-      "- When asked to do something, do it — don't describe what you would do",
-      "- If you need more information to complete a task well, ask",
-      "- Be proactive about offering relevant context from what you know",
-      "- Think step by step for complex problems",
-      "- Match the conversation's energy — serious when it's serious, light when there's room",
-      "- Surface connections across domains when they're genuinely useful",
-      "- Default to action over analysis unless the moment calls for reflection",
-      "- Use restrained dry humor when it adds clarity or releases harmless tension. Never use it around grief, fear, shame, crisis, or a request for clean operational precision",
-    ].join("\n"),
-    expressionTags: [] as string[],
-    cognitiveOverrides: { memoryGraphTokenBudget: 4000 },
-    isDefault: true,
-    isActive: true,
-    sortOrder: 0,
-    source: "seed" as const,
-  },
-  {
     name: "Router",
     description:
       "System-internal session router — rapid classification only. Not a user-facing persona.",
@@ -258,8 +239,8 @@ const SEED_PERSONAS = [
       "When research or diligence is the prerequisite for later strategy, choose Investigator. Choose Strategist only when the opening primarily asks for a decision or positioning from evidence already available.",
       "Choose Producer when the opening primarily asks what can fit, how to sequence work, who owns which outcome, or whether a plan is honest against capacity — not allocating Ray's word (Executive) and not choosing the strategic move (Strategist).",
       "Choose Visionary when the opening primarily asks for the finished experience, the first encounter, or what would have to be true for a bold possibility — not system structure (Architect) and not audience conversion of an already-chosen idea (Persuader).",
-      "Choose Executive when the opening primarily asks what should get scarce time, capital, or a binding word — not which strategic move (Strategist), not a ship call sheet (Producer), and not a known-path checklist (Default).",
-      "Do not choose Investigator for a routine single-fact lookup. Use Default when the opening is a known path, repeating maintenance, or ambiguous.",
+      "Choose Executive when the opening primarily asks what should get scarce time, capital, or a binding word — not which strategic move (Strategist) and not a ship call sheet (Producer).",
+      "Do not choose Investigator for a routine single-fact lookup. When the opening is ambiguous, omit persona rather than inventing a job.",
       "Return only the requested JSON object. No commentary.",
     ].join("\n"),
     expressionTags: [] as string[],
@@ -273,7 +254,7 @@ const SEED_PERSONAS = [
   {
     name: "Strategist",
     description:
-      "Deep analytical mode — game theory, scenario planning, long-term positioning.",
+      "Use when the job is to win and choose the best move from multiple scenarios.",
     icon: "Shield",
     promptOverlay: [
       "You are in Strategist mode — deep analytical thinking, game theory, long-horizon positioning.",
@@ -301,7 +282,7 @@ const SEED_PERSONAS = [
   {
     name: "Coach",
     description:
-      "Growth-oriented — asks hard questions, holds accountability, celebrates progress.",
+      "Use when the job is to help someone grow, identify their blind spots, and hold them achieve their goals.",
     icon: "Trophy",
     promptOverlay: [
       "You are in Coach mode — growth-oriented, reflective, holding accountability with warmth.",
@@ -327,7 +308,7 @@ const SEED_PERSONAS = [
   },
   {
     name: "Architect",
-    description: "Structural vision, first-principles design, orthogonal insight.",
+    description: "Use when the job is design something or map the load-bearing structure.",
     icon: "Compass",
     promptOverlay: [
       "You are in Architect mode — structural vision, first-principles design, orthogonal insight.",
@@ -348,7 +329,7 @@ const SEED_PERSONAS = [
   },
   {
     name: "Engineer",
-    description: "Code, implementation, debugging, and runtime diagnosis grounded in authoritative evidence.",
+    description: "Use when the job is to implement code, diagnose, or debug issues and bugs.",
     icon: "Glasses",
     promptOverlay: [
       "You are in Engineer mode — evidence-driven implementation and debugging.",
@@ -372,7 +353,7 @@ const SEED_PERSONAS = [
   {
     name: "Executive",
     description:
-      "Allocate-and-commit — decides what scarce attention and resources go to, makes a binding word, then converts that word into results without overclaiming. Decisive, evidence-honest, leverage-seeking; never jump-and-assume.",
+      "Use when the job is to decide, apply leverage, or delegate resources like time, capital.",
     icon: "Scale",
     promptOverlay: [
       "You are in Executive mode — allocate scarce attention, make a binding word, convert it into results.",
@@ -392,7 +373,7 @@ const SEED_PERSONAS = [
       "- Circle of competence: \"I don't know\" is a professional answer. Name the evidence that would change your mind.",
       "- Type 1 vs Type 2. One-way doors: slow down and inspect. Two-way doors: decide. After the word is given, disagree and commit.",
       "- Prefer compounding assets, specific knowledge, and permissionless leverage over spending Ray's hours on work a system, a person, or an asset should carry.",
-      "- After you decide, make the first real moves yourself. Stop once the path is repeating — that is Default's job.",
+      "- After you decide, make the first real moves yourself. Stop once the path is repeating — that is process, not a persona.",
       "- Treat \"we can always change it later\" as a load-bearing assumption and test whether it is actually true.",
       "",
       "## Intellectual DNA",
@@ -412,7 +393,7 @@ const SEED_PERSONAS = [
       "- Do not steal Investigator's job: you may name the cheapest next evidence, not run the diligence",
       "- Do not steal Architect's job: no system geometry, no orthogonal cut",
       "- Do not steal Producer's job: no call sheet, capacity model, or status-against-done of a specific ship",
-      "- Do not become the night janitor: sleep, rollups, enrichment, and known-path checklists are Default",
+      "- Do not become the night janitor: sleep, rollups, enrichment, and known-path checklists run under Root",
       "- Do not license assume-and-go. The old Operator line — make a reasonable call and note your assumption — is forbidden here",
       "",
       "## Handoffs",
@@ -421,7 +402,7 @@ const SEED_PERSONAS = [
       "- Which move from an established picture → Strategist",
       "- Structure of the thing → Architect",
       "- What ships, with what, by when → Producer",
-      "- Known path, repeating checklist, or maintenance → Default",
+      "- Known path, repeating checklist, or maintenance → stay in the current job or remain unoriented",
       "- Build or debug it → Engineer",
       "",
       "Failed if the output is confident-wrong, a strategy paper, or a production manager wearing a CEO title.",
@@ -436,7 +417,7 @@ const SEED_PERSONAS = [
   {
     name: "Visionary",
     description:
-      "Finished-encounter vision — craftsman meets dreamer. Starts from what it should feel like to arrive, then walks backward to what would have to be true. Beauty, detail, and the art of the possible; never idea piles or system geometry.",
+      "Use when the job is to boldly and optimistically imagine the a future can be real.",
     icon: "Eye",
     promptOverlay: [
       "You are in Visionary mode — finished-encounter vision, craftsman meets dreamer.",
@@ -480,7 +461,7 @@ const SEED_PERSONAS = [
       "- Structure, system, invariant, or first-principles design → Architect",
       "- Audience already chosen and idea already chosen → Persuader",
       "- Is this even true → Investigator",
-      "- Build or debug it → Engineer, then Default",
+      "- Build or debug it → Engineer",
       "- When the factual picture or the strategic move is the real ask, switch rather than faking vision over missing truth",
       "",
       "Failed if the output is a mood board, a metaphor farm, or a better adjective for Architect's design.",
@@ -494,7 +475,7 @@ const SEED_PERSONAS = [
   },
   {
     name: "Companion",
-    description: "Emotional presence — deep listening, warmth, holding space.",
+    description: "Use when the job is to listen and be present in the moment.",
     icon: "Heart",
     promptOverlay: [
       "You are in Companion mode — present, warm, emotionally attuned.",
@@ -521,7 +502,7 @@ const SEED_PERSONAS = [
   {
     name: "Investigator",
     description:
-      "Evidence-first research for market and category analysis, company and role diligence, people and background research, fact-finding before decisions, messy-source synthesis, adversarial claim checking, and determining what is actually true before strategy or execution.",
+      "Use when the job is to establish what is actually true from evidence.",
     icon: "Search",
     promptOverlay: [
       "You are in Investigator mode — evidence-first research and diligence.",
@@ -550,7 +531,7 @@ const SEED_PERSONAS = [
   {
     name: "Persuader",
     description:
-      "Audience-centered persuasion for sales, marketing, outreach, and narrative framing.",
+      "Use when the job is to understand your audience and motivate them to take an action you believe in.",
     icon: "Megaphone",
     promptOverlay: [
       "You are in Persuader mode — audience-centered persuasion, sales, marketing, and narrative framing.",
@@ -576,7 +557,7 @@ const SEED_PERSONAS = [
   {
     name: "Producer",
     description:
-      "Owns the promise — decomposition, resource-honest estimates, capacity, accountability, and truthful status against done. Hands off when the path is known and just needs doing.",
+      "Use when the job is to determine and manage deadlines, capacity, constraints, and delivery.",
     icon: "Briefcase",
     promptOverlay: [
       "You are in Producer mode — you own the promise: what ships, with what, by when.",
@@ -630,12 +611,12 @@ const SEED_PERSONAS = [
       "- Structure is undecided → Architect",
       "- The move is unchosen → Strategist",
       "- Facts are missing → Investigator",
-      "- Path is known and just needs doing → Default",
+      "- Path is known and just needs doing → stay with the current owner or remain unoriented",
       "- The work is code or runtime → Engineer",
       "- The person is the problem → Coach",
       "- Someone else must want it → Persuader",
       "",
-      "If you start doing the work, you have collapsed into Default. If you start allocating Ray's word, you have stolen Executive. If you start designing the system, you have stolen Architect. If you start asking how Ray feels about the slip, you have stolen Coach.",
+      "If you start doing the work yourself, you have left the Producer seat. If you start allocating Ray's word, you have stolen Executive. If you start designing the system, you have stolen Architect. If you start asking how Ray feels about the slip, you have stolen Coach.",
       "",
       "## Refusals",
       "",
@@ -872,9 +853,7 @@ class PersonaStorageClass {
   private async resolveDefaultPersonaId(entries: PersonaEntry[]): Promise<number | null> {
     const principal = requireCurrentUserPrincipal();
     if (!principal.userId || !principal.accountId) {
-      return entries.find((entry) => !entry.isSystem && entry.name === "Default")?.id
-        ?? entries.find((entry) => !entry.isSystem)?.id
-        ?? null;
+      return entries.find((entry) => !entry.isSystem)?.id ?? null;
     }
     const [preference] = await db.select().from(personaPreferences).where(
       combineWithVisibleScope(principal, personaPreferenceScopeColumns),
@@ -882,9 +861,7 @@ class PersonaStorageClass {
     if (preference && entries.some((entry) => entry.id === preference.defaultPersonaId && !entry.isSystem)) {
       return preference.defaultPersonaId;
     }
-    const fallback = entries.find((entry) => !entry.isSystem && (entry.isDefault || entry.name === "Default"))
-      ?? entries.find((entry) => !entry.isSystem)
-      ?? null;
+    const fallback = entries.find((entry) => !entry.isSystem) ?? null;
     return fallback?.id ?? null;
   }
 
@@ -996,6 +973,7 @@ class PersonaStorageClass {
     contextSections?: Record<string, boolean>;
     toolBundle?: string[];
   }): Promise<PersonaEntry> {
+    assertSelectablePersonaName(input.name);
     const systemNameConflict = (await this.listForManagement()).some(
       (persona) =>
         persona.isSystem &&
@@ -1078,7 +1056,10 @@ class PersonaStorageClass {
     const existing = await this.get(id);
     if (!existing) return null;
     const updates: Record<string, unknown> = { updatedAt: new Date() };
-    if (input.name !== undefined) updates.name = input.name;
+    if (input.name !== undefined) {
+      assertSelectablePersonaName(input.name);
+      updates.name = input.name;
+    }
     if (input.description !== undefined)
       updates.description = input.description;
     if (input.icon !== undefined) updates.icon = input.icon;
@@ -1548,7 +1529,7 @@ class PersonaStorageClass {
     if (existing.source === "seed")
       return { success: false, error: "Cannot delete seed personas" };
     if (existing.isDefault)
-      return { success: false, error: "Cannot delete the default Persona" };
+      return { success: false, error: "Cannot delete the home-preference Persona" };
     await db
       .delete(personas)
       .where(
@@ -1607,6 +1588,7 @@ class PersonaStorageClass {
       .update(personas)
       .set({ name: "Executive", updatedAt: new Date() })
       .where(sql`LOWER(${personas.name}) = 'operator'`);
+    await this.retireDefaultPersona();
     this.invalidateCache();
 
     for (const seed of SEED_PERSONAS) {
@@ -1663,6 +1645,7 @@ class PersonaStorageClass {
     const removedLegacyRows = await this.reconcileLegacySeedRows();
     this.invalidateCache();
     await this.updateSeedOverlays();
+    await this.syncSelectablePersonaPayloads();
     await this.initializeRevisionLineage();
     log.log(
       `seedDefaults: ensured ${SEED_PERSONAS.length} seed personas; removed ${removedLegacyRows} legacy scoped seed rows`,
@@ -1702,6 +1685,74 @@ class PersonaStorageClass {
     });
     void systemPrincipal;
     this.invalidateCache();
+  }
+
+  /**
+   * Default is not a persona. Unset leftover Default bindings, then delete
+   * every remaining Default row so the name cannot stay selectable.
+   */
+  private async retireDefaultPersona(): Promise<void> {
+    const defaultRows = await db
+      .select({ id: personas.id })
+      .from(personas)
+      .where(sql`LOWER(${personas.name}) = 'default'`);
+    if (defaultRows.length === 0) return;
+    const defaultIds = defaultRows.map((row) => row.id);
+    const replacement = await db
+      .select({ id: personas.id })
+      .from(personas)
+      .where(and(
+        eq(personas.scope, "global"),
+        eq(personas.source, "seed"),
+        eq(personas.isSystem, false),
+        sql`LOWER(${personas.name}) = 'companion'`,
+      ))
+      .limit(1);
+    const replacementId = replacement[0]?.id ?? null;
+    if (replacementId) {
+      await db
+        .update(personaPreferences)
+        .set({ defaultPersonaId: replacementId, updatedAt: new Date() })
+        .where(inArray(personaPreferences.defaultPersonaId, defaultIds));
+    } else {
+      await db
+        .delete(personaPreferences)
+        .where(inArray(personaPreferences.defaultPersonaId, defaultIds));
+    }
+    await db
+      .update(personas)
+      .set({ isDefault: false, isActive: false, updatedAt: new Date() })
+      .where(inArray(personas.id, defaultIds));
+    await db.delete(personas).where(inArray(personas.id, defaultIds));
+    log.log(`retireDefaultPersona: removed ${defaultIds.length} Default persona rows`);
+  }
+
+  /**
+   * Descriptions and group maps are the chooser surface. Write the locked
+   * Use-when sentences and PERSONA_CONTEXT_MAPS onto every same-name row,
+   * including live user copies, so Router and re-orient cannot classify from
+   * drifted leftovers.
+   */
+  private async syncSelectablePersonaPayloads(): Promise<void> {
+    let updated = 0;
+    for (const seed of SEED_PERSONAS) {
+      if ((seed as { isSystem?: boolean }).isSystem) continue;
+      const map = PERSONA_CONTEXT_MAPS[seed.name.toLowerCase()] ?? {};
+      const result = await db
+        .update(personas)
+        .set({
+          description: seed.description,
+          contextSections: { ...map },
+          updatedAt: new Date(),
+        })
+        .where(sql`LOWER(${personas.name}) = ${seed.name.toLowerCase()}`)
+        .returning({ id: personas.id });
+      updated += result.length;
+    }
+    if (updated > 0) {
+      this.invalidateCache();
+      log.log(`syncSelectablePersonaPayloads: updated ${updated} persona rows`);
+    }
   }
 
   /** Remove malformed scoped seed rows after canonical global rows exist. */
