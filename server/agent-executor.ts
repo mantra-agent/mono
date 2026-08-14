@@ -189,14 +189,24 @@ function resolveToolOutcomeFailureCode(args: {
   failure?: ToolFailure;
   failureKind?: ToolFailureKind;
   flattenedCode?: string;
+  toolName?: string;
 }): string | undefined {
   const explicit =
     (typeof args.failure?.code === "string" && args.failure.code.trim()) ||
     (typeof args.flattenedCode === "string" && args.flattenedCode.trim()) ||
     "";
   if (explicit) return explicit;
-  if (args.failureKind) return `tool_${args.failureKind}`;
-  return "tool_failed";
+  // No handler code: fold the stable tool identity into the synthetic code so
+  // privacy-safe error aggregates split by owning tool
+  // (Executor:Error:TOOL_FAILED_<TOOL>) instead of collapsing every uncoded
+  // failure into one anonymous TOOL_FAILED bucket. Tool names are a fixed,
+  // non-user vocabulary, so this discriminant leaks no user data.
+  const toolSuffix =
+    typeof args.toolName === "string"
+      ? args.toolName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")
+      : "";
+  const base = args.failureKind ? `tool_${args.failureKind}` : "tool_failed";
+  return toolSuffix ? `${base}_${toolSuffix}` : base;
 }
 
 export type ToolContinuation =
@@ -2833,6 +2843,7 @@ export class AgentExecutor extends EventEmitter {
           failure,
           failureKind,
           flattenedCode: flattenedFailureCode,
+          toolName: name,
         })
       : failure?.code ?? flattenedFailureCode;
     ctx.resolvedToolCalls.push({
