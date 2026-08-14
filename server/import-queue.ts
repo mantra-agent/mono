@@ -373,7 +373,16 @@ export async function upsertCandidates(candidates: Array<Partial<StoredImportCan
         .set(candidateToRow(merged))
         .where(sql`${peopleImportCandidates.email} = ${email} AND ${visibleCandidatePredicate()}`);
     } else {
-      await db.insert(peopleImportCandidates).values({ ...candidateToRow(incoming), ...candidateOwnershipValues() });
+      // Atomic against the account-local (principal_account_id, email) key. Two email-sync
+      // workers can both miss the SELECT above and race the first insert for the same sender;
+      // ON CONFLICT resolves the loser to an update instead of throwing 23505. A different
+      // account never conflicts, so each account keeps its own candidate row.
+      await db.insert(peopleImportCandidates)
+        .values({ ...candidateToRow(incoming), ...candidateOwnershipValues() })
+        .onConflictDoUpdate({
+          target: [peopleImportCandidates.principalAccountId, peopleImportCandidates.email],
+          set: candidateToRow(incoming),
+        });
     }
   }
 }
