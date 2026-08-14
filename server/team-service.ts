@@ -53,7 +53,9 @@ export class TeamService {
         createdByUserId: teams.createdByUserId,
         createdAt: teams.createdAt,
         updatedAt: teams.updatedAt,
-        memberCount: sql<number>`(SELECT COUNT(*)::int FROM team_members tm WHERE tm.team_id = ${teams.id})`,
+        // Qualify outer teams.id — bare ${teams.id} emits "id", which binds to team_members.id (serial)
+        // inside the subquery and fails with integer = text.
+        memberCount: sql<number>`(SELECT COUNT(*)::int FROM team_members tm WHERE tm.team_id = "teams"."id")`,
       })
       .from(teams)
       .where(eq(teams.accountId, principal.accountId))
