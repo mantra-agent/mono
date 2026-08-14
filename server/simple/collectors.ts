@@ -1503,8 +1503,12 @@ function itemFromProject(project: Project, section: SimpleSection, index: number
 
 const SESSION_REVIEW_INBOX_LIMIT = 25;
 const SESSION_REVIEW_PLAN_CHUNK = 100;
-/** Undismissed error/warning attention older than this stays off Home. Clear once and it stays gone. */
-const SESSION_REVIEW_ERROR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Error/warning attention surfaces to Home only while newer than this. */
+const SESSION_REVIEW_ERROR_SURFACE_WINDOW_MS = 48 * 60 * 60 * 1000;
+/** Error/warning attention still sitting past this is durably dismissed so it cannot resurrect. */
+const SESSION_REVIEW_ERROR_AUTO_CLEAR_MS = 7 * 24 * 60 * 60 * 1000;
+/** Bound durable auto-clear writes per Home collect. */
+const SESSION_REVIEW_MAX_AUTO_CLEARS_PER_COLLECT = 50;
 /** Aggressive chip labels so "{@session} had an Error" stays scannable. */
 const SESSION_REVIEW_TITLE_MAX_CHARS = 22;
 
@@ -1517,11 +1521,12 @@ function truncateSessionReviewTitle(title: string): string {
   return `${cleaned.slice(0, Math.max(1, SESSION_REVIEW_TITLE_MAX_CHARS - 1)).trimEnd()}…`;
 }
 
-function isWithinSessionReviewErrorWindow(observedAt: string | undefined, nowMs: number): boolean {
-  if (!observedAt) return false;
+/** Age of the error/warning attention in ms, or null when the timestamp is unusable. */
+function sessionReviewErrorAgeMs(observedAt: string | undefined, nowMs: number): number | null {
+  if (!observedAt) return null;
   const ms = Date.parse(observedAt);
-  if (!Number.isFinite(ms)) return false;
-  return nowMs - ms <= SESSION_REVIEW_ERROR_MAX_AGE_MS;
+  if (!Number.isFinite(ms)) return null;
+  return nowMs - ms;
 }
 
 function selectPrimaryHomeSessionReviewKind(
@@ -1693,6 +1698,7 @@ async function collectSessionReviewInboxItems(timezone: string): Promise<SimpleF
 
   const nowMs = Date.now();
   const items: SimpleFeedItem[] = [];
+  let autoClears = 0;
   for (const session of candidates) {
     const observedAt = session.updatedAt || session.createdAt || new Date().toISOString();
     const kinds: SessionReviewKind[] = [];
@@ -1701,17 +1707,34 @@ async function collectSessionReviewInboxItems(timezone: string): Promise<SimpleF
     const emailKinds = emailKindsBySession.get(session.id);
     if (emailKinds?.length) kinds.push(...emailKinds);
 
-    // Errors/warnings only surface while recent. Dismiss/check-circle clear is
-    // durable — this is not a per-boot resurrection of cleared notices.
-    const errorInWindow = isWithinSessionReviewErrorWindow(observedAt, nowMs);
-    if (errorInWindow && session.errorSeverity === "error") {
-      kinds.push("error");
-    } else if (
-      errorInWindow &&
-      (session.errorSeverity === "warning" ||
-        (session.errorSeverity as string | null | undefined) === "warn")
-    ) {
-      kinds.push("warning");
+    // Errors/warnings follow two clocks, mirroring the reported-issue INBOX:
+    // they surface only within 48h, and anything still sitting past 7d is
+    // durably dismissed so a later session update cannot resurrect it.
+    const severity =
+      session.errorSeverity === "error"
+        ? "error"
+        : session.errorSeverity === "warning" ||
+            (session.errorSeverity as string | null | undefined) === "warn"
+          ? "warning"
+          : null;
+    if (severity) {
+      const ageMs = sessionReviewErrorAgeMs(observedAt, nowMs);
+      if (
+        ageMs !== null &&
+        ageMs > SESSION_REVIEW_ERROR_AUTO_CLEAR_MS &&
+        autoClears < SESSION_REVIEW_MAX_AUTO_CLEARS_PER_COLLECT
+      ) {
+        // Durable clear of the owning system notices; never touches questions,
+        // plans, or drafts. Fail-soft so one bad row cannot break the feed.
+        try {
+          await chatFileStorage.dismissAllSystemNotices(session.id);
+          autoClears += 1;
+        } catch {
+          // Best-effort: a failed auto-clear just leaves the row off Home.
+        }
+      } else if (ageMs !== null && ageMs <= SESSION_REVIEW_ERROR_SURFACE_WINDOW_MS) {
+        kinds.push(severity);
+      }
     }
 
     const primary = selectPrimaryHomeSessionReviewKind(kinds);
