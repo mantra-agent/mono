@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { SimpleTextFrame } from "@/components/home/simple-text-frame";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -22,7 +23,6 @@ import {
   CircleCheck,
   CircleDashed,
   CircleDot,
-  FileText,
   Loader2,
   MapPin,
   MessageSquare,
@@ -185,48 +185,46 @@ export function IssueInlineProfile({ issueId, onDeleted }: { issueId: number; on
   const reporter = typeof issue.reporterEmail === "string" && issue.reporterEmail.trim()
     ? issue.reporterEmail.trim()
     : null;
+  const bodyText = [
+    issue.description?.trim() || null,
+    issue.reproSteps?.trim() && issue.reproSteps.trim() !== issue.description?.trim()
+      ? `**Repro steps**\n\n${issue.reproSteps.trim()}`
+      : null,
+  ].filter(Boolean).join("\n\n");
 
   return (
     <div className="space-y-6 py-2" data-testid={`issue-inline-profile-${issue.id}`}>
-      <div className="space-y-0">
-        <ProfileDetailSection
-          title={<span className="block truncate text-xs font-bold uppercase leading-none tracking-wider text-muted-foreground">{issue.title}</span>}
-          headerAction={(
-            <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
-                  aria-label="Issue actions"
-                >
-                  <MoreHorizontal className="h-3 w-3" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  className="text-destructive focus:text-destructive"
-                  onClick={() => deleteIssue.mutate()}
-                  disabled={deleteIssue.isPending}
-                >
-                  <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          collapsedContent={issue.description ? (
-            <p className="whitespace-pre-wrap text-[14px] leading-tight text-white/80" data-testid="inline-issue-summary">
-              {issue.description}
-            </p>
-          ) : undefined}
-          testId="section-issue-profile"
-        >
+      <div className="space-y-2">
+        {/* Actions live in the row menu; the expanded panel keeps only Delete. */}
+        <div className="flex justify-end">
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 transition-opacity hover:bg-accent hover:text-foreground"
+                aria-label="Issue actions"
+              >
+                <MoreHorizontal className="h-3 w-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() => deleteIssue.mutate()}
+                disabled={deleteIssue.isPending}
+              >
+                <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Canonical text display, exactly like a surfaced library page text view. */}
+        <SimpleTextFrame content={bodyText} empty="No description provided." />
+
+        <div className="space-y-0">
           <div className="overflow-hidden rounded-md border border-border/20">
-            {issue.description ? (
-              <ProfileTreeRow label="Description" icon={<FileText className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
-                <span className="line-clamp-2 whitespace-pre-wrap text-muted-foreground">{issue.description}</span>
-              </ProfileTreeRow>
-            ) : null}
             <ProfileTreeRow label="Status" icon={<StatusIcon status={status} />} hasValue showEmpty mobileLayout="inline">
               <Select value={status} onValueChange={(value) => updateIssue.mutate({ status: value })}>
                 <SelectTrigger className="w-48" data-testid="select-inline-issue-status"><SelectValue /></SelectTrigger>
@@ -249,7 +247,7 @@ export function IssueInlineProfile({ issueId, onDeleted }: { issueId: number; on
               </ProfileTreeRow>
             ) : null}
           </div>
-        </ProfileDetailSection>
+        </div>
 
         {issue.spec ? (
           <ProfileDetailSection title="Spec" collapsedContent={<p className="line-clamp-2 text-[14px] leading-tight text-white/80">{issue.spec}</p>} testId="section-issue-spec">
