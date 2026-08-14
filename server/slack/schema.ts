@@ -1,5 +1,10 @@
 import type { Pool } from "pg";
 
+/**
+ * Additive Slack pilot schema. Statements stay separate so one bad DDL cannot
+ * hide behind a multi-statement string, and every regex CHECK is a complete
+ * PostgreSQL string literal (closing $' required — bare {n,m} is syntax error).
+ */
 export async function ensureSlackSchema(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS slack_installations (
@@ -13,6 +18,7 @@ export async function ensureSlackSchema(pool: Pool): Promise<void> {
       owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
       vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE RESTRICT,
       allowed_channel_ids TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      allowed_channel_name TEXT,
       enabled BOOLEAN NOT NULL DEFAULT FALSE,
       status TEXT NOT NULL DEFAULT 'unconfigured',
       last_connected_at TIMESTAMPTZ,
@@ -28,15 +34,27 @@ export async function ensureSlackSchema(pool: Pool): Promise<void> {
         cardinality(allowed_channel_ids) = 0 OR allowed_channel_ids[1] ~ '^C[A-Z0-9]{1,31}$'
       ),
       CONSTRAINT slack_installations_channel_limit CHECK (cardinality(allowed_channel_ids) <= 1),
+      CONSTRAINT slack_installations_channel_name_check CHECK (
+        allowed_channel_name IS NULL OR allowed_channel_name ~ '^#?[A-Za-z0-9][A-Za-z0-9_-]{0,79}$'
+      ),
       CONSTRAINT slack_installations_status_check CHECK (status IN ('unconfigured','ready','connected','degraded','disabled'))
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS slack_installations_team_app_environment_unique
-      ON slack_installations(team_id, api_app_id, platform_environment_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS slack_installations_one_enabled_app
-      ON slack_installations(team_id, api_app_id) WHERE enabled;
-    CREATE INDEX IF NOT EXISTS slack_installations_account_owner
-      ON slack_installations(account_id, owner_user_id);
+    )
+  `);
 
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS slack_installations_team_app_environment_unique
+      ON slack_installations(team_id, api_app_id, platform_environment_id)
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS slack_installations_one_enabled_app
+      ON slack_installations(team_id, api_app_id) WHERE enabled
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS slack_installations_account_owner
+      ON slack_installations(account_id, owner_user_id)
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS slack_principal_mappings (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       installation_id UUID NOT NULL REFERENCES slack_installations(id) ON DELETE CASCADE,
@@ -50,13 +68,21 @@ export async function ensureSlackSchema(pool: Pool): Promise<void> {
       updated_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      CONSTRAINT slack_principal_mappings_ids_check CHECK (team_id ~ '^T[A-Z0-9]{1,31}$' AND slack_user_id ~ '^U[A-Z0-9]{1,31}$')
-    );
+      CONSTRAINT slack_principal_mappings_ids_check CHECK (
+        team_id ~ '^T[A-Z0-9]{1,31}$' AND slack_user_id ~ '^U[A-Z0-9]{1,31}$'
+      )
+    )
+  `);
+  await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS slack_principal_mappings_external_unique
-      ON slack_principal_mappings(installation_id, team_id, slack_user_id);
+      ON slack_principal_mappings(installation_id, team_id, slack_user_id)
+  `);
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS slack_principal_mappings_account_user
-      ON slack_principal_mappings(account_id, mantra_user_id);
+      ON slack_principal_mappings(account_id, mantra_user_id)
+  `);
 
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS slack_session_bindings (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       installation_id UUID NOT NULL REFERENCES slack_installations(id) ON DELETE CASCADE,
@@ -71,12 +97,18 @@ export async function ensureSlackSchema(pool: Pool): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT slack_session_bindings_external_key_check CHECK (char_length(external_key) BETWEEN 1 AND 240)
-    );
+    )
+  `);
+  await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS slack_session_bindings_external_unique
-      ON slack_session_bindings(installation_id, external_key);
+      ON slack_session_bindings(installation_id, external_key)
+  `);
+  await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS slack_session_bindings_session_unique
-      ON slack_session_bindings(session_id);
+      ON slack_session_bindings(session_id)
+  `);
 
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS slack_events (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       installation_id UUID NOT NULL REFERENCES slack_installations(id) ON DELETE CASCADE,
@@ -108,33 +140,45 @@ export async function ensureSlackSchema(pool: Pool): Promise<void> {
       CONSTRAINT slack_events_delivery_check CHECK (delivery_state IN ('none','progress','final','failure','failed')),
       CONSTRAINT slack_events_body_limit CHECK (body IS NULL OR char_length(body) <= 4000),
       CONSTRAINT slack_events_attempt_limit CHECK (attempt_count BETWEEN 0 AND 3)
-    );
+    )
+  `);
+  await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS slack_events_provider_unique
-      ON slack_events(installation_id, event_id);
+      ON slack_events(installation_id, event_id)
+  `);
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS slack_events_claim
-      ON slack_events(installation_id, status, received_at);
+      ON slack_events(installation_id, status, received_at)
+  `);
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS slack_events_retention
-      ON slack_events(updated_at);
+      ON slack_events(updated_at)
+  `);
 
-    ALTER TABLE slack_installations DROP CONSTRAINT IF EXISTS slack_installations_ids_check;
+  // Rolling-deploy repair for pre-channel-name tables and any prior incomplete CHECKs.
+  await pool.query(`ALTER TABLE slack_installations ADD COLUMN IF NOT EXISTS allowed_channel_name TEXT`);
+  await pool.query(`ALTER TABLE slack_installations DROP CONSTRAINT IF EXISTS slack_installations_ids_check`);
+  await pool.query(`
     ALTER TABLE slack_installations ADD CONSTRAINT slack_installations_ids_check CHECK (
       team_id ~ '^T[A-Z0-9]{1,31}$' AND api_app_id ~ '^A[A-Z0-9]{1,31}$' AND bot_user_id ~ '^U[A-Z0-9]{1,31}$'
-    );
-    ALTER TABLE slack_installations DROP CONSTRAINT IF EXISTS slack_installations_channel_ids_check;
+    )
+  `);
+  await pool.query(`ALTER TABLE slack_installations DROP CONSTRAINT IF EXISTS slack_installations_channel_ids_check`);
+  await pool.query(`
     ALTER TABLE slack_installations ADD CONSTRAINT slack_installations_channel_ids_check CHECK (
       cardinality(allowed_channel_ids) = 0 OR allowed_channel_ids[1] ~ '^C[A-Z0-9]{1,31}$'
-    );
-    ALTER TABLE slack_principal_mappings DROP CONSTRAINT IF EXISTS slack_principal_mappings_ids_check;
-    ALTER TABLE slack_principal_mappings ADD CONSTRAINT slack_principal_mappings_ids_check CHECK (
-      team_id ~ '^T[A-Z0-9]{1,31}
- AND slack_user_id ~ '^U[A-Z0-9]{1,31}
-
-    );
-    ALTER TABLE slack_installations ADD COLUMN IF NOT EXISTS allowed_channel_name TEXT;
-    ALTER TABLE slack_installations DROP CONSTRAINT IF EXISTS slack_installations_channel_name_check;
+    )
+  `);
+  await pool.query(`ALTER TABLE slack_installations DROP CONSTRAINT IF EXISTS slack_installations_channel_name_check`);
+  await pool.query(`
     ALTER TABLE slack_installations ADD CONSTRAINT slack_installations_channel_name_check CHECK (
-      allowed_channel_name IS NULL OR allowed_channel_name ~ '^#?[A-Za-z0-9][A-Za-z0-9_-]{0,79}
-
-    );
+      allowed_channel_name IS NULL OR allowed_channel_name ~ '^#?[A-Za-z0-9][A-Za-z0-9_-]{0,79}$'
+    )
+  `);
+  await pool.query(`ALTER TABLE slack_principal_mappings DROP CONSTRAINT IF EXISTS slack_principal_mappings_ids_check`);
+  await pool.query(`
+    ALTER TABLE slack_principal_mappings ADD CONSTRAINT slack_principal_mappings_ids_check CHECK (
+      team_id ~ '^T[A-Z0-9]{1,31}$' AND slack_user_id ~ '^U[A-Z0-9]{1,31}$'
+    )
   `);
 }
