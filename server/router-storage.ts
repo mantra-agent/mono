@@ -400,6 +400,124 @@ export async function removeConnectorFromRouter(
 }
 
 /**
+ * Reparent an existing model connector onto a Router (or back to legacy NULL).
+ * Preserves credentials, config, and status. Destination membership is exclusive.
+ * Appends unpinned at the end of the destination pool. Idempotent when already there.
+ */
+export async function moveConnectorToRouter(
+  connectorId: number,
+  routerId: string | null,
+): Promise<ModelConnector> {
+  if (!Number.isFinite(connectorId) || connectorId <= 0) {
+    throw new Error("Invalid connector id");
+  }
+
+  if (routerId) {
+    const router = await getRouterById(routerId);
+    if (!router) throw new Error("Router not found");
+  }
+
+  return db.transaction(async (tx) => {
+    // Peek source membership so both pool locks can be taken in sorted order first.
+    const [peek] = await tx
+      .select({
+        id: providerConnections.id,
+        connectorKind: providerConnections.connectorKind,
+        routerId: providerConnections.routerId,
+      })
+      .from(providerConnections)
+      .where(eq(providerConnections.id, connectorId))
+      .limit(1);
+    if (!peek) throw new Error("Connector not found");
+    if (peek.connectorKind !== "model") {
+      throw new Error("Only model connectors can join a Router");
+    }
+
+    const fromRouterId = peek.routerId ?? null;
+    if (fromRouterId === routerId) {
+      const [same] = await tx
+        .select()
+        .from(providerConnections)
+        .where(eq(providerConnections.id, connectorId))
+        .limit(1);
+      if (!same) throw new Error("Connector not found");
+      return mapConnector(same);
+    }
+
+    const lockKeys = [
+      fromRouterId ? `router-members:${fromRouterId}` : "router-members:legacy",
+      routerId ? `router-members:${routerId}` : "router-members:legacy",
+    ].sort();
+    for (const key of new Set(lockKeys)) {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${key}))`);
+    }
+
+    const [existing] = await tx
+      .select()
+      .from(providerConnections)
+      .where(eq(providerConnections.id, connectorId))
+      .limit(1);
+    if (!existing) throw new Error("Connector not found");
+    if (existing.connectorKind !== "model") {
+      throw new Error("Only model connectors can join a Router");
+    }
+    const currentRouterId = existing.routerId ?? null;
+    if (currentRouterId !== fromRouterId) {
+      throw new Error("Connector membership changed during move; retry");
+    }
+    if (currentRouterId === routerId) {
+      return mapConnector(existing);
+    }
+
+    const destinationFilter = routerId
+      ? and(
+          eq(providerConnections.connectorKind, "model"),
+          eq(providerConnections.routerId, routerId),
+        )
+      : and(
+          eq(providerConnections.connectorKind, "model"),
+          isNull(providerConnections.routerId),
+        );
+
+    const peers = await tx
+      .select({
+        id: providerConnections.id,
+        sortOrder: providerConnections.sortOrder,
+      })
+      .from(providerConnections)
+      .where(destinationFilter);
+
+    const nextSortOrder = peers.reduce(
+      (max, row) => Math.max(max, row.sortOrder ?? 0),
+      -1,
+    ) + 1;
+
+    const [updated] = await tx
+      .update(providerConnections)
+      .set({
+        routerId,
+        priorityPinned: false,
+        sortOrder: nextSortOrder,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(and(
+        eq(providerConnections.id, connectorId),
+        eq(providerConnections.connectorKind, "model"),
+      ))
+      .returning();
+    if (!updated) throw new Error("Connector not found");
+
+    log.info("moved connector to router", {
+      connectorId,
+      fromRouterId: currentRouterId,
+      toRouterId: routerId,
+      sortOrder: nextSortOrder,
+    });
+    return mapConnector(updated);
+  });
+}
+
+/**
  * Reorder connectors inside one Router. Pin cohort boundary preserved.
  * ids must be the complete ordered set of that Router's model connectors.
  */
