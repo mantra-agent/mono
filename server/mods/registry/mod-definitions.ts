@@ -173,7 +173,7 @@ const business: ModDefinition = {
       nav("business.nav.business-model", "Business", "Model", "LineChart", "navigation.businessModel.open", "business.route.business-model", 3, { requiredPermissions: ["system:read"] }),
       nav("business.nav.budgets", "Business", "Budgets", "DollarSign", "navigation.budgets.open", "business.route.budgets", 4, { requiredPermissions: ["system:read"] }),
       nav("business.nav.job-roles", "Business", "Roles", "Briefcase", "navigation.roles.open", "business.route.job-roles", 5, { requiredPermissions: ["system:read"] }),
-      nav("business.nav.hiring", "Business", "Hiring", "Briefcase", "navigation.hiring.open", "business.route.hiring", 6, { requiredPermissions: ["system:read"] }),
+      nav("business.nav.hiring", "Business", "Hiring", "UserPlus", "navigation.hiring.open", "business.route.hiring", 6, { requiredPermissions: ["system:read"] }),
       nav("business.nav.kpis", "Business", "KPIs", "Gauge", "navigation.kpis.open", "business.route.kpis", 6, { requiredPermissions: ["system:read"] }),
       nav("business.nav.metrics", "Business", "Metrics", "Activity", "navigation.metrics.open", "business.route.metrics", 7, { requiredPermissions: ["system:read"] }),
     ],
