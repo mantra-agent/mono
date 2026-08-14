@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useLocation, useParams } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ChevronRight, ExternalLink, Play, History, ShieldCheck, Trash2, FileText, Search, Cable, Link2, User, FolderGit2, GitBranch, GitMerge, Zap, Code2, Server, Hash, Layers, Cpu, PenTool, ClipboardList, PackageOpen, type LucideIcon } from "lucide-react";
+import { Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ChevronRight, ExternalLink, Play, History, ShieldCheck, Cable, Link2, User, FolderGit2, GitBranch, GitMerge, Zap, Code2, Server, Hash, Layers, Cpu } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
@@ -14,8 +14,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
-import { ReferenceRenderer } from "@/components/references/reference-renderer";
-import { createReferenceRef } from "@shared/references";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -86,16 +84,6 @@ interface RuntimeVariable {
   inferred?: boolean;
 }
 
-interface ContextArtifact {
-  id: number;
-  environmentId: number;
-  kind: string;
-  libraryPageId: string;
-  pageTitle: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 interface PlatformTreeEnvironment { id: number; name: string }
 interface PlatformTreeProduct { id: number; environments: PlatformTreeEnvironment[] }
 interface PlatformTree { id: number; products: PlatformTreeProduct[] }
@@ -111,7 +99,6 @@ interface EnvironmentDetails {
   source: EnvironmentBinding;
   hosting: EnvironmentBinding;
   runtimeVariables: RuntimeVariable[];
-  contextArtifacts?: ContextArtifact[];
   deploymentState: { status: string; note?: string };
   promotion: { mode: string; sourceBranch: string; targetBranch: string | null };
 }
@@ -1805,263 +1792,6 @@ function DeploymentStatusCard({
 
 // --- Config Card (read-only) ---
 
-const CONTEXT_ARTIFACT_KINDS = [
-  { value: "coding_process", label: "Coding Process", description: "Universal engineering process and principles" },
-  { value: "design_system", label: "Design System", description: "Visual language, tokens, and component patterns" },
-  { value: "planning_process", label: "Planning Process", description: "Planning workflow and review procedures" },
-  { value: "product_definition", label: "Product Definition", description: "Product north star, ICP, value props, and principles" },
-] as const;
-
-const ARTIFACT_KIND_LABELS: Record<string, string> = Object.fromEntries(
-  CONTEXT_ARTIFACT_KINDS.map((k) => [k.value, k.label]),
-);
-
-const ARTIFACT_KIND_ICONS: Record<string, LucideIcon> = {
-  coding_process: Code2,
-  design_system: PenTool,
-  planning_process: ClipboardList,
-  product_definition: PackageOpen,
-};
-
-function contextPageReference(artifact: ContextArtifact) {
-  return createReferenceRef({
-    type: "page",
-    id: artifact.libraryPageId,
-    metadata: {
-      label: artifact.pageTitle,
-      href: `/info#library?page=${encodeURIComponent(artifact.libraryPageId)}`,
-    },
-  });
-}
-
-function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: ContextArtifact[]; environmentId: number }) {
-  const [adding, setAdding] = useState(false);
-  const [newKind, setNewKind] = useState("");
-  const [selectedPage, setSelectedPage] = useState<{ id: string; title: string } | null>(null);
-  const [pagePickerOpen, setPagePickerOpen] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<ContextArtifact | null>(null);
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-
-  // All kinds always available — multiple artifacts per kind allowed
-  const availableKinds = [...CONTEXT_ARTIFACT_KINDS];
-
-  const saveMutation = useMutation({
-    mutationFn: async ({ kind, libraryPageId }: { kind: string; libraryPageId: string }) => {
-      const res = await fetch(`/api/platforms/environments/${environmentId}/context-artifacts`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, libraryPageId }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Failed" }));
-        throw new Error(err.error || "Failed to save context artifact");
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/platforms/environments", environmentId, "details"] });
-      setAdding(false);
-      setNewKind("");
-      setSelectedPage(null);
-    },
-    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
-  });
-
-  const removeMutation = useMutation({
-    mutationFn: async (artifactId: number) => {
-      const res = await fetch(`/api/platforms/environments/${environmentId}/context-artifacts/${artifactId}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to remove context artifact");
-      return res.json();
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/platforms/environments", environmentId, "details"] }),
-    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
-  });
-
-  return (
-    <div>
-      {!adding && (
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
-          className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-cta hover:text-cta/80 hover:bg-accent/70 rounded-md transition-colors"
-        >
-          <Plus className="h-3.5 w-3.5 shrink-0" />
-          <span>New Context</span>
-        </button>
-      )}
-      {adding && (
-        <div className="mb-2 space-y-2 rounded border border-border/30 p-2">
-          <div className="grid gap-1.5">
-            <Label className="text-xs">Kind</Label>
-            <Select value={newKind} onValueChange={setNewKind}>
-              <SelectTrigger className="h-7 text-xs">
-                <SelectValue placeholder="Select artifact kind" />
-              </SelectTrigger>
-              <SelectContent>
-                {availableKinds.map((k) => (
-                  <SelectItem key={k.value} value={k.value} className="text-xs">
-                    <span>{k.label}</span>
-                    <span className="ml-2 text-muted-foreground">{k.description}</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid gap-1.5">
-            <Label className="text-xs">Library Page</Label>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs justify-start font-normal"
-              onClick={() => setPagePickerOpen(true)}
-            >
-              {selectedPage ? (
-                <span className="flex items-center gap-1.5 truncate">
-                  <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  {selectedPage.title}
-                </span>
-              ) : (
-                <span className="text-muted-foreground flex items-center gap-1.5">
-                  <Search className="h-3 w-3" />
-                  Search library pages...
-                </span>
-              )}
-            </Button>
-          </div>
-          <div className="flex gap-1.5 justify-end">
-            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => { setAdding(false); setNewKind(""); setSelectedPage(null); }}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              className="h-6 px-2 text-xs"
-              disabled={!newKind.trim() || !selectedPage || saveMutation.isPending}
-              onClick={() => selectedPage && saveMutation.mutate({ kind: newKind.trim(), libraryPageId: selectedPage.id })}
-            >
-              {saveMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Save"}
-            </Button>
-          </div>
-        </div>
-      )}
-      {artifacts.length > 0 && (
-        <div className="space-y-1">
-          {artifacts.map((a) => {
-            const ref = contextPageReference(a);
-            const KindIcon = ARTIFACT_KIND_ICONS[a.kind] ?? FileText;
-            const kindLabel = ARTIFACT_KIND_LABELS[a.kind] ?? a.kind;
-            return (
-              <div key={a.id} className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-muted/40">
-                <div className="flex min-w-0 items-center gap-2">
-                  <KindIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label={kindLabel} />
-                  <ReferenceRenderer key={ref.canonical} refValue={ref} surface="simple-row" className="max-w-[14rem]" />
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 w-5 p-0 shrink-0 text-muted-foreground hover:text-destructive"
-                  onClick={() => setPendingDelete(a)}
-                  disabled={removeMutation.isPending}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove context artifact?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will remove “{pendingDelete?.pageTitle}” from this environment’s context. The Library page itself is not deleted.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (pendingDelete) removeMutation.mutate(pendingDelete.id);
-                setPendingDelete(null);
-              }}
-            >
-              Remove
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <LibraryPagePickerDialog
-        open={pagePickerOpen}
-        onOpenChange={setPagePickerOpen}
-        onSelect={(page) => { setSelectedPage(page); setPagePickerOpen(false); }}
-      />
-    </div>
-  );
-}
-
-function LibraryPagePickerDialog({ open, onOpenChange, onSelect }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSelect: (page: { id: string; title: string }) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const { data: pages } = useQuery<Array<{ id: string; title: string; slug: string; oneLiner?: string }>>({
-    queryKey: ["/api/info/library", "picker"],
-    queryFn: async () => {
-      const res = await fetch("/api/info/library");
-      if (!res.ok) return [];
-      return res.json();
-    },
-    enabled: open,
-  });
-
-  const filtered = (pages ?? []).filter(
-    (p) => !query || p.title.toLowerCase().includes(query.toLowerCase()) || p.slug.includes(query.toLowerCase()),
-  );
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Select Library Page</DialogTitle>
-          <DialogDescription>Search for a page to link as a context artifact.</DialogDescription>
-        </DialogHeader>
-        <div className="relative">
-          <Search className="absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search pages..."
-            className="pl-7 h-8 text-sm"
-            autoFocus
-          />
-        </div>
-        <ScrollArea className="max-h-64">
-          {filtered.map((page) => (
-            <button
-              key={page.id}
-              className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-accent/50 flex items-center gap-2"
-              onClick={() => onSelect({ id: page.id, title: page.title })}
-            >
-              <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
-              <div className="min-w-0 flex-1">
-                <span className="truncate block">{page.title}</span>
-                {page.oneLiner && <span className="truncate block text-muted-foreground text-[10px]">{page.oneLiner}</span>}
-              </div>
-            </button>
-          ))}
-          {filtered.length === 0 && (
-            <p className="text-xs text-muted-foreground text-center py-3">
-              {query ? "No matching pages" : "No pages found"}
-            </p>
-          )}
-        </ScrollArea>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function ConfigCard({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
     <Card className="border-border/40 bg-card/60 shadow-none">
@@ -2151,9 +1881,6 @@ function EnvironmentDetailsConfigureCard({ details, environmentId }: { details: 
       </EnvironmentSection>
       <EnvironmentSection label="Hosting" defaultOpen={false} storageKey={`platform-environment:${environmentId}:section:hosting`}>
         <HostingBindingCard binding={details.hosting} environmentId={environmentId} />
-      </EnvironmentSection>
-      <EnvironmentSection label="Context">
-        <ContextArtifactsCard artifacts={details.contextArtifacts || []} environmentId={environmentId} />
       </EnvironmentSection>
     </div>
   );

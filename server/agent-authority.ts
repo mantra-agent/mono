@@ -44,7 +44,7 @@ const ENGINEERING_WRITE_ACTIONS: Record<string, ReadonlySet<string>> = {
     "create_connection", "create_platform", "update_platform", "create_product", "update_product",
     "create_product_legacy", "update_product_legacy",
     "create_environment", "update_environment", "delete_environment", "save_source_binding",
-    "save_hosting_binding", "save_context_artifact", "remove_context_artifact", "set_build_lifecycle",
+    "save_hosting_binding", "set_build_lifecycle",
     "disable_build_lifecycle", "delete_build_lifecycle", "start_build_workflow", "deploy_cloudflare_pages",
     "cancel_cloudflare_pages_deployment", "repair_cloudflare_pages_project",
   ]),

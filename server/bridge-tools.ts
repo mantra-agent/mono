@@ -6522,7 +6522,7 @@ ${refs}` : ""),
     const action = typeof args.action === "string" ? args.action : "";
     if (!action) return { result: "Missing 'action' parameter", error: true };
 
-    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "provision_database_roles", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "list_products", "create_product", "update_product", "create_product_legacy", "update_product_legacy", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection", "save_context_artifact", "get_context_artifacts", "remove_context_artifact", "get_cloudflare_pages_project", "deploy_cloudflare_pages", "cancel_cloudflare_pages_deployment", "poll_cloudflare_pages_deployment", "repair_cloudflare_pages_project"]);
+    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "provision_database_roles", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "list_products", "create_product", "update_product", "create_product_legacy", "update_product_legacy", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection", "get_cloudflare_pages_project", "deploy_cloudflare_pages", "cancel_cloudflare_pages_deployment", "poll_cloudflare_pages_deployment", "repair_cloudflare_pages_project"]);
     if (!allowed.has(action)) {
       return { result: `Unknown platforms action: ${action}. Allowed: ${[...allowed].join(", ")}`, error: true };
     }
@@ -6535,7 +6535,6 @@ ${refs}` : ""),
         environmentSourceBindings,
         environmentHostingBindings,
         environmentRuntimeVariables,
-        environmentContextArtifacts,
         platforms: platformsTable,
         productPlatformAssociations,
         products,
@@ -6544,13 +6543,11 @@ ${refs}` : ""),
         insertPlatformSchema,
         insertPlatformProductSchema,
         insertPlatformProductEnvironmentSchema,
-        upsertContextArtifactSchema,
       } = await import("@shared/models/platforms");
       const { requireCurrentPrincipal } = await import("./principal-context");
       const { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } = await import("./scoped-storage");
       const { storeProviderCredential, getProviderCredential, deleteProviderCredential } = await import("./provider-credential-store");
       const { getVisibleEnvironment, getWritableEnvironment, getVisibleProduct, getWritableProduct } = await import("./platforms/platform-access");
-      const { libraryPages } = await import("@shared/models/info");
 
       const connScopeColumns = { scope: providerConnections.scope, ownerUserId: providerConnections.ownerUserId, accountId: providerConnections.accountId };
       const platScopeColumns = { scope: platformsTable.scope, ownerUserId: platformsTable.ownerUserId, accountId: platformsTable.accountId };
@@ -6559,8 +6556,6 @@ ${refs}` : ""),
       const writableConn = (pred?: SQL) => combineWithWritableScope(requireCurrentPrincipal(), connScopeColumns, pred);
       const visiblePlat = (pred?: SQL) => combineWithVisibleScope(requireCurrentPrincipal(), platScopeColumns, pred);
       const writablePlat = (pred?: SQL) => combineWithWritableScope(requireCurrentPrincipal(), platScopeColumns, pred);
-      const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
-      const visibleLib = (pred?: SQL) => combineWithVisibleScope(requireCurrentPrincipal(), libraryScopeColumns, pred);
       const positiveId = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null);
 
       if (action === "provision_database_roles") {
@@ -7179,79 +7174,6 @@ ${refs}` : ""),
           [saved] = await db.insert(environmentHostingBindings).values(values).returning();
         }
         return { result: JSON.stringify({ saved: true, binding: { id: saved.id, environmentId: saved.environmentId, provider: saved.provider, projectId: saved.projectId, projectName: saved.projectName, providerEnvironmentId: saved.providerEnvironmentId, serviceName: saved.serviceName, connectionId: saved.connectionId } }, null, 2) };
-      }
-
-      // ── save_context_artifact ──
-      if (action === "save_context_artifact") {
-        const envId = typeof args.id === "number" ? args.id : null;
-        if (!envId) return { result: "Missing 'id' (environment ID) for save_context_artifact", error: true };
-        const kind = typeof args.kind === "string" ? args.kind.trim() : null;
-        const libraryPageId = typeof args.libraryPageId === "string" ? args.libraryPageId.trim() : null;
-        if (!kind) return { result: "Missing 'kind' for save_context_artifact", error: true };
-        if (!libraryPageId) return { result: "Missing 'libraryPageId' for save_context_artifact", error: true };
-
-        const environmentAccess = await getWritableEnvironment(envId);
-        if (!environmentAccess) return { result: `Environment ${envId} not found or not writable`, error: true };
-
-        // Verify the linked page is visible to the current principal.
-        const [page] = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(visibleLib(eq(libraryPages.id, libraryPageId))).limit(1);
-        if (!page) return { result: `Library page ${libraryPageId} not found`, error: true };
-
-        // Dedup: same environment + kind + libraryPageId = already linked
-        const [existingDup] = await db.select({ id: environmentContextArtifacts.id }).from(environmentContextArtifacts)
-          .where(and(eq(environmentContextArtifacts.environmentId, envId), eq(environmentContextArtifacts.kind, kind), eq(environmentContextArtifacts.libraryPageId, libraryPageId))).limit(1);
-
-        let saved;
-        if (existingDup) {
-          saved = existingDup;
-        } else {
-          [saved] = await db.insert(environmentContextArtifacts).values({ environmentId: envId, kind, libraryPageId }).returning();
-        }
-        return { result: JSON.stringify({ saved: true, artifact: { id: saved.id, environmentId: saved.environmentId, kind: saved.kind, libraryPageId: saved.libraryPageId, pageTitle: page.title } }, null, 2) };
-      }
-
-      // ── get_context_artifacts ──
-      if (action === "get_context_artifacts") {
-        const envId = typeof args.id === "number" ? args.id : null;
-        if (!envId) return { result: "Missing 'id' (environment ID) for get_context_artifacts", error: true };
-
-        if (!(await getVisibleEnvironment(envId))) return { result: `Environment ${envId} not accessible`, error: true };
-        const rows = await db
-          .select({
-            id: environmentContextArtifacts.id,
-            environmentId: environmentContextArtifacts.environmentId,
-            kind: environmentContextArtifacts.kind,
-            libraryPageId: environmentContextArtifacts.libraryPageId,
-            pageTitle: libraryPages.title,
-          })
-          .from(environmentContextArtifacts)
-          .leftJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
-          .where(and(eq(environmentContextArtifacts.environmentId, envId), visibleLib()));
-
-        return { result: JSON.stringify(rows.map(r => ({ ...r, pageTitle: r.pageTitle || "Untitled" })), null, 2) };
-      }
-
-      // ── remove_context_artifact ──
-      if (action === "remove_context_artifact") {
-        const envId = typeof args.id === "number" ? args.id : null;
-        const kind = typeof args.kind === "string" ? args.kind.trim() : null;
-        const libraryPageId = typeof args.libraryPageId === "string" ? args.libraryPageId.trim() : null;
-        if (!envId) return { result: "Missing 'id' (environment ID) for remove_context_artifact", error: true };
-        if (!kind) return { result: "Missing 'kind' for remove_context_artifact", error: true };
-
-        const environmentAccess = await getWritableEnvironment(envId);
-        if (!environmentAccess) return { result: `Environment ${envId} not found or not writable`, error: true };
-
-        // If libraryPageId provided, remove the specific artifact; otherwise remove all of that kind
-        const conditions = [eq(environmentContextArtifacts.environmentId, envId), eq(environmentContextArtifacts.kind, kind)];
-        if (libraryPageId) conditions.push(eq(environmentContextArtifacts.libraryPageId, libraryPageId));
-
-        const deleted = await db.delete(environmentContextArtifacts)
-          .where(and(...conditions))
-          .returning({ id: environmentContextArtifacts.id });
-
-        if (deleted.length === 0) return { result: `Context artifact kind '${kind}'${libraryPageId ? ` with page ${libraryPageId}` : ""} not found for environment ${envId}`, error: true };
-        return { result: JSON.stringify({ removed: true, kind, count: deleted.length }) };
       }
 
       return { result: `Unhandled platforms action: ${action}`, error: true };
@@ -12642,11 +12564,10 @@ async function loadMissingCodingContext(
   if (missing.includes("design_md")) {
     let designLoaded = false;
 
-    // Strategy 1: Load only context artifacts visible through both the
-    // parent Platform and linked Library page.
+    // Strategy 1: Product-owned design_system pages visible to the principal.
     try {
-      const { listVisibleEnvironmentContextPages } = await import("./platforms/context-artifact-access");
-      const pages = await listVisibleEnvironmentContextPages(["design_system"]);
+      const { listVisibleProductContextPages } = await import("./platforms/context-artifact-access");
+      const pages = await listVisibleProductContextPages(["design_system"]);
       const contents = pages.map(page => page.content.trim()).filter(Boolean);
       if (contents.length > 0) {
         parts.push(`\n## DESIGN.md\n\n${contents.join("\n\n---\n\n")}`);

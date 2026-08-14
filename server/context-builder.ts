@@ -1984,16 +1984,16 @@ This section loads with the Development context group. Use it for code changes, 
 ${filesystemBody}`;
   }
 
-  // Fallback: principal-visible environment coding_process pages, deduped.
+  // Fallback: principal-visible Product coding_process pages, deduped.
   try {
-    const { listVisibleEnvironmentContextPages } = await import("./platforms/context-artifact-access");
-    const pages = await listVisibleEnvironmentContextPages(["coding_process"]);
+    const { listVisibleProductContextPages } = await import("./platforms/context-artifact-access");
+    const pages = await listVisibleProductContextPages(["coding_process"]);
     const seen = new Set<string>();
     const contents: string[] = [];
     for (const page of pages) {
       const body = page.content.trim();
       if (!body) continue;
-      const key = page.id || page.slug || body.slice(0, 200);
+      const key = page.libraryPageId || page.slug || body.slice(0, 200);
       if (seen.has(key)) continue;
       seen.add(key);
       contents.push(body);
@@ -2005,14 +2005,14 @@ ${contents.join("\n\n---\n\n")}`;
     }
   } catch (err) {
     const { createLogger } = await import("./log");
-    createLogger("ContextBuilder").warn("Failed to load coding process from environment artifact", {
+    createLogger("ContextBuilder").warn("Failed to load coding process from product context", {
       error: err instanceof Error ? err.message : String(err),
     });
   }
 
   return `${header}
 
-WARNING: Coding instructions could not be loaded from any source (filesystem CODING.md or environment context artifact). Coding work may proceed with reduced guidance. Report this in the final coding report as a degraded check.`;
+WARNING: Coding instructions could not be loaded from any source (filesystem CODING.md or product context artifact). Coding work may proceed with reduced guidance. Report this in the final coding report as a degraded check.`;
 }
 
 async function resolvePlanningInstructions(): Promise<string> {
