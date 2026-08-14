@@ -1563,6 +1563,7 @@ export interface IChatFileStorage {
     questionResponse?: QuestionResponseMeta,
     questionCancellation?: QuestionCancellationMeta,
     questionPrompt?: QuestionPrompt,
+    speaker?: MessageSpeakerMeta,
   ): Promise<
     | { outcome: "created"; message: FileMessage; decisionId?: string }
     | { outcome: "duplicate"; message: FileMessage; decisionId?: string }
@@ -2867,6 +2868,7 @@ export const chatFileStorage: IChatFileStorage = {
     questionResponse?: QuestionResponseMeta,
     questionCancellation?: QuestionCancellationMeta,
     questionPrompt?: QuestionPrompt,
+    speaker?: MessageSpeakerMeta,
   ) {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
@@ -2925,6 +2927,7 @@ export const chatFileStorage: IChatFileStorage = {
         ...(pageContext ? { pageContext } : {}),
         ...(questionResponse ? { questionResponse } : {}),
         ...(effectiveCancellation ? { questionCancellation: effectiveCancellation } : {}),
+        ...(speaker ? { speaker } : {}),
       };
       let decisionId: string | undefined;
       if (questionResponse && questionPrompt) {
