@@ -16,6 +16,7 @@ import {
   fetchEnvironmentDeployments,
   enableWarmStageRuntimeVariable,
   fetchEnvironmentRuntimeLogs,
+  findInFlightEnvironmentDeployment,
   listEnvironmentVariableNames,
   redeployEnvironment,
   resolveEnvironmentDeploymentId,
@@ -434,6 +435,26 @@ export function registerRailwayRoutes(app: Express) {
         reason: `Queued ${head.sha.slice(0, 7)} for warm apply`,
       });
       await setStageSyncTargetVariable(control, head.sha);
+      const inFlight = await findInFlightEnvironmentDeployment(control);
+      if (inFlight) {
+        const result = {
+          targetCommitSha: head.sha,
+          targetCommitMessage: head.message,
+          deploymentId: inFlight.id,
+          restarted: false,
+          deferred: true,
+          reason: "in_flight_deploy",
+        };
+        await db.update(privilegedAccessAudit).set({
+          metadata: {
+            idempotencyKey,
+            environmentId: control.environment.platformEnvironmentId,
+            status: "completed",
+            result,
+          },
+        }).where(eq(privilegedAccessAudit.id, existing.id));
+        return res.json({ ok: true, action: "sync_latest", replayed: false, ...result });
+      }
       const restart = await restartEnvironment(control);
       const result = {
         targetCommitSha: head.sha,
