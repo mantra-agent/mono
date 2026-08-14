@@ -28,8 +28,9 @@ interface GoalIndex {
 }
 
 const WIKI_LINK_RE = /\[\[([^\]\n]+?)\]\]/g;
-const LIBRARY_URL_PATH_RE = /\/info\/library\/([A-Za-z0-9_-]+)/g;
-const LIBRARY_URL_QUERY_RE = /\/info(?:\/library|#library)\?page=([A-Za-z0-9_-]+)/g;
+const LIBRARY_URL_PATH_RE = /\/info\/library\/([A-Za-z0-9_%-]+)/g;
+// page= accepts human slug or stable UUID (optionally percent-encoded).
+const LIBRARY_URL_QUERY_RE = /\/(?:info|library)(?:\/library|#library)\?page=([A-Za-z0-9_%-]+)/g;
 const LIBRARY_BADGE_RE = /\[(?:spec|page):([a-z0-9-]+)\]/gi;
 const PERSON_URL_RE = /\/people\/([A-Za-z0-9_-]+)/g;
 const PERSON_BADGE_RE = /\[(?:person|people):\s*([A-Za-z0-9_-]+)\]/gi;

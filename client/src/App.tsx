@@ -261,6 +261,11 @@ function preserveCurrentQuery(targetPath: string): string {
   return `${targetPath}${query ? `?${query}` : ""}`;
 }
 
+/** Keep search + hash across path-only redirects (Library deep links live in the hash). */
+function preserveCurrentLocation(targetPath: string): string {
+  return `${preserveCurrentQuery(targetPath)}${window.location.hash || ""}`;
+}
+
 function sessionRedirectFromQuery(fallbackPath = "/home"): string {
   const params = new URLSearchParams(window.location.search);
   const sessionId = params.get("c") || params.get("key");
@@ -371,9 +376,9 @@ function Router() {
         <Route path="/zero" component={ZeroPage} />
         <Route path="/interface-preview" component={InterfacePreviewPage} />
         <Route path="/dev/orb">{() => <RequirePermission permission="system:read"><DevOrbPage /></RequirePermission>}</Route>
-        <Route path="/library2">{() => <Redirect to="/library" />}</Route>
+        <Route path="/library2">{() => <Redirect to={preserveCurrentLocation("/library")} />}</Route>
         <Route path="/library" component={LibraryPage} />
-        <Route path="/info">{() => <Redirect to="/library" />}</Route>
+        <Route path="/info">{() => <Redirect to={preserveCurrentLocation("/library")} />}</Route>
         <Route path="/files" component={FilesPage} />
         <Route path="/documents/:id" component={DocumentViewerPage} />
         <Route path="/audiences">{() => <RequirePermission permission="system:read"><AudiencesPage /></RequirePermission>}</Route>

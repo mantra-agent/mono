@@ -9,19 +9,28 @@ import { ReferenceRenderer, type ReferenceSurface } from "./reference-renderer";
 const REF_PROTOCOL = "ref://";
 const CODE_WRAPPED_CANONICAL_REF = /`(@([A-Za-z_][A-Za-z0-9_]*):([^`\s\]<>]+))`/g;
 
-const LIBRARY_PAGE_URL_SOURCE = String.raw`(?:https?:\/\/[^\/\s)]+)?\/(?:info|library)#library\?page=([A-Za-z0-9_-]+)`;
+// Capture slug or UUID (optionally percent-encoded). page= is dual-addressable.
+const LIBRARY_PAGE_URL_SOURCE = String.raw`(?:https?:\/\/[^\/\s)]+)?\/(?:info|library)#library\?page=([A-Za-z0-9_%-]+)`;
 const LINKED_LIBRARY_PAGE = new RegExp(String.raw`\[[^\]]*\]\(\s*${LIBRARY_PAGE_URL_SOURCE}\s*\)`, "g");
 const BARE_LIBRARY_PAGE = new RegExp(LIBRARY_PAGE_URL_SOURCE, "g");
 
+function decodeLibraryPageRef(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 /**
  * Normalize authored library-page URLs (markdown links or bare URLs pointing
- * at /info#library?page=<slug> or /library#library?page=<slug>) into canonical
- * @page: reference tokens so they render as proper chips with correct hrefs.
+ * at /info#library?page=<slug|uuid> or /library#library?page=<slug|uuid>) into
+ * canonical @page: reference tokens so they render as proper chips with correct hrefs.
  */
 function normalizeLibraryPageLinks(content: string): string {
   return content
-    .replace(LINKED_LIBRARY_PAGE, (_m, slug: string) => `@page:${slug}`)
-    .replace(BARE_LIBRARY_PAGE, (_m, slug: string) => `@page:${slug}`);
+    .replace(LINKED_LIBRARY_PAGE, (_m, pageRef: string) => `@page:${decodeLibraryPageRef(pageRef)}`)
+    .replace(BARE_LIBRARY_PAGE, (_m, pageRef: string) => `@page:${decodeLibraryPageRef(pageRef)}`);
 }
 
 function unwrapCodeWrappedReferenceTokens(content: string): string {
