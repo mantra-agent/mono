@@ -34,7 +34,7 @@ import {
   environmentHostingBindings,
   environmentSourceBindings,
   platformProductEnvironments,
-  platformProducts,
+  products,
   platforms,
   providerConnections,
   type EnvironmentHostingBinding,
@@ -1271,12 +1271,12 @@ export async function getWorkflowEnvironmentTruth(runIdOrEnvironmentId: string |
   const [row] = await db
     .select({
       platform: platforms,
-      product: platformProducts,
+      product: products,
       environment: platformProductEnvironments,
     })
     .from(platformProductEnvironments)
-    .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-    .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
+    .innerJoin(products, eq(platformProductEnvironments.productId, products.id))
+    .innerJoin(platforms, eq(platformProductEnvironments.platformId, platforms.id))
     .where(and(eq(platformProductEnvironments.id, environmentId), visible(platformScopeColumns)))
     .limit(1);
   if (!row) return null;

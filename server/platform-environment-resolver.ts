@@ -2,7 +2,7 @@ import { and, eq, type SQL } from "drizzle-orm";
 import {
   environmentHostingBindings,
   platformProductEnvironments,
-  platformProducts,
+  products,
   platforms,
   providerConnections,
 } from "@shared/models/platforms";
@@ -49,8 +49,8 @@ async function resolveEnvironment(where: SQL): Promise<ResolvedPlatformEnvironme
     .select({
       platformEnvironmentId: platformProductEnvironments.id,
       platformEnvironmentName: platformProductEnvironments.name,
-      productId: platformProducts.id,
-      productName: platformProducts.name,
+      productId: products.id,
+      productName: products.name,
       platformId: platforms.id,
       platformName: platforms.name,
       provider: environmentHostingBindings.provider,
@@ -65,8 +65,8 @@ async function resolveEnvironment(where: SQL): Promise<ResolvedPlatformEnvironme
     .from(platformProductEnvironments)
     .innerJoin(environmentHostingBindings, eq(environmentHostingBindings.environmentId, platformProductEnvironments.id))
     .innerJoin(providerConnections, eq(providerConnections.id, environmentHostingBindings.connectionId))
-    .innerJoin(platformProducts, eq(platformProducts.id, platformProductEnvironments.productId))
-    .innerJoin(platforms, eq(platforms.id, platformProducts.platformId))
+    .innerJoin(products, eq(products.id, platformProductEnvironments.productId))
+    .innerJoin(platforms, eq(platforms.id, platformProductEnvironments.platformId))
     .where(where)
     .limit(2);
 

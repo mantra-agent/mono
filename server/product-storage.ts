@@ -2,7 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { db, runWithDatabaseTransaction } from "./db";
 import { requireCurrentPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
-import { featureRequests, insertFeatureRequestSchema, insertProductContextSchema, insertProductSchema, platforms, productBacklogs, productContextArtifacts, productPlatformAssociations, products } from "@shared/models/platforms";
+import { featureRequests, insertFeatureRequestSchema, insertProductContextSchema, insertProductSchema, platformProductEnvironments, platforms, productBacklogs, productContextArtifacts, productPlatformAssociations, products } from "@shared/models/platforms";
 import { libraryPages } from "@shared/models/info";
 import { vaults } from "@shared/models/vaults";
 import { visiblePlatform, writablePlatform } from "./platforms/platform-access";
@@ -98,7 +98,8 @@ export const productStorage = {
     const [product] = await db.select().from(products).where(combineWithWritableScope(principal, scopeColumns, eq(products.id, id))).limit(1);
     if (!product) return false;
     const [counts] = await db.select({ platforms: sql<number>`count(distinct ${productPlatformAssociations.id})::int`, features: sql<number>`count(distinct ${featureRequests.id})::int` }).from(productBacklogs).leftJoin(productPlatformAssociations, eq(productPlatformAssociations.productId, product.id)).leftJoin(featureRequests, eq(featureRequests.backlogId, productBacklogs.id)).where(eq(productBacklogs.productId, id));
-    const dependencies = { platforms: counts?.platforms ?? 0, featureRequests: counts?.features ?? 0 };
+    const [environmentCount] = await db.select({ environments: sql<number>`count(${platformProductEnvironments.id})::int` }).from(platformProductEnvironments).where(eq(platformProductEnvironments.productId, id));
+    const dependencies = { platforms: counts?.platforms ?? 0, featureRequests: counts?.features ?? 0, environments: environmentCount?.environments ?? 0 };
     if (Object.values(dependencies).some(Boolean)) throw new ProductDependencyError(dependencies);
     const [deleted] = await db.delete(products).where(combineWithWritableScope(principal, scopeColumns, eq(products.id, id))).returning({ id: products.id });
     return !!deleted;

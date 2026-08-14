@@ -2,7 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import {
   environmentHostingBindings,
   platformProductEnvironments,
-  platformProducts,
+  products,
   platforms,
   providerConnections,
 } from "@shared/models/platforms";
@@ -90,13 +90,13 @@ async function listVisibleRailwayEnvironments(principal: Principal): Promise<Vis
     .select({
       platformEnvironmentId: platformProductEnvironments.id,
       environmentName: platformProductEnvironments.name,
-      productName: platformProducts.name,
+      productName: products.name,
       platformName: platforms.name,
       hostingBindingId: environmentHostingBindings.id,
     })
     .from(platformProductEnvironments)
-    .innerJoin(platformProducts, eq(platformProducts.id, platformProductEnvironments.productId))
-    .innerJoin(platforms, eq(platforms.id, platformProducts.platformId))
+    .innerJoin(products, eq(products.id, platformProductEnvironments.productId))
+    .innerJoin(platforms, eq(platforms.id, platformProductEnvironments.platformId))
     .innerJoin(
       environmentHostingBindings,
       eq(environmentHostingBindings.environmentId, platformProductEnvironments.id),
@@ -106,7 +106,7 @@ async function listVisibleRailwayEnvironments(principal: Principal): Promise<Vis
       combineWithVisibleScope(principal, platformScope),
       combineWithVisibleScope(principal, providerScope),
       eq(platforms.status, "active"),
-      eq(platformProducts.status, "active"),
+      eq(products.status, "active"),
       eq(providerConnections.status, "active"),
       eq(environmentHostingBindings.provider, "railway"),
       eq(providerConnections.provider, "railway"),

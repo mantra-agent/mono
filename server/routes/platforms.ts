@@ -10,7 +10,7 @@ import { getSecretSync } from "../secrets-store";
 import { getProviderCredential } from "../provider-credential-store";
 import { getLatestDeploymentByToken } from "../integrations/railway/client";
 import { getCloudflareLatestDeployment } from "../services/provider-connection-service";
-import { environmentHostingBindings, environmentRuntimeVariables, environmentSourceBindings, environmentCapabilityBindings, environmentContextArtifacts, insertPlatformProductEnvironmentSchema, insertPlatformProductSchema, insertPlatformSchema, platformProductEnvironments, platformProducts, platforms, providerConnections, upsertSourceBindingSchema, upsertHostingBindingSchema, upsertCapabilityBindingSchema, upsertContextArtifactSchema, type EnvironmentSourceBinding, type EnvironmentHostingBinding, type EnvironmentRuntimeVariable, type ProviderConnection, type EnvironmentCapabilityBinding } from "@shared/models/platforms";
+import { environmentHostingBindings, environmentRuntimeVariables, environmentSourceBindings, environmentCapabilityBindings, environmentContextArtifacts, insertPlatformProductEnvironmentSchema, insertPlatformProductSchema, insertPlatformSchema, platformProductEnvironments, productPlatformAssociations, products, platforms, providerConnections, upsertSourceBindingSchema, upsertHostingBindingSchema, upsertCapabilityBindingSchema, upsertContextArtifactSchema, type EnvironmentSourceBinding, type EnvironmentHostingBinding, type EnvironmentRuntimeVariable, type ProviderConnection, type EnvironmentCapabilityBinding } from "@shared/models/platforms";
 import { encrypt, getEncryptionKey } from "../encryption";
 import { getCloudflarePagesProjectTruth, triggerCloudflarePagesProductionDeployment, retryCloudflarePagesDeployment, cancelCloudflarePagesDeployment, repairCloudflarePagesProject, type CloudflareProjectRepair } from "../platforms/cloudflare-pages-service";
 import { deleteEnvironmentBuildLifecycleConfigs, disableEnvironmentBuildLifecycleConfig, getEnvironmentBuildLifecycleConfig, getEnvironmentBuildStatus, listEnvironmentBuildWorkflows, setEnvironmentBuildLifecycleConfig, startEnvironmentBuildWorkflow } from "../platforms/build-lifecycle-service";
@@ -122,9 +122,9 @@ async function ensurePlatformWritable(platformId: number): Promise<boolean> {
 async function ensureProductWritable(platformId: number, productId: number): Promise<boolean> {
   if (!(await ensurePlatformWritable(platformId))) return false;
   const rows = await db
-    .select({ id: platformProducts.id })
-    .from(platformProducts)
-    .where(and(eq(platformProducts.id, productId), eq(platformProducts.platformId, platformId)))
+    .select({ id: productPlatformAssociations.id })
+    .from(productPlatformAssociations)
+    .where(and(eq(productPlatformAssociations.productId, productId), eq(productPlatformAssociations.platformId, platformId)))
     .limit(1);
   return rows.length > 0;
 }
@@ -143,17 +143,20 @@ export function registerPlatformRoutes(app: Express): void {
         principal,
         rows.map((platform) => platform.id),
       );
-      const products = await db
-        .select()
-        .from(platformProducts)
-        .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
+      const productRows = await db
+        .select({
+          product: products,
+          platformId: productPlatformAssociations.platformId,
+        })
+        .from(productPlatformAssociations)
+        .innerJoin(products, eq(productPlatformAssociations.productId, products.id))
+        .innerJoin(platforms, eq(productPlatformAssociations.platformId, platforms.id))
         .where(visiblePlatform())
-        .orderBy(platformProducts.platformId, platformProducts.name);
+        .orderBy(productPlatformAssociations.platformId, products.name);
       const environments = await db
         .select()
         .from(platformProductEnvironments)
-        .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-        .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
+        .innerJoin(platforms, eq(platformProductEnvironments.platformId, platforms.id))
         .where(visiblePlatform())
         .orderBy(platformProductEnvironments.productId, platformProductEnvironments.name);
       const environmentsByProduct = new Map<number, typeof platformProductEnvironments.$inferSelect[]>();
@@ -162,11 +165,15 @@ export function registerPlatformRoutes(app: Express): void {
         list.push(row.platform_product_environments);
         environmentsByProduct.set(row.platform_product_environments.productId, list);
       }
-      const productsByPlatform = new Map<number, (typeof platformProducts.$inferSelect & { environments: typeof platformProductEnvironments.$inferSelect[] })[]>();
-      for (const row of products) {
-        const list = productsByPlatform.get(row.platform_products.platformId) || [];
-        list.push({ ...row.platform_products, environments: environmentsByProduct.get(row.platform_products.id) || [] });
-        productsByPlatform.set(row.platform_products.platformId, list);
+      const productsByPlatform = new Map<number, Array<typeof products.$inferSelect & { platformId: number; environments: typeof platformProductEnvironments.$inferSelect[] }>>();
+      for (const row of productRows) {
+        const list = productsByPlatform.get(row.platformId) || [];
+        list.push({
+          ...row.product,
+          platformId: row.platformId,
+          environments: environmentsByProduct.get(row.product.id) || [],
+        });
+        productsByPlatform.set(row.platformId, list);
       }
       res.json(
         rows.map((platform) => {
@@ -193,8 +200,8 @@ export function registerPlatformRoutes(app: Express): void {
       const [row] = await db
         .select()
         .from(platformProductEnvironments)
-        .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-        .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
+        .innerJoin(products, eq(platformProductEnvironments.productId, products.id))
+        .innerJoin(platforms, eq(platformProductEnvironments.platformId, platforms.id))
         .where(and(eq(platformProductEnvironments.id, environmentId), visiblePlatform()))
         .limit(1);
       if (!row) return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "get_environment_details" });
@@ -278,7 +285,7 @@ export function registerPlatformRoutes(app: Express): void {
 
       res.json({
         platform: row.platforms,
-        product: row.platform_products,
+        product: row.products,
         environment: {
           ...row.platform_product_environments,
           kind: environmentKind(row.platform_product_environments.name),
@@ -487,8 +494,7 @@ export function registerPlatformRoutes(app: Express): void {
           })
           .from(environmentHostingBindings)
           .innerJoin(platformProductEnvironments, eq(environmentHostingBindings.environmentId, platformProductEnvironments.id))
-          .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-          .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
+          .innerJoin(platforms, eq(platformProductEnvironments.platformId, platforms.id))
           .where(and(eq(environmentHostingBindings.environmentId, environmentId), visiblePlatform()))
           .limit(1);
         hostingRow = rows[0];
@@ -820,11 +826,12 @@ export function registerPlatformRoutes(app: Express): void {
       const platformId = platformIdParam(req.params.platformId);
       const productId = platformIdParam(req.params.productId);
       if (!(await ensurePlatformWritable(platformId))) return res.status(404).json({ error: `Platform ${platformId} not found`, operation: "update_platform_product" });
+      if (!(await ensureProductWritable(platformId, productId))) return res.status(404).json({ error: `Product ${productId} not found`, operation: "update_platform_product" });
       const parsed = insertPlatformProductSchema.partial().parse(req.body);
-      const [updated] = await db.update(platformProducts).set({ ...parsed, updatedAt: sql`CURRENT_TIMESTAMP` }).where(and(eq(platformProducts.id, productId), eq(platformProducts.platformId, platformId))).returning();
+      const [updated] = await db.update(products).set({ ...parsed, updatedAt: sql`CURRENT_TIMESTAMP` }).where(eq(products.id, productId)).returning();
       if (!updated) return res.status(404).json({ error: `Product ${productId} not found`, operation: "update_platform_product" });
       await db.update(platforms).set({ updatedAt: sql`CURRENT_TIMESTAMP` }).where(writablePlatform(eq(platforms.id, platformId)));
-      res.json(updated);
+      res.json({ ...updated, platformId });
     } catch (error: unknown) {
       const err = routeError(error, "update_platform_product");
       res.status(400).json({ error: err.message, operation: err.operation });
@@ -839,7 +846,7 @@ export function registerPlatformRoutes(app: Express): void {
       if (!(await ensureProductWritable(platformId, productId))) return res.status(404).json({ error: `Product ${productId} not found`, operation: "create_product_environment" });
       const parsed = insertPlatformProductEnvironmentSchema.parse(req.body);
       const [created] = await db.insert(platformProductEnvironments).values({ ...parsed, productId, platformId }).returning();
-      await db.update(platformProducts).set({ updatedAt: sql`CURRENT_TIMESTAMP` }).where(and(eq(platformProducts.id, productId), eq(platformProducts.platformId, platformId)));
+      await db.update(products).set({ updatedAt: sql`CURRENT_TIMESTAMP` }).where(eq(products.id, productId));
       await db.update(platforms).set({ updatedAt: sql`CURRENT_TIMESTAMP` }).where(writablePlatform(eq(platforms.id, platformId)));
       res.status(201).json(created);
     } catch (error: unknown) {
@@ -856,7 +863,7 @@ export function registerPlatformRoutes(app: Express): void {
       if (!(await ensureProductWritable(platformId, productId))) return res.status(404).json({ error: `Product ${productId} not found`, operation: "delete_product_environment" });
       const [deleted] = await db.delete(platformProductEnvironments).where(and(eq(platformProductEnvironments.id, environmentId), eq(platformProductEnvironments.productId, productId))).returning({ id: platformProductEnvironments.id });
       if (!deleted) return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "delete_product_environment" });
-      await db.update(platformProducts).set({ updatedAt: sql`CURRENT_TIMESTAMP` }).where(and(eq(platformProducts.id, productId), eq(platformProducts.platformId, platformId)));
+      await db.update(products).set({ updatedAt: sql`CURRENT_TIMESTAMP` }).where(eq(products.id, productId));
       await db.update(platforms).set({ updatedAt: sql`CURRENT_TIMESTAMP` }).where(writablePlatform(eq(platforms.id, platformId)));
       res.json({ success: true });
     } catch (error: unknown) {
@@ -870,7 +877,7 @@ export function registerPlatformRoutes(app: Express): void {
       const platformId = platformIdParam(req.params.platformId);
       const productId = platformIdParam(req.params.productId);
       if (!(await ensurePlatformWritable(platformId))) return res.status(404).json({ error: `Platform ${platformId} not found`, operation: "delete_platform_product" });
-      const [deleted] = await db.delete(platformProducts).where(and(eq(platformProducts.id, productId), eq(platformProducts.platformId, platformId))).returning({ id: platformProducts.id });
+      const [deleted] = await db.delete(productPlatformAssociations).where(and(eq(productPlatformAssociations.productId, productId), eq(productPlatformAssociations.platformId, platformId))).returning({ id: productPlatformAssociations.id });
       if (!deleted) return res.status(404).json({ error: `Product ${productId} not found`, operation: "delete_platform_product" });
       await db.update(platforms).set({ updatedAt: sql`CURRENT_TIMESTAMP` }).where(writablePlatform(eq(platforms.id, platformId)));
       res.json({ success: true });

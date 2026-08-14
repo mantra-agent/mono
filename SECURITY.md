@@ -1,3 +1,10 @@
+<!-- 2026-08-14 Environment product remount:
+- Assets/data: A01/A03/A07 Build Product intent in `products` and Environment ownership in `platform_product_environments` (S1/S2 deployment identity).
+- Flow/threat: Environment create/list/resolve still parented on leftover `platform_products` IDs after Product intent moved to `products`. Name-matched dual identity lets source, Railway, Cloudflare, Expo, Issues, and workflows attach to the wrong Product, and leftover create/delete can invent a second authority (STRIDE tampering/repudiation; DATA-01/AGENT-03).
+- Deterministic controls/owner: `platform_product_environments.product_id` and `workflow_runs.linked_product_id` now FK to `products`. Remount maps leftover parents by same-account exact name (Landing 10→1, Mobile 8→2, Web 7→3, Website 5→4). Environment visibility and create use denormalized `platform_id` plus `product_platform_associations`. `product-storage.remove` fails closed while Environments remain. `platform_products` is leftover and is not deleted. Owner: Build Products. Severity: high integrity. SLA: immediate.
+- Residual/rollback: leftover `platform_products` rows remain until a later delete. Revert the remount migration/heal, Environment parent joins, and this finding together.
+-->
+
 <!-- 2026-08-14 Account name + last-active:
 - Assets/data: A01/A07 Account admin name (`accounts.name`) and projected last-active (S1 operational identity). No new Account column.
 - Flow/threat: Accounts admin -> rename / suspend / archive / toast. A second last-active clock or foundation replay overwrite would lie about who is live or undo an admin rename (STRIDE tampering; IAM-01).
@@ -92,8 +99,8 @@
 <!-- 2026-08-12 Product tool mutation split:
 - Assets/data: principal/account-scoped Product intent in `products` (A01/A07; S2) and rolling `platform_products` Environment ownership (A03; S1/S2).
 - Flow/threat: model-originated `platforms` tool -> Product create/update. Keeping `create_product` on `platform_products` lets the Agent invent a second Product authority, miss owner/account scope, and leave the BUILD Products screen empty (STRIDE tampering/repudiation; DATA-01/AGENT-03).
-- Deterministic controls/owner: `product-storage.ts` remains the sole ordinary Product mutation boundary. `list_products`, `create_product`, and `update_product` delegate to it and inherit its principal-scoped predicates. `create_product_legacy` and `POST /api/platforms/:id/products` are frozen (tool error / HTTP 410) and must not insert `platform_products`. `update_product_legacy` remains a compatibility write on existing Environment parents only. `platform_product_environments.platform_id` is additive denormalized Platform ownership, backfilled from `platform_products`; it does not remount Environments onto `products`. Both remaining families remain engineering-write actions; named `build:write`, Build composition, and Platform writability stay independent. Owner: Build Products. Severity: high integrity during the dual-table transition. SLA: immediate.
-- Residual/rollback: freeze is reversible by restoring the two create paths. The additive `platform_id` column is nullable and unused by Environment parentage until remount. Revert the freeze, AGENTS contract, and this finding together if the cut is abandoned.
+- Deterministic controls/owner: `product-storage.ts` remains the sole ordinary Product mutation boundary. `list_products`, `create_product`, and `update_product` delegate to it and inherit its principal-scoped predicates. `create_product_legacy` and `POST /api/platforms/:id/products` are frozen (tool error / HTTP 410) and must not insert `platform_products`. `update_product_legacy` remains a compatibility write on remounted Products. `platform_product_environments.product_id` now references `products`; `platform_id` is the denormalized Platform owner. Both remaining families remain engineering-write actions; named `build:write`, Build composition, and Platform writability stay independent. Owner: Build Products. Severity: high integrity during the dual-table transition. SLA: immediate.
+- Residual/rollback: freeze remains; remount now parents Environments on `products`. Revert the freeze, remount, AGENTS contract, and this finding together if the cut is abandoned.
 -->
 
 <!-- 2026-08-12 Cost all-account reporting scope:

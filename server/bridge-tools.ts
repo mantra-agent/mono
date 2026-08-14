@@ -6537,7 +6537,8 @@ ${refs}` : ""),
         environmentRuntimeVariables,
         environmentContextArtifacts,
         platforms: platformsTable,
-        platformProducts,
+        productPlatformAssociations,
+        products,
         platformProductEnvironments,
         insertProviderConnectionSchema,
         insertPlatformSchema,
@@ -6733,14 +6734,15 @@ ${refs}` : ""),
         const productAccess = await getWritableProduct(productId);
         if (!productAccess) return { result: `Product ${productId} not found or not writable`, error: true };
         const prod = productAccess.product;
+        const plat = productAccess.platform;
         const patch: Record<string, unknown> = { updatedAt: sqlTag`CURRENT_TIMESTAMP` };
         if (typeof args.name === "string") patch.name = args.name.trim();
         if (typeof args.description === "string") patch.description = args.description;
         if (typeof args.status === "string") patch.status = args.status;
         const parsed = insertPlatformProductSchema.partial().parse(patch);
-        const [updated] = await db.update(platformProducts).set({ ...parsed, updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(platformProducts.id, productId)).returning();
-        await db.update(platformsTable).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(writablePlat(eq(platformsTable.id, prod.platformId)));
-        return { result: JSON.stringify(updated, null, 2) };
+        const [updated] = await db.update(products).set({ ...parsed, updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(products.id, productId)).returning();
+        await db.update(platformsTable).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(writablePlat(eq(platformsTable.id, plat.id)));
+        return { result: JSON.stringify({ ...updated, platformId: plat.id }, null, 2) };
       }
 
       // ── create_environment ──
@@ -6750,10 +6752,11 @@ ${refs}` : ""),
         const productAccess = await getWritableProduct(productId);
         if (!productAccess) return { result: `Product ${productId} not found or not writable`, error: true };
         const prod = productAccess.product;
+        const plat = productAccess.platform;
         const parsed = insertPlatformProductEnvironmentSchema.parse({ name: typeof args.name === "string" ? args.name : "" });
-        const [created] = await db.insert(platformProductEnvironments).values({ ...parsed, productId, platformId: prod.platformId }).returning();
-        await db.update(platformProducts).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(platformProducts.id, productId));
-        await db.update(platformsTable).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(writablePlat(eq(platformsTable.id, prod.platformId)));
+        const [created] = await db.insert(platformProductEnvironments).values({ ...parsed, productId, platformId: plat.id }).returning();
+        await db.update(products).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(products.id, productId));
+        await db.update(platformsTable).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(writablePlat(eq(platformsTable.id, plat.id)));
         return { result: JSON.stringify(created, null, 2) };
       }
 
@@ -6765,10 +6768,11 @@ ${refs}` : ""),
         if (!environmentAccess) return { result: `Environment ${envId} not found or not writable`, error: true };
         const env = environmentAccess.environment;
         const prod = environmentAccess.product;
+        const plat = environmentAccess.platform;
         const parsed = insertPlatformProductEnvironmentSchema.partial().parse({ name: typeof args.name === "string" ? args.name : undefined });
         const [updated] = await db.update(platformProductEnvironments).set({ ...parsed, updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(platformProductEnvironments.id, envId)).returning();
-        await db.update(platformProducts).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(platformProducts.id, prod.id));
-        await db.update(platformsTable).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(writablePlat(eq(platformsTable.id, prod.platformId)));
+        await db.update(products).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(products.id, prod.id));
+        await db.update(platformsTable).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(writablePlat(eq(platformsTable.id, plat.id)));
         return { result: JSON.stringify(updated, null, 2) };
       }
 
@@ -6776,9 +6780,16 @@ ${refs}` : ""),
       if (action === "list_environments") {
         const plats = await db.select().from(platformsTable).where(visiblePlat()).orderBy(desc(platformsTable.updatedAt));
         const platformIds = plats.map(platform => platform.id);
-        const prods = platformIds.length > 0
-          ? await db.select().from(platformProducts).where(inArray(platformProducts.platformId, platformIds)).orderBy(platformProducts.name)
+        const associated = platformIds.length > 0
+          ? await db.select({
+              product: products,
+              platformId: productPlatformAssociations.platformId,
+            }).from(productPlatformAssociations)
+              .innerJoin(products, eq(productPlatformAssociations.productId, products.id))
+              .where(inArray(productPlatformAssociations.platformId, platformIds))
+              .orderBy(products.name)
           : [];
+        const prods = associated.map((row) => ({ ...row.product, platformId: row.platformId }));
         const productIds = prods.map(product => product.id);
         const envs = productIds.length > 0
           ? await db.select().from(platformProductEnvironments).where(inArray(platformProductEnvironments.productId, productIds)).orderBy(platformProductEnvironments.name)
@@ -7091,8 +7102,8 @@ ${refs}` : ""),
         await db.delete(environmentHostingBindings).where(eq(environmentHostingBindings.environmentId, envId));
         await db.delete(environmentSourceBindings).where(eq(environmentSourceBindings.environmentId, envId));
         const [deleted] = await db.delete(platformProductEnvironments).where(eq(platformProductEnvironments.id, envId)).returning();
-        await db.update(platformProducts).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(platformProducts.id, prod.id));
-        await db.update(platformsTable).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(writablePlat(eq(platformsTable.id, prod.platformId)));
+        await db.update(products).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(products.id, prod.id));
+        await db.update(platformsTable).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(writablePlat(eq(platformsTable.id, environmentAccess.platform.id)));
         return { result: JSON.stringify({ deleted: true, environment: deleted }, null, 2) };
       }
 
