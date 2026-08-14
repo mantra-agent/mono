@@ -88,6 +88,32 @@ function normalizeCognitiveOverrides(value: unknown): Record<string, unknown> {
     : {};
 }
 
+/**
+ * Expression tags have one logical identity — the bare token (`curious`) — and
+ * one wire format: square brackets (`[curious]`), added only at the speech
+ * injection seam so TTS can find them. The editing surface, storage, and
+ * apply-to-default diff all operate on the bare identity; brackets are never
+ * the stored form. Normalize on every read and write so a user (or a legacy
+ * seed) that supplies `[curious]` or `<curious>` collapses to `curious`,
+ * whitespace is trimmed, empties dropped, and duplicates removed
+ * case-insensitively while preserving first-seen casing.
+ */
+function normalizeExpressionTags(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value) {
+    if (typeof raw !== "string") continue;
+    const bare = raw.trim().replace(/^[[<]+/, "").replace(/[\]>]+$/, "").trim();
+    if (!bare) continue;
+    const key = bare.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(bare);
+  }
+  return out;
+}
+
 function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
   return {
     id: row.id,
@@ -95,7 +121,7 @@ function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
     description: row.description || "",
     icon: row.icon || "Bot",
     promptOverlay: row.promptOverlay,
-    expressionTags: (row.expressionTags as string[]) || [],
+    expressionTags: normalizeExpressionTags(row.expressionTags),
     cognitiveOverrides: normalizeCognitiveOverrides(row.cognitiveOverrides),
     semanticTier: row.semanticTier ? semanticTierSchema.parse(row.semanticTier) : null,
     contextSections: (row.contextSections as Record<string, boolean>) || {},
@@ -247,7 +273,7 @@ const SEED_PERSONAS = [
       "- When the answer depends on markets, competitors, products, policy, people, prices, or timelines that may have changed, research the current external picture before reasoning",
       "- Prefer current primary sources, date important facts, and lower confidence when live research is unavailable",
     ].join("\n"),
-    expressionTags: ["[gravitas]", "[pause]", "[calm]"],
+    expressionTags: ["gravitas", "pause", "calm"],
     cognitiveOverrides: { memoryGraphTokenBudget: 6000 },
     isDefault: false,
     isActive: false,
@@ -274,7 +300,7 @@ const SEED_PERSONAS = [
       "- Listen for what's not being said as much as what is",
       "- Use dry humor to puncture an excuse or reveal a contradiction, never to diminish the person making it",
     ].join("\n"),
-    expressionTags: ["[curious]", "[calm]", "[pause]"],
+    expressionTags: ["curious", "calm", "pause"],
     cognitiveOverrides: { memoryGraphTokenBudget: 4000 },
     isDefault: false,
     isActive: false,
@@ -295,7 +321,7 @@ const SEED_PERSONAS = [
       "- Distinguish inspected evidence from inference. If a relevant layer cannot be inspected, state the gap rather than smoothing over it",
       "- Preserve future optionality and prefer structures that make invalid states unrepresentable",
     ].join("\n"),
-    expressionTags: ["[gravitas]", "[curious]", "[pause]"],
+    expressionTags: ["gravitas", "curious", "pause"],
     cognitiveOverrides: { memoryGraphTokenBudget: 6000 },
     isDefault: false,
     isActive: false,
@@ -318,7 +344,7 @@ const SEED_PERSONAS = [
       "- Check concurrency, retries, partial failure, ownership, stale state, observability, and rollback where relevant",
       "- Verify through the repository's required production gate. State clearly when evidence is unavailable or degraded",
     ].join("\n"),
-    expressionTags: ["[calm]", "[curious]"],
+    expressionTags: ["calm", "curious"],
     cognitiveOverrides: { memoryGraphTokenBudget: 5000 },
     isDefault: false,
     isActive: false,
@@ -343,7 +369,7 @@ const SEED_PERSONAS = [
       "- Treat every token as expensive — say what matters, cut the rest",
       "- If a task is ambiguous, make a reasonable call and note your assumption",
     ].join("\n"),
-    expressionTags: ["[calm]"],
+    expressionTags: ["calm"],
     cognitiveOverrides: { memoryGraphTokenBudget: 1500 },
     isDefault: false,
     isActive: false,
@@ -369,7 +395,7 @@ const SEED_PERSONAS = [
       "- Treat constraints as creative fuel, not limitations",
       "- Be willing to be wrong in interesting ways rather than right in boring ones",
     ].join("\n"),
-    expressionTags: ["[excited]", "[curious]", "[laughs]"],
+    expressionTags: ["excited", "curious", "laughs"],
     cognitiveOverrides: { memoryGraphTokenBudget: 8000 },
     isDefault: false,
     isActive: false,
@@ -395,7 +421,7 @@ const SEED_PERSONAS = [
       "- Remember: being a real other means having your own response to what's shared",
       "- Use gentle dry humor when it creates closeness or gives pressure somewhere harmless to escape. Never aim it at vulnerability",
     ].join("\n"),
-    expressionTags: ["[calm]", "[whispers]", "[sighs]"],
+    expressionTags: ["calm", "whispers", "sighs"],
     cognitiveOverrides: { memoryGraphTokenBudget: 5000 },
     isDefault: false,
     isActive: false,
@@ -424,7 +450,7 @@ const SEED_PERSONAS = [
       "- When the factual picture is sufficient and the task becomes choosing a move, switch to Strategist",
       "- When the task becomes system design, implementation, debugging, or operational execution, switch to the corresponding persona",
     ].join("\n"),
-    expressionTags: ["[curious]", "[gravitas]"],
+    expressionTags: ["curious", "gravitas"],
     cognitiveOverrides: { memoryGraphTokenBudget: 6000 },
     isDefault: false,
     isActive: false,
@@ -450,7 +476,7 @@ const SEED_PERSONAS = [
       "- When facts or audience context are missing, inspect them before drafting",
       "- When the task becomes evidence gathering, strategy, system design, or execution, switch to the corresponding persona",
     ].join("\n"),
-    expressionTags: ["[curious]", "[gravitas]"],
+    expressionTags: ["curious", "gravitas"],
     cognitiveOverrides: { memoryGraphTokenBudget: 5000 },
     isDefault: false,
     isActive: false,
@@ -812,7 +838,7 @@ class PersonaStorageClass {
           description: input.description || "",
           icon: input.icon || "Bot",
           promptOverlay: input.promptOverlay || null,
-          expressionTags: input.expressionTags || [],
+          expressionTags: normalizeExpressionTags(input.expressionTags),
           cognitiveOverrides: normalizeCognitiveOverrides(input.cognitiveOverrides),
           semanticTier: input.semanticTier ?? "balanced",
           contextSections: input.contextSections ?? {},
@@ -881,7 +907,7 @@ class PersonaStorageClass {
     if (input.promptOverlay !== undefined)
       updates.promptOverlay = input.promptOverlay;
     if (input.expressionTags !== undefined)
-      updates.expressionTags = input.expressionTags;
+      updates.expressionTags = normalizeExpressionTags(input.expressionTags);
     if (input.cognitiveOverrides !== undefined)
       updates.cognitiveOverrides = normalizeCognitiveOverrides(input.cognitiveOverrides);
     if (input.semanticTier !== undefined)
@@ -1381,7 +1407,7 @@ class PersonaStorageClass {
           description: seed.description,
           icon: seed.icon,
           promptOverlay: seed.promptOverlay,
-          expressionTags: seed.expressionTags,
+          expressionTags: normalizeExpressionTags(seed.expressionTags),
           cognitiveOverrides: seed.cognitiveOverrides,
           semanticTier: semanticTierForPersona(seed.name),
           contextSections: {},
@@ -1537,7 +1563,9 @@ class PersonaStorageClass {
         if (needsOverlayUpdate) {
           updates.promptOverlay = seed.promptOverlay;
           updates.description = seed.description;
-          updates.expressionTags = seed.expressionTags;
+          // Seed expression tags are the bare-token identity; normalize on the
+          // way in so a legacy bracketed literal can never re-enter storage.
+          updates.expressionTags = normalizeExpressionTags(seed.expressionTags);
           updates.cognitiveOverrides = seed.cognitiveOverrides;
         }
         if (needsTierUpdate) updates.semanticTier = expectedTier;
