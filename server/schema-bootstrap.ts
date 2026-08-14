@@ -1705,6 +1705,7 @@ export async function runSchemaBootstrap(
         WHEN 'Strategist' THEN 'max'
         WHEN 'Architect' THEN 'max'
         WHEN 'Operator' THEN 'fast'
+        WHEN 'Executive' THEN 'high'
         WHEN 'Visionary' THEN 'high'
         WHEN 'Creative' THEN 'high'
         WHEN 'Coach' THEN 'high'

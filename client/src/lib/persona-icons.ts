@@ -2,7 +2,7 @@ import {
   Bot, User, Shield, Trophy, Zap, Palette, Heart,
   Sparkles, Brain, Target, Compass, BookOpen, Star,
   Flame, Eye, Lightbulb, Feather, Anchor, Gem,
-  Rocket, Glasses, Coffee, Briefcase, Globe, Swords,
+  Rocket, Glasses, Coffee, Briefcase, Globe, Swords, Scale,
   type LucideIcon,
 } from "lucide-react";
 
@@ -32,6 +32,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Briefcase,
   Globe,
   Swords,
+  Scale,
 };
 
 export const AVAILABLE_ICONS = Object.keys(ICON_MAP);
