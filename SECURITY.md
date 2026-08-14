@@ -1,3 +1,10 @@
+<!-- 2026-08-14 Leftover catalog followers rebase:
+- Assets/data: A04/A06 selectable Persona identity (S2 mind configuration). updateState is follow vs customize, not a second seat.
+- Flow/threat: Operator→Executive (and Persuader/Creative) kept the old overlay on user copies. Lineage hashed that leftover against the new seed, marked pinned_legacy, then Apply to Default only pushed following copies. Uncustomized accounts stayed on a retired card and missed every later publish (STRIDE spoofing/elevation analogue; AGENT-03).
+- Deterministic controls/owner: boot advances a drifted seed into a platform revision and pushes followers. Copies with no user-scoped revision that still carry a retired opener or match any historical platform revision rebase onto the current default. New forks pin following. Owner: Core Persona/Context. Severity: medium integrity. SLA: immediate.
+- Residual/rollback: a real user revision is never overwritten. Historical sessions stay pinned. Revert advanceSeedRevisions, healLeftoverFollowers, the insertOwnedCopy follow pin, and this finding together.
+-->
+
 <!-- 2026-08-14 Orphan persona copies regain seed lineage:
 - Assets/data: A04/A06 selectable Persona identity (S2 mind configuration). templatePersonaId is lineage, not a new seat.
 - Flow/threat: user copies created before copy-on-write can lack templatePersonaId. Apply to Default then hides, so operators mint a second seed or publish the leftover Persuader row (STRIDE spoofing/elevation analogue; AGENT-03).

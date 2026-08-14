@@ -918,6 +918,13 @@ export interface PersonaRevisionPayload {
 }
 
 const REVISION_FIELDS = ["name", "description", "icon", "promptOverlay", "expressionTags", "cognitiveOverrides", "semanticTier", "contextSections", "toolBundle"] as const;
+
+/** Retired same-identity openers. A leftover copy still carrying one never customized. */
+const RETIRED_CATALOG_OVERLAY_PREFIXES = [
+  "You are in Operator mode",
+  "You are in Persuader mode",
+  "You are in Creative mode",
+] as const;
 type RevisionField = typeof REVISION_FIELDS[number];
 
 function revisionPayload(persona: PersonaEntry): PersonaRevisionPayload {
@@ -1716,6 +1723,9 @@ class PersonaStorageClass {
               sortOrder: maxSort + 1,
               source: "user",
               templatePersonaId: target.id,
+              baseRevisionId: target.currentRevisionId,
+              currentRevisionId: target.currentRevisionId,
+              updateState: target.currentRevisionId ? "following" : "pinned_legacy",
               ...ownedInsertValues(principal, personaScopeColumns),
               createdByUserId: principal.userId ?? undefined,
               updatedByUserId: principal.userId ?? undefined,
@@ -1935,8 +1945,10 @@ class PersonaStorageClass {
     await this.updateSeedOverlays();
     await this.syncSelectablePersonaPayloads();
     await this.initializeRevisionLineage();
+    const advancedSeeds = await this.advanceSeedRevisions();
+    const healedFollowers = await this.healLeftoverFollowers();
     log.log(
-      `seedDefaults: ensured ${SEED_PERSONAS.length} seed personas; removed ${removedLegacyRows} legacy scoped seed rows; linked ${linkedOrphans} orphan user copies`,
+      `seedDefaults: ensured ${SEED_PERSONAS.length} seed personas; removed ${removedLegacyRows} legacy scoped seed rows; linked ${linkedOrphans} orphan user copies; advanced ${advancedSeeds} seed revisions; healed ${healedFollowers} leftover followers`,
     );
   }
 
@@ -2128,6 +2140,161 @@ class PersonaStorageClass {
       log.log(`linkOrphanUserCopiesToSeeds: attached ${linked} user copies`);
     }
     return linked;
+  }
+
+  /**
+   * Boot overlay/context rewrites used to mutate the seed row in place.
+   * Mint a platform revision when the live seed no longer matches its
+   * current revision, then push anyone already following.
+   */
+  private async advanceSeedRevisions(): Promise<number> {
+    let advanced = 0;
+    const seeds = await db
+      .select()
+      .from(personas)
+      .where(and(eq(personas.source, "seed"), eq(personas.scope, "global")));
+    for (const seed of seeds) {
+      if (!seed.currentRevisionId) continue;
+      const [current] = await db
+        .select()
+        .from(personaRevisions)
+        .where(eq(personaRevisions.id, seed.currentRevisionId))
+        .limit(1);
+      if (!current) continue;
+      const entry = rowToEntry(seed);
+      const payload = revisionPayload(entry);
+      const hash = payloadHash(payload);
+      if (hash === current.contentHash) continue;
+      const revision = {
+        id: randomUUID(),
+        personaIdentityId: seed.id,
+        scope: "platform" as const,
+        ownerUserId: null,
+        accountId: null,
+        instanceId: null,
+        parentRevisionId: current.id,
+        platformBaseRevisionId: null,
+        payload,
+        contentHash: hash,
+        changeSummary: "Boot catalog rewrite",
+        createdByUserId: null,
+      };
+      await db.transaction(async (tx) => {
+        await tx.insert(personaRevisions).values(revision);
+        await tx
+          .update(personas)
+          .set({
+            currentRevisionId: revision.id,
+            baseRevisionId: revision.id,
+            updateState: "following",
+            updatedAt: new Date(),
+          })
+          .where(eq(personas.id, seed.id));
+        if (!seed.isSystem) {
+          await tx
+            .update(personas)
+            .set({
+              ...payload,
+              baseRevisionId: revision.id,
+              currentRevisionId: revision.id,
+              updateState: "following",
+              updatedAt: new Date(),
+            })
+            .where(and(eq(personas.templatePersonaId, seed.id), eq(personas.updateState, "following")));
+          await tx
+            .update(personas)
+            .set({ updateState: "update_available" })
+            .where(and(eq(personas.templatePersonaId, seed.id), sql`${personas.updateState} <> 'following'`));
+        }
+      });
+      advanced++;
+    }
+    if (advanced > 0) {
+      this.invalidateCache();
+      log.log(`advanceSeedRevisions: minted ${advanced} platform revisions`);
+    }
+    return advanced;
+  }
+
+  /**
+   * Rebase leftover followers onto the current platform default.
+   * A leftover is a copy with no user revision that still carries a
+   * retired catalog opener or matches an older platform revision.
+   * Real customizations and Keep-mine copies stay put.
+   */
+  private async healLeftoverFollowers(): Promise<number> {
+    let healed = 0;
+    const copies = await db
+      .select()
+      .from(personas)
+      .where(
+        and(
+          eq(personas.source, "user"),
+          sql`${personas.templatePersonaId} IS NOT NULL`,
+          sql`${personas.updateState} <> 'customized'`,
+        ),
+      );
+    for (const copy of copies) {
+      if (copy.templatePersonaId == null) continue;
+      const [userRevision] = await db
+        .select({ id: personaRevisions.id })
+        .from(personaRevisions)
+        .where(and(eq(personaRevisions.personaIdentityId, copy.id), eq(personaRevisions.scope, "user")))
+        .limit(1);
+      if (userRevision) continue;
+      const [template] = await db
+        .select()
+        .from(personas)
+        .where(eq(personas.id, copy.templatePersonaId))
+        .limit(1);
+      if (!template?.currentRevisionId) continue;
+      const [platform] = await db
+        .select()
+        .from(personaRevisions)
+        .where(eq(personaRevisions.id, template.currentRevisionId))
+        .limit(1);
+      if (!platform) continue;
+      const leftoverCatalog = RETIRED_CATALOG_OVERLAY_PREFIXES.some((prefix) =>
+        (copy.promptOverlay ?? "").startsWith(prefix),
+      );
+      const copyHash = payloadHash(revisionPayload(rowToEntry(copy)));
+      const [historical] = leftoverCatalog
+        ? []
+        : await db
+            .select({ id: personaRevisions.id })
+            .from(personaRevisions)
+            .where(
+              and(
+                eq(personaRevisions.personaIdentityId, template.id),
+                eq(personaRevisions.scope, "platform"),
+                eq(personaRevisions.contentHash, copyHash),
+              ),
+            )
+            .limit(1);
+      if (!leftoverCatalog && !historical) continue;
+      const alreadyCurrent =
+        copy.updateState === "following" &&
+        copy.currentRevisionId === platform.id &&
+        payloadHash(revisionPayload(rowToEntry(copy))) === platform.contentHash;
+      if (alreadyCurrent) continue;
+      const payload = sanitizeRevisionPayload(platform.payload);
+      await db
+        .update(personas)
+        .set({
+          ...payload,
+          baseRevisionId: platform.id,
+          currentRevisionId: platform.id,
+          updateState: "following",
+          updatedAt: new Date(),
+        })
+        .where(eq(personas.id, copy.id));
+      healed++;
+    }
+    if (healed > 0) {
+      this.invalidateCache();
+      log.log(`healLeftoverFollowers: rebased ${healed} user copies`);
+    }
+    return healed;
   }
 
   /** Resolve a user-facing global seed template by name (excludes system seeds). */
