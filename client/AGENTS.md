@@ -204,6 +204,8 @@ Tiered badge system for status indicators across the app:
 
 Badges consolidate in the nav: highest-priority status wins per section.
 
+Nav item labels stay `text-muted-foreground` unless the item is the current route. Status may recolor a nav label only for `error` or `active`. Do not map `attention`, `unread`, or `pinned` onto a nav item — those tokens are `text-foreground` and read as selected.
+
 `mergeResolvedNavigation` keeps one placement per interaction target across all sidebar sections. A Mod contribution whose `section` no longer matches the static `navSections` must not reinsert that target.
 
 ## Session UI Ownership

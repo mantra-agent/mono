@@ -73,7 +73,6 @@ import { useExecutorStatus } from "@/hooks/use-executor-status";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { useWorkActivity } from "./thought-indicator";
-import { useGoalsActivity } from "./goals-activity-indicator";
 import { useSystemActivity } from "./system-alert-indicator";
 import { useCommsActivity } from "@/hooks/use-comms-activity";
 import { useEnvActivity } from "@/hooks/use-env-activity";
@@ -685,19 +684,18 @@ export function NavPage() {
   const { guidedTarget, invoke } = useUiInteraction();
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Activity indicators
+  // Activity indicators. Attention/unread/pinned must not enter this map:
+  // those levels paint text-foreground and impersonate the selected route.
   const workActive = useWorkActivity();
-  const goalsActive = useGoalsActivity();
   const systemActive = useSystemActivity();
   const commsActive = useCommsActivity();
   const envActive = useEnvActivity();
 
   const statusMap: Record<string, NavDotLevel | null> = {
     Brain: workActive ? "active" : null,
-    Goals: goalsActive ? "attention" : null,
     System: systemActive ? "error" : null,
-    Email: commsActive,
-    Build: envActive,
+    Email: commsActive === "error" ? "error" : null,
+    Build: envActive === "error" || envActive === "active" ? envActive : null,
   };
 
   // Collapsed state: sections that are explicitly collapsed by the user.
@@ -817,6 +815,8 @@ export function NavPage() {
                       const active = isItemActive(item.url, location);
                       const level = statusMap[item.title] ?? null;
                       const sc = getStatusClasses(level);
+                      // Selected owns white. Status may keep error/active hue, never attention-as-selected.
+                      const statusPaints = level === "error" || level === "active" || level === "cta";
                       const isLast = idx === section.items.length - 1;
 
                       return (
@@ -844,9 +844,9 @@ export function NavPage() {
                                 className={cn(
                                   "h-4 w-4 shrink-0",
                                   // Rest-only mute: child text color must not pin over parent hover/active.
-                                  item.titleTone === "muted" && !active && !level
+                                  item.titleTone === "muted" && !active && !statusPaints
                                     ? "text-muted-foreground group-hover:text-foreground"
-                                    : level
+                                    : statusPaints
                                       ? sc.icon
                                       : "",
                                 )}
@@ -855,9 +855,9 @@ export function NavPage() {
                             <span
                               className={cn(
                                 "flex-1 text-left truncate",
-                                item.titleTone === "muted" && !active && !level
+                                item.titleTone === "muted" && !active && !statusPaints
                                   ? "text-muted-foreground group-hover:text-foreground"
-                                  : level
+                                  : statusPaints
                                     ? sc.text
                                     : "",
                                 level === "active" && "animate-pulse"
