@@ -44,6 +44,25 @@
   display: none;
 }
 
+/* Always-visible thin scrollbar for surfaces where scrollability must stay
+   obvious without hover/scroll intent (e.g. wide data grids). */
+.scrollbar-visible {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+  scrollbar-gutter: stable;
+}
+.scrollbar-visible::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-visible::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-visible::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--border));
+  border-radius: 999px;
+}
+
 /* Global scale — default 110%, overridden at runtime by the UI Scale
    slider in Account settings. The pre-hydration script in index.html
    reads localStorage and sets html.style.fontSize before React mounts. */
