@@ -108,9 +108,6 @@ export async function registerOrientationRoutes(app: Express) {
   const { fileRuleStorage } = await import("../file-storage/rules");
   const ruleMutationSchema = z.object({
     rule: z.string().trim().min(1).optional(),
-    source: z.enum(["correction", "reflection", "manual"]).optional(),
-    scope: z.enum(["always", "contextual"]).optional(),
-    context: z.string().trim().min(1).optional(),
     tags: z.array(z.string().trim().min(1)).min(1).optional(),
   }).strict();
 
@@ -140,11 +137,7 @@ export async function registerOrientationRoutes(app: Express) {
     log.debug("POST /api/rules");
     try {
       const input = ruleMutationSchema.extend({ rule: z.string().trim().min(1) }).parse(req.body);
-      const scope = input.scope ?? (input.context ? "contextual" : "always");
-      if (scope === "contextual" && !input.context) {
-        return res.status(400).json({ error: "context is required for a contextual Rule" });
-      }
-      res.json(await fileRuleStorage.create({ ...input, scope }));
+      res.json(await fileRuleStorage.create(input));
     } catch (error: any) {
       log.error("POST /api/rules error:", error?.message);
       res.status(error instanceof z.ZodError ? 400 : 500).json({ error: error.message });
@@ -160,11 +153,6 @@ export async function registerOrientationRoutes(app: Express) {
       }
       const existing = await fileRuleStorage.getById(req.params.id);
       if (!existing) return res.status(404).json({ error: "Rule not found" });
-      const nextScope = input.scope ?? existing.scope;
-      const nextContext = input.context ?? existing.context;
-      if (nextScope === "contextual" && !nextContext) {
-        return res.status(400).json({ error: "context is required for a contextual Rule" });
-      }
       const updated = await fileRuleStorage.update(req.params.id, input);
       if (!updated) return res.status(404).json({ error: "Rule not found" });
       res.json(updated);

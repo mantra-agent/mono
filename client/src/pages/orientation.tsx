@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { usePageHeader } from "@/hooks/use-page-header";
 import {
@@ -17,7 +17,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
@@ -28,6 +30,10 @@ import {
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import {
+  PROFILE_DESCRIPTION_FRAME_CLASS,
+  PROFILE_DESCRIPTION_TEXT_CLASS,
+} from "@/components/profile-description-style";
 import { UniversalTagPicker } from "@/components/universal-tag-picker";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -44,13 +50,13 @@ import {
   MoreHorizontal,
   Plus,
   ShieldCheck,
+  SlidersHorizontal,
   Tag,
   type LucideIcon,
 } from "lucide-react";
 
 type SectionKey = "theses" | "rules" | "principles";
 type OrientationRecord = Record<string, unknown> & { id?: string | number };
-type RuleScope = "always" | "contextual";
 
 interface SectionConfig {
   key: SectionKey;
@@ -70,7 +76,6 @@ const SECTION_CONFIGS: SectionConfig[] = [
     icon: ShieldCheck,
     endpoint: "/api/rules",
     title: (item) => text(item.rule) || "Untitled rule",
-    subtitle: (item) => text(item.context),
   },
   {
     key: "principles",
@@ -134,9 +139,6 @@ function searchableText(section: SectionConfig, item: OrientationRecord): string
     section.title(item),
     section.subtitle?.(item) ?? "",
     formatValue(item.rule),
-    formatValue(item.context),
-    formatValue(item.scope),
-    formatValue(item.source),
     formatValue(item.tags),
     formatValue(item.layer1),
     formatValue(item.layer2),
@@ -244,11 +246,118 @@ function DetailTagsRow({
   );
 }
 
+function RuleTagRow({
+  tags,
+  onChange,
+  testId,
+}: {
+  tags: string[];
+  onChange: (tags: string[]) => void;
+  testId: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(tags.length);
+  const summaryRef = useRef<HTMLDivElement>(null);
+  const measurementRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const summary = summaryRef.current;
+    const measurement = measurementRef.current;
+    if (!summary || !measurement) return;
+
+    const updateVisibleCount = () => {
+      const widths = Array.from(measurement.children).map((child) => (child as HTMLElement).offsetWidth);
+      const gap = 4;
+      const availableWidth = summary.clientWidth;
+      const allTagsWidth = widths.reduce((total, width) => total + width, 0) + Math.max(0, widths.length - 1) * gap;
+
+      if (allTagsWidth <= availableWidth) {
+        setVisibleCount(tags.length);
+        return;
+      }
+
+      let occupiedWidth = 0;
+      let nextVisibleCount = 0;
+      for (const width of widths) {
+        const nextWidth = occupiedWidth + (nextVisibleCount > 0 ? gap : 0) + width;
+        if (nextWidth > availableWidth) break;
+        occupiedWidth = nextWidth;
+        nextVisibleCount += 1;
+      }
+      setVisibleCount(nextVisibleCount);
+    };
+
+    updateVisibleCount();
+    const observer = new ResizeObserver(updateVisibleCount);
+    observer.observe(summary);
+    return () => observer.disconnect();
+  }, [tags]);
+
+  const hasOverflow = visibleCount < tags.length;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <ProfileTreeRow
+        label={<span data-testid={`${testId}-label`}>Tags</span>}
+        icon={<SlidersHorizontal className="h-3.5 w-3.5" />}
+        hasValue={tags.length > 0}
+        showEmpty
+        actionContent={
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 min-h-5 w-5 min-w-5 shrink-0 rounded px-0 text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+              aria-label={hasOverflow ? `Show all ${tags.length} tags` : "Edit tags"}
+              data-testid={hasOverflow ? `${testId}-overflow` : `${testId}-edit`}
+            >
+              {hasOverflow ? <MoreHorizontal className="h-3.5 w-3.5" /> : <Plus className="h-3 w-3" />}
+            </Button>
+          </PopoverTrigger>
+        }
+        mobileLayout="inline"
+        testId={testId}
+      >
+        <div
+          ref={summaryRef}
+          className="relative flex h-5 w-48 min-w-0 items-center justify-end gap-1 overflow-hidden"
+          data-testid={`${testId}-summary`}
+        >
+          <div ref={measurementRef} aria-hidden className="pointer-events-none invisible absolute left-0 top-0 flex items-center gap-1">
+            {tags.map((tag) => (
+              <Badge key={tag} variant="outline" className="h-5 px-1.5 py-0 text-xs">
+                {tag}
+              </Badge>
+            ))}
+          </div>
+          {tags.slice(0, visibleCount).map((tag) => (
+            <Badge
+              key={tag}
+              variant="outline"
+              className="h-5 max-w-full shrink-0 overflow-hidden px-1.5 py-0 text-xs"
+              data-testid={`${testId}-badge-${tag}`}
+            >
+              <span className="truncate">{tag}</span>
+            </Badge>
+          ))}
+        </div>
+      </ProfileTreeRow>
+      <PopoverContent align="end" className="w-72 p-2" onOpenAutoFocus={(event) => event.preventDefault()} data-testid={`${testId}-popover`}>
+        <UniversalTagPicker
+          variant="compact"
+          selected={tags}
+          onChange={onChange}
+          placeholder="Add tag"
+          testId={`${testId}-picker`}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function RuleDetails({ item }: { item: OrientationRecord }) {
   const ruleId = String(item.id ?? "");
   const [ruleText, setRuleText] = useState(text(item.rule));
-  const [contextText, setContextText] = useState(text(item.context));
-  const scope = (text(item.scope) || "always") as RuleScope;
   const tags = asStringArray(item.tags);
 
   const updateMutation = useMutation({
@@ -270,109 +379,25 @@ function RuleDetails({ item }: { item: OrientationRecord }) {
     updateMutation.mutate({ rule: next });
   };
 
-  const commitContext = () => {
-    const next = contextText.trim();
-    if (next === text(item.context)) return;
-    if (scope === "contextual" && !next) {
-      setContextText(text(item.context));
-      return;
-    }
-    updateMutation.mutate({ context: next || undefined, scope: next ? "contextual" : "always" });
-  };
-
   return (
     <div className="space-y-0.5">
-      <ProfileTreeRow
-        label="Rule"
-        icon={<FileText className="h-3.5 w-3.5" />}
-        hasValue={Boolean(ruleText.trim())}
-        showEmpty
-        mobileLayout="inline"
-        testId={`row-rule-text-${ruleId}`}
-        expandedContent={
-          <Textarea
-            value={ruleText}
-            onChange={(event) => setRuleText(event.target.value)}
-            onBlur={commitRule}
-            className="min-h-20 text-sm"
-            data-testid={`input-rule-text-${ruleId}`}
-          />
-        }
-      >
-        <span className="min-w-0 whitespace-pre-wrap break-words text-sm">{ruleText || "—"}</span>
-      </ProfileTreeRow>
+      <div className={PROFILE_DESCRIPTION_FRAME_CLASS}>
+        <Textarea
+          value={ruleText}
+          onChange={(event) => setRuleText(event.target.value)}
+          onBlur={commitRule}
+          placeholder="Rule"
+          className={cn(
+            "min-h-20 w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
+            PROFILE_DESCRIPTION_TEXT_CLASS,
+          )}
+          data-testid={`input-rule-text-${ruleId}`}
+        />
+      </div>
 
-      <ProfileTreeRow
-        label="Scope"
-        icon={<Layers className="h-3.5 w-3.5" />}
-        hasValue
-        showEmpty
-        mobileLayout="inline"
-        testId={`row-rule-scope-${ruleId}`}
-        expandedContent={
-          <div className="flex gap-2">
-            {(["always", "contextual"] as const).map((nextScope) => (
-              <button
-                key={nextScope}
-                type="button"
-                className={cn(
-                  "rounded-md border px-2 py-1 text-xs capitalize transition-colors",
-                  scope === nextScope
-                    ? "border-foreground/30 bg-accent text-foreground"
-                    : "border-border text-muted-foreground hover:text-foreground",
-                )}
-                onClick={() => {
-                  if (nextScope === scope) return;
-                  if (nextScope === "contextual" && !contextText.trim()) return;
-                  updateMutation.mutate({
-                    scope: nextScope,
-                    context: nextScope === "always" ? undefined : contextText.trim(),
-                  });
-                }}
-                data-testid={`button-rule-scope-${nextScope}-${ruleId}`}
-              >
-                {nextScope}
-              </button>
-            ))}
-          </div>
-        }
-      >
-        <span className="capitalize text-sm">{scope}</span>
-      </ProfileTreeRow>
-
-      <ProfileTreeRow
-        label="Context"
-        icon={<Compass className="h-3.5 w-3.5" />}
-        hasValue={Boolean(contextText.trim())}
-        showEmpty
-        mobileLayout="inline"
-        testId={`row-rule-context-${ruleId}`}
-        expandedContent={
-          <Input
-            value={contextText}
-            onChange={(event) => setContextText(event.target.value)}
-            onBlur={commitContext}
-            placeholder="When this rule applies"
-            className="h-8 text-sm"
-            data-testid={`input-rule-context-${ruleId}`}
-          />
-        }
-      >
-        <span className="min-w-0 truncate text-sm">{contextText || "—"}</span>
-      </ProfileTreeRow>
-
-      <DetailTextRow
-        label="Source"
-        icon={<Link2 className="h-3.5 w-3.5" />}
-        value={item.source}
-        testId={`row-rule-source-${ruleId}`}
-      />
-
-      <DetailTagsRow
-        label="Tags"
+      <RuleTagRow
         tags={tags}
         testId={`row-rule-tags-${ruleId}`}
-        editable
         onChange={(nextTags) => updateMutation.mutate({ tags: nextTags.length ? nextTags : undefined })}
       />
     </div>
@@ -570,16 +595,10 @@ function NewRuleForm({
   onCreated: () => void;
 }) {
   const [rule, setRule] = useState("");
-  const [context, setContext] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const createMutation = useMutation({
     mutationFn: async () => {
-      const body: Record<string, unknown> = {
-        rule: rule.trim(),
-        source: "manual",
-        scope: context.trim() ? "contextual" : "always",
-      };
-      if (context.trim()) body.context = context.trim();
+      const body: Record<string, unknown> = { rule: rule.trim() };
       if (tags.length) body.tags = tags;
       const response = await apiRequest("POST", "/api/rules", body);
       return response.json();
@@ -601,13 +620,6 @@ function NewRuleForm({
         className="min-h-20 text-sm"
         data-testid="input-new-rule-text"
         autoFocus
-      />
-      <Input
-        value={context}
-        onChange={(event) => setContext(event.target.value)}
-        placeholder="Context (optional)"
-        className="h-8 text-sm"
-        data-testid="input-new-rule-context"
       />
       <UniversalTagPicker
         variant="compact"

@@ -207,7 +207,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
   rules: {
     description: RULES_TOOL_DESCRIPTION,
     whenToUse: "When the user explicitly establishes a durable, deterministic personal behavioral override that has no stronger structural home.",
-    example: '{ "action": "save", "rule": "Do not use the phrase no pressure in my strategic communications", "scope": "contextual", "context": "strategic communications" }',
+    example: '{ "action": "save", "rule": "In my strategic communications, never use the phrase no pressure" }',
   },
   intentions: {
     description: "DEPRECATED — Intentions system removed. Use the 'autonomy' skill for autonomous work.",
