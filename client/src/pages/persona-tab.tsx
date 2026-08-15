@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Check, ChevronRight, Circle, Loader2, MoreHorizontal, Plus, X } from "lucide-react";
+import { Check, ChevronRight, Loader2, MoreHorizontal, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { HIERARCHY_PRIMARY_ACTION_CLASS, HIERARCHY_SECTION_HEADER_CLASS, HIERARCHY_SESSION_ROW_CLASS, HIERARCHY_TREE_STACK_CLASS } from "@/components/hierarchy-section-header";
@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { StatusDot, DefaultSyncDialog, UpdateAvailableActions, useDefaultSync, buildDiffRows, type PendingSync, type ApplyDiffRow } from "@/components/lattice-controls";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { resolvePersonaIcon, AVAILABLE_ICONS } from "@/lib/persona-icons";
@@ -109,39 +109,6 @@ function tierToBudget(tier: string): string {
   return found ? String(found.tokens) : "";
 }
 
-interface ApplyDiffRow {
-  field: string;
-  before: string;
-  after: string;
-}
-
-type DefaultSyncMode = "apply" | "revert";
-
-interface PendingSync {
-  mode: DefaultSyncMode;
-  title: string;
-  description: string;
-  rows: ApplyDiffRow[];
-  run: () => Promise<void>;
-}
-
-function formatDiffValue(value: unknown): string {
-  if (value == null) return "—";
-  if (typeof value === "string") return value.trim() ? value : "—";
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) {
-    if (value.length === 0) return "—";
-    if (value.every((entry) => typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean")) {
-      return value.map(String).join(", ");
-    }
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
 function readMemoryGraphTokenBudget(overrides: Record<string, unknown> | null | undefined): number | null {
   const budget = overrides?.memoryGraphTokenBudget;
   return typeof budget === "number" && Number.isFinite(budget) && budget > 0 ? budget : null;
@@ -185,15 +152,7 @@ function buildApplyDiffRows(
   before: Record<string, unknown> | null | undefined,
   after: Record<string, unknown>,
 ): ApplyDiffRow[] {
-  const keys = Array.from(new Set([...Object.keys(before || {}), ...Object.keys(after)])).sort();
-  return keys
-    .map((field) => {
-      const left = formatDiffValue(before?.[field]);
-      const right = formatDiffValue(after[field]);
-      if (left === right) return null;
-      return { field: FIELD_LABELS[field as LocalField] || field, before: left, after: right };
-    })
-    .filter((row): row is ApplyDiffRow => row != null);
+  return buildDiffRows(before, after, (field) => FIELD_LABELS[field as LocalField] || field);
 }
 
 function resolveApplyTargetId(persona: Persona): number | null {
@@ -297,89 +256,6 @@ function buildRevertField(persona: Persona, field: LocalField): PendingSync {
   };
 }
 
-function ApplyDiffView({ rows, mode }: { rows: ApplyDiffRow[]; mode: DefaultSyncMode }) {
-  if (rows.length === 0) {
-    return <p className="text-sm text-muted-foreground">No differences from the current default.</p>;
-  }
-  const leftLabel = mode === "revert" ? "Current" : "Current default";
-  const rightLabel = mode === "revert" ? "After revert" : "After apply";
-  return (
-    <div className="max-h-80 space-y-2 overflow-auto pr-1">
-      {rows.map((row) => (
-        <div key={row.field} className="rounded-md border border-border/40 bg-muted/20 p-2">
-          <div className="mb-1 text-xs font-medium text-foreground">{row.field}</div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div className="min-w-0">
-              <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">{leftLabel}</div>
-              <pre className="whitespace-pre-wrap break-words rounded-md bg-background/60 px-2 py-1.5 text-xs text-muted-foreground">{row.before}</pre>
-            </div>
-            <div className="min-w-0">
-              <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">{rightLabel}</div>
-              <pre className="whitespace-pre-wrap break-words rounded-md bg-background/60 px-2 py-1.5 text-xs text-foreground">{row.after}</pre>
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** Apply a persona (or one field) to its platform default, or revert it back, behind a confirmation prompt. */
-function usePersonaDefaultSync(onDone: () => void) {
-  const { toast } = useToast();
-  const [pending, setPending] = useState<PendingSync | null>(null);
-  const mutation = useMutation({
-    mutationFn: async (input: PendingSync) => {
-      await input.run();
-    },
-    onSuccess: (_data, input) => {
-      toast({ title: input.mode === "revert" ? "Reverted to default" : "Applied to default" });
-      setPending(null);
-      onDone();
-    },
-    onError: (err: Error) => {
-      toast({ title: "Couldn't update default", description: err.message, variant: "destructive" });
-    },
-  });
-  const request = (build: () => PendingSync) => {
-    try {
-      setPending(build());
-    } catch (err) {
-      toast({ title: "Can't continue", description: (err as Error).message, variant: "destructive" });
-    }
-  };
-  return {
-    pending,
-    request,
-    cancel: () => setPending(null),
-    confirm: () => {
-      if (pending) mutation.mutate(pending);
-    },
-    working: mutation.isPending,
-  };
-}
-
-function DefaultSyncDialog({ sync }: { sync: ReturnType<typeof usePersonaDefaultSync> }) {
-  const mode: DefaultSyncMode = sync.pending?.mode ?? "apply";
-  return (
-    <AlertDialog open={sync.pending != null} onOpenChange={(o) => { if (!o) sync.cancel(); }}>
-      <AlertDialogContent className="max-w-3xl">
-        <AlertDialogHeader>
-          <AlertDialogTitle>{sync.pending?.title}</AlertDialogTitle>
-          <AlertDialogDescription>{sync.pending?.description}</AlertDialogDescription>
-        </AlertDialogHeader>
-        <ApplyDiffView rows={sync.pending?.rows || []} mode={mode} />
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction disabled={sync.working || (sync.pending?.rows.length ?? 0) === 0} onClick={(event) => { event.preventDefault(); sync.confirm(); }}>
-            {sync.working ? "Working…" : mode === "revert" ? "Revert to default" : "Apply to default"}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
 function PersonaActionsMenu({
   onApplyAll,
   onRevertAll,
@@ -453,25 +329,6 @@ function fieldValueClass(changed?: boolean): string {
   return changed ? "text-white" : "text-muted-foreground";
 }
 
-function StatusDot({
-  kind,
-  className,
-}: {
-  kind: "local" | "inbound";
-  className?: string;
-}) {
-  const inbound = kind === "inbound";
-  return (
-    <Circle
-      className={cn(
-        "h-1.5 w-1.5",
-        inbound ? "fill-success text-success" : "fill-warning text-warning",
-        className,
-      )}
-      aria-label={inbound ? "Default has advanced" : "Edited locally"}
-    />
-  );
-}
 
 function LocalEditMark({ field, changedFields }: { field: LocalField; changedFields?: string[] }) {
   if (!fieldChanged(field, changedFields)) return null;
@@ -851,7 +708,7 @@ function PersonaTreeItem({
   useEffect(() => {
     setDraft(draftFromPersona(persona));
   }, [persona]);
-  const sync = usePersonaDefaultSync(onRefresh);
+  const sync = useDefaultSync(onRefresh);
   const showApply = canApply && resolveApplyTargetId(persona) != null;
   const showRevert = showApply && personaBaseline(persona) != null;
   const collapsedDescription = draft.description.trim();
@@ -913,15 +770,11 @@ function PersonaTreeItem({
             showAdvancedFields={showAdvancedFields}
           />
           {persona.updateAvailable && (
-            <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default")}>
-              <div className="min-w-0 flex-1 text-sm">
-                <p className="font-medium">Update available</p>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={() => personaAction.mutate({ action: "keep-mine" })}>Keep mine</Button>
-                  <Button size="sm" onClick={() => personaAction.mutate({ action: "use-updated-default" })}>Use updated default</Button>
-                </div>
-              </div>
-            </div>
+            <UpdateAvailableActions
+              working={personaAction.isPending}
+              onKeepMine={() => personaAction.mutate({ action: "keep-mine" })}
+              onUseUpdatedDefault={() => personaAction.mutate({ action: "use-updated-default" })}
+            />
           )}
         </div>
       </CollapsibleContent>
@@ -1017,7 +870,7 @@ function PlatformPersonaItem({ persona, canApply, onPublished }: { persona: Pers
   useEffect(() => {
     setDraft(draftFromPersona(persona));
   }, [persona]);
-  const sync = usePersonaDefaultSync(onPublished);
+  const sync = useDefaultSync(onPublished);
   const showApply = canApply && resolveApplyTargetId(persona) != null;
   const collapsedDescription = draft.description.trim();
   return (

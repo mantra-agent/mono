@@ -71,12 +71,21 @@ import {
   ExternalLink,
   History,
   MoreVertical,
+  MoreHorizontal,
   Search,
   FileText,
   PauseCircle,
   Play,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import {
+  StatusDot,
+  DefaultSyncDialog,
+  UpdateAvailableActions,
+  useDefaultSync,
+  buildDiffRows,
+  type PendingSync,
+} from "@/components/lattice-controls";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSkillFailures } from "@/components/skill-failure-indicator";
 import { useAuth } from "@/hooks/use-auth";
@@ -102,6 +111,205 @@ function downloadJson(data: unknown, filename: string) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ─── Skill Default Lattice grammar (Persona parity) ──────────────────────────
+// Payload builders + the change-stage controls. The visual/interaction motif is
+// shared with Personas via `@/components/lattice-controls`; only the skill-shaped
+// payload and endpoints live here.
+
+const SKILL_FIELD_LABELS: Record<string, string> = {
+  name: "Name",
+  description: "Description",
+  category: "Category",
+  whenToUse: "When to use",
+  process: "Process",
+  outputSpec: "Output spec",
+  checklist: "Checklist",
+  scoreThreshold: "Score threshold",
+  sessionType: "Session type",
+  activity: "Activity",
+  recommendedPersonaTemplateId: "Persona",
+  addToMemory: "Add to memory",
+  pinnedToContext: "Pinned",
+  references: "References",
+};
+
+const skillLabelFor = (field: string) => SKILL_FIELD_LABELS[field] ?? field;
+
+/** Current lattice payload of a skill — mirrors the server SKILL_PAYLOAD_FIELDS shape. */
+function skillCurrentPayload(skill: SkillWithReferences): Record<string, unknown> {
+  return {
+    name: skill.name,
+    description: skill.description,
+    category: skill.category,
+    whenToUse: skill.whenToUse,
+    process: skill.process,
+    outputSpec: skill.outputSpec,
+    checklist: skill.checklist ?? [],
+    scoreThreshold: skill.scoreThreshold ?? null,
+    sessionType: skill.sessionType ?? null,
+    activity: skill.activity,
+    recommendedPersonaTemplateId: skill.recommendedPersonaTemplateId ?? null,
+    addToMemory: skill.addToMemory,
+    pinnedToContext: skill.pinnedToContext,
+    references: [...skill.references]
+      .map((r) => ({ name: r.name, content: r.content }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.content.localeCompare(b.content)),
+  };
+}
+
+/** The global template id this skill publishes to, or null when there is none. */
+function skillTemplateId(skill: SkillWithReferences): string | null {
+  return skill.templateSkillId ?? (skill.scope === "global" ? skill.id : null);
+}
+
+function buildSkillApplyAll(skill: SkillWithReferences, templateId: string): PendingSync {
+  const changes = skillCurrentPayload(skill);
+  return {
+    mode: "apply",
+    title: `Apply ${skill.name} to default?`,
+    description: `Publish ${skill.name}'s current values as the platform default for everyone. Skills following the default update automatically; customized copies get an "Update available".`,
+    rows: buildDiffRows(skill.platformBaseline, changes, skillLabelFor),
+    run: async () => {
+      await apiRequest("POST", `/api/skills/platform/${templateId}/publish`, {
+        changes,
+        changeSummary: `Apply ${skill.name} to default`,
+        confirmed: true,
+      });
+    },
+  };
+}
+
+function buildSkillApplyField(skill: SkillWithReferences, templateId: string, field: string): PendingSync {
+  const label = skillLabelFor(field);
+  const changes = { [field]: skillCurrentPayload(skill)[field] };
+  return {
+    mode: "apply",
+    title: `Apply ${label} to default?`,
+    description: `Publish ${skill.name}'s ${label} as the platform default for everyone.`,
+    rows: buildDiffRows({ [field]: skill.platformBaseline?.[field] }, changes, skillLabelFor),
+    run: async () => {
+      await apiRequest("POST", `/api/skills/platform/${templateId}/publish`, {
+        changes,
+        changeSummary: `Apply ${label} to default`,
+        confirmed: true,
+      });
+    },
+  };
+}
+
+function buildSkillRevertAll(skill: SkillWithReferences): PendingSync {
+  return {
+    mode: "revert",
+    title: `Revert ${skill.name} to default?`,
+    description: `Discard ${skill.name}'s customizations and restore the current platform default.`,
+    rows: buildDiffRows(skillCurrentPayload(skill), skill.platformBaseline, skillLabelFor),
+    run: async () => {
+      await apiRequest("POST", `/api/skills/${skill.id}/reset`, {});
+    },
+  };
+}
+
+function buildSkillRevertField(skill: SkillWithReferences, field: string): PendingSync {
+  const label = skillLabelFor(field);
+  const baselineValue = skill.platformBaseline?.[field];
+  return {
+    mode: "revert",
+    title: `Revert ${label} to default?`,
+    description: `Discard ${skill.name}'s ${label} customization and restore the current platform default.`,
+    rows: buildDiffRows({ [field]: skillCurrentPayload(skill)[field] }, { [field]: baselineValue }, skillLabelFor),
+    run: async () => {
+      await apiRequest("PATCH", `/api/skills/${skill.id}`, { [field]: baselineValue });
+    },
+  };
+}
+
+/**
+ * Expanded-row change-stage controls: inbound Keep-mine / Use-updated-default,
+ * per-field Apply / Revert on local drift, and whole-skill Apply / Revert to
+ * Default. Reset is Revert — it keeps the user copy. Renders nothing when there
+ * is no drift, no inbound update, and no default to publish to.
+ */
+function SkillLatticeSection({ skill }: { skill: SkillWithReferences }) {
+  const { hasPermission } = useAuth();
+  const canApply = hasPermission("system:write");
+  const { toast } = useToast();
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
+  const sync = useDefaultSync(refresh);
+  const latticeAction = useMutation({
+    mutationFn: async ({ action }: { action: "keep-mine" | "use-updated-default" }) => {
+      await apiRequest("POST", `/api/skills/${skill.id}/${action}`, {});
+    },
+    onSuccess: refresh,
+    onError: (err: Error) => toast({ title: "Couldn't update skill", description: err.message, variant: "destructive" }),
+  });
+
+  const templateId = skillTemplateId(skill);
+  const isUserCopy = skill.scope !== "global";
+  const hasBaseline = skill.platformBaseline != null;
+  // Publishing to the default is admin-gated; reverting a user's own copy is
+  // owner-authed (the /reset + PATCH routes are user-writable, not system:write).
+  const showApply = canApply && templateId != null;
+  const showRevert = hasBaseline && isUserCopy;
+  const drift = skill.changedFields ?? [];
+  const current = skillCurrentPayload(skill);
+
+  if (!skill.updateAvailable && drift.length === 0 && !showApply && !showRevert) return null;
+
+  return (
+    <div className="space-y-2 rounded-md border border-border/40 bg-muted/10 p-2" data-testid={`skill-lattice-${skill.id}`}>
+      {skill.updateAvailable && (
+        <UpdateAvailableActions
+          working={latticeAction.isPending}
+          onKeepMine={() => latticeAction.mutate({ action: "keep-mine" })}
+          onUseUpdatedDefault={() => latticeAction.mutate({ action: "use-updated-default" })}
+        />
+      )}
+      {drift.length > 0 && (
+        <div className="space-y-0.5">
+          {drift.map((field) => (
+            <div key={field} className="flex items-center gap-2 text-xs" data-testid={`skill-drift-${skill.id}-${field}`}>
+              <StatusDot kind="local" className="shrink-0" />
+              <span className="min-w-0 flex-1 truncate text-foreground">{skillLabelFor(field)}</span>
+              {(showApply || showRevert) && (
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+                      aria-label={`${skillLabelFor(field)} actions`}
+                    >
+                      <MoreHorizontal className="h-3 w-3" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {showApply && <DropdownMenuItem onClick={() => sync.request(() => buildSkillApplyField(skill, templateId!, field))}>Apply to Default</DropdownMenuItem>}
+                    {showRevert && <DropdownMenuItem onClick={() => sync.request(() => buildSkillRevertField(skill, field))}>Revert to Default</DropdownMenuItem>}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {(showApply || showRevert) && (
+        <div className="flex flex-wrap gap-2 pt-0.5">
+          {showApply && (
+            <Button size="sm" variant="outline" onClick={() => sync.request(() => buildSkillApplyAll(skill, templateId!))}>
+              Apply to Default
+            </Button>
+          )}
+          {showRevert && (
+            <Button size="sm" variant="outline" onClick={() => sync.request(() => buildSkillRevertAll(skill))}>
+              Revert to Default
+            </Button>
+          )}
+        </div>
+      )}
+      <DefaultSyncDialog sync={sync} />
+    </div>
+  );
 }
 
 function SkillTreeRow({
@@ -142,6 +350,9 @@ function SkillTreeRow({
           <Lightbulb className={cn("h-3.5 w-3.5 shrink-0", hasFailed && "text-error")} />
         </span>
         <span className="flex-1 min-w-0 truncate">{skill.name}</span>
+        {/* Lattice marks: green inbound (default advanced), amber local-ahead. */}
+        {skill.updateAvailable && <StatusDot kind="inbound" className="shrink-0" />}
+        {(skill.changedFields?.length ?? 0) > 0 && <StatusDot kind="local" className="shrink-0" />}
         {/* Expand/collapse twisty — absolute right-8 per hierarchy tree standard */}
         <button
           type="button"
@@ -213,6 +424,8 @@ function SkillInlineDetail({ skill }: { skill: SkillWithReferences }) {
         <span className="text-xs text-muted-foreground">v{skill.version} · {skill.estimatedTokens.toLocaleString()} tokens · {skill.writeCategory}</span>
       </div>
       <p className="text-xs text-muted-foreground">{skill.description}</p>
+
+      <SkillLatticeSection skill={skill} />
 
       {skill.whenToUse && (
         <div>
@@ -1358,7 +1571,6 @@ export function SkillsContent({ embedded }: { embedded?: boolean }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
       setDeletingSkill(null);
-      setSelectedId(null);
       toast({ title: "Skill deleted" });
     },
     onError: (err: Error) => {

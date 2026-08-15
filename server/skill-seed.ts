@@ -88,8 +88,30 @@ export function changedSkillFields(
   ) as string[];
 }
 
+/**
+ * Structural source for a revision payload. Full skill rows and enriched
+ * `SkillWithReferences` (which omits `allowedTools`) both satisfy it, so read
+ * enrichment can compute a payload without casting through the full row type.
+ */
+export type SkillRevisionSource = Pick<
+  typeof skills.$inferSelect,
+  | "name"
+  | "description"
+  | "category"
+  | "whenToUse"
+  | "process"
+  | "outputSpec"
+  | "checklist"
+  | "scoreThreshold"
+  | "sessionType"
+  | "activity"
+  | "recommendedPersonaTemplateId"
+  | "addToMemory"
+  | "pinnedToContext"
+>;
+
 export function skillRevisionPayload(
-  row: typeof skills.$inferSelect,
+  row: SkillRevisionSource,
   references: Array<{ name: string; content: string }>,
 ): SkillRevisionPayload {
   const sortedRefs = [...references]
