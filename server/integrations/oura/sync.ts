@@ -2,6 +2,7 @@ import { getAccount, updateAccount } from "../../connected-accounts";
 import { upsertHealthMetricsAndProcessCompletions } from "../../routes/wellness";
 import { createLogger } from "../../log";
 import { userDateStr } from "../../utils/user-time";
+import { projectOuraMetrics } from "../../mods/oura-metrics-adapter";
 import { fetchOuraCollection, OuraApiError } from "./client";
 import {
   mapOuraDailyActivity,
@@ -178,6 +179,7 @@ export async function syncOuraAccount(input: { accountId: string; mode?: OuraSyn
       lastSyncCompletionsUpgraded: result.completions.upgraded,
       lastSyncError: null,
     });
+    const coreProjection = await projectOuraMetrics();
     await updateAccount(input.accountId, { healthy: true, healthError: null, healthCheckedAt: new Date() });
 
     log.log(`sync complete accountId=${input.accountId} mode=${mode} range=${startDate}..${endDate} metricRows=${result.metricRows} inserted=${result.inserted} completionsLogged=${result.completions.logged} completionsUpgraded=${result.completions.upgraded}`);

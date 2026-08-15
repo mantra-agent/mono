@@ -211,6 +211,18 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     timezone: "__USER_TZ__",
   },
   {
+    legacyMatch: (t) => t.type === "system" && t.prompt === "oura-sync",
+    systemKey: "oura-sync",
+    name: "Oura Sync",
+    description: "Hourly incremental Oura polling; webhooks remain optional acceleration.",
+    type: "system",
+    skillId: undefined,
+    prompt: "oura-sync",
+    schedules: [{ id: "sys-oura-sync-hourly", frequency: "every_x_hours", interval: 1 }],
+    enabled: true,
+    timezone: "__USER_TZ__",
+  },
+  {
     legacyMatch: (t) => t.type === "system" && t.prompt === "content-publish",
 
     systemKey: "content-publisher",

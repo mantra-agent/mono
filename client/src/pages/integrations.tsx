@@ -4938,7 +4938,11 @@ function OuraDetail() {
               {webhooks?.lastSubscriptionError && (
                 <p className="text-xs text-warning-foreground border-t pt-3" data-testid="text-oura-webhook-warning">{webhooks.lastSubscriptionError}</p>
               )}
-              <p className="text-xs text-muted-foreground border-t pt-3">Webhooks only trigger bounded syncs. Health data still comes from Oura API reads.</p>
+              <p className="text-xs text-muted-foreground border-t pt-3" data-testid="text-oura-sync-mode">
+                {(webhooks?.subscriptions?.length || 0) > 0
+                  ? "Real-time updates accelerate the hourly periodic sync."
+                  : "Real-time updates are inactive. Oura remains connected and continues syncing periodically every hour."}
+              </p>
             </CardContent>
           </Card>
         </div>
