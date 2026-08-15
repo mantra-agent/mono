@@ -16,6 +16,7 @@ import {
   workflowRef,
   toolRef,
   serverRouteGroupRef,
+  metricAdapter,
 } from "./contribution-builders";
 import { actionsForOwner } from "./action-catalog";
 
@@ -153,6 +154,7 @@ const business: ModDefinition = {
   requiresCore: ["agent", "automation", "references", "ui-composition"],
   recommendsMods: ["planning"],
   contributions: {
+    metricAdapters: [metricAdapter("business.metric-adapter.core", "business", ["business"], "business.metrics")],
     serverRouteGroups: [serverRouteGroupRef("business.routes.api", "business.api")],
     tools: [
       toolRef("business.tool.business", "business"),

@@ -14,6 +14,7 @@ import {
   metricUpdateSchema,
 } from "@shared/models/metrics";
 import { seedDefaultMetricsAndKpis } from "./metrics-seed";
+import { getBusinessMetricCollection } from "./mods/business-metrics-adapter";
 import { getCurrentPrincipal } from "./principal-context";
 import { createLogger } from "./log";
 
@@ -151,7 +152,7 @@ export function registerMetricsRoutes(app: Express): void {
           res.status(400).json({ error: "businessId, start, and end must form a valid sampling range" });
           return;
         }
-        res.json(await metricsStorage.collection(businessId, start, end));
+        res.json(await getBusinessMetricCollection(businessId, start, end));
       } catch (error) {
         respondError(res, "collect metrics", error);
       }
