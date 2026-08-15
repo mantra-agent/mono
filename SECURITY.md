@@ -1,3 +1,10 @@
+<!-- 2026-08-15 Universal Metrics cutover:
+- Assets/data: Core Metric and KPI definitions, samples, KPI links, and domain adapter projections (S1 operational measurement identity; S2 health/business values). No history delete and no second measurement store.
+- Flow/threat: Business, Performance, and Health/Oura all write or project into Core metrics, while clients and tools still hit Business-prefixed routes. Leaving Business as the producer path would keep dual ownership and let a domain disable path look like data loss (STRIDE tampering/repudiation; DATA-01/AGENT-03).
+- Deterministic controls/owner: `server/metrics/core-engine.ts` remains the sole service boundary. Neutral `/api/metrics` and `/api/kpis` are the canonical HTTP handlers; `/api/business/*` rewrites are compatibility aliases only. Performance and Oura adapters project through Core with stable IDs and source-ref provenance; disabling a domain adapter preserves definitions/samples and surfaces staleness. Owner: Core Metrics. Severity: medium integrity. SLA: immediate.
+- Residual/rollback: Business route aliases, Business collection adapter, and seed retirement path remain until zero callers. Revert the route ownership flip, AGENTS metrics boundary note, and this finding together; never drop metric history as rollback.
+-->
+
 <!-- 2026-08-14 People Slack User ID is an address, not a Principal:
 - Assets/data: A01 Person contact identity (`persons.social_profiles.slack`, S1 Slack User ID). No token, mapping, Session, or send authority.
 - Flow/threat: People profile -> typed Slack User ID (`U…`) stored like Instagram. Credible abuse is treating that field as inbound Slack identity, auto-discovering IDs, or posting from it (STRIDE spoofing/elevation; IAM-01/AGENT-03).
