@@ -102,6 +102,7 @@ const build: ModDefinition = {
     serverRouteGroups: [
       serverRouteGroupRef("build.routes.platforms", "build.platforms"),
       serverRouteGroupRef("build.routes.products", "build.products"),
+      serverRouteGroupRef("build.routes.features", "build.features"),
       serverRouteGroupRef("build.routes.issues", "build.issues"),
       serverRouteGroupRef("build.routes.db-sync", "build.db-sync"),
       serverRouteGroupRef("build.routes.railway", "build.railway"),

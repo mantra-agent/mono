@@ -91,6 +91,8 @@ export async function convergeBootSchema(): Promise<void> {
         await ensurePhoneSchema(pool);
         await ensureSlackSchema(pool);
         await ensureWorkVaultSchema(pool);
+        const { ensureFeatureSchema } = await import("./feature-schema");
+        await ensureFeatureSchema(pool);
       },
     },
     {
