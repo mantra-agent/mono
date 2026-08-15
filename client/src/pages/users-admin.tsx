@@ -21,7 +21,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { HIERARCHY_PRIMARY_ACTION_CLASS, HIERARCHY_TREE_STACK_CLASS } from "@/components/hierarchy-section-header";
-import { matchesIdentityQuery, useIdentityGraph } from "@/lib/identity-graph";
+import { matchesIdentityQuery, useIdentityGraph, type IdentityGraphAccount } from "@/lib/identity-graph";
 import { createReferenceRef } from "@shared/references";
 import type { ClientPresenceEntry, ClientPresenceKind } from "@shared/client-presence";
 
@@ -545,17 +545,41 @@ export default function UsersAdminPage() {
       return matchesIdentityQuery(search, user.email, user.role, user.id, ...accountNames);
     });
   }, [accountsById, membershipsByUser, search, users]);
-  const activeUsers = useMemo(() => filteredUsers.filter((user) => user.presence.length > 0), [filteredUsers]);
+  // Users have no lifecycle discriminant of their own — the owning personal
+  // Account's status is the single writable one. Project it so a suspended or
+  // archived Account pulls its owner out of the presence split into its own
+  // section rather than lingering under Inactive.
+  const ownedAccountByUser = useMemo(() => {
+    const map = new Map<string, IdentityGraphAccount>();
+    for (const account of identityGraph.data?.accounts ?? []) {
+      if (account.kind === "personal" && account.ownerUserId) map.set(account.ownerUserId, account);
+    }
+    return map;
+  }, [identityGraph.data?.accounts]);
+  const lifecycleUsers = useMemo(() => {
+    const live: AdminUserRow[] = [];
+    const suspended: AdminUserRow[] = [];
+    const archived: AdminUserRow[] = [];
+    for (const user of filteredUsers) {
+      const status = ownedAccountByUser.get(user.id)?.status;
+      if (status === "suspended") suspended.push(user);
+      else if (status === "archived") archived.push(user);
+      else live.push(user);
+    }
+    return { live, suspended, archived };
+  }, [filteredUsers, ownedAccountByUser]);
+  const byLastActiveDesc = (a: AdminUserRow, b: AdminUserRow) => {
+    const aTime = a.lastActiveAt ? new Date(a.lastActiveAt).getTime() : 0;
+    const bTime = b.lastActiveAt ? new Date(b.lastActiveAt).getTime() : 0;
+    return bTime - aTime;
+  };
+  const activeUsers = useMemo(() => lifecycleUsers.live.filter((user) => user.presence.length > 0), [lifecycleUsers]);
   const inactiveUsers = useMemo(
-    () => filteredUsers
-      .filter((user) => user.presence.length === 0)
-      .sort((a, b) => {
-        const aTime = a.lastActiveAt ? new Date(a.lastActiveAt).getTime() : 0;
-        const bTime = b.lastActiveAt ? new Date(b.lastActiveAt).getTime() : 0;
-        return bTime - aTime;
-      }),
-    [filteredUsers],
+    () => lifecycleUsers.live.filter((user) => user.presence.length === 0).sort(byLastActiveDesc),
+    [lifecycleUsers],
   );
+  const suspendedUsers = useMemo(() => [...lifecycleUsers.suspended].sort(byLastActiveDesc), [lifecycleUsers]);
+  const archivedUsers = useMemo(() => [...lifecycleUsers.archived].sort(byLastActiveDesc), [lifecycleUsers]);
   const filteredWaitlist = useMemo(
     () => waitlist.filter((application) => matchesIdentityQuery(search, application.email, application.status, application.role)),
     [search, waitlist],
@@ -694,6 +718,8 @@ export default function UsersAdminPage() {
           <UserGroupSection label="Waitlist" count={filteredWaitlist.length} defaultOpen={false} storageKey="users:list:waitlist:open">{filteredWaitlist.length > 0 ? filteredWaitlist.map(renderWaitlistRow) : <div className="px-2 py-1.5 text-sm text-muted-foreground">No one is waiting.</div>}</UserGroupSection>
           <UserGroupSection label="Active" count={activeUsers.length} defaultOpen storageKey="users:list:active:open">{activeUsers.length > 0 ? activeUsers.map(renderUserRow) : <div className="px-2 py-1.5 text-sm text-muted-foreground">No active users.</div>}</UserGroupSection>
           <UserGroupSection label="Inactive" count={inactiveUsers.length} defaultOpen={false} storageKey="users:list:inactive:open">{inactiveUsers.length > 0 ? inactiveUsers.map(renderUserRow) : <div className="px-2 py-1.5 text-sm text-muted-foreground">No inactive users.</div>}</UserGroupSection>
+          <UserGroupSection label="Suspended" count={suspendedUsers.length} defaultOpen={false} storageKey="users:list:suspended:open">{suspendedUsers.length > 0 ? suspendedUsers.map(renderUserRow) : <div className="px-2 py-1.5 text-sm text-muted-foreground">No suspended users.</div>}</UserGroupSection>
+          <UserGroupSection label="Archived" count={archivedUsers.length} defaultOpen={false} storageKey="users:list:archived:open">{archivedUsers.length > 0 ? archivedUsers.map(renderUserRow) : <div className="px-2 py-1.5 text-sm text-muted-foreground">No archived users.</div>}</UserGroupSection>
         </div>
       </div>
       <InviteUserDialog open={inviteOpen} onOpenChange={setInviteOpen} />
