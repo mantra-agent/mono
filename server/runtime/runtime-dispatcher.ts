@@ -1,6 +1,7 @@
 import type { RuntimeResourcePool } from "@shared/models/runtime";
 import { BOOT_ID } from "../db";
 import { createLogger } from "../log";
+import { AccountLifecycleError } from "../principal";
 import { runWithPrincipal } from "../principal-context";
 import type { RuntimeAttemptDecision, RuntimeExecutionContext } from "./runtime-handler";
 import {
@@ -16,6 +17,30 @@ const DISPATCH_INTERVAL_MS = 1_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const STOP_DRAIN_MS = 7_000;
 const NATIVE_POOLS: RuntimeResourcePool[] = ["background_agent", "short_worker"];
+
+/**
+ * startRuntimeAttempt already terminalizes authority failures as blocked, then
+ * rethrows so execute() stops. That is expected control flow — not a dispatcher
+ * contract failure — so it must not project into application_error_aggregates.
+ */
+function isExpectedAuthorityTerminal(error: unknown): boolean {
+  if (error instanceof AccountLifecycleError) return true;
+  if (!error || typeof error !== "object") return false;
+  const code =
+    "code" in error && typeof (error as { code?: unknown }).code === "string"
+      ? String((error as { code: string }).code)
+      : "";
+  if (
+    code === "authority_subject_missing" ||
+    code === "account_suspended" ||
+    code === "account_archived" ||
+    code.startsWith("authority_") ||
+    code.endsWith("_authority_revoked")
+  ) {
+    return true;
+  }
+  return "status" in error && (error as { status?: unknown }).status === 403;
+}
 
 class RuntimeDispatcher {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -67,14 +92,26 @@ class RuntimeDispatcher {
       const claimed = await claimNextRuntimeRun(resourcePool, `${BOOT_ID}:${resourcePool}`);
       if (!claimed || this.stopping) return;
       const execution = this.execute(claimed.fence).catch((error) => {
-        log.error("runtime.dispatch.execution_failed", {
+        const details = {
           runId: claimed.run.id,
           attemptId: claimed.attempt.id,
           accountId: claimed.run.accountId,
           handler: `${claimed.run.handlerKey}@${claimed.run.handlerVersion}`,
           resourcePool,
           errorType: error instanceof Error ? error.name : typeof error,
-        });
+          reasonCode:
+            error && typeof error === "object" && "code" in error && typeof (error as { code?: unknown }).code === "string"
+              ? String((error as { code: string }).code)
+              : null,
+        };
+        // Authority already terminalized the run as blocked; warn only so
+        // AccountLifecycleError thrash cannot flood ERRORS (see Self Heal
+        // RUNTIME_DISPATCH_EXECUTION_FAILED).
+        if (isExpectedAuthorityTerminal(error)) {
+          log.warn("runtime.dispatch.execution_blocked", details);
+          return;
+        }
+        log.error("runtime.dispatch.execution_failed", details);
       });
       this.active.add(execution);
       void execution.finally(() => this.active.delete(execution));
