@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ChevronRight, Loader2, Plus } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -22,17 +22,25 @@ import { useToast } from "@/hooks/use-toast";
 const stages = ["idea", "spec", "develop", "test", "calibrate", "maintain", "deprecate"] as const;
 type Feature = { id: string; summary: string; stage: typeof stages[number]; status: string; product_name?: string };
 type Product = { id: number; name: string };
+type Person = { id: string; name: string; cabinetLevel?: string };
 
 function formatStage(stage: typeof stages[number]) {
   return stage.charAt(0).toUpperCase() + stage.slice(1);
 }
 
-function CreateFeatureDialog({ products, onCreated }: { products: Product[]; onCreated: () => void }) {
+function CreateFeatureDialog({ products, currentPerson, onCreated }: { products: Product[]; currentPerson: Person | null; onCreated: () => void }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [summary, setSummary] = useState("");
   const [productId, setProductId] = useState("");
   const [owner, setOwner] = useState<ReferencePickerValue[]>([]);
+
+  useEffect(() => {
+    if (currentPerson && owner.length === 0) {
+      setOwner([{ type: "person", id: currentPerson.id, label: currentPerson.name }]);
+    }
+  }, [currentPerson, owner.length]);
+
   const create = useMutation({
     mutationFn: async () => {
       const response = await apiRequest("POST", "/api/features", {
@@ -47,7 +55,7 @@ function CreateFeatureDialog({ products, onCreated }: { products: Product[]; onC
       toast({ title: "Feature created", description: summary.trim() });
       setSummary("");
       setProductId("");
-      setOwner([]);
+      setOwner(currentPerson ? [{ type: "person", id: currentPerson.id, label: currentPerson.name }] : []);
       setOpen(false);
       onCreated();
     },
@@ -93,8 +101,16 @@ function CreateFeatureDialog({ products, onCreated }: { products: Product[]; onC
 
 export default function FeaturesPage() {
   const [search, setSearch] = useState("");
-  const features = useQuery<Feature[]>({ queryKey: ["/api/features", search], queryFn: async () => apiRequest("GET", `/api/features${search ? `?search=${encodeURIComponent(search)}` : ""}`) });
+  const features = useQuery<Feature[]>({
+    queryKey: ["/api/features", search],
+    queryFn: async () => {
+      const response = await apiRequest("GET", `/api/features${search ? `?search=${encodeURIComponent(search)}` : ""}`);
+      return response.json();
+    },
+  });
   const products = useQuery<Product[]>({ queryKey: ["/api/products"] });
+  const people = useQuery<{ people: Person[] }>({ queryKey: ["/api/people"] });
+  const currentPerson = people.data?.people.find((person) => person.cabinetLevel === "user") ?? null;
   const grouped = useMemo(() => stages.map((stage) => ({ stage, rows: (features.data ?? []).filter((row) => row.stage === stage) })), [features.data]);
 
   return (
@@ -102,7 +118,7 @@ export default function FeaturesPage() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className={HIERARCHY_TREE_STACK_CLASS} data-testid="features-page">
           <HierarchySearchInput value={search} onChange={setSearch} inputTestId="input-search-features" clearTestId="button-clear-feature-search" ariaLabel="Search features" />
-          <CreateFeatureDialog products={products.data ?? []} onCreated={() => features.refetch()} />
+          <CreateFeatureDialog products={products.data ?? []} currentPerson={currentPerson} onCreated={() => features.refetch()} />
           {grouped.map(({ stage, rows }) => (
             <Collapsible key={stage} defaultOpen>
               <CollapsibleTrigger className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}>
