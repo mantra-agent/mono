@@ -10058,7 +10058,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
     return handler(args);
   },
   async memory(args) {
-    const action = args.action;
+    let action = args.action;
     if (!action) return { result: "Missing action parameter", error: true };
     const sub: Record<string, ToolHandler> = {
       read: memoryTools.memory_read,
@@ -10077,8 +10077,11 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       return result;
     }
     // Compatibility alias: memory.get is the public name for vnext_claim_detail.
-    // Fall through in-place — do not re-enter a missing bridgeHandlers.memory binding.
+    // Retarget the local dispatch variable (not just args.action) so the
+    // downstream `action === "vnext_claim_detail"` branch actually matches;
+    // fall through in-place — do not re-enter a missing bridgeHandlers.memory binding.
     if (action === "get") {
+      action = "vnext_claim_detail";
       args.action = "vnext_claim_detail";
     }
     const retiredLegacyCrudActions: Record<string, string> = {
