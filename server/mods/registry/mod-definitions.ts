@@ -82,7 +82,6 @@ const build: ModDefinition = {
       clientRoute("build.route.design", "/design", "design", { requiredPermissions: ["build:read"] }),
       clientRoute("build.route.platforms", "/platforms", "platforms", { requiredPermissions: ["build:read"] }),
       clientRoute("build.route.products", "/products", "products", { requiredPermissions: ["build:read"] }),
-      clientRoute("build.route.backlog", "/backlog", "backlog", { requiredPermissions: ["build:read"] }),
       clientRoute("build.route.features", "/build/features", "features", { requiredPermissions: ["build:read"] }),
       clientRoute("build.route.platform-environment-detail", "/platforms/environments/:id", "platform-environment-detail", { requiredPermissions: ["build:read"] }),
       clientRoute("build.route.issue-detail", "/issues/:id", "issue-detail", { requiredPermissions: ["build:read"] }),
@@ -90,7 +89,6 @@ const build: ModDefinition = {
     navigation: [
       nav("build.nav.platforms", "Build", "Platforms", "Boxes", "navigation.platforms.open", "build.route.platforms", 1, { requiredPermissions: ["build:read"] }),
       nav("build.nav.products", "Build", "Products", "Boxes", "navigation.products.open", "build.route.products", 2, { requiredPermissions: ["build:read"] }),
-      nav("build.nav.backlog", "Build", "Backlog", "ClipboardList", "navigation.backlog.open", "build.route.backlog", 3, { requiredPermissions: ["build:read"] }),
       nav("build.nav.features", "Build", "Features", "ClipboardList", "navigation.features.open", "build.route.features", 4, { requiredPermissions: ["build:read"] }),
       nav("build.nav.design", "Build", "Design", "Palette", "navigation.design.open", "build.route.design", 4, { requiredPermissions: ["build:read"] }),
       nav("build.nav.issues", "Build", "Issues", "Hammer", "navigation.issues.open", "build.route.build", 5, { requiredPermissions: ["build:read"] }),
