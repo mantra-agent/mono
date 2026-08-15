@@ -12,7 +12,6 @@ import { useVoiceStreaming } from "@/hooks/use-voice-streaming";
 import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
 import { SessionTranscriptPanel } from "@/components/session-transcript-panel";
 import { NavigationOrbButton } from "@/components/app-sidebar";
-import { ConnectionsIndicator } from "@/components/connections-indicator";
 import { VaultSwitcher } from "@/components/vault-switcher";
 // Tooltip import removed — FAB tooltip no longer needed
 import { apiRequest } from "@/lib/queryClient";
@@ -884,7 +883,6 @@ function FocusWidgetPanel({ contained }: FocusWidgetPanelProps) {
             <VaultSwitcher />
           </div>
           <div className="flex flex-1 items-center justify-end gap-2 px-2">
-            <ConnectionsIndicator />
             <button
               type="button"
               onClick={() => setWidgetOpen(!widgetOpen)}

@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Bot, Check, Clock, Image, KeyRound, Loader2, LogOut, Mail, MessageSquareText, Monitor, Save } from "lucide-react";
+import { Bot, Check, Clock, Globe2, Image, KeyRound, Loader2, LogOut, Mail, MessageSquareText, Monitor, Save } from "lucide-react";
+import { ConnectionsIndicator } from "@/components/connections-indicator";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -205,6 +206,17 @@ export default function AccountPage() {
           )}
         >
           <span className="text-muted-foreground">••••••••</span>
+        </ProfileTreeRow>
+
+        <ProfileTreeRow
+          label="Connected sections"
+          icon={<Globe2 className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="account-connected-sections-row"
+        >
+          <ConnectionsIndicator emptyText="None" />
         </ProfileTreeRow>
 
         <ProfileTreeRow

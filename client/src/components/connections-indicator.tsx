@@ -1,7 +1,8 @@
 import { Glasses, Globe2, Smartphone } from "lucide-react";
 import { useMemo } from "react";
 import { useClientPresence } from "@/hooks/use-client-presence";
-import type { ClientPresenceEntry, ClientPresenceKind } from "@shared/client-presence";
+import { cn } from "@/lib/utils";
+import type { ClientPresenceKind } from "@shared/client-presence";
 
 const KIND_LABEL: Record<ClientPresenceKind, string> = {
   web: "Web connected",
@@ -21,14 +22,30 @@ function kindSort(a: ClientPresenceKind, b: ClientPresenceKind): number {
   return order[a] - order[b];
 }
 
-export function ConnectionsIndicator() {
+interface ConnectionsIndicatorProps {
+  /** When no clients are present, render this quiet label instead of hiding. */
+  emptyText?: string;
+  className?: string;
+}
+
+export function ConnectionsIndicator({ emptyText, className }: ConnectionsIndicatorProps = {}) {
   const { clients } = useClientPresence();
   const orderedKinds = useMemo(
     () => Array.from(new Set(clients.map((client) => client.kind))).sort(kindSort),
     [clients],
   );
 
-  if (orderedKinds.length === 0) return null;
+  if (orderedKinds.length === 0) {
+    if (!emptyText) return null;
+    return (
+      <span
+        className={cn("text-xs text-muted-foreground", className)}
+        data-testid="connections-indicator-empty"
+      >
+        {emptyText}
+      </span>
+    );
+  }
 
   const label = orderedKinds
     .map((kind) => KIND_LABEL[kind].replace(" connected", ""))
@@ -36,7 +53,7 @@ export function ConnectionsIndicator() {
 
   return (
     <div
-      className="flex flex-row-reverse items-center gap-1"
+      className={cn("flex items-center gap-1", className)}
       aria-label={`Connected clients: ${label}`}
       data-testid="connections-indicator"
     >
