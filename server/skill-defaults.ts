@@ -250,11 +250,11 @@ No preamble. No source list. No explanation of your process. No extra headings.
   {
     name: "brief-daily",
     recommendedPersona: "Companion",
-    description: "Assembles a morning briefing calibrated to the day's actual cognitive load. Monday/Wednesday/Friday carry more weight; Tuesday/Thursday are minimal. Archives to Library and links to Goals page.",
+    description: "Assembles a morning briefing calibrated to the day's actual cognitive load. Monday/Wednesday/Friday carry more weight; Tuesday/Thursday are minimal. Prepends each day onto one rolling Morning Brief Library page and re-surfaces that same page.",
     category: "communication",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "7.8",
+    version: "7.9",
     addToMemory: true,
     scoreThreshold: 0.8,
     pinnedToContext: false,
@@ -272,7 +272,7 @@ No preamble. No source list. No explanation of your process. No extra headings.
       { check: "Hot Topics section pulls 1-3 headlines from news signals when available, or is cleanly omitted when feed is empty", weight: 1 },
       { check: "Brief depth matches the day type: Tuesday/Thursday are under 15 lines unless urgent; Monday/Wednesday/Friday include a priority alignment check; weekends contain no work content", weight: 2 },
       { check: "Contains no empty sections, no Flags/nag section, no standalone email or finance sections", weight: 1 },
-      { check: "Brief archived to Library and linked as today's daily artifact", weight: 1 },
+      { check: "Prepended today's entry on the single Morning Brief Library page and re-surfaced that same page", weight: 2 },
     ],
     process: `You are assembling and delivering Ray's Daily Brief — a morning briefing calibrated to the day's cognitive load, not the volume of available data.
 
@@ -386,18 +386,30 @@ Urgent items (calendar conflicts, blocked tasks, time-sensitive decisions) surfa
 
 ## Delivery
 
-After assembling the brief, output it directly as this session's response. Then:
+After assembling the brief, output it directly as this session's response. Then archive onto ONE rolling Library page and re-surface that same page.
 
-1. Use the \`library\` tool to archive and surface the brief. First check if the page exists with action "get_library_page" (id: "daily-brief-YYYY-MM-DD"). If it exists, use action "update_library_page"; if not, use action "create_library_page":
-   - id: "daily-brief-YYYY-MM-DD" (using today's date)
-   - title: "Daily Brief — [Day of Week], [Date]"
-   - plainTextContent: The full brief content in markdown
+Primary artifact every run: the account's single Morning Brief Library page (stable slug \`morning-brief\`, title "Morning Brief"). If missing, create it once, then reuse that same page forever. Never mint a new dated page.
+
+1. Resolve the page:
+   - Prefer \`library(action: "get_library_page", id: "morning-brief")\`.
+   - If missing, also try title search for "Morning Brief" / "Daily Brief" before creating.
+   - If still missing, create once with:
+     - id/slug: "morning-brief"
+     - title: "Morning Brief"
+     - plainTextContent starting with \`# Morning Brief\` then today's dated section
+     - tags: ["daily-brief", "morning-brief"]
+2. If the page already exists, prepend today's entry at the top of the body via \`library(action: "edit_library_page")\` or \`update_library_page\`:
+   - Newest day first.
+   - Each entry starts with \`## [Day of Week], [Month] [Day], [Year]\` then the full brief markdown for that day.
+   - Do not overwrite or delete prior days.
+   - If today's heading already exists at the top, replace only that section rather than duplicating it.
+3. Re-surface the SAME page every run:
    - surface: true
    - surfaceDurationHours: 24
-   - surfaceReason: "Daily Brief"
+   - surfaceReason: "Daily Brief — [Day of Week], [Date]"
    - surfaceSection: "inbox"
 
-Do NOT use the \`priorities\` tool with action "set_brief" for Daily Brief visibility. Home/Simple Inbox visibility is owned by Library surfacing. Do NOT create a separate conversation via the \`converse\` tool. Do NOT set attention flags.
+Do NOT create \`daily-brief-YYYY-MM-DD\` pages. Do NOT use the \`priorities\` tool with action "set_brief" for Daily Brief visibility. Home/Simple Inbox visibility is owned by Library surfacing. Do NOT create a separate conversation via the \`converse\` tool. Do NOT set attention flags.
 
 ## Important Rules
 - AFFIRMATION FIRST. Always. Every day. Before everything. NO EXCEPTIONS, not even on Sunday.
