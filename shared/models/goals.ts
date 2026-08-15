@@ -154,6 +154,7 @@ export const createGoalSchema = z.object({
   periodWeek: z.string().nullable().optional(),
   periodMonth: z.string().nullable().optional(),
   source: z.string().optional(),
+  blockedBy: z.array(z.string().min(1)).optional(),
 });
 
 export type CreateGoalInput = z.infer<typeof createGoalSchema>;
@@ -172,6 +173,7 @@ export const updateGoalSchema = z.object({
   periodWeek: z.string().nullable().optional(),
   periodMonth: z.string().nullable().optional(),
   source: z.string().optional(),
+  blockedBy: z.array(z.string().min(1)).optional(),
 });
 
 export type UpdateGoalInput = z.infer<typeof updateGoalSchema>;

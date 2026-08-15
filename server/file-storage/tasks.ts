@@ -481,6 +481,8 @@ export class FileTaskStorage {
 
     this.invalidateCache();
     const task = rowToTask(row);
+    const { addBlockedByReferences } = await import("../work-blocking-mutations");
+    await addBlockedByReferences(`@task:${task.id}`, input);
     await syncTaskTags(task);
     log.log(`createTask id=${task.id} title="${task.title}" status=${task.status} priority=${task.priority}`);
     return task;
@@ -569,6 +571,8 @@ export class FileTaskStorage {
     log.log(`updateTask id=${id} fields=${Object.keys(updates).join(",")}`);
     this.invalidateCache();
     const task = rowToTask(row);
+    const { addBlockedByReferences } = await import("../work-blocking-mutations");
+    await addBlockedByReferences(`@task:${task.id}`, command);
     if (updates.tags !== undefined) {
       await syncTaskTags(task);
     }

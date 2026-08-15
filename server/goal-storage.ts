@@ -323,17 +323,18 @@ export class GoalStorage {
   }
 
   async createGoal(input: CreateGoalInput): Promise<Goal> {
+    const { blockedBy: _blockedBy, ...domainInput } = input;
     const now = new Date().toISOString();
     const parentId = input.parentId ?? null;
     const goal: Goal = {
       id: generateId(),
-      shortName: input.shortName,
-      description: input.description,
-      rawInput: input.rawInput || "",
-      horizon: input.horizon,
+      shortName: domainInput.shortName,
+      description: domainInput.description,
+      rawInput: domainInput.rawInput || "",
+      horizon: domainInput.horizon,
       parentId,
-      owner: input.owner || "me",
-      vaultId: this.resolveVaultId(input.vaultId),
+      owner: domainInput.owner || "me",
+      vaultId: this.resolveVaultId(domainInput.vaultId),
       tags: input.tags || [],
       status: input.status || "active",
       notes: [],
@@ -357,11 +358,12 @@ export class GoalStorage {
   }
 
   async updateGoal(id: string, updates: UpdateGoalInput): Promise<Goal> {
+    const { blockedBy: _blockedBy, ...domainUpdates } = updates;
     const goal = await this.getGoal(id);
     if (!goal) throw new Error(`Goal ${id} not found`);
 
     const changedFields: string[] = [];
-    for (const [key, value] of Object.entries(updates)) {
+    for (const [key, value] of Object.entries(domainUpdates)) {
       if (value !== undefined && JSON.stringify((goal as any)[key]) !== JSON.stringify(value)) {
         changedFields.push(key);
       }
@@ -378,7 +380,7 @@ export class GoalStorage {
 
     const updated: Goal = {
       ...goal,
-      ...updates,
+      ...domainUpdates,
       id: goal.id,
       createdAt: goal.createdAt,
       notes: goal.notes,

@@ -110,11 +110,16 @@ export class GoalsService {
       }
     }
     const goal = await goalStorage.createGoal(input);
+    const { addBlockedByReferences } = await import("./work-blocking-mutations");
+    await addBlockedByReferences(`@goal:${goal.id}`, input);
     return { goal, created: true };
   }
 
   async update(id: string, input: UpdateGoalInput): Promise<Goal> {
-    return goalStorage.updateGoal(id, input);
+    const goal = await goalStorage.updateGoal(id, input);
+    const { addBlockedByReferences } = await import("./work-blocking-mutations");
+    await addBlockedByReferences(`@goal:${goal.id}`, input);
+    return goal;
   }
 
   async setStatus(id: string, status: GoalStatus): Promise<Goal> {
