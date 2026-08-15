@@ -443,13 +443,39 @@ function PersonaIconDisplay({ iconName, className }: { iconName: string; classNa
   return <Icon className={className} />;
 }
 
+function fieldChanged(field: LocalField, changedFields?: string[]): boolean {
+  return field === "memoryGraphTokenBudget"
+    ? Boolean(changedFields?.includes("cognitiveOverrides"))
+    : Boolean(changedFields?.includes(field));
+}
+
+function fieldValueClass(changed?: boolean): string {
+  return changed ? "text-white" : "text-muted-foreground";
+}
+
+function StatusDot({
+  kind,
+  className,
+}: {
+  kind: "local" | "inbound";
+  className?: string;
+}) {
+  const inbound = kind === "inbound";
+  return (
+    <Circle
+      className={cn(
+        "h-1.5 w-1.5",
+        inbound ? "fill-success text-success" : "fill-warning text-warning",
+        className,
+      )}
+      aria-label={inbound ? "Default has advanced" : "Edited locally"}
+    />
+  );
+}
+
 function LocalEditMark({ field, changedFields }: { field: LocalField; changedFields?: string[] }) {
-  const matches =
-    field === "memoryGraphTokenBudget"
-      ? changedFields?.includes("cognitiveOverrides")
-      : changedFields?.includes(field);
-  if (!matches) return null;
-  return <Circle className="h-1.5 w-1.5 fill-warning text-warning" aria-label="Edited locally" />;
+  if (!fieldChanged(field, changedFields)) return null;
+  return <StatusDot kind="local" />;
 }
 
 function IconPicker({
@@ -551,7 +577,7 @@ function PersonaProseEditor({
       <div className={cn(PROFILE_DESCRIPTION_FRAME_CLASS, "min-w-0")}>
         {changed && (
           <div className="mb-1 flex justify-end">
-            <Circle className="h-1.5 w-1.5 fill-warning text-warning" aria-label="Edited locally" />
+            <StatusDot kind="local" />
           </div>
         )}
         {showMarkdownPreview ? (
@@ -565,7 +591,7 @@ function PersonaProseEditor({
             aria-label={`Edit ${actionLabel.replace(/ actions$/i, "").toLowerCase()}`}
           >
             {value.trim() ? (
-              <div className={cn("prose prose-sm dark:prose-invert max-w-none break-words", PROFILE_DESCRIPTION_TEXT_CLASS, "prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:overflow-x-auto")}>
+              <div className={cn("prose prose-sm dark:prose-invert max-w-none break-words text-[14px] leading-tight", fieldValueClass(changed), "prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:overflow-x-auto")}>
                 <MarkdownContent content={value} compact />
               </div>
             ) : (
@@ -585,7 +611,8 @@ function PersonaProseEditor({
             className={cn(
               minHeightClassName,
               "w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
-              PROFILE_DESCRIPTION_TEXT_CLASS,
+              "text-[14px] leading-tight",
+              fieldValueClass(changed),
             )}
           />
         )}
@@ -657,6 +684,7 @@ function PersonaPayloadEditor({
     },
   });
   const mark = (field: LocalField) => <LocalEditMark field={field} changedFields={persona.changedFields} />;
+  const valueTone = (field: LocalField) => fieldValueClass(fieldChanged(field, persona.changedFields));
   const fieldMenu = (field: LocalField) =>
     onApplyField || onRevertField ? (
       <>
@@ -678,7 +706,7 @@ function PersonaPayloadEditor({
       />
       <ProfileTreeRow label="Memory" icon={mark("memoryGraphTokenBudget")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("memoryGraphTokenBudget")} menuVisibility="hover">
         <Select value={budgetToTier(draft.memoryGraphTokenBudget) || undefined} onValueChange={(value) => commit("memoryGraphTokenBudget", tierToBudget(value))}>
-          <SelectTrigger><SelectValue placeholder="Default" /></SelectTrigger>
+          <SelectTrigger className={valueTone("memoryGraphTokenBudget")}><SelectValue placeholder="Default" /></SelectTrigger>
           <SelectContent>
             {MEMORY_TIERS.map((tier) => (
               <SelectItem key={tier.value} value={tier.value}>{tier.label}</SelectItem>
@@ -688,7 +716,7 @@ function PersonaPayloadEditor({
       </ProfileTreeRow>
       <ProfileTreeRow label="Thinking" icon={mark("semanticTier")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("semanticTier")} menuVisibility="hover">
         <Select value={draft.semanticTier} onValueChange={(value) => commit("semanticTier", value as PersonaPayloadDraft["semanticTier"])}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectTrigger className={valueTone("semanticTier")}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="max">Max</SelectItem>
             <SelectItem value="high">High</SelectItem>
@@ -700,7 +728,7 @@ function PersonaPayloadEditor({
       {showAdvancedFields && (
         <>
           <ProfileTreeRow label="Expressions" icon={mark("expressionTags")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("expressionTags")} menuVisibility="hover" expandedContent={<Input value={draft.expressionTags} placeholder="curious, gravitas" onChange={(event) => set("expressionTags", event.target.value)} {...commitInput("expressionTags", persona.expressionTags.join(", "))} />}>
-            <span className="truncate">{draft.expressionTags || "None"}</span>
+            <span className={cn("truncate", valueTone("expressionTags"))}>{draft.expressionTags || "None"}</span>
           </ProfileTreeRow>
           <ProfileTreeRow label="Context" icon={mark("contextSections")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("contextSections")} menuVisibility="hover" expandedContent={<div>{sectionCatalog.map((entry) => {
             const locked = Boolean(entry.lockedByRoot) || rootContextOn.has(entry.id);
@@ -716,7 +744,7 @@ function PersonaPayloadEditor({
               </button>
             );
           })}</div>}>
-            <span>{Object.keys(draft.contextSections).length} overrides</span>
+            <span className={valueTone("contextSections")}>{Object.keys(draft.contextSections).length} overrides</span>
           </ProfileTreeRow>
           <ProfileTreeRow label="Tools" icon={mark("toolBundle")} hasValue showEmpty mobileLayout="inline" menuContent={fieldMenu("toolBundle")} menuVisibility="hover" expandedContent={<div>{toolCatalog.map((entry) => {
             const locked = entry.isCore || rootToolsOn.has(entry.name);
@@ -729,7 +757,7 @@ function PersonaPayloadEditor({
               </button>
             );
           })}</div>}>
-            <span>{draft.toolBundle.length ? `${draft.toolBundle.length} selected` : "All tools"}</span>
+            <span className={valueTone("toolBundle")}>{draft.toolBundle.length ? `${draft.toolBundle.length} selected` : "All tools"}</span>
           </ProfileTreeRow>
         </>
       )}
@@ -801,7 +829,7 @@ function PersonaNameEditor({
       }}
     >
       <span className="min-w-0 truncate text-foreground">{name}</span>
-      {changed && <Circle className="h-1.5 w-1.5 shrink-0 fill-warning text-warning" aria-label="Edited locally" />}
+      {changed && <StatusDot kind="local" className="shrink-0" />}
     </button>
   );
 }
@@ -842,7 +870,7 @@ function PersonaTreeItem({
           <span className="relative shrink-0">
             <IconPicker value={persona.icon} compact onChange={(icon) => onUpdate({ icon })} />
             {persona.changedFields?.includes("icon") && (
-              <Circle className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 fill-warning text-warning" aria-label="Edited locally" />
+              <StatusDot kind="local" className="absolute -right-0.5 -top-0.5" />
             )}
           </span>
         )}
@@ -852,6 +880,7 @@ function PersonaTreeItem({
           changed={persona.changedFields?.includes("name")}
           onCommit={(name) => onUpdate({ name })}
         />
+        {persona.updateAvailable && <StatusDot kind="inbound" className="shrink-0" />}
         {persona.isDefault && <span className="shrink-0 text-xs text-muted-foreground/70">Default</span>}
         <CollapsibleTrigger asChild>
           <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground" aria-label={open ? "Collapse persona" : "Expand persona"}>
@@ -867,7 +896,7 @@ function PersonaTreeItem({
       </div>
       {!open && collapsedDescription ? (
         <div className="px-2 pb-1">
-          <div className={cn(PROFILE_DESCRIPTION_TEXT_CLASS, "whitespace-pre-wrap text-white/80")}>
+          <div className={cn("whitespace-pre-wrap text-[14px] leading-tight", fieldValueClass(persona.changedFields?.includes("description")))}>
             {collapsedDescription}
           </div>
         </div>
@@ -1009,7 +1038,7 @@ function PlatformPersonaItem({ persona, canApply, onPublished }: { persona: Pers
       </div>
       {!open && collapsedDescription ? (
         <div className="px-2 pb-1">
-          <div className={cn(PROFILE_DESCRIPTION_TEXT_CLASS, "whitespace-pre-wrap text-white/80")}>
+          <div className={cn("whitespace-pre-wrap text-[14px] leading-tight", fieldValueClass(false))}>
             {collapsedDescription}
           </div>
         </div>
