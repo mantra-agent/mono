@@ -13,6 +13,8 @@ export type ToolFailureCode =
   | "task_update_internal"
   | "task_missing_title"
   | "business_plan_internal"
+  | "business_input_invalid"
+  | "business_internal"
   | "tool_authority_denied"
   | "build_mod_inactive"
   | "hook_name_conflict"
