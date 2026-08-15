@@ -170,7 +170,8 @@ type ClientVoiceSessionOperation =
   | "sdk_error"
   | "connection"
   | "event_ws"
-  | "start_session";
+  | "start_session"
+  | "midsession_disconnect";
 
 type ClientVoiceSessionOperationError = Error & {
   code?: string;
@@ -1087,6 +1088,18 @@ export function VoiceSessionProvider({
               isError: true,
             }]);
             setVoiceThinking(false);
+            const terminalDisconnectError = normalizeClientVoiceSessionError(
+              `voice mid-session disconnect: reconnect exhausted after ${maxReconnectAttempts} attempts — ${disconnectReason}`,
+              "midsession_disconnect",
+              "VOICE_MIDSESSION_DISCONNECT",
+              "voice mid-session disconnect: reconnect exhausted",
+            );
+            log.error(terminalDisconnectError, clientVoiceSessionLogContext({
+              operation: "midsession_disconnect",
+              phase: String(context.closeCode ?? ""),
+              reason: disconnectReason,
+              attempt: maxReconnectAttempts,
+            }));
             const persistedErrorMsg = "Voice session disconnected unexpectedly. Your conversation has been saved.";
             cleanupSession(`${source}-exhausted`, persistedErrorMsg);
           }
@@ -1106,6 +1119,18 @@ export function VoiceSessionProvider({
         isError: true,
       }]);
       setVoiceThinking(false);
+      const terminalDisconnectError = normalizeClientVoiceSessionError(
+        `voice mid-session disconnect: reconnect exhausted after ${maxReconnectAttempts} attempts — ${disconnectReason}`,
+        "midsession_disconnect",
+        "VOICE_MIDSESSION_DISCONNECT",
+        "voice mid-session disconnect: reconnect exhausted",
+      );
+      log.error(terminalDisconnectError, clientVoiceSessionLogContext({
+        operation: "midsession_disconnect",
+        phase: String(context.closeCode ?? ""),
+        reason: disconnectReason,
+        attempt: maxReconnectAttempts,
+      }));
       const persistedErrorMsg = "Voice session ended unexpectedly. Your conversation has been saved.";
       cleanupSession(`${source}-max-reached`, persistedErrorMsg);
     }
