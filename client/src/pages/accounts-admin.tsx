@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Building2, ChevronRight, Clock, Loader2, MoreHorizontal, Route } from "lucide-react";
+import { SimpleCheckCircle } from "@/components/home/home-check-circle";
 import { EditableSessionTitle } from "@/components/editable-session-title";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
@@ -82,6 +83,22 @@ function AccountRow({
   onAssignRouter: (account: IdentityGraphAccount, routerId: string) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [modsOpen, setModsOpen] = useState(false);
+  const { toast } = useToast();
+  const modsQuery = useQuery<{ mods: Array<{ key: string; name: string; status: string }>; canManage: boolean }>({
+    queryKey: ["/api/admin/accounts", account.id, "mods"],
+    queryFn: async () => (await apiRequest("GET", `/api/admin/accounts/${account.id}/mods`)).json(),
+    enabled: modsOpen,
+  });
+  const modMutation = useMutation({
+    mutationFn: async ({ key, enabled }: { key: string; enabled: boolean }) =>
+      (await apiRequest("POST", `/api/admin/accounts/${account.id}/mods/${key}/${enabled ? "install" : "disable"}`)).json(),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/admin/accounts", account.id, "mods"] });
+      await queryClient.invalidateQueries({ queryKey: IDENTITY_GRAPH_QUERY_KEY });
+    },
+    onError: (error: Error) => toast({ title: "Could not update Mod", description: error.message, variant: "destructive" }),
+  });
   const email = ownerEmail(account, users);
   const children = useMemo(() => {
     const userRefs = users.map((user) => createReferenceRef({
@@ -228,6 +245,51 @@ function AccountRow({
                     />
                   </DropdownMenuContent>
                 </DropdownMenu>
+              ) : null}
+            </div>
+          </HierarchyTreeRow>
+          <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+            <div className="min-w-0">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent/70"
+                onClick={() => setModsOpen((value) => !value)}
+                aria-expanded={modsOpen}
+                data-testid={`account-mods-toggle-${account.id}`}
+              >
+                <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", modsOpen && "rotate-90")} />
+                <span className="text-xs font-bold uppercase tracking-wider">Mods</span>
+              </button>
+              {modsOpen ? (
+                <div className="mt-0 space-y-0">
+                  {modsQuery.isLoading ? (
+                    <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Loading Mods…
+                    </div>
+                  ) : modsQuery.isError ? (
+                    <div className="px-2 py-1.5 text-sm text-destructive">Could not load Mods.</div>
+                  ) : (modsQuery.data?.mods ?? []).length === 0 ? (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">No Mods.</div>
+                  ) : (
+                    (modsQuery.data?.mods ?? []).map((mod) => {
+                      const enabled = mod.status === "enabled";
+                      const pending = modMutation.isPending && modMutation.variables?.key === mod.key;
+                      return (
+                        <div key={mod.key} className="flex items-center gap-2 px-2 py-1.5 text-sm" data-testid={`account-mod-row-${account.id}-${mod.key}`}>
+                          <SimpleCheckCircle
+                            checked={enabled}
+                            pending={pending}
+                            disabled={!canWrite || !(modsQuery.data?.canManage ?? false) || pending}
+                            label={enabled ? `Disable ${mod.name}` : `Enable ${mod.name}`}
+                            onClick={() => modMutation.mutate({ key: mod.key, enabled: !enabled })}
+                          />
+                          <span className={enabled ? "text-foreground" : "text-muted-foreground"}>{mod.name}</span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               ) : null}
             </div>
           </HierarchyTreeRow>
