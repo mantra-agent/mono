@@ -249,6 +249,7 @@ export function SessionTranscriptPanel({
   } = useQuery<{
     messages: Message[];
     reviewPlan?: { id: string; pageId: string; status: string } | null;
+    pinnedPlan?: { id: string; pageId: string; status: string } | null;
   } & Session>({
     queryKey: ["/api/sessions", activeSession],
     enabled: !!activeSession,
@@ -850,6 +851,7 @@ export function SessionTranscriptPanel({
         activeSession={activeSession}
         sessionKey={ownedSessionData?.sessionKey}
         reviewPlanId={ownedSessionData?.reviewPlan?.id}
+        pinnedPlanId={ownedSessionData?.pinnedPlan?.id}
         messages={displayMessages}
         streaming={displayStreaming}
         isSessionStreaming={isStreaming}

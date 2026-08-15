@@ -70,7 +70,8 @@ import { BOOT_ID, db } from "../../db";
 import { and, eq, inArray, isNull, notInArray, sql as drizzleSql, type SQL } from "drizzle-orm";
 import { combineWithVisibleScope } from "../../scoped-storage";
 import { libraryPages } from "@shared/models/info";
-import { planExecutions } from "@shared/schema";
+import { planExecutions, planSessionLinks } from "@shared/schema";
+import { setPlanSessionPinned } from "../../plan-service";
 import { agendaDefinitionStorage } from "../../agenda-storage";
 import { instantiateAgendaDefinition } from "@shared/models/agendas";
 import { createLogger } from "../../log";
@@ -814,7 +815,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         pageId: planExecutions.pageId,
         status: planExecutions.status,
       };
-      const [activePlan, reviewPlan] = await Promise.all([
+      const [activePlan, reviewPlan, pinnedPlan] = await Promise.all([
         db.select(planProjection)
           .from(planExecutions)
           .where(visiblePlan(and(
@@ -833,8 +834,22 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           .orderBy(planExecutions.createdAt)
           .limit(1)
           .then(rows => rows[0] ?? null),
+        db.select(planProjection)
+          .from(planSessionLinks)
+          .innerJoin(planExecutions, eq(planExecutions.id, planSessionLinks.planId))
+          .where(and(
+            combineWithVisibleScope(requireCurrentPrincipal(), {
+              ownerUserId: planSessionLinks.ownerUserId,
+              accountId: planSessionLinks.accountId,
+            }, eq(planSessionLinks.sessionId, id)),
+            isNull(planSessionLinks.unlinkedAt),
+            drizzleSql`${planSessionLinks.pinnedAt} IS NOT NULL`,
+            visiblePlan(),
+          ))
+          .limit(1)
+          .then(rows => rows[0] ?? null),
       ]);
-      res.json({ ...session, messages: projectedMessages, activePlan, reviewPlan });
+      res.json({ ...session, messages: projectedMessages, activePlan, reviewPlan, pinnedPlan });
     } catch (error) {
       chatLog.error("Error fetching session:", error);
       res.status(500).json({ error: "Failed to fetch session" });
@@ -1206,6 +1221,28 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     } catch (error) {
       chatLog.error("Error toggling session pin:", error);
       res.status(500).json({ error: "Failed to toggle session pin" });
+    }
+  });
+
+  app.patch("/api/sessions/:id/plans/:planId/pin", async (req: Request, res: Response) => {
+    try {
+      const sessionId = req.params.id as string;
+      const planId = req.params.planId as string;
+      if (typeof req.body?.pinned !== "boolean") {
+        return res.status(400).json({ error: "pinned (boolean) is required" });
+      }
+      const session = await chatStorage.getSession(sessionId);
+      if (!session) return res.status(404).json({ error: "Session not found" });
+      const updated = await setPlanSessionPinned(planId, sessionId, req.body.pinned);
+      if (!updated) return res.status(404).json({ error: "Plan is not linked to this session" });
+      eventBus.publish({
+        event: "data:sessions_changed",
+        data: { reason: "plan_pin_changed", sessionIds: [sessionId] },
+      });
+      res.json({ ok: true, pinned: req.body.pinned });
+    } catch (error) {
+      chatLog.error("Error toggling session plan pin:", error);
+      res.status(500).json({ error: "Failed to toggle plan pin" });
     }
   });
 

@@ -46,6 +46,7 @@ function visiblePlanAttempt(predicate?: SQL): SQL { return combineWithVisibleSco
 function writablePlanAttempt(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentPrincipal(), planAttemptScopeColumns, predicate); }
 function visiblePlanReview(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planReviewScopeColumns, predicate); }
 function writablePlanReview(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentPrincipal(), planReviewScopeColumns, predicate); }
+function visiblePlanLink(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planLinkScopeColumns, predicate); }
 function writablePlanLink(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentPrincipal(), planLinkScopeColumns, predicate); }
 
 export type PlanStepStatus = PlanStep["status"];
@@ -190,6 +191,36 @@ export async function unlinkPlanSession(planId: string, sessionId: string): Prom
     .where(writablePlanLink(and(eq(planSessionLinks.planId, planId), eq(planSessionLinks.sessionId, sessionId), isNull(planSessionLinks.unlinkedAt))))
     .returning({ id: planSessionLinks.id });
   return rows.length;
+}
+
+export async function setPlanSessionPinned(planId: string, sessionId: string, pinned: boolean): Promise<boolean> {
+  const principal = requireCurrentPrincipal();
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`plan-session-pin:${principal.accountId}:${sessionId}`}))`);
+    const link = await tx.select({ id: planSessionLinks.id })
+      .from(planSessionLinks)
+      .where(visiblePlanLink(and(
+        eq(planSessionLinks.planId, planId),
+        eq(planSessionLinks.sessionId, sessionId),
+        isNull(planSessionLinks.unlinkedAt),
+      )))
+      .then((rows) => rows[0]);
+    if (!link) return false;
+
+    const now = new Date();
+    if (pinned) {
+      await tx.update(planSessionLinks)
+        .set({ pinnedAt: null, updatedAt: now })
+        .where(writablePlanLink(and(
+          eq(planSessionLinks.sessionId, sessionId),
+          isNull(planSessionLinks.unlinkedAt),
+        )));
+    }
+    await tx.update(planSessionLinks)
+      .set({ pinnedAt: pinned ? now : null, updatedAt: now })
+      .where(writablePlanLink(eq(planSessionLinks.id, link.id)));
+    return true;
+  });
 }
 
 export async function createPlanStepAttempt(params: {
