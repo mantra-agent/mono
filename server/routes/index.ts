@@ -42,6 +42,7 @@ import { registerGlassesRoutes } from "../glasses/routes";
 import { registerMagicDemoRoutes } from "./magic-demo";
 import { registerPlatformRoutes } from "./platforms";
 import { registerProductRoutes } from "./products";
+import { registerFeatureRoutes } from "./features";
 import { registerSpeechRecognitionRoutes } from "./speech-recognition";
 import { registerWorkflowRoutes } from "./workflows";
 import { registerGoalRoutes } from "./goal-routes";
@@ -120,6 +121,7 @@ export async function registerDomainRoutes(
   registerMagicDemoRoutes(app);
   registerPlatformRoutes(app);
   registerProductRoutes(app);
+  registerFeatureRoutes(app);
   registerSpeechRecognitionRoutes(app);
   await registerWorkflowRoutes(app);
   registerGoalRoutes(app);

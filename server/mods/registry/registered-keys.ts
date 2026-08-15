@@ -235,6 +235,7 @@ export type RegisteredTimerTemplateKey = (typeof REGISTERED_TIMER_TEMPLATE_KEYS)
 export const REGISTERED_ROUTE_GROUP_KEYS = [
   "build.platforms",
   "build.products",
+  "build.features",
   "build.issues",
   "build.db-sync",
   "build.railway",

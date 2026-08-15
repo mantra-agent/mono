@@ -6522,7 +6522,7 @@ ${refs}` : ""),
     const action = typeof args.action === "string" ? args.action : "";
     if (!action) return { result: "Missing 'action' parameter", error: true };
 
-    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "provision_database_roles", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "list_products", "create_product", "update_product", "create_product_legacy", "update_product_legacy", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection", "get_cloudflare_pages_project", "deploy_cloudflare_pages", "cancel_cloudflare_pages_deployment", "poll_cloudflare_pages_deployment", "repair_cloudflare_pages_project"]);
+    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "provision_database_roles", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "list_products", "create_product", "update_product", "create_product_legacy", "update_product_legacy", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection", "get_cloudflare_pages_project", "deploy_cloudflare_pages", "cancel_cloudflare_pages_deployment", "poll_cloudflare_pages_deployment", "repair_cloudflare_pages_project", "list_features", "get_feature", "create_feature", "update_feature", "archive_feature", "delete_feature", "link_feature_kpi", "unlink_feature_kpi"]);
     if (!allowed.has(action)) {
       return { result: `Unknown platforms action: ${action}. Allowed: ${[...allowed].join(", ")}`, error: true };
     }
@@ -6678,6 +6678,20 @@ ${refs}` : ""),
         const [updated] = await db.update(platformsTable).set({ ...parsed, updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(writablePlat(eq(platformsTable.id, id))).returning();
         if (!updated) return { result: `Platform ${id} not found or not writable`, error: true };
         return { result: JSON.stringify(updated, null, 2) };
+      }
+
+      if (["list_features", "get_feature", "create_feature", "update_feature", "archive_feature", "delete_feature", "link_feature_kpi", "unlink_feature_kpi"].includes(action)) {
+        const { featureStorage } = await import("./feature-storage");
+        const featureId = typeof args.featureId === "string" ? args.featureId : typeof args.id === "string" ? args.id : "";
+        if (action === "list_features") return { result: JSON.stringify(await featureStorage.list({ productId: positiveId(args.productId), search: typeof args.search === "string" ? args.search : undefined }), null, 2) };
+        if (!featureId) return { result: "Feature id is required", error: true };
+        if (action === "get_feature") return { result: JSON.stringify(await featureStorage.get(featureId), null, 2) };
+        if (action === "create_feature") return { result: JSON.stringify(await featureStorage.create(args), null, 2) };
+        if (action === "update_feature") return { result: JSON.stringify(await featureStorage.update(featureId, args), null, 2) };
+        if (action === "archive_feature") return { result: JSON.stringify(await featureStorage.archive(featureId), null, 2) };
+        if (action === "delete_feature") return { result: JSON.stringify({ success: await featureStorage.permanentlyDelete(featureId, args.confirm === true) }, null, 2) };
+        if (action === "link_feature_kpi") return { result: JSON.stringify(await featureStorage.linkKpi(featureId, String(args.kpiAddress), String(args.idempotencyKey)), null, 2) };
+        return { result: JSON.stringify(await featureStorage.unlinkKpi(featureId, String(args.linkId)), null, 2) };
       }
 
       // ── list_products ──
