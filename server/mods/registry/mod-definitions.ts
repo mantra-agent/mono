@@ -220,6 +220,7 @@ const wellness: ModDefinition = {
       ),
     ],
     integrations: [integration("wellness.integration.oura", "oura", "available", ["health-metrics"])],
+    metricAdapters: [metricAdapter("wellness.metric-adapter.oura", "oura", ["health"], "wellness.metrics")],
     // Cadence Timers materialize through wellness-managed-resources under installation ownership.
     timers: [
       timerTemplateRef("wellness.timer.weekly-reflection", "weekly-reflection"),

@@ -119,6 +119,20 @@ const SYSTEM_COMMAND_HANDLERS: Record<string, SystemCommandHandler> = {
     );
   },
 
+  "oura-sync": async (_timer, _run) => {
+    log.debug("Executing bounded Oura sync system command");
+    const { getAccount } = await import("./connected-accounts");
+    const { syncOuraAccount } = await import("./integrations/oura/sync");
+    const account = await getAccount("oura:primary");
+    if (!account) return { outcome: "skipped", reason: "oura_not_connected" };
+    try {
+      const result = await syncOuraAccount({ accountId: account.accountId, mode: "incremental" });
+      return { outcome: "success", output: result };
+    } catch (error) {
+      return { outcome: "degraded", reason: "oura_sync_failed", output: { error: error instanceof Error ? error.message : String(error) } };
+    }
+  },
+
   "content-publish": async (_timer, _run) => {
     log.debug(`Executing content-publish system command`);
     const { publishScheduledContent } = await import("./content-publisher");
