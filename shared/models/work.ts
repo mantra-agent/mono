@@ -94,6 +94,7 @@ export const insertTaskSchema = z.object({
   output: z.string().optional().default(""),
   deadline: z.string().nullable().optional().default(null),
   tokenEstimate: z.number().nullable().optional().default(null),
+  blockedBy: z.array(z.string().min(1)).optional(),
 });
 export type InsertTask = z.infer<typeof insertTaskSchema>;
 
@@ -155,6 +156,7 @@ export const insertProjectSchema = z.object({
   tags: z.array(z.string()).optional().default([]),
   people: z.array(z.string()).optional().default([]),
   goalId: z.string().nullable().optional().default(null),
+  blockedBy: z.array(z.string().min(1)).optional(),
 });
 export type InsertProject = z.infer<typeof insertProjectSchema>;
 

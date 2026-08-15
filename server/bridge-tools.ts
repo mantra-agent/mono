@@ -1715,6 +1715,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         requiresReview: args.requiresReview ?? false,
         impact: args.impact ?? null,
         effort: args.effort ?? null,
+        blockedBy: args.blockedBy,
         milestoneId,
         ...(sourceMeetingVaultId ? { vaultId: sourceMeetingVaultId } : {}),
         context,
@@ -1819,6 +1820,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (args.projectId !== undefined) command.projectId = args.projectId;
     if (args.milestoneId !== undefined) command.milestoneId = args.milestoneId;
     if (args.deadline !== undefined) command.deadline = args.deadline;
+    if (args.blockedBy !== undefined) command.blockedBy = args.blockedBy;
     const clearFields = Array.isArray(args.clearFields)
       ? args.clearFields.filter((field: unknown): field is string => typeof field === "string")
       : [];
@@ -2265,6 +2267,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             periodWeek: args.periodWeek,
             periodMonth: args.periodMonth,
             source: args.source,
+            blockedBy: args.blockedBy,
           });
           return { result: `Goal created: "${goal.shortName}" [goal:${goal.id}] (horizon: ${goal.horizon}, status: ${goal.status}, tags: ${goal.tags.join(", ") || "none"})` };
         }
@@ -2282,6 +2285,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           if (args.periodWeek !== undefined) updates.periodWeek = args.periodWeek;
           if (args.periodMonth !== undefined) updates.periodMonth = args.periodMonth;
           if (args.source !== undefined) updates.source = args.source;
+          if (args.blockedBy !== undefined) updates.blockedBy = args.blockedBy;
           const goal = await goalsService.update(id, updates);
           return { result: `Goal updated: "${goal.shortName}" [goal:${id}] — ${Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(", ")}` };
         }
@@ -2950,6 +2954,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             ...(args.tags !== undefined && { tags: args.tags }),
             ...(args.people !== undefined && { people: args.people }),
             ...(args.goalId !== undefined && { goalId: args.goalId }),
+            ...(args.blockedBy !== undefined && { blockedBy: args.blockedBy }),
             ...(sourceMeetingVaultId ? { vaultId: sourceMeetingVaultId } : {}),
           });
           const project = await fileProjectStorage.createProject(
@@ -3197,6 +3202,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
               status: args.milestoneStatus,
               startDate: args.startDate || null,
               dueDate: args.dueDate || null,
+              blockedBy: args.blockedBy,
             },
             sourceSession?.type === "meeting" && sourceSessionId
               ? { originType: "meeting", originId: sourceSessionId }
@@ -3225,6 +3231,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           if (args.startDate) updates.startDate = args.startDate;
           if (args.dueDate) updates.dueDate = args.dueDate;
           if (args.order !== undefined) updates.order = args.order;
+          if (args.blockedBy !== undefined) updates.blockedBy = args.blockedBy;
           await fileProjectStorage.updateMilestone(Number(projectId), Number(milestoneId), updates);
           return { result: `Milestone ${milestoneId} updated on project ${projectId}` };
         }

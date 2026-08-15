@@ -345,6 +345,8 @@ export class FileProjectStorage {
 
     this.invalidateCache();
     const project = rowToProject(created.row, created.milestones, [vaultId], true);
+    const { addBlockedByReferences } = await import("../work-blocking-mutations");
+    await addBlockedByReferences(`@project:${project.id}`, input);
     await syncProjectTags(project);
     log.debug(`createProject id=${project.id} title="${project.title}" status=${project.status}`);
     return project;
@@ -550,6 +552,10 @@ export class FileProjectStorage {
     }
     log.debug(`updateProject id=${id} fields=${Object.keys(updates).join(",")}`);
     const project = await this.getProject(id);
+    if (project) {
+      const { addBlockedByReferences } = await import("../work-blocking-mutations");
+      await addBlockedByReferences(`@project:${project.id}`, updates);
+    }
     if (project && updates.tags !== undefined) {
       await syncProjectTags(project);
     }
@@ -558,7 +564,7 @@ export class FileProjectStorage {
 
   async addMilestone(
     projectId: number,
-    input: { name: string; status?: string; startDate?: string | null; dueDate?: string | null },
+    input: { name: string; status?: string; startDate?: string | null; dueDate?: string | null; blockedBy?: string[] },
     provenance?: WorkCreationProvenance,
   ): Promise<Project | undefined> {
     if (input.status && !["planned", "active", "completed"].includes(input.status)) {
@@ -615,10 +621,15 @@ export class FileProjectStorage {
     }
     this.invalidateCache();
     log.debug(`addMilestone projectId=${projectId} milestoneId=${newId} name="${input.name}"`);
-    return this.getProject(projectId);
+    const project = await this.getProject(projectId);
+    if (project) {
+      const { addBlockedByReferences } = await import("../work-blocking-mutations");
+      await addBlockedByReferences(`@milestone:${projectId}~${newId}`, input);
+    }
+    return project;
   }
 
-  async updateMilestone(projectId: number, milestoneId: number, updates: Partial<Milestone>): Promise<Project | undefined> {
+  async updateMilestone(projectId: number, milestoneId: number, updates: Partial<Milestone> & { blockedBy?: string[] }): Promise<Project | undefined> {
     if (updates.status && !["planned", "active", "completed"].includes(updates.status)) {
       throw new Error(`Invalid milestone status: ${updates.status}`);
     }
@@ -665,7 +676,12 @@ export class FileProjectStorage {
     if (!changed) return undefined;
     this.invalidateCache();
     log.debug(`updateMilestone projectId=${projectId} milestoneId=${milestoneId}`);
-    return this.getProject(projectId);
+    const project = await this.getProject(projectId);
+    if (project) {
+      const { addBlockedByReferences } = await import("../work-blocking-mutations");
+      await addBlockedByReferences(`@milestone:${projectId}~${milestoneId}`, updates);
+    }
+    return project;
   }
 
   async removeMilestone(projectId: number, milestoneId: number): Promise<Project | undefined> {
