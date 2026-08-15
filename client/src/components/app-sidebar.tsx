@@ -326,7 +326,6 @@ const navSections: NavSection[] = [
     items: [
       navItem("Platforms", "navigation.platforms.open", Boxes),
       navItem("Products", "navigation.products.open", Boxes),
-      navItem("Backlog", "navigation.backlog.open", ClipboardList),
       navItem("Design", "navigation.design.open", Palette),
       navItem("Issues", "navigation.issues.open", Hammer),
       navItem("Database", "navigation.database.open", DatabaseZap),

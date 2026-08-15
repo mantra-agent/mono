@@ -32,7 +32,6 @@ export const REGISTERED_SURFACE_KEYS = [
   "work",
   "platforms",
   "products",
-  "backlog",
   "features",
   "platform-environment-detail",
   "memory",

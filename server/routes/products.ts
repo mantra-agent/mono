@@ -28,25 +28,6 @@ export function registerProductRoutes(app: Express): void {
     try { confirmationSchema.parse(req.body); const deleted = await productStorage.remove(idSchema.parse(req.params.id)); deleted ? res.json({ success: true }) : res.status(404).json({ error: "Product not found" }); }
     catch (error) { res.status(error instanceof ProductDependencyError ? 409 : 400).json({ error: error instanceof Error ? error.message : "Product deletion failed", dependencies: error instanceof ProductDependencyError ? error.dependencies : undefined }); }
   });
-  app.get("/api/products/:id/backlog", requirePermission("build:read"), async (req, res) => {
-    const backlog = await productStorage.backlog(idSchema.parse(req.params.id)); backlog ? res.json(backlog) : res.status(404).json({ error: "Product not found" });
-  });
-  app.post("/api/products/:id/backlog/feature-requests", requirePermission("build:write"), async (req, res) => {
-    try { const request = await productStorage.createFeature(idSchema.parse(req.params.id), req.body); request ? res.status(201).json(request) : res.status(404).json({ error: "Product not found" }); }
-    catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Feature Request creation failed" }); }
-  });
-  app.patch("/api/products/:id/backlog/feature-requests/:requestId", requirePermission("build:write"), async (req, res) => {
-    try { const request = await productStorage.updateFeature(idSchema.parse(req.params.id), idSchema.parse(req.params.requestId), req.body); request ? res.json(request) : res.status(404).json({ error: "Feature Request not found" }); }
-    catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Feature Request update failed" }); }
-  });
-  app.delete("/api/products/:id/backlog/feature-requests/:requestId", requirePermission("build:write"), async (req, res) => {
-    try { confirmationSchema.parse(req.body); const deleted = await productStorage.removeFeature(idSchema.parse(req.params.id), idSchema.parse(req.params.requestId)); deleted ? res.json({ success: true }) : res.status(404).json({ error: "Feature Request not found" }); }
-    catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Feature Request deletion failed" }); }
-  });
-  app.post("/api/products/:id/backlog/feature-requests/:requestId/issue", requirePermission("build:write"), async (req, res) => {
-    try { const issue = await productStorage.bridgeFeatureToIssue(idSchema.parse(req.params.id), idSchema.parse(req.params.requestId)); issue ? res.status(201).json(issue) : res.status(404).json({ error: "Feature Request not found" }); }
-    catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Issue creation failed" }); }
-  });
   app.put("/api/products/:id/context-artifacts", requirePermission("build:write"), async (req, res) => {
     try {
       const saved = await productStorage.addContext(idSchema.parse(req.params.id), req.body);

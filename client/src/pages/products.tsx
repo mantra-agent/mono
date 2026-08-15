@@ -54,7 +54,6 @@ interface Product {
   description: string;
   status: "active" | "paused" | "archived";
   vaultId?: string | null;
-  backlogId: number;
   platforms: { platformId: number; platformName: string }[];
   context?: ProductContext[];
 }

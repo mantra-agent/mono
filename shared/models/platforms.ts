@@ -73,23 +73,11 @@ export const products = pgTable("products", {
   index("idx_products_vault").on(table.vaultId),
 ]);
 
-export const productBacklogs = pgTable("product_backlogs", {
-  id: serial("id").primaryKey(), productId: integer("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
-  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [uniqueIndex("product_backlogs_product_unique").on(table.productId)]);
-
 export const productPlatformAssociations = pgTable("product_platform_associations", {
   id: serial("id").primaryKey(), productId: integer("product_id").notNull().references(() => products.id, { onDelete: "restrict" }),
   platformId: integer("platform_id").notNull().references(() => platforms.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [uniqueIndex("product_platform_associations_unique").on(table.productId, table.platformId)]);
-
-export const featureRequests = pgTable("feature_requests", {
-  id: serial("id").primaryKey(), backlogId: integer("backlog_id").notNull().references(() => productBacklogs.id, { onDelete: "cascade" }),
-  title: text("title").notNull(), description: text("description").notNull().default(""), status: text("status").notNull().default("backlog"),
-  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [index("idx_feature_requests_backlog_status").on(table.backlogId, table.status)]);
 
 export const PRODUCT_CONTEXT_KINDS = [
   "coding_process",
@@ -359,10 +347,6 @@ export const insertProductSchema = createInsertSchema(products)
     platformIds: z.array(z.number().int().positive()).optional().default([]),
   });
 
-export const insertFeatureRequestSchema = createInsertSchema(featureRequests)
-  .omit({ id: true, backlogId: true, createdAt: true, updatedAt: true })
-  .extend({ title: z.string().trim().min(1).max(300), description: z.string().trim().max(5000).optional().default(""), status: z.enum(["backlog", "planned", "completed"]).optional().default("backlog") });
-
 export const insertPlatformProductEnvironmentSchema = createInsertSchema(platformProductEnvironments)
   .omit({ id: true, productId: true, platformId: true, createdAt: true, updatedAt: true })
   .extend({
@@ -375,8 +359,6 @@ export type PlatformProduct = typeof platformProducts.$inferSelect;
 export type InsertPlatformProduct = z.infer<typeof insertPlatformProductSchema>;
 export type Product = typeof products.$inferSelect;
 export type InsertProduct = z.infer<typeof insertProductSchema>;
-export type ProductBacklog = typeof productBacklogs.$inferSelect;
-export type FeatureRequest = typeof featureRequests.$inferSelect;
 export type ProductContextArtifact = typeof productContextArtifacts.$inferSelect;
 export type InsertProductContext = z.infer<typeof insertProductContextSchema>;
 export type ProductContextKind = z.infer<typeof productContextKindSchema>;
