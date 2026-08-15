@@ -80,7 +80,7 @@ export const SECRET_CATALOG: SecretSpec[] = [
   { name: "SENDGRID_FROM_NAME", section: "sendgrid", label: "From Name", description: "Optional display name for Mantra outbound notifications." },
   { name: "OURA_CLIENT_ID", section: "oura", label: "Oura Client ID", description: "OAuth client ID from the Oura Cloud API Application settings." },
   { name: "OURA_CLIENT_SECRET", section: "oura", label: "Oura Client Secret", description: "OAuth client secret from the Oura Cloud API Application settings." },
-  { name: "OURA_WEBHOOK_VERIFY_TOKEN", section: "oura", label: "Oura Webhook Verify Token", description: "Shared verification token used by the Oura webhook callback. Generate a long random value and configure the same value in Oura Cloud." },
+  { name: "OURA_WEBHOOK_VERIFY_TOKEN", section: "oura", label: "Oura Webhook Verify Token", description: "Private verification token sent to Oura when Mantra creates webhook subscriptions. Generate a random value of at least 32 characters; do not add it to the Oura Developer Application." },
   // GitHub credentials are owned by encrypted Platform provider connections.
   { name: "S3_BUCKET", section: "storage", label: "S3 Bucket Name", description: "Name of the S3-compatible bucket used for object storage (uploads, generated files, indexed content). Single bucket; the app writes under 'public/' and 'private/' key prefixes." },
   { name: "S3_REGION", section: "storage", label: "S3 Region", description: "Region of the bucket (e.g. 'us-east-1'). For Railway Buckets and most S3-compatible providers any value is accepted but it must be set." },

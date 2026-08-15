@@ -1,6 +1,7 @@
 import { createLogger } from "../../log";
 import { getSecret } from "../../secrets-store";
 import { getAccountTokens, updateAccount } from "../../connected-accounts";
+import { providerFetch, readBoundedProviderBody } from "../provider-http";
 import type {
   OuraCollectionFetchOptions,
   OuraPagedResponse,
@@ -198,14 +199,14 @@ async function sendOuraRequest(
   timeoutMs: number,
 ): Promise<Response> {
   try {
-    return await fetch(url, {
+    return await providerFetch(url, {
       method,
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(timeoutMs),
+      timeoutMs,
     });
   } catch (err: unknown) {
     throw toNetworkError(`Oura API request failed path=${sanitizePath(url.pathname)}`, err);
@@ -250,7 +251,7 @@ async function ouraAppFetch<T = unknown>(
   const url = buildApiUrl(path, options.params);
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await providerFetch(url, {
       method: options.method || "GET",
       headers: {
         "Content-Type": "application/json",
@@ -258,7 +259,7 @@ async function ouraAppFetch<T = unknown>(
         "x-client-secret": config.clientSecret,
       },
       body: options.body ? JSON.stringify(options.body) : undefined,
-      signal: AbortSignal.timeout(options.timeoutMs || DEFAULT_TIMEOUT_MS),
+      timeoutMs: options.timeoutMs || DEFAULT_TIMEOUT_MS,
     });
   } catch (err: unknown) {
     throw toNetworkError(`Oura app API request failed path=${sanitizePath(path)}`, err);
@@ -317,13 +318,30 @@ async function toResponseError(response: Response, prefix: string): Promise<Oura
     : response.status === 429
       ? "rate_limited"
       : "response";
-  const safeMessage = `${prefix}: HTTP ${response.status}${retryAfterMs ? ` retryAfterMs=${retryAfterMs}` : ""}`;
-  try {
-    await response.text();
-  } catch {
-    // Drain best-effort without using or logging raw provider payloads.
-  }
+  const providerDetail = await readOuraProviderErrorDetail(response);
+  const safeMessage = `${prefix}: HTTP ${response.status}${providerDetail ? ` · ${providerDetail}` : ""}${retryAfterMs ? ` retryAfterMs=${retryAfterMs}` : ""}`;
   return new OuraApiError(safeMessage, response.status || 502, code, retryAfterMs || undefined);
+}
+
+async function readOuraProviderErrorDetail(response: Response): Promise<string | undefined> {
+  const body = await readBoundedProviderBody(response).catch(() => "");
+  if (!body) return undefined;
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    const detail = [parsed.detail, parsed.message, parsed.error_description, parsed.error]
+      .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+    return detail ? sanitizeProviderDetail(detail) : undefined;
+  } catch {
+    return sanitizeProviderDetail(body);
+  }
+}
+
+function sanitizeProviderDetail(value: string): string | undefined {
+  const normalized = value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 320);
+  if (!normalized) return undefined;
+  return normalized
+    .replace(/(client_secret|verification_token|access_token|refresh_token|authorization)\s*[=:]\s*[^\s,;}]+/gi, "$1=[redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer [redacted]");
 }
 
 function toNetworkError(prefix: string, err: unknown): OuraApiError {

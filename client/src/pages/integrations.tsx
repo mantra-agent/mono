@@ -4713,11 +4713,11 @@ function OuraDetail() {
   }, [connectMutation, toast]);
 
   useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
+    const onMessage = async (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
       const data = event.data as { type?: string; status?: string; message?: string } | null;
       if (!data || data.type !== "mantra:oura-oauth") return;
-      queryClient.invalidateQueries({ queryKey: ["/api/oura/status"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/oura/status"] });
       if (data.status === "connected") {
         toast({ title: "Oura connected" });
       } else {
@@ -4774,22 +4774,6 @@ function OuraDetail() {
 
   return (
     <div className="space-y-4" data-testid="oura-detail">
-      <Card data-testid="card-secret-oura">
-        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <Activity className="h-4 w-4" />
-            Oura API Credentials
-          </CardTitle>
-          <OuraStatusBadge status={status} />
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground" data-testid="text-oura-copy">
-            Connect Oura once. Agent will pull sleep, readiness, activity, workouts, heart rate, and recovery signals into Health without manual exports.
-          </p>
-          <SecretsForSection section="oura" />
-        </CardContent>
-      </Card>
-
       <Card data-testid="card-oura-account">
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
           <CardTitle className="text-base font-semibold flex items-center gap-2">
