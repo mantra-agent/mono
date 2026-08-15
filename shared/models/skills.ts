@@ -296,4 +296,14 @@ export type InsertSkillReference = z.infer<typeof insertSkillReferenceSchema>;
 export interface SkillWithReferences extends SkillResponse {
   references: SkillReference[];
   trustScore: number;
+  /**
+   * Skill Default Lattice read-enrichment (Persona parity). Present on
+   * management reads; omitted on raw writes. `platformBaseline` is the current
+   * platform-default payload this copy follows, `changedFields` are the named
+   * fields this copy is locally ahead on, and `updateAvailable` is true when the
+   * default advanced past this copy and their content still differs.
+   */
+  platformBaseline?: Record<string, unknown> | null;
+  changedFields?: string[];
+  updateAvailable?: boolean;
 }

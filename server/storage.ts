@@ -648,22 +648,77 @@ export class HybridStorage implements IStorage {
     const predicate = conditions.length > 0 ? and(...conditions) : undefined;
     const rows = await db.select().from(skills).where(this.skillVisible(predicate)).orderBy(desc(skills.updatedAt));
     const principal = requireCurrentPrincipal();
+    const enriched = await Promise.all(rows.map(s => this.enrichSkillWithReferences(s)));
+    // Platform-default lookup: a user shadow follows a same-name global, linked
+    // by templateSkillId (Persona templatePersonaId) or by name for legacy rows.
+    const platformById = new Map<string, SkillWithReferences>();
+    const platformByName = new Map<string, SkillWithReferences>();
+    for (const s of enriched) {
+      if (s.scope === "global") {
+        platformById.set(s.id, s);
+        if (!platformByName.has(s.name)) platformByName.set(s.name, s);
+      }
+    }
     const effectiveRows = principal.actorType === "user"
-      ? [...rows]
+      ? [...enriched]
           .sort((left, right) => {
             const leftOwned = left.scope === "user" && left.ownerUserId === principal.userId && left.accountId === principal.accountId;
             const rightOwned = right.scope === "user" && right.ownerUserId === principal.userId && right.accountId === principal.accountId;
             return Number(rightOwned) - Number(leftOwned);
           })
           .filter((row, index, all) => all.findIndex((candidate) => candidate.name === row.name) === index)
-      : rows;
-    return Promise.all(effectiveRows.map(s => this.enrichSkillWithReferences(s)));
+      : enriched;
+    return effectiveRows.map(s => this.attachSkillLatticeSignals(s, this.resolveSkillBaselineFromMaps(s, platformById, platformByName)));
   }
 
   async getSkill(id: string): Promise<SkillWithReferences | undefined> {
     const [skill] = await db.select().from(skills).where(this.skillVisible(eq(skills.id, id)));
     if (!skill) return undefined;
-    return this.enrichSkillWithReferences(skill);
+    const enriched = await this.enrichSkillWithReferences(skill);
+    return this.attachSkillLatticeSignals(enriched, await this.resolveSkillPlatformBaseline(enriched));
+  }
+
+  /** Resolve the platform-default copy for a skill from prebuilt global maps. */
+  private resolveSkillBaselineFromMaps(
+    skill: SkillWithReferences,
+    byId: Map<string, SkillWithReferences>,
+    byName: Map<string, SkillWithReferences>,
+  ): SkillWithReferences | undefined {
+    if (skill.scope === "global") return skill;
+    if (skill.templateSkillId) return byId.get(skill.templateSkillId);
+    return byName.get(skill.name);
+  }
+
+  /** Resolve the platform-default copy for a single skill via targeted reads. */
+  private async resolveSkillPlatformBaseline(skill: SkillWithReferences): Promise<SkillWithReferences | undefined> {
+    if (skill.scope === "global") return skill;
+    if (skill.templateSkillId) {
+      const [linked] = await db.select().from(skills).where(and(eq(skills.id, skill.templateSkillId), eq(skills.scope, "global")));
+      if (linked) return this.enrichSkillWithReferences(linked);
+    }
+    const [named] = await db.select().from(skills).where(and(eq(skills.name, skill.name), eq(skills.scope, "global")));
+    return named ? this.enrichSkillWithReferences(named) : undefined;
+  }
+
+  /**
+   * Attach Persona-parity lattice signals (platformBaseline, changedFields,
+   * updateAvailable) to an enriched skill. Content-based inbound test: only
+   * surface an update when the copy still differs from the current default.
+   */
+  private attachSkillLatticeSignals(
+    skill: SkillWithReferences,
+    baseline: SkillWithReferences | undefined,
+  ): SkillWithReferences {
+    const platformBaseline = baseline ? skillRevisionPayload(baseline, baseline.references) : null;
+    const current = skillRevisionPayload(skill, skill.references);
+    const drift = platformBaseline ? changedSkillFields(platformBaseline, current) : [];
+    const updateAvailable = (skill.updateState === "update_available" || skill.updateState === "conflict") && drift.length > 0;
+    return {
+      ...skill,
+      platformBaseline: platformBaseline as Record<string, unknown> | null,
+      changedFields: drift,
+      updateAvailable,
+    };
   }
 
   async getSkillByName(name: string): Promise<SkillWithReferences | undefined> {
