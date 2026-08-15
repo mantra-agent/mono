@@ -117,7 +117,7 @@ function requiresPermission(
   if (toolName === "backup") return ["list", "get"].includes(action || "") ? "system:read" : "system:write";
   if (toolName === "jobs") return ["list", "get"].includes(action || "") ? "system:read" : "system:write";
   if (toolName === "business" && (action === "get_budget" || action === "get_model" || action === "get_hiring_plan" || action === "list_hiring_slots")) return "system:read";
-  if (toolName === "business" && action?.includes("_budget_")) return "system:write";
+  if (toolName === "business" && (action?.includes("_budget_") || action === "set_assumption" || action === "link_assumption_kpi" || action === "clear_assumption_kpi")) return "system:write";
   if (isRepositoryScratchWrite(toolName, action, args)) return "build:write";
   if (!ENGINEERING_TOOLS.has(toolName)) return null;
   if (toolName === "shell" || toolName === "python") return "build:write";
