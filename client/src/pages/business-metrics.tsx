@@ -143,7 +143,7 @@ function RecordSampleForm({ metric }: { metric: Metric }) {
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/business/metrics/${metric.id}/samples`, {
+      const res = await apiRequest("POST", `/api/metrics/${metric.id}/samples`, {
         value: Number(value),
         unit: metric.unit,
         evidence: evidence.trim() || undefined,
@@ -152,7 +152,7 @@ function RecordSampleForm({ metric }: { metric: Metric }) {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/business/metrics") });
+      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/metrics") });
       queryClient.invalidateQueries({ queryKey: ["/api/business/kpis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/business/kpis/standing-scores"] });
       toast({ title: "Sample recorded", description: `${metric.name} updated.` });
@@ -280,7 +280,7 @@ function CreateMetricDialog({ businessId }: { businessId: string }) {
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/business/metrics", {
+      const res = await apiRequest("POST", "/api/metrics", {
         businessId,
         name: name.trim(),
         unit: unit.trim(),
@@ -292,7 +292,7 @@ function CreateMetricDialog({ businessId }: { businessId: string }) {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/business/metrics") });
+      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/metrics") });
       toast({ title: "Metric created", description: name });
       setOpen(false);
       setName("");
@@ -369,9 +369,9 @@ export default function BusinessMetricsPage() {
     return { start: rangeStart(sampleSpan, end), end };
   }, [sampleSpan]);
   const { data, isLoading } = useQuery<MetricCollection>({
-    queryKey: ["/api/business/metrics/collection", selectedId, sampleSpan],
+    queryKey: ["/api/metrics/collection", selectedId, sampleSpan],
     queryFn: async () => {
-      const url = `/api/business/metrics/collection?businessId=${encodeURIComponent(selectedId ?? "")}&start=${encodeURIComponent(samplingRange.start.toISOString())}&end=${encodeURIComponent(samplingRange.end.toISOString())}`;
+      const url = `/api/metrics/collection?businessId=${encodeURIComponent(selectedId ?? "")}&start=${encodeURIComponent(samplingRange.start.toISOString())}&end=${encodeURIComponent(samplingRange.end.toISOString())}`;
       const response = await apiRequest("GET", url);
       return response.json();
     },
@@ -381,11 +381,11 @@ export default function BusinessMetricsPage() {
 
   const deleteMutation = useMutation({
     mutationFn: async (metric: Metric) => {
-      const res = await apiRequest("DELETE", `/api/business/metrics/${metric.id}`);
+      const res = await apiRequest("DELETE", `/api/metrics/${metric.id}`);
       return res.json();
     },
     onSuccess: (_result, metric) => {
-      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/business/metrics") });
+      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/metrics") });
       queryClient.invalidateQueries({ queryKey: ["/api/business/kpis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/business/kpis/standing-scores"] });
       toast({ title: "Metric deleted", description: metric.name });

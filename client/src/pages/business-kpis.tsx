@@ -79,7 +79,7 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/business/kpis", {
+      const res = await apiRequest("POST", "/api/kpis", {
         metricId,
         name: name.trim(),
         targetLabel: targetLabel.trim() || undefined,
@@ -94,7 +94,7 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/business/kpis") });
+      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/kpis") });
       toast({ title: "KPI created", description: name });
       setOpen(false);
       setName("");
@@ -171,7 +171,7 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
 export default function BusinessKpisPage() {
   const { businesses, selectedId, setSelectedId } = useSelectedBusiness();
   const [query, setQuery] = useState("");
-  const kpisUrl = selectedId ? `/api/business/kpis?businessId=${encodeURIComponent(selectedId)}` : "/api/business/kpis";
+  const kpisUrl = selectedId ? `/api/kpis?businessId=${encodeURIComponent(selectedId)}` : "/api/kpis";
   const metricsUrl = selectedId ? `/api/business/metrics?businessId=${encodeURIComponent(selectedId)}` : "/api/business/metrics";
 
   const { data, isLoading } = useQuery<KpisResponse>({ queryKey: [kpisUrl], enabled: Boolean(selectedId) });
