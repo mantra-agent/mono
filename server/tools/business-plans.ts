@@ -574,7 +574,8 @@ async function handleHiringAction(action: string, args: Record<string, unknown>)
   return { result: safeStringify(await businessHiringStorage.update(slotId, { businessId, plannedStartMonth: optionalStr(args, "plannedStartMonth"), clearFields: stringArray(args.clearFields) as ["plannedStartMonth"] | undefined, idempotencyKey }), { label: "bridge.business.hiring.update" }) };
 }
 const BUDGET_ACTIONS = new Set(["get_budget", ...Object.keys(BUDGET_MUTATION_ACTIONS)]);
-const MODEL_ACTIONS = new Set(["get_model"]);
+const MODEL_WRITE_ACTIONS = new Set(["set_assumption", "link_assumption_kpi", "clear_assumption_kpi"]);
+const MODEL_ACTIONS = new Set(["get_model", ...MODEL_WRITE_ACTIONS]);
 const PLAN_ACTIONS = new Set([
   "list", "get", "create", "rename", "delete", "set_thematic_goal", "clear_thematic_goal",
   "add_initiative", "remove_initiative", "set_leading_metric", "clear_leading_metric", "set_lagging_kpi", "clear_lagging_kpi", "add_kpi", "remove_kpi", "assign_vault",
@@ -587,17 +588,7 @@ const METRIC_ACTIONS = new Set([
 
 const MODEL_PERIOD_MODES = new Set(["monthly", "quarterly", "annually"]);
 
-async function handleModelAction(action: string, args: Record<string, unknown>) {
-  const businessId = requiredStr(args, "businessId");
-  if (!businessId) return { result: `business.${action} requires businessId`, error: true };
-  if (action !== "get_model") return { result: `Unknown business Model action: ${action}`, error: true };
-
-  const periodArg = optionalStr(args, "period") ?? "monthly";
-  if (!MODEL_PERIOD_MODES.has(periodArg)) {
-    return { result: "business.get_model period must be monthly, quarterly, or annually", error: true };
-  }
-  const period = periodArg as "monthly" | "quarterly" | "annually";
-
+async function computeModelBundle(businessId: string, period: "monthly" | "quarterly" | "annually") {
   const { businessModelStorage } = await import("../business-model-storage");
   const { businessBudgetStorage } = await import("../business-budget-storage");
   const { businessHiringStorage } = await import("../business-hiring-storage");
@@ -615,48 +606,142 @@ async function handleModelAction(action: string, args: Record<string, unknown>) 
   const departments = budget?.departments ?? [];
   const projection = computeProjection(model.assumptions, roles, departments, hiring.slots);
   const periods = aggregateMonths(projection.months, period);
-  const last = periods[periods.length - 1] ?? null;
+  return { model, budget, hiring, projection, periods, departments };
+}
 
+function modelGetPayload(bundle: Awaited<ReturnType<typeof computeModelBundle>>, period: "monthly" | "quarterly" | "annually") {
+  const { model, budget, hiring, projection, periods, departments } = bundle;
+  const last = periods[periods.length - 1] ?? null;
   return {
-    result: safeStringify({
-      model: {
-        id: model.id,
-        businessId: model.businessId,
-        name: model.name,
-        assumptions: model.assumptions,
-        createdAt: model.createdAt,
-        updatedAt: model.updatedAt,
-      },
-      period,
-      periods,
-      months: projection.months,
-      gates: projection.gates,
-      financing: projection.financing,
-      financingNeed: projection.financingNeed,
-      metricSeries: projection.metricSeries,
-      aggregates: {
-        horizonMonths: projection.months.length,
-        periodCount: periods.length,
-        entryContributionGrossMargin: projection.entryContributionGrossMargin,
-        baselineCacPaybackMonths: projection.baselineCacPaybackMonths,
-        impliedRetainedAccountArpaExpansionPct: projection.impliedRetainedAccountArpaExpansionPct,
-        endingCash: last?.endingCash ?? null,
-        runwayMonths: last?.runwayMonths ?? null,
-        arr: last?.arr ?? null,
-        mrr: last?.mrr ?? null,
-        activeAccounts: last?.activeAccounts ?? null,
-        activeUsers: last?.activeUsers ?? null,
-        budgetMonthlyTotalCents: budget ? budget.monthlyTotalCents : 0,
-        budgetConfigured: Boolean(budget),
-        approvedHiringSlots: hiring.slots.filter((slot) => slot.status === "approved").length,
-      },
-      budgetDepartments: departments.map((department) => ({
-        id: department.id,
-        name: department.name,
-        monthlyTotalCents: departmentMonthlyTotal(department),
-      })),
-    }, { label: "bridge.business.model.get" }),
+    model: {
+      id: model.id,
+      businessId: model.businessId,
+      name: model.name,
+      assumptions: model.assumptions,
+      createdAt: model.createdAt,
+      updatedAt: model.updatedAt,
+    },
+    period,
+    periods,
+    months: projection.months,
+    gates: projection.gates,
+    financing: projection.financing,
+    financingNeed: projection.financingNeed,
+    metricSeries: projection.metricSeries,
+    aggregates: {
+      horizonMonths: projection.months.length,
+      periodCount: periods.length,
+      entryContributionGrossMargin: projection.entryContributionGrossMargin,
+      baselineCacPaybackMonths: projection.baselineCacPaybackMonths,
+      impliedRetainedAccountArpaExpansionPct: projection.impliedRetainedAccountArpaExpansionPct,
+      endingCash: last?.endingCash ?? null,
+      runwayMonths: last?.runwayMonths ?? null,
+      arr: last?.arr ?? null,
+      mrr: last?.mrr ?? null,
+      activeAccounts: last?.activeAccounts ?? null,
+      activeUsers: last?.activeUsers ?? null,
+      budgetMonthlyTotalCents: budget ? budget.monthlyTotalCents : 0,
+      budgetConfigured: Boolean(budget),
+      approvedHiringSlots: hiring.slots.filter((slot) => slot.status === "approved").length,
+    },
+    budgetDepartments: departments.map((department) => ({
+      id: department.id,
+      name: department.name,
+      monthlyTotalCents: departmentMonthlyTotal(department),
+    })),
   };
+}
+
+// Compact recompute after a write: the headline aggregates and gate statuses so
+// the caller sees whether the curve bent without re-fetching the full matrix.
+function modelWriteSummary(bundle: Awaited<ReturnType<typeof computeModelBundle>>) {
+  const { model, projection, periods } = bundle;
+  const last = periods[periods.length - 1] ?? null;
+  return {
+    model: {
+      id: model.id,
+      businessId: model.businessId,
+      updatedAt: model.updatedAt,
+      assumptionKpis: model.assumptions.assumptionKpis,
+    },
+    recomputed: {
+      horizonMonths: projection.months.length,
+      activeAccounts: last?.activeAccounts ?? null,
+      activeUsers: last?.activeUsers ?? null,
+      arr: last?.arr ?? null,
+      mrr: last?.mrr ?? null,
+      runwayMonths: last?.runwayMonths ?? null,
+      endingCash: last?.endingCash ?? null,
+    },
+    gates: projection.gates.map((gate) => ({
+      phaseKey: gate.phaseKey,
+      label: gate.label,
+      status: gate.status,
+      firstAchievedMonth: gate.firstAchievedMonth,
+    })),
+  };
+}
+
+async function handleModelAction(action: string, args: Record<string, unknown>) {
+  const businessId = requiredStr(args, "businessId");
+  if (!businessId) return { result: `business.${action} requires businessId`, error: true };
+
+  if (MODEL_WRITE_ACTIONS.has(action)) {
+    const { businessModelStorage } = await import("../business-model-storage");
+    const assumptionKey = requiredStr(args, "assumptionKey");
+    if (!assumptionKey) return { result: `business.${action} requires assumptionKey`, error: true };
+    const kpiIdArg = requiredStr(args, "kpiId");
+    const valueArg = optionalNumber(args, "value");
+
+    if (action === "set_assumption") {
+      if (typeof valueArg !== "number") return { result: "business.set_assumption requires a numeric value", error: true };
+      const { assumptionsPatchSchema } = await import("@shared/models/business-model");
+      // .strict() on the patch schema rejects unknown keys and wrong types, so an
+      // invalid assumptionKey or a structured/string target fails closed here.
+      const parsed = assumptionsPatchSchema.safeParse({ [assumptionKey]: valueArg });
+      if (!parsed.success) {
+        return { result: `business.set_assumption rejected "${assumptionKey}": ${parsed.error.issues[0]?.message ?? "unknown assumption or wrong type"}`, error: true };
+      }
+      await businessModelStorage.updateAssumptions(businessId, parsed.data);
+    } else {
+      // assumptionKpis merges by replacement, so preserve existing links and
+      // apply the single change to the full map.
+      const current = await businessModelStorage.getOrCreate(businessId);
+      const nextLinks: Record<string, string> = { ...current.assumptions.assumptionKpis };
+      if (action === "link_assumption_kpi") {
+        if (!kpiIdArg) return { result: "business.link_assumption_kpi requires kpiId", error: true };
+        const kpi = await kpiStorage.get(kpiIdArg);
+        if (!kpi) return { result: `business.link_assumption_kpi: KPI "${kpiIdArg}" not found or not visible`, error: true };
+        nextLinks[assumptionKey] = kpiIdArg;
+      } else {
+        delete nextLinks[assumptionKey];
+      }
+      await businessModelStorage.updateAssumptions(businessId, { assumptionKpis: nextLinks });
+    }
+
+    const writeBundle = await computeModelBundle(businessId, "monthly");
+    return {
+      result: safeStringify({
+        updated: true,
+        action,
+        businessId,
+        assumptionKey,
+        ...(action === "set_assumption" ? { value: valueArg } : {}),
+        ...(action === "link_assumption_kpi" ? { kpiId: kpiIdArg } : {}),
+        ...modelWriteSummary(writeBundle),
+      }, { label: `bridge.business.model.${action}` }),
+    };
+  }
+
+  if (action !== "get_model") return { result: `Unknown business Model action: ${action}`, error: true };
+
+  const periodArg = optionalStr(args, "period") ?? "monthly";
+  if (!MODEL_PERIOD_MODES.has(periodArg)) {
+    return { result: "business.get_model period must be monthly, quarterly, or annually", error: true };
+  }
+  const period = periodArg as "monthly" | "quarterly" | "annually";
+  const bundle = await computeModelBundle(businessId, period);
+  return { result: safeStringify(modelGetPayload(bundle, period), { label: "bridge.business.model.get" }) };
 }
 
 export const handleBusiness: ToolHandler = async (args) => {
