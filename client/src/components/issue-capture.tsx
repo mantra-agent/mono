@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Camera, Loader2, X, ImageIcon, Pencil, Undo2, Check, Upload } from "lucide-react";
+import { Camera, Loader2, X, ImageIcon, Pencil, Undo2, Check, Upload, Sparkles } from "lucide-react";
 
 const log = createLogger("IssueCapture");
 
@@ -293,6 +293,7 @@ export function openIssueCaptureDialog() {
 export function IssueCaptureDialog() {
   const [open, setOpen] = useState(false);
   const [reproSteps, setReproSteps] = useState("");
+  const [originalReproSteps, setOriginalReproSteps] = useState<string | null>(null);
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
   const [annotating, setAnnotating] = useState(false);
@@ -303,6 +304,7 @@ export function IssueCaptureDialog() {
     const handler = () => {
       routeRef.current = getCurrentRoute();
       setReproSteps("");
+      setOriginalReproSteps(null);
       setScreenshot(null);
       setOpen(true);
     };
@@ -328,6 +330,7 @@ export function IssueCaptureDialog() {
     onSuccess: () => {
       toast({ title: "Issue reported" });
       setReproSteps("");
+      setOriginalReproSteps(null);
       setScreenshot(null);
       setOpen(false);
       import("@/lib/queryClient").then(({ queryClient }) => {
@@ -337,6 +340,19 @@ export function IssueCaptureDialog() {
     onError: (err: Error) => {
       toast({ title: "Failed to report issue", description: err.message, variant: "destructive" });
     },
+  });
+
+  const enhanceMutation = useMutation({
+    mutationFn: async (text: string) => {
+      const res = await apiRequest("POST", "/api/issues/enhance", { text });
+      return (await res.json()) as { enhanced: string };
+    },
+    onSuccess: ({ enhanced }) => {
+      setOriginalReproSteps((current) => current ?? reproSteps);
+      setReproSteps(enhanced);
+      toast({ title: "Issue text enhanced", description: "Review it before reporting." });
+    },
+    onError: (err: Error) => toast({ title: "Could not enhance issue text", description: err.message, variant: "destructive" }),
   });
 
   const captureScreenshot = useCallback(async () => {
@@ -507,6 +523,14 @@ export function IssueCaptureDialog() {
               autoFocus
               data-testid="input-issue-repro"
             />
+
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => enhanceMutation.mutate(reproSteps.trim())} disabled={!reproSteps.trim() || enhanceMutation.isPending} data-testid="button-enhance-issue">
+                {enhanceMutation.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 mr-1.5" />}
+                Enhance
+              </Button>
+              {originalReproSteps !== null && <Button variant="ghost" size="sm" onClick={() => { setReproSteps(originalReproSteps); setOriginalReproSteps(null); }}>Undo enhancement</Button>}
+            </div>
 
             {screenshot && (
               <div className="space-y-1.5">
