@@ -125,6 +125,16 @@ export const coreDefinition: CoreDefinition = {
       nav("core.nav.integrations", "Admin", "Integrations", "Plug", "navigation.integrations.open", "core.route.integrations", 8),
       nav("core.nav.account", "Admin", "Account", "Settings", "navigation.account.open", "core.route.account", 9),
     ],
+    metricAdapters: [
+      {
+        kind: "metric-adapter",
+        id: "core.metric-adapter.performance-browser",
+        adapterKey: "performance",
+        definitionKeys: ["performance-route-ready-p95", "performance-main-thread-long-task-p95"],
+        viewKey: "performance.screen",
+        audience: "diagnostic",
+      },
+    ],
     widgets: [
       widget("core.widget.state", "home.primary", "state", "state", 1),
       widget("core.widget.inbox", "home.inbox", "inbox_item", "email", 1),
