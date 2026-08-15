@@ -43,6 +43,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.platforms.open": { href: "/platforms", permission: "build:read", description: "Manage your platforms and environments." },
   "navigation.products.open": { href: "/products", permission: "build:read", description: "Manage your products." },
   "navigation.backlog.open": { href: "/backlog", permission: "build:read", description: "Track your product backlog." },
+  "navigation.features.open": { href: "/build/features", permission: "build:read", description: "Shape and ship your product features." },
   "navigation.design.open": { href: "/design", permission: "build:read", description: "Explore the design system." },
   "navigation.database.open": { href: "/database", permission: "build:read", description: "Inspect your database." },
   "navigation.issues.open": { href: "/build?tab=issues", permission: "build:read", description: "Track and resolve reported issues." },
