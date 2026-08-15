@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { and, sql } from "drizzle-orm";
 import { db } from "./db";
 import { requireCurrentPrincipal } from "./principal-context";
 import { ownedInsertValues } from "./scoped-storage";
