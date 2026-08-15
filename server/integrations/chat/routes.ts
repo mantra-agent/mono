@@ -1524,7 +1524,17 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
         res.json({ files: uploaded });
       } catch (error) {
-        chatLog.error("File upload error:", error);
+        // Prefer an explicit product code over message-token aggregates.
+        // Without this, formatArgs JSON-stringifies the Error and
+        // codeFromMessage yields FILE_UPLOAD_ERROR_NAME from {"name":...}.
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        if (!(normalized as Error & { code?: string }).code) {
+          (normalized as Error & { code?: string }).code = "CHAT_FILE_UPLOAD_FAILED";
+        }
+        (normalized as Error & { operation?: string }).operation = "chat_file_upload";
+        chatLog.error("File upload error", normalized, {
+          operation: "chat_file_upload",
+        });
         res.status(500).json({ error: "Upload failed" });
       }
     },
