@@ -107,11 +107,19 @@ export const skills = pgTable("skills", {
 
   addToMemory: boolean("add_to_memory").notNull().default(true),
   pinnedToContext: boolean("pinned_to_context").notNull().default(false),
+  /** Freeze flag until updateState is projected; lattice cut 1 keeps both. */
   customized: boolean("customized").notNull().default(false),
   scope: text("scope").notNull().default("global"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
   vaultId: text("vault_id"),
+
+  /** Same-name global template this user shadow follows (Persona templatePersonaId). */
+  templateSkillId: varchar("template_skill_id"),
+  baseRevisionId: text("base_revision_id"),
+  currentRevisionId: text("current_revision_id"),
+  /** following | customized | update_available | conflict | pinned_legacy */
+  updateState: text("update_state").notNull().default("pinned_legacy"),
 
   sessionType: text("session_type"),
   personaId: integer("persona_id"),
@@ -124,9 +132,43 @@ export const skills = pgTable("skills", {
 }, (table) => [
   index("idx_skills_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_skills_account").on(table.accountId),
+  index("idx_skills_template").on(table.templateSkillId),
   uniqueIndex("idx_skills_global_name_unique").on(table.name).where(sql`${table.scope} = 'global'`),
   uniqueIndex("idx_skills_owner_name_unique").on(table.ownerUserId, table.accountId, table.name).where(sql`${table.scope} = 'user'`),
 ]);
+
+/**
+ * Immutable Skill payload history (Persona persona_revisions mirror).
+ * Skill identity IDs are UUID text, not serial ints.
+ */
+export const skillRevisions = pgTable(
+  "skill_revisions",
+  {
+    id: text("id").primaryKey(),
+    skillIdentityId: varchar("skill_identity_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(), // platform | user
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    parentRevisionId: text("parent_revision_id"),
+    platformBaseRevisionId: text("platform_base_revision_id"),
+    payload: jsonb("payload").notNull(),
+    contentHash: text("content_hash").notNull(),
+    changeSummary: text("change_summary").notNull(),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    index("idx_skill_revisions_identity_created").on(table.skillIdentityId, table.createdAt),
+    index("idx_skill_revisions_scope_owner").on(table.scope, table.ownerUserId),
+    index("idx_skill_revisions_identity_hash").on(table.skillIdentityId, table.contentHash),
+  ],
+);
+
+export type SkillRevision = typeof skillRevisions.$inferSelect;
 
 // skillScores table removed — superseded by skill_runs. DB table retained for historical data.
 
@@ -180,6 +222,10 @@ export const insertSkillSchema = createInsertSchema(skills).omit({
   updatedAt: true,
   allowedTools: true,
   customized: true,
+  templateSkillId: true,
+  baseRevisionId: true,
+  currentRevisionId: true,
+  updateState: true,
 }).extend({
   name: z.string().min(1).max(64).regex(/^[a-z][a-z0-9-]*$/, "Lowercase letters, numbers, and hyphens only"),
   description: z.string().min(1).max(1024),

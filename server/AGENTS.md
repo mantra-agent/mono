@@ -333,9 +333,9 @@ The named `session-search-projection` job may enumerate and claim only bounded `
 
 ### Skills and Prompt Modules
 
-Built-in system skills are versioned code-owned definitions unless `customized=true`. On boot, synchronize the full definition only when the persisted numeric version is lower than the code version, using a conditional update over `author=system`, `customized=false`, and the expected version. Never downgrade a higher persisted version. Every built-in definition change must increment its version. Current edits fork a private copy, so a legacy `customized=true` global row may advance only through an explicit version-to-version merge that preserves unknown content, changes the minimum named clauses required by the new invariant, and uses compare-and-swap fencing; it must never receive a full default replacement.
+Built-in system skills are versioned code-owned definitions unless `customized=true`. On boot, synchronize the full definition only when the persisted numeric version is lower than the code version, using a conditional update over `author=system`, `customized=false`, and the expected version. Never downgrade a higher persisted version. Every built-in definition change must increment its version. Current edits fork a private copy, so a legacy `customized=true` global row may advance only through an explicit version-to-version merge that preserves unknown content, changes the minimum named clauses required by the new invariant, and uses compare-and-swap fencing; it must never receive a full default replacement. `customized` remains the freeze flag until later lattice cuts project `updateState`; boot must not silently overwrite customized or mixed rows.
 
-- Skills are runnable workflows stored in `skills` with run records in `skill_runs`. They are user/agent-facing capabilities and may be launched by the skill runner.
+- Skills are runnable workflows stored in `skills` with run records in `skill_runs` and immutable payload history in `skill_revisions`. Lattice columns on `skills` (`template_skill_id`, `base_revision_id`, `current_revision_id`, `update_state`) exist for Persona-parity lineage; cut 1 snapshots and classifies only — no rebase, publish, or runtime resolution change. They are user/agent-facing capabilities and may be launched by the skill runner.
 - Prompt Modules are internal prompt templates stored in `prompt_modules` with snapshots in `prompt_module_versions`. They are loaded by code with `getPromptModulePrompt()` / `getPromptModule()` and are not runnable Skills.
 - `prompt-module-registry.ts` is the typed manifest for prompt keys, domains, owner systems, and call-site metadata. Code should use manifest keys instead of ad hoc string literals.
 - `prompt-module-defaults.ts` is bootstrap/backfill fixture data only. Runtime prompt fetch must fail closed when a DB prompt module is missing; do not silently recreate from defaults or Skills.
@@ -750,13 +750,14 @@ Runnable workflow skills are stored in the DB, executed by the autonomous runner
 - `skill-defaults.ts` — Bootstrap fixture for runnable workflow Skills only. Not live authority and not a boot-time mutation source.
 - `skill-scoring.ts` (~350 lines) — Checklist evaluation, comparative scoring, transcript assembly with artifact enrichment
 - `session-artifacts.ts` (~160 lines) — Session↔artifact join table: `recordSessionArtifact()`, `getArtifactsBySession()`, `getSessionsByArtifact()`, `resolveArtifactContent()`
-- `skill-seed.ts` (507 lines) — Boot seeding, migrations, rename map, zombie cleanup
+- `skill-seed.ts` — Boot seeding, migrations, rename map, zombie cleanup, plus `initializeSkillRevisionLineage()` (cut 1 snapshot + classification)
 - `skill-routes.ts` (310 lines) — REST API
-- `shared/models/skills.ts` — Schema: `skills`, `skill_runs`, `skill_scores`, `skill_references`
+- `shared/models/skills.ts` — Schema: `skills`, `skill_revisions`, `skill_runs`, `skill_references`
 
 ### Architecture
 - **Morphogenic Skill composition:** Skill creation, editing, and `skills.run` composition are internal intelligence operations. Any Skill may invoke any other Skill visible to the same principal; Skill identity never grants tool authority. Every eventual tool call is independently authorized at its real data, provider, human-gate, or execution boundary under the originating principal. `parentSessionId`/`parentToolCallId` are audit lineage for any spawner (including interactive chat). `parentSkillRunId` is set only when the parent session has a `skill_runs` row — that is the sole discriminant for true skill→skill composition and `child_skill_invoked` scoring. Interactive `skills.run` from chat keeps session/tool lineage and leaves `parentSkillRunId` null; do not fail closed on a missing parent SkillRun.
-- **Per-user Skill namespace:** Global Skills are read-only product templates. Each user/account may create a same-named private Skill that shadows the template for that user; editing a template copy-on-writes the private override, and reset removes it. Boot migrations mutate only global rows.
+- **Per-user Skill namespace:** Global Skills are read-only product templates. Each user/account may create a same-named private Skill that shadows the template for that user; editing a template copy-on-writes the private override, and reset removes it. Boot migrations mutate only global rows. Lattice cut 1 adds `templateSkillId` / revision pointers / `updateState` and snapshots every payload into `skill_revisions` before classification; leftover is exact-hash only and is not rebased yet. `customized` remains freeze until later cuts.
+- **No silent overwrite:** Mixed customized globals and unprovable rows classify as `customized` or `pinned_legacy`. Never full-default-replace a customized row.
 - **Explicit owner and bounded execution:** Autonomous Skill entry points must inherit or restore one exact user principal and fail closed when owner context is missing. Top-level single-flight keys include account and user identity; child replay uses the session-tree tuple, while admission, runtime, token, and tool budgets bound composition without topology allowlists.
 - **Awaited child output:** `skills.run` returns the bounded `AutonomousRunResult.summary` after the status/session receipt so a composing parent can consume the child’s actual final output rather than infer it from session history.
 - **18 hardcoded `SKILL_RUN_CONFIGS`** — callType, activity, temperature, timeout per skill (includes build-owned `sentry`/`guard`/`regression`)
@@ -768,7 +769,7 @@ Runnable workflow skills are stored in the DB, executed by the autonomous runner
 - **8 skip memory:** enrich-email, sleep, integrate, consolidate, tools-indexcontent, council, advocate
 
 ### When Working Here
-- `customized: true` flag on a skill prevents seed overwrite on boot — user edits are preserved
+- `customized: true` remains the freeze flag that prevents seed overwrite on boot — user edits are preserved. Lattice columns exist alongside it; do not treat `updateState` as authority to mutate payloads until later cuts ship mutations.
 - Post-execution side effects (reflect→library, review→temporal) are hardcoded in the runner, not skill-defined
 - Scoring activity always uses `ACTIVITY_FRAMING` tier regardless of skill's own model tier
 
