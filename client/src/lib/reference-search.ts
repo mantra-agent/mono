@@ -40,6 +40,7 @@ export const REFERENCE_TYPE_LABELS: Record<string, string> = {
   user: "User",
   agent_instance: "Agent",
   session: "Session",
+  feature: "Feature",
 };
 
 interface LibraryPageResult {
@@ -115,6 +116,13 @@ interface MetricResult {
   description?: string;
   unit?: string;
   updatedAt?: string | Date;
+}
+
+interface FeatureResult {
+  id: string;
+  summary?: string;
+  stage?: string;
+  updated_at?: string | Date;
 }
 
 interface KpiResult {
@@ -328,7 +336,7 @@ export async function loadReferenceSuggestions(
 
   logger.debug("search", { query, allowedTypes, triggerChar });
 
-  const [library, people, tags, companies, goals, tasks, projects, metrics, kpis, businessPlans, wellnessActivities, routers, sessions] =
+  const [library, people, tags, companies, goals, tasks, projects, metrics, kpis, businessPlans, wellnessActivities, routers, sessions, features] =
     await Promise.all([
       allow("page") && query
         ? fetchJson<unknown>(`/api/info/library?search=${encoded}`, signal)
@@ -375,6 +383,9 @@ export async function loadReferenceSuggestions(
         : Promise.resolve(null),
       allow("session") && query
         ? fetchJson<unknown>(`/api/sessions/search?q=${encoded}`, signal)
+        : Promise.resolve(null),
+      allow("feature")
+        ? fetchJson<unknown>(`/api/features${query ? `?search=${encoded}` : ""}`, signal)
         : Promise.resolve(null),
     ]);
 
@@ -573,6 +584,16 @@ export async function loadReferenceSuggestions(
         { rankAt: router.updatedAt },
       ),
     );
+  }
+
+  for (const feature of asItemArray<FeatureResult>(features)) {
+    if (!feature?.id) continue;
+    suggestions.push(withRankMeta({
+      type: "feature",
+      id: feature.id,
+      label: feature.summary || feature.id,
+      description: feature.stage ? `Feature · ${feature.stage}` : "Feature",
+    }, { rankAt: feature.updated_at }));
   }
 
   for (const session of asItemArray<SessionResult>(sessions, ["sessions"])) {

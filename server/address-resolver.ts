@@ -69,6 +69,7 @@ import { decisionsStorage } from "./decisions-storage";
 import { fileIssueStorage } from "./file-storage";
 import { tagService } from "./tag-service";
 import { formatBuildDeploymentLabel } from "./mods/build-deployment-home";
+import { featureStorage } from "./feature-storage";
 
 import { getEvent, listAllEvents } from "./google-calendar";
 import { objectStorageService } from "./object_storage/objectStorage";
@@ -514,6 +515,19 @@ const adapters: AddressResolverAdapter[] = [
       .where(and(inArray(products.id, numbers(refs)), visiblePlatform()));
     const byId = new Map(rows.map(row => [String(row.id), row]));
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.name, summary: byId.get(ref.id)!.description, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
+  }),
+  simpleAdapter("feature", async (principal, refs) => {
+    if (!principalHasPermission(principal, "build:read")) return resultMap(refs, "unauthorized");
+    const rows = await featureStorage.list({ includeArchived: false });
+    const byId = new Map(rows.map((row: any) => [String(row.id), row]));
+    return new Map(refs.flatMap(ref => {
+      const row = byId.get(ref.id);
+      return row ? [[requestedAddress(ref), resolved(ref, {
+        label: String(row.summary),
+        summary: row.product_name ? `Feature · ${row.product_name} · ${row.stage}` : `Feature · ${row.stage}`,
+        updatedAt: row.updated_at,
+      })]] : [];
+    }));
   }),
   simpleAdapter("environment", async (principal, refs) => {
     if (!principalHasPermission(principal, "build:read")) return resultMap(refs, "unauthorized");

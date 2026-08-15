@@ -217,6 +217,11 @@ const registry: Record<string, RegistryEntry> = {
     fallbackLabel: ref => metadataString(ref, "label") || `Platform ${ref.id}`,
     href: ref => metadataString(ref, "href") || `/platforms/${encodeURIComponent(ref.id)}`,
   },
+  feature: {
+    Icon: Hammer,
+    fallbackLabel: ref => metadataString(ref, "label") || `Feature ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/build/features/${encodeURIComponent(ref.id)}`,
+  },
   product: {
     Icon: Layers3,
     fallbackLabel: ref => metadataString(ref, "label") || `Product ${ref.id}`,
