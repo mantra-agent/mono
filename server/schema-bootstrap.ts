@@ -6283,11 +6283,13 @@ export async function runSchemaBootstrap(
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await pool.query(`ALTER TABLE plan_session_links ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_session_links_plan ON plan_session_links(plan_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_session_links_session ON plan_session_links(session_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_session_links_owner ON plan_session_links(owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_session_links_account ON plan_session_links(account_id)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_session_links_active_unique ON plan_session_links(plan_id, session_id) WHERE unlinked_at IS NULL`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_session_links_one_pinned_per_session ON plan_session_links(session_id) WHERE unlinked_at IS NULL AND pinned_at IS NOT NULL`);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS plan_step_attempts (

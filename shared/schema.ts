@@ -2235,6 +2235,7 @@ export const planSessionLinks = pgTable("plan_session_links", {
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
   anchorMessageId: text("anchor_message_id"),
+  pinnedAt: timestamp("pinned_at", { withTimezone: true }),
   linkedAt: timestamp("linked_at", { withTimezone: true }).notNull().defaultNow(),
   unlinkedAt: timestamp("unlinked_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2245,6 +2246,7 @@ export const planSessionLinks = pgTable("plan_session_links", {
   index("idx_plan_session_links_owner").on(table.ownerUserId),
   index("idx_plan_session_links_account").on(table.accountId),
   uniqueIndex("idx_plan_session_links_active_unique").on(table.planId, table.sessionId).where(sql`unlinked_at IS NULL`),
+  uniqueIndex("idx_plan_session_links_one_pinned_per_session").on(table.sessionId).where(sql`unlinked_at IS NULL AND pinned_at IS NOT NULL`),
 ]);
 
 export type PlanSessionLinkRow = typeof planSessionLinks.$inferSelect;

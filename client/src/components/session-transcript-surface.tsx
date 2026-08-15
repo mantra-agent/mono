@@ -6,6 +6,7 @@ import { DesktopVoiceSurface } from "@/components/desktop-voice-surface";
 import { DesktopAudioSurface } from "@/components/desktop-audio-surface";
 import { MobileVoiceViewport } from "@/components/mobile-voice-viewport";
 import { SessionAgendaTree } from "@/components/session-agenda-tree";
+import { InlinePlanWidget } from "@/components/chat-shared";
 import { useNativeMeetingTranscription } from "@/hooks/use-native-meeting-transcription";
 import { useVoiceCaptionsPreference } from "@/hooks/use-voice-captions-preference";
 import { VoiceCaptionOverlay } from "@/components/voice-caption-overlay";
@@ -23,6 +24,7 @@ export interface SessionTranscriptSurfaceProps {
   activeSession: string;
   sessionKey?: string | null;
   reviewPlanId?: string;
+  pinnedPlanId?: string;
   messages: Message[];
   streaming: StreamingContent;
   isSessionStreaming: boolean;
@@ -62,6 +64,7 @@ export function SessionTranscriptSurface({
   activeSession,
   sessionKey,
   reviewPlanId,
+  pinnedPlanId,
   messages,
   streaming,
   isSessionStreaming,
@@ -124,6 +127,17 @@ export function SessionTranscriptSurface({
           agenda={agenda}
         />
       ) : null}
+      {layer !== 0 && pinnedPlanId ? (
+        <div className="border-b border-border/20 px-2 py-1" data-testid="session-pinned-plan">
+          <InlinePlanWidget
+            planId={pinnedPlanId}
+            sessionId={activeSession}
+            sessionTitleById={sessionTitleById}
+            sessionStreams={sessionStreams}
+            pinned
+          />
+        </div>
+      ) : null}
       {!wsConnected && sessionStatus === "streaming" && !voiceActive && (
         <div
           className="flex items-center gap-2 px-4 py-2 bg-warning/5 dark:bg-warning/5 border-b border-warning/20 text-warning-foreground text-xs"
@@ -182,6 +196,7 @@ export function SessionTranscriptSurface({
                 activeSession={activeSession}
                 sessionKey={sessionKey}
                 reviewPlanId={reviewPlanId}
+                pinnedPlanId={pinnedPlanId}
                 voiceActive={voiceActive}
                 voiceStatus={voiceStatus}
                 voiceTranscript={voiceTranscript}

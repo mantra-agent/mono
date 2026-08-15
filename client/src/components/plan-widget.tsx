@@ -17,6 +17,8 @@ import {
   MailOpen,
   MoreHorizontal,
   Pause,
+  Pin,
+  PinOff,
   Trash2,
   Play,
 } from "lucide-react";
@@ -72,6 +74,7 @@ interface PlanWidgetProps {
   ownedChildBlocks?: Map<string, ChildSessionBlockMeta>;
   sessionTitleById?: Record<string, string>;
   sessionStreams?: SessionStreamMap;
+  pinned?: boolean;
 }
 
 function isProgressedStep(step: PlanStep): boolean {
@@ -395,6 +398,7 @@ export function PlanWidget({
   ownedChildBlocks,
   sessionTitleById,
   sessionStreams,
+  pinned = false,
 }: PlanWidgetProps) {
   const { toast } = useToast();
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -407,6 +411,7 @@ export function PlanWidget({
   const canResume = !isArchived && (isPaused || isCreated || plan.status === "failed");
   const canArchive = showArchiveAction && !isArchived && !isExecuting;
   const canDeleteFromSession = Boolean(sessionId);
+  const canPinInSession = Boolean(sessionId);
   const invalidatePlanQueries = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
     queryClient.invalidateQueries({ queryKey: ["/api/plans", plan.id] });
@@ -508,6 +513,26 @@ export function PlanWidget({
     },
   });
 
+  const pinMutation = useMutation({
+    mutationFn: async (nextPinned: boolean) => {
+      if (!sessionId) throw new Error("No session is attached to this plan widget");
+      const res = await apiRequest("PATCH", `/api/sessions/${encodeURIComponent(sessionId)}/plans/${encodeURIComponent(plan.id)}/pin`, {
+        pinned: nextPinned,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || "Pin failed");
+      }
+    },
+    onSuccess: (_result, nextPinned) => {
+      toast({ title: nextPinned ? "Plan pinned" : "Plan unpinned" });
+      if (sessionId) queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
+    },
+    onError: (err: Error) => {
+      toast({ title: pinned ? "Unpin failed" : "Pin failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   const archiveMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/plans/${plan.pageId}/archive`);
@@ -547,7 +572,7 @@ export function PlanWidget({
             )}
           </div>
 
-          {(canPause || canResume || canArchive || canDeleteFromSession) && (
+          {(canPause || canResume || canArchive || canDeleteFromSession || canPinInSession) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -559,6 +584,12 @@ export function PlanWidget({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {canPinInSession && (
+                  <DropdownMenuItem onClick={() => pinMutation.mutate(!pinned)} disabled={pinMutation.isPending}>
+                    {pinned ? <PinOff className="mr-2 h-4 w-4" /> : <Pin className="mr-2 h-4 w-4" />}
+                    {pinned ? "Unpin" : "Pin"}
+                  </DropdownMenuItem>
+                )}
                 {canPause && (
                   <DropdownMenuItem onClick={() => pauseMutation.mutate()} disabled={pauseMutation.isPending}>
                     <Pause className="mr-2 h-4 w-4" />

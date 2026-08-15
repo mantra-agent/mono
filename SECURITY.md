@@ -381,6 +381,13 @@
 - Residual/rollback: source-map quality can merge or split defects imperfectly, and global counts cannot identify an affected cohort by design. Revert the explicit permission-owned read/dismiss contracts and this record to restore the prior implicit global API; stored aggregates remain unchanged.
 -->
 
+<!-- 2026-08-15 Session Plan pinning boundary:
+- Assets/data: principal/account-scoped Plan↔Session placement metadata and Plan contents rendered inside an authenticated Session window (A01/A03/A07; S2).
+- Flow/threat: authenticated Session UI -> Plan widget Pin/Unpin -> `plan_session_links.pinned_at` -> Session detail projection. A forged Session or Plan ID could pin a foreign Plan into a visible Session, disclose its identity/content, or race two Plans into contradictory top placement (STRIDE spoofing/tampering/information disclosure; DATA-01/AGENT-03).
+- Deterministic controls/owner: the route first resolves the Session through principal/Vault-scoped `chatStorage`; `setPlanSessionPinned` then requires the exact active Plan↔Session link through principal/account scope, serializes by account+Session advisory lock, and encodes at most one pinned active link per Session with a partial unique index. Plan reads retain their existing principal/Vault authorization. Pinning changes presentation only and grants no Plan execution, tool, permission, Mod, or Vault authority. Owner: Core Sessions + Plans. Severity: high confidentiality/integrity. SLA: release-blocking. Status: repaired in source pending production build and merge.
+- Residual/rollback: existing active links remain unpinned by default; dropping the partial index/column and reverting the projection restores prior inline-only placement without deleting Plan or Session history.
+-->
+
 <!-- 2026-08-10 Business Plan initiative measurement boundary:
 - Assets/data: principal/account/Vault-owned Business Plans, initiative Project IDs, Metric IDs, KPI IDs, and Business measurement definitions (A01/A03/A07; S1/S2 business state).
 - Flow/threat: authenticated UI or Agent tool -> Business Plan storage -> initiative measurement bindings. Metric/KPI IDs and Plan patches remain untrusted; accepting a Metric ID as a KPI ID or a binding to a foreign/invisible initiative could corrupt scorecard meaning or disclose cross-Vault metadata (STRIDE tampering/information disclosure plus agentic contract confusion; DATA-01/AGENT-03).

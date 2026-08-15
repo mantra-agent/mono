@@ -103,6 +103,8 @@ interface MessageListProps {
   sessionKey?: string | null;
   /** Server-projected Plan currently awaiting human review in this session. */
   reviewPlanId?: string;
+  /** Plan whose widget is owned by the pinned Session top surface. */
+  pinnedPlanId?: string;
   voiceActive: boolean;
   voiceStatus: string;
   voiceTranscript: VoiceTranscriptEntry[];
@@ -283,6 +285,7 @@ export function MessageList({
   activeSession,
   sessionKey,
   reviewPlanId,
+  pinnedPlanId,
   voiceActive,
   voiceStatus,
   voiceTranscript,
@@ -445,7 +448,7 @@ export function MessageList({
     );
     for (const id of streamingPlanIds) toolMatchedPlanIds.add(id);
   }
-  const orphanedPlanIds = [...sessionPlanIds].filter(id => !toolMatchedPlanIds.has(id));
+  const orphanedPlanIds = [...sessionPlanIds].filter(id => id !== pinnedPlanId && !toolMatchedPlanIds.has(id));
 
   const persistedCrossKeys = new Set(
     messages
@@ -1062,6 +1065,7 @@ export function MessageList({
             msgsLoading={false}
             activeSession={activeSession}
             sessionKey={sessionKey}
+            pinnedPlanId={pinnedPlanId}
             voiceActive={false}
             voiceStatus="idle"
             voiceTranscript={[]}
@@ -1094,6 +1098,7 @@ export function MessageList({
         onQuestionSubmit={onQuestionSubmit}
         onQuestionCancel={onQuestionCancel}
         planOwnedChildBlocks={planOwnedChildBlocks}
+        suppressedPlanId={pinnedPlanId}
         sessionTitleById={sessionTitleById}
         sessionStreams={sessionStreams}
         renderArchivedMessages={renderArchivedMessages}

@@ -2342,12 +2342,14 @@ export function InlinePlanWidget({
   ownedChildBlocks,
   sessionTitleById,
   sessionStreams,
+  pinned = false,
 }: {
   planId: string;
   sessionId?: string;
   ownedChildBlocks?: Map<string, ChildSessionBlockMeta>;
   sessionTitleById?: Record<string, string>;
   sessionStreams?: SessionStreamMap;
+  pinned?: boolean;
 }) {
   const {
     data: plan,
@@ -2406,6 +2408,7 @@ export function InlinePlanWidget({
       ownedChildBlocks={ownedChildBlocks}
       sessionTitleById={sessionTitleById}
       sessionStreams={sessionStreams}
+      pinned={pinned}
     />
   );
 }
@@ -2730,6 +2733,7 @@ export const ChatTurn = memo(function ChatTurn({
   onQuestionSubmit,
   onQuestionCancel,
   planOwnedChildBlocks,
+  suppressedPlanId,
   sessionTitleById,
   sessionStreams,
   renderArchivedMessages,
@@ -2748,6 +2752,7 @@ export const ChatTurn = memo(function ChatTurn({
   onQuestionSubmit: (response: QuestionResponseMeta) => Promise<import("@/hooks/use-question-response").QuestionSubmitResult | boolean>;
   onQuestionCancel?: () => Promise<boolean>;
   planOwnedChildBlocks?: Map<string, ChildSessionBlockMeta>;
+  suppressedPlanId?: string;
   sessionTitleById?: Record<string, string>;
   sessionStreams?: SessionStreamMap;
   renderArchivedMessages?: (messages: ChatMessage[]) => ReactNode;
@@ -3235,7 +3240,7 @@ export const ChatTurn = memo(function ChatTurn({
                 renderAfterTimelineSegment={(segmentIndex) => {
                   const planIds = planWidgetIdsBySegment.get(segmentIndex);
                   if (!planIds || planIds.length === 0) return null;
-                  return planIds.map((id) => (
+                  return planIds.filter((id) => id !== suppressedPlanId).map((id) => (
                     <InlinePlanWidget
                       key={`tool-plan-${id}`}
                       planId={id}
