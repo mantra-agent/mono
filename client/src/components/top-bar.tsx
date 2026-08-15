@@ -2,7 +2,6 @@ import { navTree, NavigationOrbButton } from "@/components/app-sidebar";
 import { useSidebar } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import { MessageSquare } from "lucide-react";
-import { ConnectionsIndicator } from "@/components/connections-indicator";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { usePageHeaderContext } from "@/hooks/use-page-header";
 import { usePageActivity } from "@/hooks/use-page-activity";
@@ -184,7 +183,6 @@ export function TopBar() {
           active={isPageActive}
         />}
       {navOpen && <div className="flex-1" />}
-      <ConnectionsIndicator />
       {converseButton}
     </div>
   );
