@@ -226,6 +226,7 @@ async function genPeople(dir: string): Promise<{ count: number }> {
         socialProfiles.x ? `- **X / Twitter:** @${socialProfiles.x}` : "",
         socialProfiles.linkedin ? `- **LinkedIn:** ${socialProfiles.linkedin}` : "",
         socialProfiles.instagram ? `- **Instagram:** @${socialProfiles.instagram}` : "",
+        socialProfiles.slack ? `- **Slack:** ${socialProfiles.slack}` : "",
       ].filter(Boolean);
       const socialMd = socialLines.length ? socialLines.join("\n") + "\n" : "";
 

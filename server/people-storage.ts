@@ -39,6 +39,29 @@ export function normalizePersonEmail(value: string): string {
   return normalized;
 }
 
+const SLACK_USER_ID = /^U[A-Z0-9]{1,31}$/;
+
+export function normalizePersonSlackUserId(value: string): string {
+  const normalized = value.trim().toUpperCase();
+  if (!SLACK_USER_ID.test(normalized)) {
+    throw new Error("Slack User ID must look like U…");
+  }
+  return normalized;
+}
+
+function sanitizeSocialProfiles(input: SocialProfiles | undefined | null): SocialProfiles {
+  const source = input && typeof input === "object" ? input : {};
+  const next: SocialProfiles = {
+    instagram: source.instagram,
+    x: source.x,
+    linkedin: source.linkedin,
+  };
+  if (typeof source.slack === "string" && source.slack.trim()) {
+    next.slack = normalizePersonSlackUserId(source.slack);
+  }
+  return next;
+}
+
 export interface ContactInfo {
   type: "email" | "phone" | "social" | "other";
   label: string;
@@ -155,6 +178,7 @@ export interface SocialProfiles {
   instagram?: string;
   x?: string;
   linkedin?: string;
+  slack?: string;
 }
 
 export interface Person {
@@ -1023,6 +1047,7 @@ export class PeopleStorage {
   }
 
   private async savePerson(person: Person): Promise<void> {
+    person.socialProfiles = sanitizeSocialProfiles(person.socialProfiles);
     const now = new Date();
     const principal = requireCurrentUserPrincipal();
     await db.transaction(async tx => {

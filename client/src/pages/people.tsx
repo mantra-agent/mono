@@ -114,6 +114,7 @@ import {
   Link2,
   Unlink,
   Linkedin,
+  Slack,
 } from "lucide-react";
 import { SiInstagram, SiX } from "react-icons/si";
 import ReactMarkdown from "react-markdown";
@@ -262,6 +263,7 @@ interface SocialProfiles {
   instagram?: string;
   x?: string;
   linkedin?: string;
+  slack?: string;
 }
 
 interface Person {
@@ -2022,6 +2024,7 @@ function PersonDetailView({ personId, onClose, onDelete, openNewInteraction, onN
   const [editingInstagram, setEditingInstagram] = useState(false);
   const [editingX, setEditingX] = useState(false);
   const [editingLinkedin, setEditingLinkedin] = useState(false);
+  const [editingSlack, setEditingSlack] = useState(false);
   const [editingMet, setEditingMet] = useState(false);
   const [editingFamiliarity, setEditingFamiliarity] = useState(false);
   const [editingTrust, setEditingTrust] = useState(false);
@@ -2417,6 +2420,7 @@ function PersonDetailView({ personId, onClose, onDelete, openNewInteraction, onN
           <ProfileTreeRow label={<span data-testid="label-instagram">Instagram</span>} icon={<SiInstagram className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.instagram)} showEmpty={showEmptyProfileRows || editingInstagram} mobileLayout="inline" testId="row-profile-instagram"><Input key={person.socialProfiles?.instagram || "new-instagram"} defaultValue={person.socialProfiles?.instagram || ""} placeholder="Instagram URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.instagram || "")) handleSaveSocial("instagram", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.instagram || ""; }} className="w-48" data-testid="input-social-instagram" /></ProfileTreeRow>
           <ProfileTreeRow label={<span data-testid="label-x">X</span>} icon={<SiX className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.x)} showEmpty={showEmptyProfileRows || editingX} mobileLayout="inline" testId="row-profile-x"><Input key={person.socialProfiles?.x || "new-x"} defaultValue={person.socialProfiles?.x || ""} placeholder="X URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.x || "")) handleSaveSocial("x", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.x || ""; }} className="w-48" data-testid="input-social-x" /></ProfileTreeRow>
           <ProfileTreeRow label={<span data-testid="label-linkedin">LinkedIn</span>} icon={<Linkedin className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.linkedin)} showEmpty={showEmptyProfileRows || editingLinkedin} mobileLayout="inline" testId="row-profile-linkedin"><Input key={person.socialProfiles?.linkedin || "new-linkedin"} defaultValue={person.socialProfiles?.linkedin || ""} placeholder="LinkedIn URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.linkedin || "")) handleSaveSocial("linkedin", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.linkedin || ""; }} className="w-48" data-testid="input-social-linkedin" /></ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-slack">Slack</span>} icon={<Slack className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.slack)} showEmpty={showEmptyProfileRows || editingSlack} mobileLayout="inline" testId="row-profile-slack"><Input key={person.socialProfiles?.slack || "new-slack"} defaultValue={person.socialProfiles?.slack || ""} placeholder="U…" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.slack || "")) handleSaveSocial("slack", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.slack || ""; }} className="w-48" data-testid="input-social-slack" /></ProfileTreeRow>
 
           {person.contactInfo.map((c, i) => <ProfileTreeRow key={`contact-${i}`} label={c.label || contactTypeLabels[c.type] || c.type} icon={c.type === "email" ? <Mail className="h-3.5 w-3.5" /> : c.type === "phone" ? <Phone className="h-3.5 w-3.5" /> : <ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(c.value)} showEmpty={showEmptyProfileRows} actionContent={<Button size="icon" variant="ghost" className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => setPendingContactDeleteIndex(i)} data-testid={`button-remove-contact-${i}`}><X className="h-3 w-3" /></Button>} mobileLayout="inline" testId={`row-profile-contact-${i}`}><Input key={`${c.type}-${c.value}`} defaultValue={c.value} placeholder={c.label || contactTypeLabels[c.type] || c.type} onBlur={(e) => { const v = e.target.value.trim(); if (v !== c.value) updateMutation.mutate({ contactInfo: person.contactInfo.map((item, idx) => idx === i ? { ...item, value: v } : item).filter(item => item.value.trim()) }); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = c.value; }} data-testid={`input-contact-${i}`} /></ProfileTreeRow>)}
 
