@@ -158,26 +158,21 @@ async function getAdminUserActivity(): Promise<Map<string, string>> {
   const result = await db.execute<{ user_id: string; last_active_at: Date | string }>(sql`
     SELECT user_id, MAX(activity_at) AS last_active_at
     FROM (
-      SELECT owner_user_id AS user_id, updated_at AS activity_at
-      FROM document_store_documents
-      WHERE document_type = 'chat'
-        AND owner_user_id IS NOT NULL
+      SELECT sess->>'userId' AS user_id,
+             LEAST(expire, NOW() + ${SESSION_TTL_MS} * INTERVAL '1 millisecond') - ${SESSION_TTL_MS} * INTERVAL '1 millisecond' AS activity_at
+      FROM "session"
+      WHERE sess->>'userId' IS NOT NULL
+        AND expire > NOW()
       UNION ALL
-      SELECT owner_user_id AS user_id, updated_at AS activity_at
-      FROM conversation_messages
-      WHERE owner_user_id IS NOT NULL
-      UNION ALL
-      SELECT owner_user_id AS user_id, updated_at AS activity_at
-      FROM sessions
-      WHERE owner_user_id IS NOT NULL
-      UNION ALL
-      SELECT owner_user_id AS user_id, created_at AS activity_at
-      FROM messages
-      WHERE owner_user_id IS NOT NULL
-      UNION ALL
-      SELECT actor_user_id AS user_id, created_at AS activity_at
-      FROM privileged_access_audit
-      WHERE actor_user_id IS NOT NULL
+      SELECT conversation.owner_user_id AS user_id,
+             conversation.updated_at AS activity_at
+      FROM conversation_messages conversation
+      INNER JOIN document_store_documents chat
+        ON chat.document_type = 'chat'
+       AND chat.document_id = conversation.session_id
+      WHERE conversation.owner_user_id IS NOT NULL
+        AND conversation.payload->>'role' = 'user'
+        AND COALESCE(chat.metadata->>'sessionType', 'user') = 'user'
     ) user_activity
     GROUP BY user_id
   `);
