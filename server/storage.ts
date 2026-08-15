@@ -673,11 +673,31 @@ export class HybridStorage implements IStorage {
         if (existingOverride) {
           target = existingOverride;
         } else {
-          const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, successCount: _successCount, failureCount: _failureCount, scope: _scope, ownerUserId: _ownerUserId, accountId: _accountId, vaultId: _vaultId, ...definition } = visible;
+          const {
+            id: _id,
+            createdAt: _createdAt,
+            updatedAt: _updatedAt,
+            successCount: _successCount,
+            failureCount: _failureCount,
+            scope: _scope,
+            ownerUserId: _ownerUserId,
+            accountId: _accountId,
+            vaultId: _vaultId,
+            templateSkillId: _templateSkillId,
+            baseRevisionId: _baseRevisionId,
+            currentRevisionId: _currentRevisionId,
+            updateState: _updateState,
+            ...definition
+          } = visible;
           [target] = await tx.insert(skills).values({
             ...definition,
             id: sql`gen_random_uuid()`,
             customized: true,
+            // Lattice cut 1: link template only; revisions/classification stay boot-owned.
+            templateSkillId: visible.id,
+            baseRevisionId: null,
+            currentRevisionId: null,
+            updateState: "customized",
             scope: "user",
             ownerUserId: principal.userId,
             accountId: principal.accountId,

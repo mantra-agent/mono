@@ -1,7 +1,15 @@
+import { createHash, randomUUID } from "node:crypto";
 import { createLogger } from "./log";
 import { db } from "./db";
 import { getPostgresErrorDetails } from "./postgres-errors";
-import { skills, libraryPages, personas, skillPersonaPreferences } from "@shared/schema";
+import {
+  skills,
+  skillReferences,
+  skillRevisions,
+  libraryPages,
+  personas,
+  skillPersonaPreferences,
+} from "@shared/schema";
 import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { BUILTIN_SKILL_DEFAULTS, type SkillDefault } from "./skill-defaults";
 import * as fs from "fs";
@@ -15,6 +23,301 @@ import {
 } from "./skill-identities";
 
 const log = createLogger("SkillSeed");
+
+/** Skill lattice payload — hash identity/protocol/run-shape/references only. */
+export interface SkillRevisionPayload {
+  name: string;
+  description: string;
+  category: string;
+  whenToUse: string;
+  process: string;
+  outputSpec: string;
+  checklist: unknown;
+  scoreThreshold: number | null;
+  sessionType: string | null;
+  activity: string;
+  recommendedPersonaTemplateId: number | null;
+  addToMemory: boolean;
+  pinnedToContext: boolean;
+  references: Array<{ name: string; content: string }>;
+}
+
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, child]) => [key, stableValue(child)]),
+    );
+  }
+  return value;
+}
+
+export function skillPayloadHash(payload: SkillRevisionPayload): string {
+  return createHash("sha256").update(JSON.stringify(stableValue(payload))).digest("hex");
+}
+
+function skillRevisionPayload(
+  row: typeof skills.$inferSelect,
+  references: Array<{ name: string; content: string }>,
+): SkillRevisionPayload {
+  const sortedRefs = [...references]
+    .map((ref) => ({ name: ref.name, content: ref.content }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.content.localeCompare(b.content));
+  return {
+    name: row.name,
+    description: row.description,
+    category: row.category,
+    whenToUse: row.whenToUse,
+    process: row.process,
+    outputSpec: row.outputSpec,
+    checklist: row.checklist ?? [],
+    scoreThreshold: row.scoreThreshold ?? null,
+    sessionType: row.sessionType ?? null,
+    activity: row.activity,
+    recommendedPersonaTemplateId: row.recommendedPersonaTemplateId ?? null,
+    addToMemory: row.addToMemory,
+    pinnedToContext: row.pinnedToContext,
+    references: sortedRefs,
+  };
+}
+
+/**
+ * Skill Default Lattice cut 1 — additive snapshot + classification only.
+ * Every pre-lattice Skill gets an immutable revision of its current payload.
+ * User shadows link to same-name globals. Leftover is exact-hash only and is
+ * classified, never rebased. Mixed/unprovable rows stay customized or pinned_legacy.
+ * customized remains the freeze flag; no publish, no runtime resolution change.
+ */
+export async function initializeSkillRevisionLineage(): Promise<void> {
+  let snapshotted = 0;
+  let linked = 0;
+  let classifiedFollowing = 0;
+  let classifiedCustomized = 0;
+  let classifiedPinnedLegacy = 0;
+  let classifiedLeftover = 0;
+  let abstained = 0;
+
+  await db.transaction(async (tx) => {
+    const allSkills = await tx.select().from(skills);
+    const allRefs = await tx.select().from(skillReferences);
+    const refsBySkill = new Map<string, Array<{ name: string; content: string }>>();
+    for (const ref of allRefs) {
+      const list = refsBySkill.get(ref.skillId) ?? [];
+      list.push({ name: ref.name, content: ref.content });
+      refsBySkill.set(ref.skillId, list);
+    }
+
+    const payloadBySkillId = new Map<string, SkillRevisionPayload>();
+    const hashBySkillId = new Map<string, string>();
+    for (const row of allSkills) {
+      const payload = skillRevisionPayload(row, refsBySkill.get(row.id) ?? []);
+      payloadBySkillId.set(row.id, payload);
+      hashBySkillId.set(row.id, skillPayloadHash(payload));
+    }
+
+    // 1) Snapshot every Skill missing a current revision — immutable recoverability.
+    for (const row of allSkills) {
+      if (row.currentRevisionId) {
+        abstained++;
+        continue;
+      }
+      const payload = payloadBySkillId.get(row.id)!;
+      const contentHash = hashBySkillId.get(row.id)!;
+      const revisionScope = row.scope === "global" ? "platform" : "user";
+      if (revisionScope === "user" && (!row.ownerUserId || !row.accountId)) {
+        // Unowned user-scope row cannot satisfy skill_revisions CHECK; pin only.
+        await tx
+          .update(skills)
+          .set({ updateState: "pinned_legacy", updatedAt: new Date() })
+          .where(eq(skills.id, row.id));
+        classifiedPinnedLegacy++;
+        continue;
+      }
+      const revisionId = randomUUID();
+      await tx.insert(skillRevisions).values({
+        id: revisionId,
+        skillIdentityId: row.id,
+        scope: revisionScope,
+        ownerUserId: revisionScope === "user" ? row.ownerUserId : null,
+        accountId: revisionScope === "user" ? row.accountId : null,
+        parentRevisionId: null,
+        platformBaseRevisionId: null,
+        payload,
+        contentHash,
+        changeSummary: "Initial skill lattice snapshot",
+        createdByUserId: null,
+      });
+      await tx
+        .update(skills)
+        .set({
+          baseRevisionId: revisionId,
+          currentRevisionId: revisionId,
+          updatedAt: new Date(),
+        })
+        .where(eq(skills.id, row.id));
+      row.baseRevisionId = revisionId;
+      row.currentRevisionId = revisionId;
+      snapshotted++;
+    }
+
+    // Reload after snapshots so classification sees revision ids.
+    const skillsAfter = await tx.select().from(skills);
+    const revisions = await tx.select().from(skillRevisions);
+    const platformHashesByIdentity = new Map<string, Set<string>>();
+    for (const rev of revisions) {
+      if (rev.scope !== "platform") continue;
+      const set = platformHashesByIdentity.get(rev.skillIdentityId) ?? new Set();
+      set.add(rev.contentHash);
+      platformHashesByIdentity.set(rev.skillIdentityId, set);
+    }
+
+    const globalByName = new Map<string, (typeof skillsAfter)[number]>();
+    for (const row of skillsAfter) {
+      if (row.scope === "global") {
+        globalByName.set(row.name.toLowerCase(), row);
+      }
+    }
+
+    // 2) Link user shadows to same-name global template.
+    for (const row of skillsAfter) {
+      if (row.scope !== "user" || row.templateSkillId) continue;
+      const template = globalByName.get(row.name.toLowerCase());
+      if (!template) continue;
+      await tx
+        .update(skills)
+        .set({ templateSkillId: template.id, updatedAt: new Date() })
+        .where(eq(skills.id, row.id));
+      row.templateSkillId = template.id;
+      linked++;
+    }
+
+    // 3) Classify updateState only — never rebase or rewrite payload.
+    for (const row of skillsAfter) {
+      const hash = hashBySkillId.get(row.id) ?? skillPayloadHash(
+        skillRevisionPayload(row, refsBySkill.get(row.id) ?? []),
+      );
+
+      if (row.scope === "global") {
+        if (row.author === "system" && row.customized !== true) {
+          await tx
+            .update(skills)
+            .set({ updateState: "following", updatedAt: new Date() })
+            .where(eq(skills.id, row.id));
+          classifiedFollowing++;
+          continue;
+        }
+        // customized global: leftover only on exact historical platform hash
+        // of this identity that is not the sole current snapshot (needs prior).
+        const historical = platformHashesByIdentity.get(row.id);
+        const currentRev = row.currentRevisionId
+          ? revisions.find((r) => r.id === row.currentRevisionId)
+          : undefined;
+        const hasOlderExact =
+          !!historical &&
+          historical.size > 1 &&
+          historical.has(hash) &&
+          currentRev?.contentHash === hash;
+        // First lattice boot has only one revision per skill — cannot prove
+        // older seed. Mixed/customized globals stay customized (Keep-mine).
+        // Leftover proof requires a second distinct historical platform hash.
+        if (hasOlderExact && historical && [...historical].some((h) => h !== hash)) {
+          // Exact older platform payload still present — leftover candidate.
+          // Cut 1 classifies only; heal/rebase is a later cut.
+          await tx
+            .update(skills)
+            .set({ updateState: "pinned_legacy", updatedAt: new Date() })
+            .where(eq(skills.id, row.id));
+          classifiedLeftover++;
+          continue;
+        }
+        if (row.customized === true) {
+          await tx
+            .update(skills)
+            .set({ updateState: "customized", updatedAt: new Date() })
+            .where(eq(skills.id, row.id));
+          classifiedCustomized++;
+          continue;
+        }
+        await tx
+          .update(skills)
+          .set({ updateState: "pinned_legacy", updatedAt: new Date() })
+          .where(eq(skills.id, row.id));
+        classifiedPinnedLegacy++;
+        continue;
+      }
+
+      // User-scoped shadows
+      if (row.templateSkillId) {
+        const template = skillsAfter.find((s) => s.id === row.templateSkillId);
+        const templateHash = template ? hashBySkillId.get(template.id) : undefined;
+        const templatePlatformHashes = platformHashesByIdentity.get(row.templateSkillId);
+        const userRevisions = revisions.filter(
+          (r) => r.skillIdentityId === row.id && r.scope === "user",
+        );
+        // "No user revision" means only the lattice snapshot exists and content
+        // still matches a known platform hash of the template (exact leftover).
+        const matchesTemplateCurrent = templateHash != null && hash === templateHash;
+        const matchesHistoricalPlatform =
+          !!templatePlatformHashes && templatePlatformHashes.has(hash);
+        if (matchesTemplateCurrent) {
+          const baseId = template?.currentRevisionId ?? row.baseRevisionId;
+          await tx
+            .update(skills)
+            .set({
+              updateState: "following",
+              baseRevisionId: baseId,
+              // Keep own snapshot as currentRevisionId for recoverability; base
+              // points at the platform revision the copy follows.
+              updatedAt: new Date(),
+            })
+            .where(eq(skills.id, row.id));
+          classifiedFollowing++;
+          continue;
+        }
+        if (
+          matchesHistoricalPlatform &&
+          userRevisions.length <= 1 &&
+          !matchesTemplateCurrent
+        ) {
+          // Exact older platform hash, no authored user revision beyond snapshot.
+          await tx
+            .update(skills)
+            .set({ updateState: "pinned_legacy", updatedAt: new Date() })
+            .where(eq(skills.id, row.id));
+          classifiedLeftover++;
+          continue;
+        }
+        // Divergent content — Keep-mine / customized.
+        await tx
+          .update(skills)
+          .set({ updateState: "customized", updatedAt: new Date() })
+          .where(eq(skills.id, row.id));
+        classifiedCustomized++;
+        continue;
+      }
+
+      // Orphan user skill with no same-name global.
+      await tx
+        .update(skills)
+        .set({ updateState: row.customized ? "customized" : "pinned_legacy", updatedAt: new Date() })
+        .where(eq(skills.id, row.id));
+      if (row.customized) classifiedCustomized++;
+      else classifiedPinnedLegacy++;
+    }
+  });
+
+  log.info("Skill revision lineage initialized", {
+    snapshotted,
+    linked,
+    classifiedFollowing,
+    classifiedCustomized,
+    classifiedPinnedLegacy,
+    classifiedLeftover,
+    abstained,
+  });
+}
 
 const PROMPT_NAME_TO_SKILL: Record<string, string> = {
   "introspect": "reflect",

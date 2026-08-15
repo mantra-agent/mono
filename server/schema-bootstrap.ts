@@ -3447,6 +3447,50 @@ export async function runSchemaBootstrap(
     await pool.query(
       `ALTER TABLE skills ADD COLUMN IF NOT EXISTS pinned_to_context BOOLEAN NOT NULL DEFAULT false`,
     );
+    // Skill Default Lattice cut 1: additive lineage columns + revision table.
+    // customized remains the freeze flag until later cuts project updateState.
+    await pool.query(
+      `ALTER TABLE skills ADD COLUMN IF NOT EXISTS template_skill_id VARCHAR`,
+    );
+    await pool.query(
+      `ALTER TABLE skills ADD COLUMN IF NOT EXISTS base_revision_id TEXT`,
+    );
+    await pool.query(
+      `ALTER TABLE skills ADD COLUMN IF NOT EXISTS current_revision_id TEXT`,
+    );
+    await pool.query(
+      `ALTER TABLE skills ADD COLUMN IF NOT EXISTS update_state TEXT NOT NULL DEFAULT 'pinned_legacy'`,
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_skills_template ON skills(template_skill_id)`,
+    );
+    await pool.query(`CREATE TABLE IF NOT EXISTS skill_revisions (
+      id TEXT PRIMARY KEY,
+      skill_identity_id VARCHAR NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+      scope TEXT NOT NULL CHECK (scope IN ('platform', 'user')),
+      owner_user_id TEXT,
+      account_id TEXT,
+      parent_revision_id TEXT REFERENCES skill_revisions(id),
+      platform_base_revision_id TEXT REFERENCES skill_revisions(id),
+      payload JSONB NOT NULL,
+      content_hash TEXT NOT NULL,
+      change_summary TEXT NOT NULL,
+      created_by_user_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CHECK (
+        (scope = 'platform' AND owner_user_id IS NULL AND account_id IS NULL)
+        OR (scope = 'user' AND owner_user_id IS NOT NULL AND account_id IS NOT NULL)
+      )
+    )`);
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_skill_revisions_identity_created ON skill_revisions(skill_identity_id, created_at)`,
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_skill_revisions_scope_owner ON skill_revisions(scope, owner_user_id)`,
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_skill_revisions_identity_hash ON skill_revisions(skill_identity_id, content_hash)`,
+    );
   });
 
   await heal("activity GUID migration", async () => {
@@ -3801,6 +3845,7 @@ export async function runSchemaBootstrap(
       migrateSentryRecentChangelistGate,
       migrateLegacySkillPersonaPreferences,
       deleteZombieSkills,
+      initializeSkillRevisionLineage,
     } = await import("./skill-seed");
     await ensurePromptModuleTables(pool);
     await migrateSkillRenames();
@@ -3819,6 +3864,8 @@ export async function runSchemaBootstrap(
     await migrateSentryRecentChangelistGate();
     await deleteZombieSkills();
     await verifyRequiredSkills();
+    // Lattice cut 1: snapshot + classify only. No rebase/publish/resolution change.
+    await initializeSkillRevisionLineage();
   } catch (err: any) {
     log(`Skill seed/migration failed: ${err.message}`, "migration");
   }
