@@ -75,6 +75,8 @@ function toIso(value: Date | string | null | undefined): string | null {
 function mapMetric(row: typeof metrics.$inferSelect, latestSample?: MetricSample | null): Metric {
   return {
     id: row.id,
+    ownerKind: row.ownerKind ?? "account",
+    ownerId: row.ownerId ?? null,
     businessId: row.businessId ?? null,
     name: row.name,
     slug: row.slug,
@@ -134,6 +136,8 @@ function virtualCurrentMetric(
   const now = new Date().toISOString();
   return {
     id: `metric_current_${businessId}_${definition.slug.replace(/-/g, "_")}`,
+    ownerKind: "account",
+    ownerId: sample.accountId,
     businessId,
     name: definition.name,
     slug: definition.slug,
@@ -392,8 +396,7 @@ export const metricsStorage = {
     const rows = await db
       .select({ metric: metrics })
       .from(metrics)
-      .innerJoin(businesses, eq(businesses.id, metrics.businessId))
-      .where(visibleBusinessPredicate(principal, filter))
+      .where(and(combineWithVisibleScope(principal, metricScope, filter), businessId ? eq(metrics.businessId, businessId) : undefined))
       .orderBy(asc(metrics.name));
 
     const out: Metric[] = [];
@@ -408,8 +411,7 @@ export const metricsStorage = {
     const [result] = await db
       .select({ metric: metrics })
       .from(metrics)
-      .innerJoin(businesses, eq(businesses.id, metrics.businessId))
-      .where(visibleBusinessPredicate(principal, eq(metrics.id, id)))
+      .where(combineWithVisibleScope(principal, metricScope, eq(metrics.id, id)))
       .limit(1);
     if (!result?.metric) throw Object.assign(new Error("Metric not found"), { status: 404 });
     return overlayIdentityStockSample(mapMetric(result.metric, await latestSampleFor(result.metric.id)));
@@ -421,16 +423,14 @@ export const metricsStorage = {
     const slug = parsed.slug?.trim() || slugifyMetricName(parsed.name);
     const id = newId("metric");
     const ownership = ownedInsertValues(principal, metricScope);
-    if (!parsed.businessId) throw Object.assign(new Error("businessId is required"), { status: 400 });
-    const [target] = await db.select({ id: businesses.id }).from(businesses)
-      .where(writableBusinessPredicate(principal, eq(businesses.id, parsed.businessId))).limit(1);
-    if (!target) throw Object.assign(new Error("Business not found or not writable"), { status: 404 });
     const [row] = await db
       .insert(metrics)
       .values({
         id,
         ...ownership,
         businessId: parsed.businessId,
+        ownerKind: parsed.ownerKind ?? "account",
+        ownerId: parsed.ownerId ?? principal.accountId,
         createdByUserId: principal.userId,
         name: parsed.name,
         slug,
@@ -723,10 +723,8 @@ export const kpiStorage = {
       .select({ kpi: kpis })
       .from(kpis)
       .innerJoin(metrics, eq(metrics.id, kpis.metricId))
-      .innerJoin(businesses, eq(businesses.id, metrics.businessId))
       .where(and(
         combineWithVisibleScope(principal, kpiScope, filter),
-        visibleBusinessPredicate(principal, businessId ? eq(businesses.id, businessId) : undefined),
         businessId ? eq(metrics.businessId, businessId) : undefined,
       ))
       .orderBy(asc(kpis.name));
@@ -899,7 +897,9 @@ export async function ensureMetricsDefinitionsSchema(): Promise<void> {
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS metrics (
       id text PRIMARY KEY,
-      business_id text REFERENCES businesses(id) ON DELETE RESTRICT,
+      business_id text,
+      owner_kind text NOT NULL DEFAULT 'account',
+      owner_id text,
       name text NOT NULL,
       slug text NOT NULL,
       description text NOT NULL DEFAULT '',
@@ -918,7 +918,11 @@ export async function ensureMetricsDefinitionsSchema(): Promise<void> {
       updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  await db.execute(sql`ALTER TABLE metrics ADD COLUMN IF NOT EXISTS business_id text REFERENCES businesses(id) ON DELETE RESTRICT`);
+  await db.execute(sql`ALTER TABLE metrics ADD COLUMN IF NOT EXISTS business_id text`);
+  await db.execute(sql`ALTER TABLE metrics ADD COLUMN IF NOT EXISTS owner_kind text NOT NULL DEFAULT 'account'`);
+  await db.execute(sql`ALTER TABLE metrics ADD COLUMN IF NOT EXISTS owner_id text`);
+  await db.execute(sql`UPDATE metrics SET owner_id = COALESCE(owner_id, account_id) WHERE owner_id IS NULL`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS metrics_owner_idx ON metrics(owner_kind, owner_id)`);
   await db.execute(sql`DROP INDEX IF EXISTS metrics_account_slug_uidx`);
   // Expression unique index so NULL vault_id cannot stack duplicate slugs
   // (plain UNIQUE treats each NULL as distinct in PostgreSQL).
