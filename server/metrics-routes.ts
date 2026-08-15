@@ -80,20 +80,20 @@ async function ensureSeeded(): Promise<void> {
 }
 
 export function registerMetricsRoutes(app: Express): void {
-  // Core owns the measurement contract. Keep the Business paths as compatibility
-  // aliases while callers migrate to the neutral Tools/Core API surface.
-  app.use("/api/metrics", (req, _res, next) => {
-    req.url = `/api/business/metrics${req.url === "/" ? "" : req.url}`;
+  // Core owns the measurement contract. The canonical handlers live under the
+  // neutral Tools paths; Business URLs remain thin compatibility aliases.
+  app.use("/api/business/metrics", (req, _res, next) => {
+    req.url = `/api/metrics${req.url === "/" ? "" : req.url}`;
     next();
   });
-  app.use("/api/kpis", (req, _res, next) => {
-    req.url = `/api/business/kpis${req.url === "/" ? "" : req.url}`;
+  app.use("/api/business/kpis", (req, _res, next) => {
+    req.url = `/api/kpis${req.url === "/" ? "" : req.url}`;
     next();
   });
 
   // ── Metrics ──────────────────────────────────────────────────────
   app.get(
-    "/api/business/metrics",
+    "/api/metrics",
     requireAuth,
     requirePermission("system:read"),
     async (req: Request, res: Response) => {
@@ -117,7 +117,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.get(
-    ["/api/business/metrics/range-sample", "/api/business/metrics/usage-sample"],
+    ["/api/metrics/range-sample", "/api/metrics/usage-sample"],
     requireAuth,
     requirePermission("system:read"),
     async (req: Request, res: Response) => {
@@ -138,7 +138,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.get(
-    "/api/business/metrics/collection",
+    "/api/metrics/collection",
     requireAuth,
     requirePermission("system:read"),
     async (req: Request, res: Response) => {
@@ -160,7 +160,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.get(
-    "/api/business/metrics/:id",
+    "/api/metrics/:id",
     requireAuth,
     requirePermission("system:read"),
     async (req: Request, res: Response) => {
@@ -175,7 +175,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.post(
-    "/api/business/metrics",
+    "/api/metrics",
     requireAuth,
     requirePermission("system:write"),
     async (req: Request, res: Response) => {
@@ -191,7 +191,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.patch(
-    "/api/business/metrics/:id",
+    "/api/metrics/:id",
     requireAuth,
     requirePermission("system:write"),
     async (req: Request, res: Response) => {
@@ -209,7 +209,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.delete(
-    "/api/business/metrics/:id",
+    "/api/metrics/:id",
     requireAuth,
     requirePermission("system:write"),
     async (req: Request, res: Response) => {
@@ -224,7 +224,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.get(
-    "/api/business/metrics/:id/samples",
+    "/api/metrics/:id/samples",
     requireAuth,
     requirePermission("system:read"),
     async (req: Request, res: Response) => {
@@ -240,7 +240,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.post(
-    "/api/business/metrics/:id/samples",
+    "/api/metrics/:id/samples",
     requireAuth,
     requirePermission("system:write"),
     async (req: Request, res: Response) => {
@@ -260,7 +260,7 @@ export function registerMetricsRoutes(app: Express): void {
 
   // ── KPIs ─────────────────────────────────────────────────────────
   app.get(
-    "/api/business/kpis",
+    "/api/kpis",
     requireAuth,
     requirePermission("system:read"),
     async (req: Request, res: Response) => {
@@ -278,7 +278,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.get(
-    "/api/business/kpis/standing-scores",
+    "/api/kpis/standing-scores",
     requireAuth,
     requirePermission("system:read"),
     async (req: Request, res: Response) => {
@@ -295,7 +295,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.get(
-    "/api/business/kpis/:id",
+    "/api/kpis/:id",
     requireAuth,
     requirePermission("system:read"),
     async (req: Request, res: Response) => {
@@ -310,7 +310,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.post(
-    "/api/business/kpis",
+    "/api/kpis",
     requireAuth,
     requirePermission("system:write"),
     async (req: Request, res: Response) => {
@@ -326,7 +326,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.patch(
-    "/api/business/kpis/:id",
+    "/api/kpis/:id",
     requireAuth,
     requirePermission("system:write"),
     async (req: Request, res: Response) => {
@@ -341,7 +341,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.delete(
-    "/api/business/kpis/:id",
+    "/api/kpis/:id",
     requireAuth,
     requirePermission("system:write"),
     async (req: Request, res: Response) => {
@@ -356,7 +356,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.post(
-    "/api/business/metrics-kpis/seed",
+    "/api/metrics-kpis/seed",
     requireAuth,
     requirePermission("system:write"),
     async (_req: Request, res: Response) => {
