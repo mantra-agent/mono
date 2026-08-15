@@ -14,7 +14,7 @@ import {
   type BusinessBudgetMutation,
 } from "@shared/models/business-budgets";
 import type { ToolHandler } from "./contracts";
-import { internalFailure } from "../tool-failure";
+import { inputFailure, internalFailure } from "../tool-failure";
 
 // The Business Mod's `business` tool composes Business identity, Budgets,
 // Plans, KPIs, and Metrics behind one bounded action surface. Every action
@@ -134,6 +134,32 @@ function safeBusinessError(error: unknown): string {
     }
   }
   return "Business operation failed";
+}
+
+/** Caller-correctable HTTP 4xx / Zod-style validation thrown by storage helpers. */
+function businessClientErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const status = (error as { status?: unknown }).status;
+  if (typeof status !== "number" || !Number.isFinite(status)) return null;
+  if (status < 400 || status >= 500) return null;
+  return status;
+}
+
+/**
+ * Bare `{ error: true }` returns are contract rejects (missing args, bad enums).
+ * Stamp them input so reliability does not page them as uncoded TOOL_FAILED_BUSINESS
+ * or as business_internal reds.
+ */
+function stampBusinessContractReject(
+  action: string,
+  outcome: { result: string; error?: boolean; failure?: import("../tool-failure").ToolFailure },
+) {
+  if (!outcome.error || outcome.failure) return outcome;
+  const detail = `${action}:${String(outcome.result).slice(0, 200)}`;
+  return {
+    ...outcome,
+    failure: inputFailure("business_input_invalid", detail),
+  };
 }
 
 function businessResult(business: Business) {
@@ -636,16 +662,28 @@ async function handleModelAction(action: string, args: Record<string, unknown>) 
 export const handleBusiness: ToolHandler = async (args) => {
   const action = String(args.action || "list");
   try {
-    if (ENTITY_ACTIONS.has(action)) return await handleEntityAction(action, args);
-    if (MODEL_ACTIONS.has(action)) return await handleModelAction(action, args);
-    if (BUDGET_ACTIONS.has(action)) return await handleBudgetAction(action, args);
-    if (HIRING_ACTIONS.has(action)) return await handleHiringAction(action, args);
-    if (KPI_ACTIONS.has(action)) return await handleKpiAction(action, args);
-    if (METRIC_ACTIONS.has(action)) return await handleMetricAction(action, args);
-    if (PLAN_ACTIONS.has(action)) return await handlePlanAction(action, args);
-    return { result: `Unknown business action: ${action}`, error: true };
+    let outcome;
+    if (ENTITY_ACTIONS.has(action)) outcome = await handleEntityAction(action, args);
+    else if (MODEL_ACTIONS.has(action)) outcome = await handleModelAction(action, args);
+    else if (BUDGET_ACTIONS.has(action)) outcome = await handleBudgetAction(action, args);
+    else if (HIRING_ACTIONS.has(action)) outcome = await handleHiringAction(action, args);
+    else if (KPI_ACTIONS.has(action)) outcome = await handleKpiAction(action, args);
+    else if (METRIC_ACTIONS.has(action)) outcome = await handleMetricAction(action, args);
+    else if (PLAN_ACTIONS.has(action)) outcome = await handlePlanAction(action, args);
+    else outcome = { result: `Unknown business action: ${action}`, error: true };
+    return stampBusinessContractReject(action, outcome);
   } catch (error: unknown) {
     const message = safeBusinessError(error);
+    const clientStatus = businessClientErrorStatus(error);
+    // Storage helpers throw status:400 for range/arg validation (e.g. "end cannot
+    // be in the future"). That is caller input, not a producer defect.
+    if (clientStatus !== null) {
+      return {
+        result: message,
+        error: true,
+        failure: inputFailure("business_input_invalid", `${action}:${message}`),
+      };
+    }
     return {
       result: message,
       error: true,
