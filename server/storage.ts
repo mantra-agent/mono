@@ -2,7 +2,7 @@
 import { db, fnv1a32 } from "./db";
 import { createLogger } from "./log";
 import {
-  users, skills, skillReferences, skillRuns, skillFailureDismissals, skillPersonaPreferences, promptModules, promptModuleVersions, systemSettings, insertSkillSchema,
+  users, skills, skillReferences, skillRevisions, skillRuns, skillFailureDismissals, skillPersonaPreferences, promptModules, promptModuleVersions, systemSettings, insertSkillSchema,
   voiceSessionActive,
   emailTriageLog, emailMessages, emailSyncLog, emailSyncCursors, emailDrafts,
   emailEnrichments, emailDismissals, connectedAccounts,
@@ -22,9 +22,17 @@ import {
   type EmailEnrichment, type InsertEmailEnrichment,
   type EmailDismissal, type InsertEmailDismissal,
 } from "@shared/schema";
-import { eq, ne, desc, gte, count, sql, inArray, or, lte, and, type SQL } from "drizzle-orm";
+import { eq, ne, desc, gte, count, sql, inArray, or, lte, and, isNotNull, type SQL } from "drizzle-orm";
 import { fileIssueStorage, fileApiCallStorage } from "./file-storage";
 import { peopleStorage } from "./people-storage";
+import {
+  skillRevisionPayload,
+  skillPayloadHash,
+  changedSkillFields,
+  SKILL_PAYLOAD_FIELDS,
+  type SkillRevisionPayload,
+} from "./skill-seed";
+import { randomUUID } from "node:crypto";
 import { getCurrentPrincipal, requireCurrentPrincipal } from "./principal-context";
 import { principalHasPermission } from "./permissions";
 import type { Principal } from "./principal";
@@ -130,7 +138,27 @@ export interface IStorage {
   createSkill(data: InsertSkill): Promise<SkillWithReferences>;
   updateSkill(id: string, data: Partial<InsertSkill>): Promise<SkillWithReferences | undefined>;
   deleteSkill(id: string): Promise<boolean>;
-  resetSkillOverride(id: string): Promise<boolean>;
+  // Skill Default Lattice mutations (Persona morphogenic layer mirror).
+  ensureOwnedSkillCopy(id: string): Promise<SkillWithReferences | undefined>;
+  revertSkillOverride(id: string): Promise<SkillWithReferences | undefined>;
+  useUpdatedSkillDefault(id: string): Promise<SkillWithReferences | undefined>;
+  acknowledgeSkillUpdate(id: string): Promise<SkillWithReferences | undefined>;
+  previewPlatformSkillPublication(
+    id: string,
+    input: Partial<SkillRevisionPayload>,
+  ): Promise<{
+    template: SkillWithReferences;
+    payload: SkillRevisionPayload;
+    changedFields: string[];
+    impact: { advancing: number; updateAvailable: number };
+  } | null>;
+  publishPlatformSkillRevision(
+    id: string,
+    input: Partial<SkillRevisionPayload>,
+    changeSummary: string,
+    confirmed: boolean,
+  ): Promise<SkillWithReferences | undefined>;
+  healLeftoverSkillFollowers(): Promise<{ healed: number; abstained: number }>;
   incrementSkillSuccess(id: string): Promise<void>;
   incrementSkillFailure(id: string): Promise<void>;
   // insertSkillScore, getLatestSkillScore, getSkillScores, getSkillLastRuns removed — skill_scores superseded by skill_runs
@@ -228,6 +256,28 @@ export interface IStorage {
 
 const log = createLogger("Storage");
 const skillScopeColumns = { scope: skills.scope, ownerUserId: skills.ownerUserId, accountId: skills.accountId, vaultId: skills.vaultId };
+
+/** Exact Drizzle transaction handle type used by the skill lattice helpers. */
+type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Whole-field overlay of a partial skill payload input onto a base payload.
+ * Only defined fields override — omitted/undefined inputs are "no change", never
+ * destructive. Whole-field replace only; process text is never AI-merged.
+ */
+function mergeSkillPayloadInput(
+  base: SkillRevisionPayload,
+  input: Partial<SkillRevisionPayload>,
+): SkillRevisionPayload {
+  const merged: SkillRevisionPayload = { ...base };
+  for (const field of SKILL_PAYLOAD_FIELDS) {
+    const value = input[field];
+    if (value !== undefined) {
+      (merged as Record<string, unknown>)[field] = value;
+    }
+  }
+  return merged;
+}
 const promptModuleScopeColumns = { scope: promptModules.scope, ownerUserId: promptModules.ownerUserId, accountId: promptModules.accountId };
 const skillRunScopeColumns = { ownerUserId: skillRuns.ownerUserId, accountId: skillRuns.accountId, vaultId: skillRuns.vaultId };
 // skillScoreScopeColumns removed — skill_scores superseded by skill_runs
@@ -673,63 +723,22 @@ export class HybridStorage implements IStorage {
         if (existingOverride) {
           target = existingOverride;
         } else {
-          const {
-            id: _id,
-            createdAt: _createdAt,
-            updatedAt: _updatedAt,
-            successCount: _successCount,
-            failureCount: _failureCount,
-            scope: _scope,
-            ownerUserId: _ownerUserId,
-            accountId: _accountId,
-            vaultId: _vaultId,
-            templateSkillId: _templateSkillId,
-            baseRevisionId: _baseRevisionId,
-            currentRevisionId: _currentRevisionId,
-            updateState: _updateState,
-            ...definition
-          } = visible;
-          [target] = await tx.insert(skills).values({
-            ...definition,
-            id: sql`gen_random_uuid()`,
-            customized: true,
-            // Lattice cut 1: link template only; revisions/classification stay boot-owned.
-            templateSkillId: visible.id,
-            baseRevisionId: null,
-            currentRevisionId: null,
-            updateState: "customized",
-            scope: "user",
-            ownerUserId: principal.userId,
+          // Lattice cut 2: fork a *following* user copy of the seed. Never edit
+          // the seed. The edit below writes the first user revision and flips to
+          // customized, so a fork always carries lineage + recoverable history.
+          target = await this.forkFollowingSkillCopyTx(tx, visible, {
+            userId: principal.userId,
             accountId: principal.accountId,
             vaultId: principal.activeVaultId,
-            successCount: 0,
-            failureCount: 0,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          }).returning();
-          const inheritedRefs = await tx.select().from(skillReferences).where(eq(skillReferences.skillId, visible.id));
-          if (inheritedRefs.length > 0) {
-            await tx.insert(skillReferences).values(inheritedRefs.map((reference) => ({
-              skillId: target.id,
-              name: reference.name,
-              content: reference.content,
-            })));
-          }
-          await tx.update(skillPersonaPreferences)
-            .set({ skillId: target.id, updatedAt: new Date() })
-            .where(and(
-              eq(skillPersonaPreferences.skillId, visible.id),
-              eq(skillPersonaPreferences.ownerUserId, principal.userId),
-              eq(skillPersonaPreferences.accountId, principal.accountId),
-            ));
+          });
         }
       }
 
-      const [result] = await tx.update(skills)
-        .set({ ...skillData, updatedAt: new Date(), customized: true })
+      const [applied] = await tx.update(skills)
+        .set({ ...skillData, updatedAt: new Date() })
         .where(this.skillWritable(eq(skills.id, target.id)))
         .returning();
-      if (!result) return undefined;
+      if (!applied) return undefined;
       if (refs !== undefined) {
         await tx.delete(skillReferences).where(eq(skillReferences.skillId, target.id));
         if (refs.length > 0) {
@@ -738,10 +747,483 @@ export class HybridStorage implements IStorage {
           );
         }
       }
-      return result;
+      // Lattice cut 2: an edit is a user customization. Snapshot the edited
+      // payload as an immutable user revision and advance updateState so the
+      // freeze is a stage (customized) that publish can still offer inbound to.
+      const newPayload = await this.buildSkillPayloadTx(tx, applied);
+      const priorPayload = await this.readSkillRevisionPayloadTx(tx, applied.currentRevisionId);
+      const summary = priorPayload
+        ? `Updated ${changedSkillFields(priorPayload, newPayload).join(", ") || "skill"}`
+        : "Customized skill";
+      const revisionId = await this.insertSkillRevisionTx(tx, applied, newPayload, {
+        scope: "user",
+        parentRevisionId: applied.currentRevisionId ?? null,
+        platformBaseRevisionId: applied.baseRevisionId ?? null,
+        changeSummary: summary,
+        createdByUserId: principal.userId,
+      });
+      const [finalRow] = await tx.update(skills)
+        .set({
+          currentRevisionId: revisionId,
+          updateState: "customized",
+          customized: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(skills.id, target.id))
+        .returning();
+      return finalRow ?? applied;
     });
     if (!updated) return undefined;
     return this.enrichSkillWithReferences(updated);
+  }
+
+  /**
+   * Fork a following user copy of a global skill for a principal. Shared by
+   * updateSkill and ensureOwnedSkillCopy so the copy shape lives in one place.
+   * The copy starts `following` the template's current revision; callers that
+   * edit it write the first user revision and flip it to `customized`.
+   */
+  private async forkFollowingSkillCopyTx(
+    tx: DbTransaction,
+    visible: typeof skills.$inferSelect,
+    owner: { userId: string; accountId: string; vaultId: string | null | undefined },
+  ): Promise<typeof skills.$inferSelect> {
+    const {
+      id: _id,
+      createdAt: _createdAt,
+      updatedAt: _updatedAt,
+      successCount: _successCount,
+      failureCount: _failureCount,
+      scope: _scope,
+      ownerUserId: _ownerUserId,
+      accountId: _accountId,
+      vaultId: _vaultId,
+      templateSkillId: _templateSkillId,
+      baseRevisionId: _baseRevisionId,
+      currentRevisionId: _currentRevisionId,
+      updateState: _updateState,
+      customized: _customized,
+      ...definition
+    } = visible;
+    const [forked] = await tx.insert(skills).values({
+      ...definition,
+      id: sql`gen_random_uuid()`,
+      customized: false,
+      templateSkillId: visible.id,
+      baseRevisionId: visible.currentRevisionId ?? null,
+      currentRevisionId: visible.currentRevisionId ?? null,
+      updateState: visible.currentRevisionId ? "following" : "pinned_legacy",
+      scope: "user",
+      ownerUserId: owner.userId,
+      accountId: owner.accountId,
+      vaultId: owner.vaultId,
+      successCount: 0,
+      failureCount: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }).returning();
+    const inheritedRefs = await tx.select().from(skillReferences).where(eq(skillReferences.skillId, visible.id));
+    if (inheritedRefs.length > 0) {
+      await tx.insert(skillReferences).values(inheritedRefs.map((reference) => ({
+        skillId: forked.id,
+        name: reference.name,
+        content: reference.content,
+      })));
+    }
+    await tx.update(skillPersonaPreferences)
+      .set({ skillId: forked.id, updatedAt: new Date() })
+      .where(and(
+        eq(skillPersonaPreferences.skillId, visible.id),
+        eq(skillPersonaPreferences.ownerUserId, owner.userId),
+        eq(skillPersonaPreferences.accountId, owner.accountId),
+      ));
+    return forked;
+  }
+
+  /** Build the canonical lattice payload (identity/protocol/run-shape/refs) for a skill row. */
+  private async buildSkillPayloadTx(
+    tx: DbTransaction,
+    row: typeof skills.$inferSelect,
+  ): Promise<SkillRevisionPayload> {
+    const refs = await tx.select().from(skillReferences).where(eq(skillReferences.skillId, row.id));
+    return skillRevisionPayload(row, refs.map((r) => ({ name: r.name, content: r.content })));
+  }
+
+  /** Read a stored revision's immutable payload, or null. Restores never invent a prior state. */
+  private async readSkillRevisionPayloadTx(
+    tx: DbTransaction,
+    revisionId: string | null | undefined,
+  ): Promise<SkillRevisionPayload | null> {
+    if (!revisionId) return null;
+    const [rev] = await tx.select().from(skillRevisions).where(eq(skillRevisions.id, revisionId)).limit(1);
+    return rev ? (rev.payload as SkillRevisionPayload) : null;
+  }
+
+  /** Insert an immutable skill revision and return its id. */
+  private async insertSkillRevisionTx(
+    tx: DbTransaction,
+    row: typeof skills.$inferSelect,
+    payload: SkillRevisionPayload,
+    opts: {
+      scope: "platform" | "user";
+      parentRevisionId?: string | null;
+      platformBaseRevisionId?: string | null;
+      changeSummary: string;
+      createdByUserId?: string | null;
+    },
+  ): Promise<string> {
+    const id = randomUUID();
+    await tx.insert(skillRevisions).values({
+      id,
+      skillIdentityId: row.id,
+      scope: opts.scope,
+      ownerUserId: opts.scope === "user" ? row.ownerUserId : null,
+      accountId: opts.scope === "user" ? row.accountId : null,
+      parentRevisionId: opts.parentRevisionId ?? null,
+      platformBaseRevisionId: opts.platformBaseRevisionId ?? null,
+      payload,
+      contentHash: skillPayloadHash(payload),
+      changeSummary: opts.changeSummary,
+      createdByUserId: opts.createdByUserId ?? null,
+    });
+    return id;
+  }
+
+  /**
+   * Whole-field replace a skill row's payload from a revision payload, then set
+   * lineage/state. Whole-field only — never an AI merge of process text. Also
+   * replaces the row's references so the shadow matches the payload exactly.
+   */
+  private async applySkillPayloadTx(
+    tx: DbTransaction,
+    targetId: string,
+    payload: SkillRevisionPayload,
+    lineage: { baseRevisionId: string; currentRevisionId: string; updateState: string },
+  ): Promise<void> {
+    await tx.update(skills).set({
+      name: payload.name,
+      description: payload.description,
+      category: payload.category,
+      whenToUse: payload.whenToUse,
+      process: payload.process,
+      outputSpec: payload.outputSpec,
+      checklist: (payload.checklist ?? []) as never,
+      scoreThreshold: payload.scoreThreshold,
+      sessionType: payload.sessionType,
+      activity: payload.activity,
+      recommendedPersonaTemplateId: payload.recommendedPersonaTemplateId,
+      addToMemory: payload.addToMemory,
+      pinnedToContext: payload.pinnedToContext,
+      baseRevisionId: lineage.baseRevisionId,
+      currentRevisionId: lineage.currentRevisionId,
+      updateState: lineage.updateState,
+      customized: lineage.updateState !== "following",
+      updatedAt: new Date(),
+    }).where(eq(skills.id, targetId));
+    await tx.delete(skillReferences).where(eq(skillReferences.skillId, targetId));
+    if (payload.references.length > 0) {
+      await tx.insert(skillReferences).values(
+        payload.references.map((r) => ({ skillId: targetId, name: r.name, content: r.content })),
+      );
+    }
+  }
+
+  /**
+   * Materialize (or resolve) the caller's user-scope copy of a global skill
+   * without editing it — the "customize this skill" entry (Persona
+   * ensureOwnedCopy mirror). Never edits the seed. Returns a user-scope row
+   * unchanged; forks a following copy from a global; heals legacy orphans that
+   * share the name but lost lineage.
+   */
+  async ensureOwnedSkillCopy(id: string): Promise<SkillWithReferences | undefined> {
+    const principal = getCurrentPrincipal();
+    if (!principal?.userId || !principal.accountId) {
+      throw new Error("Skill customization requires an explicit user principal");
+    }
+    const owned = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`skill-override:${principal.accountId}:${principal.userId}`}))`);
+      const [visible] = await tx.select().from(skills).where(this.skillVisible(eq(skills.id, id)));
+      if (!visible) return undefined;
+      if (visible.scope === "user") return visible;
+      const [existing] = await tx.select().from(skills).where(and(
+        eq(skills.scope, "user"),
+        eq(skills.ownerUserId, principal.userId),
+        eq(skills.accountId, principal.accountId),
+        eq(skills.name, visible.name),
+      ));
+      if (existing) {
+        if (!existing.templateSkillId) {
+          const [healed] = await tx.update(skills)
+            .set({ templateSkillId: visible.id, updatedAt: new Date() })
+            .where(eq(skills.id, existing.id))
+            .returning();
+          return healed ?? existing;
+        }
+        return existing;
+      }
+      return this.forkFollowingSkillCopyTx(tx, visible, {
+        userId: principal.userId,
+        accountId: principal.accountId,
+        vaultId: principal.activeVaultId,
+      });
+    });
+    if (!owned) return undefined;
+    return this.enrichSkillWithReferences(owned);
+  }
+
+  /**
+   * Revert a user skill copy to the current platform default while keeping the
+   * row (Reset → Revert). Boot never deletes a user skill: the prior user
+   * revisions remain in skill_revisions for recovery; the row now follows the
+   * platform revision. Retires the old delete-based reset path.
+   */
+  async revertSkillOverride(id: string): Promise<SkillWithReferences | undefined> {
+    const principal = getCurrentPrincipal();
+    if (!principal?.userId || !principal.accountId) {
+      throw new Error("Skill revert requires an explicit user principal");
+    }
+    const reverted = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`skill-override:${principal.accountId}:${principal.userId}`}))`);
+      const [visible] = await tx.select().from(skills).where(this.skillVisible(eq(skills.id, id)));
+      if (!visible) return undefined;
+      const [shadow] = await tx.select().from(skills).where(and(
+        eq(skills.scope, "user"),
+        eq(skills.ownerUserId, principal.userId),
+        eq(skills.accountId, principal.accountId),
+        eq(skills.name, visible.name),
+      ));
+      if (!shadow) return visible.scope === "global" ? visible : undefined;
+      const [template] = await tx.select().from(skills).where(and(
+        eq(skills.scope, "global"),
+        eq(skills.name, visible.name),
+      )).limit(1);
+      if (!template?.currentRevisionId) return undefined;
+      const platformPayload = await this.readSkillRevisionPayloadTx(tx, template.currentRevisionId);
+      if (!platformPayload) return undefined;
+      await this.applySkillPayloadTx(tx, shadow.id, platformPayload, {
+        baseRevisionId: template.currentRevisionId,
+        currentRevisionId: template.currentRevisionId,
+        updateState: "following",
+      });
+      log.info("Skill override reverted to platform default (row preserved)", {
+        skillId: shadow.id,
+        platformRevisionId: template.currentRevisionId,
+      });
+      const [updated] = await tx.select().from(skills).where(eq(skills.id, shadow.id)).limit(1);
+      return updated ?? shadow;
+    });
+    if (!reverted) return undefined;
+    return this.enrichSkillWithReferences(reverted);
+  }
+
+  /** Accept the inbound platform default onto a customized copy (Use updated default). */
+  async useUpdatedSkillDefault(id: string): Promise<SkillWithReferences | undefined> {
+    const principal = getCurrentPrincipal();
+    if (!principal?.userId || !principal.accountId) {
+      throw new Error("Skill update acceptance requires an explicit user principal");
+    }
+    const updated = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`skill-override:${principal.accountId}:${principal.userId}`}))`);
+      const [shadow] = await tx.select().from(skills).where(this.skillWritable(eq(skills.id, id)));
+      if (!shadow?.templateSkillId) return undefined;
+      const [template] = await tx.select().from(skills).where(eq(skills.id, shadow.templateSkillId)).limit(1);
+      if (!template?.currentRevisionId) return undefined;
+      const platformPayload = await this.readSkillRevisionPayloadTx(tx, template.currentRevisionId);
+      if (!platformPayload) return undefined;
+      await this.applySkillPayloadTx(tx, shadow.id, platformPayload, {
+        baseRevisionId: template.currentRevisionId,
+        currentRevisionId: template.currentRevisionId,
+        updateState: "following",
+      });
+      log.info("Skill accepted updated default", {
+        skillId: shadow.id,
+        platformRevisionId: template.currentRevisionId,
+      });
+      const [row] = await tx.select().from(skills).where(eq(skills.id, shadow.id)).limit(1);
+      return row ?? shadow;
+    });
+    if (!updated) return undefined;
+    return this.enrichSkillWithReferences(updated);
+  }
+
+  /** Keep mine — acknowledge an inbound default and stay customized. */
+  async acknowledgeSkillUpdate(id: string): Promise<SkillWithReferences | undefined> {
+    const principal = getCurrentPrincipal();
+    if (!principal?.userId || !principal.accountId) {
+      throw new Error("Skill acknowledgement requires an explicit user principal");
+    }
+    const [updated] = await db.update(skills)
+      .set({ updateState: "customized", customized: true, updatedAt: new Date() })
+      .where(this.skillWritable(eq(skills.id, id)))
+      .returning();
+    if (!updated) return undefined;
+    return this.enrichSkillWithReferences(updated);
+  }
+
+  /** Preview publishing a global skill default: change summary + follower impact. */
+  async previewPlatformSkillPublication(
+    id: string,
+    input: Partial<SkillRevisionPayload>,
+  ): Promise<{
+    template: SkillWithReferences;
+    payload: SkillRevisionPayload;
+    changedFields: string[];
+    impact: { advancing: number; updateAvailable: number };
+  } | null> {
+    const principal = requireCurrentPrincipal();
+    if (!principalHasPermission(principal, "system:write")) {
+      throw new Error("system:write permission required");
+    }
+    return db.transaction(async (tx) => {
+      const [template] = await tx.select().from(skills).where(and(
+        eq(skills.id, id),
+        eq(skills.scope, "global"),
+      )).limit(1);
+      if (!template) return null;
+      const current = await this.buildSkillPayloadTx(tx, template);
+      const payload = mergeSkillPayloadInput(current, input);
+      const rows = await tx.select({ updateState: skills.updateState }).from(skills).where(eq(skills.templateSkillId, id));
+      return {
+        template: await this.enrichSkillWithReferences(template),
+        payload,
+        changedFields: changedSkillFields(current, payload),
+        impact: {
+          advancing: rows.filter((r) => r.updateState === "following").length,
+          updateAvailable: rows.filter((r) => r.updateState !== "following").length,
+        },
+      };
+    });
+  }
+
+  /**
+   * Publish a global skill default (system:write). Mints an immutable platform
+   * revision, advances the seed and following copies, and marks non-followers
+   * update_available. Requires explicit confirmation + a change summary.
+   */
+  async publishPlatformSkillRevision(
+    id: string,
+    input: Partial<SkillRevisionPayload>,
+    changeSummary: string,
+    confirmed: boolean,
+  ): Promise<SkillWithReferences | undefined> {
+    if (!confirmed || !changeSummary.trim()) {
+      throw new Error("Publication confirmation and change summary are required");
+    }
+    const principal = requireCurrentPrincipal();
+    if (!principalHasPermission(principal, "system:write")) {
+      throw new Error("system:write permission required");
+    }
+    const published = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(7102, hashtext(${id}))`);
+      const [current] = await tx.select().from(skills).where(and(
+        eq(skills.id, id),
+        eq(skills.scope, "global"),
+      )).limit(1);
+      if (!current) return undefined;
+      const currentPayload = await this.buildSkillPayloadTx(tx, current);
+      const payload = mergeSkillPayloadInput(currentPayload, input);
+      const revisionId = await this.insertSkillRevisionTx(tx, current, payload, {
+        scope: "platform",
+        parentRevisionId: current.currentRevisionId ?? null,
+        platformBaseRevisionId: current.currentRevisionId ?? null,
+        changeSummary: changeSummary.trim(),
+        createdByUserId: principal.userId ?? null,
+      });
+      await this.applySkillPayloadTx(tx, current.id, payload, {
+        baseRevisionId: revisionId,
+        currentRevisionId: revisionId,
+        updateState: "following",
+      });
+      const followers = await tx.select().from(skills).where(and(
+        eq(skills.templateSkillId, id),
+        eq(skills.updateState, "following"),
+      ));
+      for (const follower of followers) {
+        await this.applySkillPayloadTx(tx, follower.id, payload, {
+          baseRevisionId: revisionId,
+          currentRevisionId: revisionId,
+          updateState: "following",
+        });
+      }
+      await tx.update(skills)
+        .set({ updateState: "update_available", updatedAt: new Date() })
+        .where(and(
+          eq(skills.templateSkillId, id),
+          sql`${skills.updateState} <> 'following'`,
+        ));
+      log.info("Platform Skill revision published", {
+        skillId: id,
+        revisionId,
+        advanced: followers.length,
+        actorUserId: principal.userId,
+        changeSummary: changeSummary.trim(),
+      });
+      const [row] = await tx.select().from(skills).where(eq(skills.id, id)).limit(1);
+      return row ?? current;
+    });
+    if (!published) return undefined;
+    return this.enrichSkillWithReferences(published);
+  }
+
+  /**
+   * Rebase exact-hash leftover followers onto the current platform revision.
+   * Exact-hash only: a copy is healed only when its current payload hash equals
+   * a KNOWN platform revision of its template (which is named in the log) and it
+   * carries no authored user revision beyond the lattice snapshot. Mixed or
+   * unprovable rows — including autonomy 1.5-class content whose hash matches no
+   * platform revision — are never overwritten; they abstain.
+   */
+  async healLeftoverSkillFollowers(): Promise<{ healed: number; abstained: number }> {
+    let healed = 0;
+    let abstained = 0;
+    await db.transaction(async (tx) => {
+      const copies = await tx.select().from(skills).where(and(
+        eq(skills.scope, "user"),
+        isNotNull(skills.templateSkillId),
+        ne(skills.updateState, "customized"),
+      ));
+      for (const copy of copies) {
+        if (!copy.templateSkillId) { abstained++; continue; }
+        // Authored user work beyond the single lattice snapshot → never overwrite.
+        const userRevs = await tx.select({ id: skillRevisions.id }).from(skillRevisions).where(and(
+          eq(skillRevisions.skillIdentityId, copy.id),
+          eq(skillRevisions.scope, "user"),
+        ));
+        if (userRevs.length > 1) { abstained++; continue; }
+        const [template] = await tx.select().from(skills).where(eq(skills.id, copy.templateSkillId)).limit(1);
+        if (!template?.currentRevisionId) { abstained++; continue; }
+        const [platform] = await tx.select().from(skillRevisions).where(eq(skillRevisions.id, template.currentRevisionId)).limit(1);
+        if (!platform) { abstained++; continue; }
+        const copyHash = skillPayloadHash(await this.buildSkillPayloadTx(tx, copy));
+        // Exact-hash only: name the platform revision this leftover reproduces.
+        const [matched] = await tx.select({ id: skillRevisions.id }).from(skillRevisions).where(and(
+          eq(skillRevisions.skillIdentityId, template.id),
+          eq(skillRevisions.scope, "platform"),
+          eq(skillRevisions.contentHash, copyHash),
+        )).limit(1);
+        if (!matched) { abstained++; continue; }
+        const alreadyCurrent =
+          copy.updateState === "following" &&
+          copy.currentRevisionId === platform.id &&
+          copyHash === platform.contentHash;
+        if (alreadyCurrent) continue;
+        await this.applySkillPayloadTx(tx, copy.id, platform.payload as SkillRevisionPayload, {
+          baseRevisionId: platform.id,
+          currentRevisionId: platform.id,
+          updateState: "following",
+        });
+        log.info("healLeftoverSkillFollowers rebased leftover", {
+          skillId: copy.id,
+          replacedRevisionId: matched.id,
+          ontoRevisionId: platform.id,
+        });
+        healed++;
+      }
+    });
+    if (healed > 0 || abstained > 0) {
+      log.info("healLeftoverSkillFollowers complete", { healed, abstained });
+    }
+    return { healed, abstained };
   }
 
   async deleteSkill(id: string): Promise<boolean> {
@@ -754,50 +1236,6 @@ export class HybridStorage implements IStorage {
     if (visible.scope === "global") return false;
     const [deleted] = await db.delete(skills).where(this.skillWritable(eq(skills.id, id))).returning();
     return !!deleted;
-  }
-
-  async resetSkillOverride(id: string): Promise<boolean> {
-    const principal = getCurrentPrincipal();
-    if (!principal?.userId || !principal.accountId) {
-      throw new Error("Skill reset requires an explicit user principal");
-    }
-    return db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`skill-override:${principal.accountId}:${principal.userId}`}))`);
-      const [visible] = await tx.select().from(skills).where(this.skillVisible(eq(skills.id, id)));
-      if (!visible) return false;
-      const name = visible.name;
-      const [override] = await tx.select().from(skills).where(and(
-        eq(skills.scope, "user"),
-        eq(skills.ownerUserId, principal.userId),
-        eq(skills.accountId, principal.accountId),
-        eq(skills.name, name),
-      ));
-      if (!override) return visible.scope === "global";
-      const [template] = await tx.select({ id: skills.id }).from(skills).where(and(
-        eq(skills.scope, "global"),
-        eq(skills.name, name),
-      ));
-      if (!template) return false;
-      const [overridePreference] = await tx.select({ id: skillPersonaPreferences.id })
-        .from(skillPersonaPreferences)
-        .where(and(
-          eq(skillPersonaPreferences.skillId, override.id),
-          eq(skillPersonaPreferences.ownerUserId, principal.userId),
-          eq(skillPersonaPreferences.accountId, principal.accountId),
-        ));
-      if (overridePreference) {
-        await tx.delete(skillPersonaPreferences).where(and(
-          eq(skillPersonaPreferences.skillId, template.id),
-          eq(skillPersonaPreferences.ownerUserId, principal.userId),
-          eq(skillPersonaPreferences.accountId, principal.accountId),
-        ));
-        await tx.update(skillPersonaPreferences)
-          .set({ skillId: template.id, updatedAt: new Date() })
-          .where(eq(skillPersonaPreferences.id, overridePreference.id));
-      }
-      const [deleted] = await tx.delete(skills).where(this.skillWritable(eq(skills.id, override.id))).returning();
-      return !!deleted;
-    });
   }
 
   async incrementSkillSuccess(id: string): Promise<void> {
