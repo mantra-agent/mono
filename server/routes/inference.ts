@@ -22,6 +22,7 @@ import { requireAuth } from "../auth";
 import { runWithApiCallReportingScope } from "../file-storage/api-calls";
 import { listModelConnectors, reorderModelConnectors, updateModelConnector } from "../model-connectors";
 import { claudeCliTierMappingsSchema, modelTierMappingsSchema, openAITierMappingsSchema } from "@shared/model-connectors";
+import { projectPerformanceMetrics } from "../mods/performance-metrics-adapter";
 
 const INFERENCE_DEBUG_KEY = "system.inference_debug";
 
@@ -210,6 +211,9 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
         const period = req.query.period as string || "all";
         const since = computeSince(period);
         const summary = await storage.getApiCallSummary(since);
+        const performanceMetrics = req.principal
+          ? await projectPerformanceMetrics(req.principal, since ? Math.max(1, Math.ceil((Date.now() - since.getTime()) / 3_600_000)) : 24)
+          : null;
         const byModel = await storage.getApiCallsByModel(since);
         const byDay = await storage.getApiCallsByDay(since);
         const byHour = await storage.getApiCallsByHour(since);
@@ -220,7 +224,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
         const config = await executorManager.readConfig();
         const modelPrimary = config?.agents?.defaults?.model?.primary || config?.agents?.defaults?.model || "unknown";
 
-        res.json({ summary, byModel, byDay, byHour, byModelByDay, byModelByHour, byProfile, currentModel: modelPrimary });
+        res.json({ summary, byModel, byDay, byHour, byModelByDay, byModelByHour, byProfile, currentModel: modelPrimary, performanceMetrics });
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
