@@ -2367,6 +2367,33 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
   },
 
+  blocking_graph: async (args) => {
+    try {
+      const { blockingGraphService } = await import("./blocking-graph-service");
+      const action = args.action || "list_blockers";
+      if (action === "list_blockers") {
+        if (!args.sourceAddress) return { result: "Missing sourceAddress", error: true };
+        return { result: JSON.stringify(await blockingGraphService.listBlockers({ sourceAddress: String(args.sourceAddress), lifecycle: args.lifecycle, cursor: args.cursor, limit: args.limit })) };
+      }
+      if (action === "list_blocked_items") {
+        if (!args.targetAddress) return { result: "Missing targetAddress", error: true };
+        return { result: JSON.stringify(await blockingGraphService.listBlockedItems({ targetAddress: String(args.targetAddress), lifecycle: args.lifecycle, cursor: args.cursor, limit: args.limit })) };
+      }
+      if (action === "add_blocker") {
+        if (!args.sourceAddress || !args.targetAddress || !args.idempotencyKey) return { result: "add_blocker requires sourceAddress, targetAddress, and idempotencyKey", error: true };
+        const edge = await blockingGraphService.createBlockedBy({ sourceAddress: String(args.sourceAddress), targetAddress: String(args.targetAddress), idempotencyKey: String(args.idempotencyKey), ...(args.provenanceAddress ? { provenanceAddress: String(args.provenanceAddress) } : {}) });
+        return { result: JSON.stringify(edge), sideEffectOnly: true };
+      }
+      if (action === "remove_blocker") {
+        if (!args.sourceAddress || !args.linkId) return { result: "remove_blocker requires sourceAddress and linkId", error: true };
+        const edge = await blockingGraphService.retireBlockedBy({ sourceAddress: String(args.sourceAddress), linkId: String(args.linkId) });
+        return { result: JSON.stringify(edge), sideEffectOnly: true };
+      }
+      return { result: `Unknown blocking_graph action: ${action}`, error: true };
+    } catch (error) {
+      return { result: `Blocking graph error: ${error instanceof Error ? error.message : String(error)}`, error: true };
+    }
+  },
   companies: companiesHandler,
 
   async people(args) {
@@ -12497,6 +12524,7 @@ const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   decisions: new Set(["create", "update", "delete", "lock", "reopen", "add_update", "edit_update", "delete_update", "add_link", "remove_link"]),
   plan: new Set(["update_step", "add_steps", "pause", "unlink_session"]),
   routers: new Set(["create", "move_connector", "set_account_router"]),
+  blocking_graph: new Set(["add_blocker", "remove_blocker"]),
 };
 
 const SIDE_EFFECT_ONLY_TOOLS = new Set([

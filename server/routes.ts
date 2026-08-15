@@ -45,6 +45,7 @@ import { diagnoseGmailBatchRead } from "./bridge-tools";
 import { registerExportRoutes } from "./export-routes";
 import { registerReferenceRoutes } from "./reference-routes";
 import { registerLifeAddressingCutoverRoutes } from "./life-addressing-cutover-routes";
+import { registerBlockingGraphRoutes } from "./blocking-graph-routes";
 import { registerRuntimeRoutes } from "./runtime-routes";
 import { registerBackupRoutes } from "./routes/backup";
 import { registerAdminRoutes } from "./routes/admin";
@@ -228,6 +229,7 @@ export async function registerRoutes(
   registerGoalRoutes(app);
   registerReferenceRoutes(app);
   registerLifeAddressingCutoverRoutes(app);
+  registerBlockingGraphRoutes(app);
   registerRuntimeRoutes(app);
   registerTagRoutes(app);
   registerObjectGrantRoutes(app);

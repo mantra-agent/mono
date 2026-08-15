@@ -53,6 +53,7 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   news: { default: 1, actions: { summary: 0, list_signals: 0, get_signal: 0, list_sources: 0, list_scan_runs: 0, interest_graph: 0 } },
   business: { default: 1, actions: { list_hiring_slots: 0, get_hiring_plan: 0, create_hiring_slot: 2, update_hiring_slot: 2, cancel_hiring_slot: 2, list: 0, get: 0, list_kpis: 0, get_kpi: 0, list_metrics: 0, get_metric: 0, sample_range: 0, sample_usage: 0, list_samples: 0, list_businesses: 0, get_business: 0, list_business_vaults: 0, get_model: 0, get_budget: 0, delete_budget_department: 2, delete_budget_category: 2, delete_budget_line_item: 2, create_business: 2, update_business: 2, archive_business: 2, add_business_vault: 2, remove_business_vault: 2, set_business_vaults: 2 } },
   goals: { default: 1, actions: { list: 0, get: 0, search: 0 } },
+  blocking_graph: { default: 1, actions: { list_blockers: 0, list_blocked_items: 0 } },
   // Plan execution is internal orchestration. Each child and eventual tool call
   // remains independently authorized under the originating principal.
   plan: { default: 1, actions: { get: 0, list: 0 } },

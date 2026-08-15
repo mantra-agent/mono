@@ -596,6 +596,25 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
+  blocking_graph: {
+    description: "Manage the universal Core blocking graph over canonical typed addresses using one blocked_by predicate.",
+    category: "work",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list_blockers", "list_blocked_items", "add_blocker", "remove_blocker"], description: "Blocking graph action" },
+        sourceAddress: { type: "string", description: "Canonical source address of the blocked item" },
+        targetAddress: { type: "string", description: "Canonical address of the blocking prerequisite" },
+        linkId: { type: "string", description: "Blocking edge id for remove_blocker" },
+        idempotencyKey: { type: "string", description: "Required replay-safe key for add_blocker" },
+        provenanceAddress: { type: "string", description: "Optional canonical supporting address" },
+        cursor: { type: "string", description: "Cursor returned by a prior read" },
+        lifecycle: { type: "string", enum: ["active", "retired"], description: "Lifecycle filter" },
+        limit: { type: "number", description: "Bounded page size" },
+      },
+      required: ["action"],
+    },
+  },
   question: {
     description: QUESTION_TOOL_DESCRIPTION,
     category: "communication",
