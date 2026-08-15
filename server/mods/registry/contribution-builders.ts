@@ -17,6 +17,7 @@ import type {
   SkillContribution,
   ToolContribution,
   ServerRouteGroupContribution,
+  MetricAdapterContribution,
 } from "@shared/models/mod-registry";
 import type { UiInteractionTarget } from "@shared/ui-interaction";
 import type {
@@ -150,6 +151,10 @@ export function skillRef(
 
 export function toolRef(id: string, toolName: RegisteredToolKey): ToolContribution {
   return { kind: "tool", id, toolName, audience: "diagnostic" };
+}
+
+export function metricAdapter(id: string, adapterKey: string, definitionKeys: string[], viewKey: string): MetricAdapterContribution {
+  return { kind: "metric-adapter", id, adapterKey, definitionKeys, viewKey, audience: "diagnostic" };
 }
 
 export function serverRouteGroupRef(

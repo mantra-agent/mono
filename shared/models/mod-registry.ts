@@ -116,6 +116,13 @@ export interface DashboardHeatmapContribution extends ContributionBase {
   group: "operating" | "code" | "wellness";
 }
 
+export interface MetricAdapterContribution extends ContributionBase {
+  kind: "metric-adapter";
+  adapterKey: string;
+  definitionKeys: string[];
+  viewKey: string;
+}
+
 export interface SlotContribution extends ContributionBase {
   kind: "slot";
   slotKey: string;
@@ -205,6 +212,7 @@ export interface NotificationContribution extends ContributionBase {
  * rejects any contribution carrying `kind: "memory"`.
  */
 export interface ModContributions {
+  metricAdapters?: MetricAdapterContribution[];
   skills?: SkillContribution[];
   workflows?: WorkflowContribution[];
   hooks?: HookTemplateContribution[];
@@ -225,6 +233,7 @@ export interface ModContributions {
 
 /** Any single contribution across all kinds. */
 export type AnyContribution =
+  | MetricAdapterContribution
   | SkillContribution
   | WorkflowContribution
   | HookTemplateContribution
@@ -294,6 +303,7 @@ export function definitionOwnerKey(def: CoreDefinition | ModDefinition): string 
 /** Flatten a contributions bundle into a single ordered list. */
 export function listContributions(contributions: ModContributions): AnyContribution[] {
   const groups: (AnyContribution[] | undefined)[] = [
+    contributions.metricAdapters,
     contributions.skills,
     contributions.workflows,
     contributions.hooks,

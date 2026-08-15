@@ -15,6 +15,12 @@ export {
   upsertInternalPeriodSample,
 } from "../metrics-storage";
 
+import type { MetricCollection } from "@shared/models/metrics";
+
+export async function queryMetricCollection(businessId: string, start: Date, end: Date): Promise<MetricCollection> {
+  return metricsStorage.collection(businessId, start, end);
+}
+
 export type {
   InternalBusinessMetricDefinition,
   InternalBusinessMetricRef,
