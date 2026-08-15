@@ -84,6 +84,23 @@ function sessionIdFromBotMetadata(payload: unknown): string | null {
 }
 
 /**
+ * Origin environment stamped into bot.metadata at creation (join.ts). The status
+ * webhook is a single dashboard-configured endpoint shared by every environment
+ * on the same Recall workspace, so events for bots created elsewhere land here
+ * carrying a sessionId that only exists in the originating environment's DB.
+ */
+function originBaseUrlFromBotMetadata(payload: unknown): string | null {
+  const bot = (payload as { data?: { bot?: { metadata?: Record<string, unknown> } } })
+    ?.data?.bot;
+  const value = bot?.metadata?.webhookBaseUrl;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function normalizeBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "").toLowerCase();
+}
+
+/**
  * Recall.ai webhook receiver. Two endpoints, both Svix-signed with the
  * workspace webhook secret and verified before any processing:
  *
@@ -95,6 +112,12 @@ function sessionIdFromBotMetadata(payload: unknown): string | null {
  * Both return 2xx immediately after verification and process async. Bot →
  * session mapping travels in bot.metadata.sessionId (set at bot creation), so
  * no separate mapping store exists.
+ *
+ * The status endpoint is shared across every environment on one Recall
+ * workspace, so it also receives events for bots created elsewhere. Those carry
+ * bot.metadata.webhookBaseUrl for the originating environment; when it does not
+ * match this deployment's public base URL the event is a foreign no-op, logged
+ * at debug and skipped rather than failing local session resolution.
  */
 export function registerRecallRoutes(
   app: Express,
@@ -148,6 +171,17 @@ export function registerRecallRoutes(
     if (!sessionId) {
       log.warn(`Recall status event ${eventName} without bot.metadata.sessionId — cannot route`);
       return;
+    }
+    const originBaseUrl = originBaseUrlFromBotMetadata(body);
+    if (originBaseUrl) {
+      const { getRuntimePublicBaseUrl } = await import("../runtime-identity");
+      const localBaseUrl = await getRuntimePublicBaseUrl();
+      if (localBaseUrl && normalizeBaseUrl(originBaseUrl) !== normalizeBaseUrl(localBaseUrl)) {
+        log.debug(
+          `Ignoring foreign-environment Recall status event sessionId=${sessionId} event=${eventName} origin=${originBaseUrl} local=${localBaseUrl}`,
+        );
+        return;
+      }
     }
     const subCode = body?.data?.data?.sub_code || undefined;
     try {

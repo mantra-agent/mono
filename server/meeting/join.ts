@@ -267,7 +267,10 @@ export async function createMeetingRecallBot(opts: {
       botName: "Mantra Agent",
       webhookUrl: `${publicUrl}/api/webhooks/recall/transcript`,
       participantAudioUrl,
-      metadata: { sessionId: opts.sessionId },
+      // webhookBaseUrl stamps the origin environment so the shared,
+      // dashboard-configured status webhook can distinguish a foreign
+      // environment's bot from a genuine local session-not-found.
+      metadata: { sessionId: opts.sessionId, webhookBaseUrl: publicUrl },
       outputMediaUrl,
     });
     return { botId: bot.id, outputMediaUrl };
