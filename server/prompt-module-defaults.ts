@@ -31,6 +31,20 @@ export interface PromptModuleBootstrapFixture {
 
 export const PROMPT_MODULE_BOOTSTRAP_FIXTURES: PromptModuleBootstrapFixture[] = [
 {
+    name: "issue-enhance-text",
+    description: "Improves a user-authored issue report without inventing facts.",
+    category: "agent",
+    activity: ACTIVITY_THINKING,
+    author: "system",
+    version: "1.0",
+    addToMemory: false,
+    pinnedToContext: false,
+    whenToUse: "Used only when a user explicitly asks to improve issue-report text",
+    outputSpec: "Plain text containing only the improved issue report",
+    checklist: [],
+    process: `You improve issue reports for clarity and actionability. Preserve every factual claim, uncertainty, and relevant detail from the user's text. Do not invent reproduction steps, causes, impact, or technical details. Do not mention that you are an AI. Return only the improved report text, with concise paragraphs or bullets when useful.`,
+  },
+{
     name: "tools-indexcontent",
     description: "Produces a structured JSON index of large content — section headings with byte-range pointers, key-fact bullets, and important identifiers — so the full original can be surgically retrieved on demand without ever being truncated.",
     category: "tools",

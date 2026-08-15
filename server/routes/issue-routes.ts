@@ -12,9 +12,14 @@ import {
 import { createLogger } from "../log";
 import { requireModRouteGroup } from "../mods/mod-access";
 import { requireCurrentPrincipal } from "../principal-context";
+import { chatCompletion } from "../model-client";
+import { getPromptModulePrompt } from "../prompt-modules";
+import { ACTIVITY_THINKING } from "../job-profiles";
 const requireActiveBuild = requireModRouteGroup("build.issues");
 
 const log = createLogger("IssueRoutes");
+
+const enhanceIssueSchema = z.object({ text: z.string().trim().min(1).max(10000) });
 
 const createIssueSchema = z.object({
   title: z.string().max(500).optional().default(""),
@@ -47,6 +52,27 @@ function isIssueCreateValidationError(error: unknown): error is { name: string; 
 
 export function registerIssueRoutes(app: Express) {
   app.use("/api/issues", requireAuth);
+
+  app.post("/api/issues/enhance", async (req, res) => {
+    try {
+      const { text } = enhanceIssueSchema.parse(req.body);
+      const prompt = await getPromptModulePrompt("issue-enhance-text");
+      const result = await chatCompletion({
+        activity: ACTIVITY_THINKING,
+        metadata: { source: "issue-report-enhancement", activity: ACTIVITY_THINKING },
+        maxTokens: 1200,
+        temperature: 0.2,
+        messages: [{ role: "system", content: prompt }, { role: "user", content: text }],
+      });
+      const enhanced = result.content.trim();
+      if (!enhanced || enhanced.length > 10000) return res.status(502).json({ error: "Enhancement returned unusable text" });
+      res.json({ enhanced });
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ error: "Invalid issue text" });
+      log.error("issue_text_enhancement_failed", { errorType: error?.name || "UnknownError" });
+      res.status(502).json({ error: "Could not enhance issue text" });
+    }
+  });
 
   app.post("/api/issues", async (req, res) => {
     try {

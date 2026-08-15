@@ -9,6 +9,7 @@ import {
 
 export const PROMPT_MODULE_KEYS = [
   "agent-classifycomplexity",
+  "issue-enhance-text",
   "chat-compactrunhistory",
   "myelination-cross-concept",
   "myelination-link",
@@ -49,6 +50,14 @@ export const PROMPT_MODULE_MANIFEST: Record<PromptModuleKey, PromptModuleManifes
     description: "Classifies task complexity for model/profile routing.",
     activity: ACTIVITY_THINKING,
     callSites: [{ file: "server/job-profiles.ts", purpose: "Routes inference work to the appropriate complexity tier." }],
+  },
+  "issue-enhance-text": {
+    key: "issue-enhance-text",
+    domain: "agent",
+    ownerSystem: "agent",
+    description: "Improves a user-authored issue report without inventing facts.",
+    activity: ACTIVITY_THINKING,
+    callSites: [{ file: "server/routes/issue-routes.ts", purpose: "Enhances issue text on explicit user request." }],
   },
   "chat-compactrunhistory": {
     key: "chat-compactrunhistory",
