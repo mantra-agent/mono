@@ -1052,11 +1052,18 @@ class PersonaStorageClass {
     const withBaseline = (entry: PersonaEntry): PersonaEntry => {
       const baseline = entry.source === "seed" ? entry : entry.templatePersonaId ? platformById.get(entry.templatePersonaId) : undefined;
       const platformBaseline = baseline ? revisionPayload(baseline) : null;
+      const drift = platformBaseline ? changedFields(platformBaseline, revisionPayload(entry)) : [];
+      // The inbound "default advanced" mark is content-based, not state-based.
+      // Applying a customized copy to the default leaves that copy's updateState
+      // at update_available even though its content now equals the platform
+      // default; without a content check every authoring copy would read as
+      // behind. Only surface an inbound update when the copy actually differs
+      // from the current platform default.
       return {
         ...entry,
         platformBaseline,
-        changedFields: platformBaseline ? changedFields(platformBaseline, revisionPayload(entry)) : [],
-        updateAvailable: entry.updateState === "update_available" || entry.updateState === "conflict",
+        changedFields: drift,
+        updateAvailable: (entry.updateState === "update_available" || entry.updateState === "conflict") && drift.length > 0,
       };
     };
 
