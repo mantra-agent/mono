@@ -9,6 +9,7 @@ import { libraryPages } from "@shared/models/info";
 import { inArray } from "drizzle-orm";
 import { listSkillPersonaConfiguration, setSkillPersonaPreference } from "./skill-persona-service";
 import { requireCurrentPrincipal } from "./principal-context";
+import { requirePermission } from "./permissions";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { ownerOfExecutableContribution, hasActiveModAccess } from "./mods/mod-access";
 
@@ -327,17 +328,89 @@ export function registerSkillRoutes(app: Express): void {
     }
   });
 
+  // Reset is now Revert: keep the user copy, restore the platform default, write
+  // a following revision. The row is never deleted (Skill Default Lattice).
   app.post("/api/skills/:id/reset", async (req, res) => {
     try {
       const visible = await storage.getSkill(req.params.id);
       if (!visible) return res.status(404).json({ error: "Skill not found" });
-      const reset = await storage.resetSkillOverride(visible.id);
-      if (!reset) return res.status(404).json({ error: "No global template exists for this skill" });
-      const skill = await storage.getSkillByName(visible.name);
-      res.json(skill);
+      const reverted = await storage.revertSkillOverride(visible.id);
+      if (!reverted) return res.status(404).json({ error: "No global template exists for this skill" });
+      res.json(reverted);
     } catch (err: any) {
       log.error("POST /api/skills/:id/reset error:", err.message);
-      res.status(500).json({ error: "Failed to reset skill" });
+      res.status(500).json({ error: "Failed to revert skill" });
+    }
+  });
+
+  // Materialize the caller's editable copy of a global skill without editing it.
+  app.post("/api/skills/:id/ensure-owned", async (req, res) => {
+    try {
+      const owned = await storage.ensureOwnedSkillCopy(req.params.id);
+      if (!owned) return res.status(404).json({ error: "Skill not found" });
+      res.json(owned);
+    } catch (err: any) {
+      log.error("POST /api/skills/:id/ensure-owned error:", err.message);
+      res.status(500).json({ error: "Failed to fork skill copy" });
+    }
+  });
+
+  // Keep mine — acknowledge an inbound default and stay customized.
+  app.post("/api/skills/:id/keep-mine", async (req, res) => {
+    try {
+      const result = await storage.acknowledgeSkillUpdate(req.params.id);
+      if (!result) return res.status(404).json({ error: "Skill not found" });
+      res.json(result);
+    } catch (err: any) {
+      log.error("POST /api/skills/:id/keep-mine error:", err.message);
+      res.status(500).json({ error: "Failed to acknowledge skill update" });
+    }
+  });
+
+  // Use updated default — accept the inbound platform default onto this copy.
+  app.post("/api/skills/:id/use-updated-default", async (req, res) => {
+    try {
+      const result = await storage.useUpdatedSkillDefault(req.params.id);
+      if (!result) return res.status(404).json({ error: "Updated default not found" });
+      res.json(result);
+    } catch (err: any) {
+      log.error("POST /api/skills/:id/use-updated-default error:", err.message);
+      res.status(500).json({ error: "Failed to accept updated default" });
+    }
+  });
+
+  app.post("/api/skills/platform/:id/preview", requirePermission("system:write"), async (req, res) => {
+    try {
+      const parsed = updateSkillSchema.safeParse(req.body?.changes || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() });
+      }
+      const preview = await storage.previewPlatformSkillPublication(req.params.id, parsed.data as any);
+      if (!preview) return res.status(404).json({ error: "Platform Skill not found" });
+      res.json(preview);
+    } catch (err: any) {
+      log.error("POST /api/skills/platform/:id/preview error:", err.message);
+      res.status(500).json({ error: "Failed to preview publication" });
+    }
+  });
+
+  app.post("/api/skills/platform/:id/publish", requirePermission("system:write"), async (req, res) => {
+    try {
+      const parsed = updateSkillSchema.safeParse(req.body?.changes || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() });
+      }
+      const result = await storage.publishPlatformSkillRevision(
+        req.params.id,
+        parsed.data as any,
+        String(req.body?.changeSummary || ""),
+        req.body?.confirmed === true,
+      );
+      if (!result) return res.status(404).json({ error: "Platform Skill not found" });
+      res.json(result);
+    } catch (err: any) {
+      log.error("POST /api/skills/platform/:id/publish error:", err.message);
+      res.status(400).json({ error: err.message || "Failed to publish skill default" });
     }
   });
 

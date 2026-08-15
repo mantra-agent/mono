@@ -58,7 +58,37 @@ export function skillPayloadHash(payload: SkillRevisionPayload): string {
   return createHash("sha256").update(JSON.stringify(stableValue(payload))).digest("hex");
 }
 
-function skillRevisionPayload(
+/** Canonical skill payload field order — the merge/diff surface (Persona REVISION_FIELDS mirror). */
+export const SKILL_PAYLOAD_FIELDS: (keyof SkillRevisionPayload)[] = [
+  "name",
+  "description",
+  "category",
+  "whenToUse",
+  "process",
+  "outputSpec",
+  "checklist",
+  "scoreThreshold",
+  "sessionType",
+  "activity",
+  "recommendedPersonaTemplateId",
+  "addToMemory",
+  "pinnedToContext",
+  "references",
+];
+
+/** Named changed fields between two skill payloads — whole-field compare, never AI merge. */
+export function changedSkillFields(
+  from: SkillRevisionPayload,
+  to: SkillRevisionPayload,
+): string[] {
+  return SKILL_PAYLOAD_FIELDS.filter(
+    (field) =>
+      JSON.stringify(stableValue(from[field])) !==
+      JSON.stringify(stableValue(to[field])),
+  ) as string[];
+}
+
+export function skillRevisionPayload(
   row: typeof skills.$inferSelect,
   references: Array<{ name: string; content: string }>,
 ): SkillRevisionPayload {
