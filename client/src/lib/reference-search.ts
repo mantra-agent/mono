@@ -39,6 +39,7 @@ export const REFERENCE_TYPE_LABELS: Record<string, string> = {
   account: "Account",
   user: "User",
   agent_instance: "Agent",
+  session: "Session",
 };
 
 interface LibraryPageResult {
@@ -129,6 +130,14 @@ interface BusinessPlanResult {
   name?: string;
   vaultId?: string;
   updatedAt?: string | Date;
+}
+
+interface SessionResult {
+  id: string;
+  title?: string;
+  type?: string;
+  updatedAt?: string | Date;
+  createdAt?: string | Date;
 }
 
 interface WellnessActivityResult {
@@ -319,7 +328,7 @@ export async function loadReferenceSuggestions(
 
   logger.debug("search", { query, allowedTypes, triggerChar });
 
-  const [library, people, tags, companies, goals, tasks, projects, metrics, kpis, businessPlans, wellnessActivities, routers] =
+  const [library, people, tags, companies, goals, tasks, projects, metrics, kpis, businessPlans, wellnessActivities, routers, sessions] =
     await Promise.all([
       allow("page") && query
         ? fetchJson<unknown>(`/api/info/library?search=${encoded}`, signal)
@@ -363,6 +372,9 @@ export async function loadReferenceSuggestions(
         : Promise.resolve(null),
       allow("router")
         ? fetchJson<unknown>("/api/routers", signal)
+        : Promise.resolve(null),
+      allow("session") && query
+        ? fetchJson<unknown>(`/api/sessions/search?q=${encoded}`, signal)
         : Promise.resolve(null),
     ]);
 
@@ -559,6 +571,21 @@ export async function loadReferenceSuggestions(
           description: router.isDefault ? "Default Router" : "Router",
         },
         { rankAt: router.updatedAt },
+      ),
+    );
+  }
+
+  for (const session of asItemArray<SessionResult>(sessions, ["sessions"])) {
+    if (!session?.id) continue;
+    suggestions.push(
+      withRankMeta(
+        {
+          type: "session",
+          id: session.id,
+          label: session.title || session.id,
+          description: session.type ? `Session · ${session.type}` : "Session",
+        },
+        { rankAt: bestTimestamp(session.updatedAt, session.createdAt) },
       ),
     );
   }
