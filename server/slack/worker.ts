@@ -71,6 +71,13 @@ const sockets = new Map<string, WebSocket>();
 // until the installation is disabled/re-enabled (i.e. reauthorized), which is the
 // only in-process signal that its authorization may have changed.
 const needsReauth = new Set<string>();
+// Installations that failed to connect for a non-permanent reason are retried
+// with exponential backoff rather than on every 30s tick, so a single bad
+// installation cannot mint a storm of identical error logs. The first failure
+// of an episode logs at error; subsequent retries log at warn until it recovers.
+const RECONNECT_BACKOFF_BASE_MS = 30_000;
+const RECONNECT_BACKOFF_CAP_MS = 30 * 60_000;
+const connectBackoff = new Map<string, { failures: number; nextAttemptAt: number }>();
 let stopped = false;
 let refreshTimer: NodeJS.Timeout | null = null;
 let processing = false;
@@ -91,6 +98,7 @@ export async function stopSlackWorker(): Promise<void> {
   for (const socket of sockets.values()) socket.close(1000, "Mantra shutdown");
   sockets.clear();
   needsReauth.clear();
+  connectBackoff.clear();
 }
 
 async function refreshInstallations(): Promise<void> {
@@ -118,8 +126,15 @@ async function refreshInstallations(): Promise<void> {
   for (const id of needsReauth) {
     if (!enabled.has(id)) needsReauth.delete(id);
   }
+  // Drop backoff state once disabled/removed so a re-enable retries immediately.
+  for (const id of connectBackoff.keys()) {
+    if (!enabled.has(id)) connectBackoff.delete(id);
+  }
+  const now = Date.now();
   for (const installation of installations) {
     if (sockets.has(installation.id) || needsReauth.has(installation.id)) continue;
+    const backoff = connectBackoff.get(installation.id);
+    if (backoff && backoff.nextAttemptAt > now) continue;
     void connectInstallation(installation);
   }
   void drainQueue(installations);
@@ -135,15 +150,24 @@ async function connectInstallation(installation: SlackInstallationRow): Promise<
     socket.on("message", (data) => void handleSocketMessage(installation, credentials, socket, data.toString()));
     socket.on("close", () => sockets.delete(installation.id));
     socket.on("error", (error) => log.warn("Slack socket degraded", { installationId: installation.id, errorName: error.name }));
+    connectBackoff.delete(installation.id);
     log.info("Slack socket connected", { installationId: installation.id });
   } catch (error) {
     const code = error instanceof Error ? error.message : String(error);
     if (PERMANENT_CONNECTION_FAILURES.has(code)) {
       needsReauth.add(installation.id);
+      connectBackoff.delete(installation.id);
       log.warn("Slack installation requires reauthorization; halting reconnect attempts until re-enabled", { installationId: installation.id, reason: code });
       return;
     }
-    log.error("Slack installation connection failed", error instanceof Error ? error : new Error(String(error)), { installationId: installation.id });
+    const failures = (connectBackoff.get(installation.id)?.failures ?? 0) + 1;
+    const delay = Math.min(RECONNECT_BACKOFF_BASE_MS * 2 ** (failures - 1), RECONNECT_BACKOFF_CAP_MS);
+    connectBackoff.set(installation.id, { failures, nextAttemptAt: Date.now() + delay });
+    if (failures === 1) {
+      log.error("Slack installation connection failed", error instanceof Error ? error : new Error(String(error)), { installationId: installation.id });
+    } else {
+      log.warn("Slack installation still failing to connect; backing off", { installationId: installation.id, failures, retryInMs: delay, reason: code.slice(0, 80) });
+    }
   }
 }
 
