@@ -116,6 +116,7 @@ import {
 import { STATUS_CONFIG, PROJECT_STATUS_CONFIG, groupTasksByStatus } from "@/lib/task-utils";
 import { TaskWidget } from "@/components/task-widget";
 import { ExpandedDescriptionEditor } from "@/components/expanded-description-editor";
+import { BlockedByRow } from "@/components/blocked-by-row";
 import { useTaskModal } from "@/contexts/task-modal-context";
 
 const log = createLogger("WorkPage");
@@ -1991,6 +1992,7 @@ function ProjectTreeNode({
                     placeholder="Add a project description..."
                     testIdPrefix={`project-description-${project.id}`}
                   />
+                  <BlockedByRow sourceAddress={`@project:${project.id}`} testId={`row-project-blocked-by-${project.id}`} />
                   <ProjectReferenceChipRow project={project} people={people} />
                 </div>
               </div>

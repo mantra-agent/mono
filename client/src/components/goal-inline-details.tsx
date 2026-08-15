@@ -26,6 +26,7 @@ import { UniversalTagPicker } from "@/components/universal-tag-picker";
 import { ReferencePicker } from "@/components/references/reference-picker";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { GoalRelationshipsRow } from "@/components/goal-relationships-row";
+import { BlockedByRow } from "@/components/blocked-by-row";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
@@ -361,6 +362,7 @@ export function GoalInlineDetails({ goalId }: GoalInlineDetailsProps) {
       </ProfileTreeRow>
 
       <GoalRelationshipsRow goalId={goalId} />
+      <BlockedByRow sourceAddress={`@goal:${goalId}`} testId={`row-goal-blocked-by-${goalId}`} />
 
       <ProfileTreeRow
         label="Projects"

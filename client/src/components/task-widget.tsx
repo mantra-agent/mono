@@ -47,6 +47,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { InlineDatePicker } from "@/components/inline-date-picker";
 import { ExpandedDescriptionEditor } from "@/components/expanded-description-editor";
+import { BlockedByRow } from "@/components/blocked-by-row";
 import type { Task, Project, PriorityLevel, TaskStatus, ImpactEffort } from "@shared/models/work";
 import { getDeadlineProximity } from "@shared/models/work";
 import { STATUS_CONFIG } from "@/lib/task-utils";
@@ -424,6 +425,8 @@ export function TaskWidget({ taskId, defaultExpanded = false, showHeader = true,
               testIdPrefix={`task-description-${taskId}`}
             />
           </div>
+
+          <BlockedByRow sourceAddress={`@task:${taskId}`} testId={`row-task-blocked-by-${taskId}`} />
 
           <TaskFieldRow icon={Flag} label="Status" testId="row-task-status">
             <Select value={task.status} onValueChange={(v) => updateMutation.mutate({ status: v as TaskStatus })}>
