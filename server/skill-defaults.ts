@@ -435,7 +435,7 @@ Do NOT create \`daily-brief-YYYY-MM-DD\` pages. Do NOT use the \`priorities\` to
     category: "system",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "1.3",
+    version: "1.7",
     addToMemory: true,
     pinnedToContext: false,
     whenToUse: "Used for recurring autonomous scan-and-execute work. Replaces the retired advance and prioritize skills.",
@@ -446,6 +446,7 @@ Do NOT create \`daily-brief-YYYY-MM-DD\` pages. Do NOT use the \`priorities\` to
       { check: "Uses existing canonical systems for outputs: goals, tasks, projects, Library, issues, people interactions, workflows, and decisions", weight: 3 },
       { check: "Executes only safe internal work autonomously and gates external side effects, new goals, unclear project-stack placement, or irreversible actions for Ray", weight: 4 },
       { check: "Avoids duplicate conversations, artifacts, tasks, issues, or follow-up surfaces", weight: 3 },
+      { check: "For each upcoming external or high-prep meeting, resolves the single canonical preparation page from meeting metadata, follows missing agenda → agenda conversation → confirmed agenda → one preparation page, and never creates a duplicate brief or parallel conversation", weight: 3 },
       { check: "Creates or identifies corresponding tasks for non-trivial Agent work, attaches them to the best existing project/milestone when possible, and records terminal status before ending", weight: 4 },
       { check: "Treats aligned Agent-assigned tasks as a legitimate work queue subject to goals, safety gates, and timing", weight: 3 },
       { check: "Produces a compact report with evidence, task/project/milestone placement, final task statuses, blockers, and next action", weight: 2 },
@@ -493,6 +494,28 @@ Aligned Agent-assigned tasks are a legitimate autonomous work queue. Work them w
 ## Retired systems
 
 The old advance and prioritize skills are retired. Do not use intentions, parked ideas, or the old priority stack as autonomous control planes. Use goals, tasks, projects, Library, workflows, decisions, people, and issues instead.
+
+## Meeting-readiness protocol
+
+For each upcoming external or high-prep meeting in the relevant planning window:
+
+1. Inspect canonical meeting metadata and resolve its single preparation page from \`agendaLibraryPageId\`. Agenda and brief preparation are sections of that page, never separate artifacts.
+2. Apply closed-loop run-history reconciliation using the meeting event ID, title, date, participants, agenda conversation, canonical preparation page, and any prior surfaced result. Treat matching unresolved work as \`already_active\`. Never create parallel conversations or duplicate pages.
+3. If the agenda is missing and no matching active agenda request exists, start one conversation about the agenda. Use the meeting title, date, participants, People records and interactions, related sessions, goals, projects, decisions, email, and relevant memories to make a concrete first draft. Put the proposed agenda directly in the opening chat message. Ask Ray to confirm or revise it. Record the conversation and resolution criteria in the ledger.
+4. Once the agenda is confirmed, resolve the canonical preparation page. If absent, create one page and claim it through meetings action=\`set_metadata\` with \`agendaLibraryPageId\`. If it exists, update that page. Add briefing context beneath the agenda on the same page and surface it once for review.
+5. If the canonical page already contains the agenda and briefing context, verify readiness and take no duplicate action. Update it only when new material evidence changes preparation meaningfully.
+6. Never publish private Mantra preparation into the shared calendar description. Use meeting metadata for the canonical page. Use \`link_artifact\` only for distinct non-preparation artifacts with an explicit kind such as research, follow_up, or recap.
+
+The dependency is strict: **missing agenda → agenda conversation → confirmed agenda → one canonical preparation page**.
+
+## Session-ledger verification
+
+Sessions remain the universal execution ledger, but routine reconciliation is provenance-first:
+
+1. Enumerate changed timers, skill runs, plan/workflow attempts, tasks, and sessions from their canonical status/timestamp fields since the last checkpoint.
+2. Retain and follow exact session IDs already attached to those producers. Inspect authoritative messages by exact ID with \`session.get_messages\` when outcome evidence is needed.
+3. Use \`session.list\` for bounded metadata discovery when provenance is incomplete. Reserve \`session.search\` for historical recovery, human recall, or genuinely missing identity; do not use guessed keywords as the normal proof that scheduled work ran.
+4. Reconcile terminal status and canonical artifacts/tasks from exact records. A fuzzy text match is discovery evidence, never execution identity.
 
 ## Output
 
