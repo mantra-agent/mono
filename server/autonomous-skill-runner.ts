@@ -278,27 +278,32 @@ async function pageWritePostRunVerify(sessionId: string, toolCalls: ToolCallLog)
   await verifyPageLinkPosted(sessionId, toolCalls, wrotePage);
 }
 async function dailyBriefSurfacePostRunVerify(sessionId: string, toolCalls: ToolCallLog): Promise<void> {
-  const pageResults = toolCalls
-    .filter(t => t.name === "library" && (t.action === "create_library_page" || t.action === "update_library_page") && !t.error && t.result)
-    .map(t => t.result!);
-  if (pageResults.length === 0) {
+  const pageWriteCalls = toolCalls.filter(t =>
+    t.name === "library"
+    && (t.action === "create_library_page" || t.action === "update_library_page" || t.action === "edit_library_page")
+    && !t.error
+    && t.result
+  );
+  if (pageWriteCalls.length === 0) {
     logger.warn(`[daily-brief] [${sessionId}] Post-run: no Library page write detected, cannot enforce INBOX surfacing`);
     return;
   }
 
-  const slugMatch = pageResults
-    .map(r => r.match(/\[page:([^\]]+)\]/))
+  const slugMatch = pageWriteCalls
+    .map(t => t.result!.match(/\[page:([^\]]+)\]/) || t.result!.match(/@page:([a-zA-Z0-9_-]+)/))
     .find(Boolean);
 
+  // One rolling Morning Brief page. Prefer the page the skill just wrote;
+  // fall back to the stable slug, never a dated daily-brief-YYYY-MM-DD page.
+  const pageId = slugMatch?.[1] || "morning-brief";
   const { getDateInTimezone } = await import("./timezone");
-  const fallbackSlug = `daily-brief-${getDateInTimezone()}`;
-  const pageId = slugMatch?.[1] || fallbackSlug;
+  const dateLabel = getDateInTimezone();
   const result = await executeTool("library", generateToolCallId("auto-tc"), {
     action: "update_library_page",
     id: pageId,
     surface: true,
     surfaceDurationHours: 24,
-    surfaceReason: "Daily Brief",
+    surfaceReason: `Daily Brief — ${dateLabel}`,
     surfaceSection: "inbox",
   }, {
     sessionId,

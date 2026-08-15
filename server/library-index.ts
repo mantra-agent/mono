@@ -129,10 +129,10 @@ const DEFAULT_INDEX: LibraryIndex = {
   },
   "daily-briefs": {
     pageId: "3f328f0a-d39d-4161-aff1-e9217c8bc10d",
-    title: "Daily Briefs",
-    namingConvention: "Daily Brief — {DayOfWeek}, {MonthName} {Day}, {Year}",
-    tags: ["daily-brief"],
-    description: "Morning briefings assembled by brief-daily skill",
+    title: "Morning Brief",
+    namingConvention: "Morning Brief (single rolling page; newest day prepended)",
+    tags: ["daily-brief", "morning-brief"],
+    description: "Single rolling morning briefing page maintained by brief-daily; each run prepends today's entry and re-surfaces the same page",
   },
   "daily-reviews": {
     pageId: "59ce5eec-adf9-4ae1-aaef-f0ec6e5a5aca",

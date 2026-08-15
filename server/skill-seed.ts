@@ -404,7 +404,7 @@ export async function migrateCustomizedPlanPeriodContract(): Promise<void> {
   }
 }
 
-const DAILY_BRIEF_COMPOSITION_CONTRACT_VERSION = "7.8";
+const DAILY_BRIEF_COMPOSITION_CONTRACT_VERSION = "7.9";
 const DAILY_BRIEF_REQUIRED_CHILD_SKILLS = ["affirm", "learning"] as const;
 
 function mergeDailyBriefCompositionChecklist(
@@ -443,7 +443,7 @@ function mergeDailyBriefCompositionChecklist(
 export async function migrateCustomizedDailyBriefCompositionContract(): Promise<void> {
   const canonical = BUILTIN_SKILL_DEFAULTS.find((definition) => definition.name === "brief-daily");
   if (!canonical || canonical.version !== DAILY_BRIEF_COMPOSITION_CONTRACT_VERSION) {
-    log.error("Cannot reconcile customized Daily Brief skill: canonical v7.8 definition is missing");
+    log.error("Cannot reconcile customized Daily Brief skill: canonical v7.9 definition is missing");
     return;
   }
 
@@ -488,7 +488,7 @@ export async function migrateCustomizedDailyBriefCompositionContract(): Promise<
       ))
       .returning({ id: skills.id });
     if (updated) {
-      log.info("Reconciled customized builtin Daily Brief 7.7 → 7.8 with structural composition gates");
+      log.info("Reconciled customized builtin Daily Brief 7.7 → 7.9 with structural composition gates");
       return;
     }
   }
