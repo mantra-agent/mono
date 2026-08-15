@@ -3830,18 +3830,12 @@ export async function runSchemaBootstrap(
 
     const {
       seedBuiltinSkills,
-      migrateCustomizedPlanPeriodContract,
-      migrateCustomizedDailyBriefCompositionContract,
       verifyRequiredSkills,
       migrateSkillRenames,
       migrateLegacyPromptOverrides,
-      migrateSkillProcessToToolBased,
       migrateCanonicalScanToolGate,
       deprecateRetiredBuiltinSkills,
       migrateSkillProcessUpdates,
-      migrateAutonomyCanonicalMeetingPrep,
-      migrateAutonomyProvenanceVerification,
-      migrateDailyBriefCanonicalMeetingPrep,
       migrateSentryRecentChangelistGate,
       migrateLegacySkillPersonaPreferences,
       deleteZombieSkills,
@@ -3850,22 +3844,30 @@ export async function runSchemaBootstrap(
     await ensurePromptModuleTables(pool);
     await migrateSkillRenames();
     await seedBuiltinSkills();
-    await migrateCustomizedPlanPeriodContract();
-    await migrateCustomizedDailyBriefCompositionContract();
     await migrateLegacySkillPersonaPreferences();
     await migrateLegacyPromptOverrides();
-    await migrateSkillProcessToToolBased();
+    // Mod-owned code skills (scan, Reliability Sentinel) are not lattice seats;
+    // their monotonic clause gates stay code-owned. deprecate/refresh operate on
+    // non-customized rows only.
     await migrateCanonicalScanToolGate();
     await deprecateRetiredBuiltinSkills();
     await migrateSkillProcessUpdates();
-    await migrateAutonomyCanonicalMeetingPrep();
-    await migrateAutonomyProvenanceVerification();
-    await migrateDailyBriefCanonicalMeetingPrep();
     await migrateSentryRecentChangelistGate();
     await deleteZombieSkills();
     await verifyRequiredSkills();
-    // Lattice cut 1: snapshot + classify only. No rebase/publish/resolution change.
+    // Skill Default Lattice migration surface (cut 3). The per-skill customized-
+    // clause migrations (customized Plan/Brief merges, migrateAutonomy*,
+    // Daily Brief meeting-prep) are retired: the code catalog is the source of
+    // truth and advancement flows through the lattice, never a fingerprinted
+    // in-place patch that silently freezes a customized row.
+    //   1) snapshot + link orphans + classify new lattice entrants
     await initializeSkillRevisionLineage();
+    //   2) code catalog publishes drifted defaults through follower rules
+    //      (advances following seats/copies; offers inbound to customized seats)
+    const { storage: skillLatticeStorage } = await import("./storage");
+    await skillLatticeStorage.syncSkillCatalogToLattice();
+    //   3) rebase exact-hash leftover user copies onto the current platform revision
+    await skillLatticeStorage.healLeftoverSkillFollowers();
   } catch (err: any) {
     log(`Skill seed/migration failed: ${err.message}`, "migration");
   }

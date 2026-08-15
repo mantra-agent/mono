@@ -11,7 +11,7 @@ import {
   skillPersonaPreferences,
 } from "@shared/schema";
 import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
-import { BUILTIN_SKILL_DEFAULTS, type SkillDefault } from "./skill-defaults";
+import { BUILTIN_SKILL_DEFAULTS } from "./skill-defaults";
 import * as fs from "fs";
 import * as path from "path";
 import {
@@ -113,6 +113,40 @@ export function skillRevisionPayload(
   };
 }
 
+/** One code catalog entry projected onto the lattice payload merge surface. */
+export interface CodeCatalogSkillInput {
+  name: string;
+  version: string;
+  input: Partial<SkillRevisionPayload>;
+}
+
+/**
+ * Project BUILTIN_SKILL_DEFAULTS (the SEED_PERSONAS mirror) onto the lattice
+ * payload input. References and recommendedPersonaTemplateId are intentionally
+ * omitted so the catalog publisher's whole-field overlay preserves each global's
+ * current references and persona recommendation (owned by separate seed paths).
+ */
+export function codeCatalogSkillInputs(): CodeCatalogSkillInput[] {
+  return BUILTIN_SKILL_DEFAULTS.map((def) => ({
+    name: def.name,
+    version: def.version || "1.0",
+    input: {
+      name: def.name,
+      description: def.description,
+      category: def.category,
+      whenToUse: def.whenToUse ?? `Used for ${def.category} operations`,
+      process: def.process,
+      outputSpec: def.outputSpec ?? "See process instructions",
+      checklist: def.checklist ?? [],
+      scoreThreshold: def.scoreThreshold ?? null,
+      sessionType: def.sessionType ?? null,
+      activity: def.activity,
+      addToMemory: def.addToMemory ?? true,
+      pinnedToContext: def.pinnedToContext ?? false,
+    },
+  }));
+}
+
 /**
  * Skill Default Lattice cut 1 — additive snapshot + classification only.
  * Every pre-lattice Skill gets an immutable revision of its current payload.
@@ -128,6 +162,11 @@ export async function initializeSkillRevisionLineage(): Promise<void> {
   let classifiedPinnedLegacy = 0;
   let classifiedLeftover = 0;
   let abstained = 0;
+  // Rows that newly enter the lattice this boot. Classification only writes
+  // these (plus rows still at the unclassified `pinned_legacy` default), so a
+  // later boot never clobbers a `following`/`customized`/`update_available`
+  // state owned by the catalog publisher, leftover heal, or a user mutation.
+  const snapshottedIds = new Set<string>();
 
   await db.transaction(async (tx) => {
     const allSkills = await tx.select().from(skills);
@@ -189,6 +228,7 @@ export async function initializeSkillRevisionLineage(): Promise<void> {
         .where(eq(skills.id, row.id));
       row.baseRevisionId = revisionId;
       row.currentRevisionId = revisionId;
+      snapshottedIds.add(row.id);
       snapshotted++;
     }
 
@@ -224,7 +264,12 @@ export async function initializeSkillRevisionLineage(): Promise<void> {
     }
 
     // 3) Classify updateState only — never rebase or rewrite payload.
+    //    Idempotent: only classify rows new to the lattice this boot, or rows
+    //    still at the unclassified `pinned_legacy` default. Rows already moved to
+    //    following/customized/update_available/conflict are owned by the catalog
+    //    publisher, leftover heal, and user mutations — do not re-derive them.
     for (const row of skillsAfter) {
+      if (!snapshottedIds.has(row.id) && row.updateState !== "pinned_legacy") continue;
       const hash = hashBySkillId.get(row.id) ?? skillPayloadHash(
         skillRevisionPayload(row, refsBySkill.get(row.id) ?? []),
       );
@@ -563,27 +608,11 @@ const CANONICAL_BUILTIN_SKILL_IDS: Readonly<Record<string, string>> = {
   regression: CANONICAL_REGRESSION_SKILL_ID,
 };
 
-function builtinSkillDefinitionPatch(def: (typeof BUILTIN_SKILL_DEFAULTS)[number]) {
-  return {
-    description: def.description,
-    category: def.category,
-    activity: def.activity,
-    process: def.process,
-    whenToUse: def.whenToUse ?? `Used for ${def.category} operations`,
-    outputSpec: def.outputSpec ?? "See process instructions",
-    checklist: def.checklist ?? [],
-    scoreThreshold: def.scoreThreshold ?? null,
-    version: def.version || "1.0",
-    author: def.author || "system",
-    status: "active",
-    addToMemory: def.addToMemory ?? true,
-    pinnedToContext: def.pinnedToContext ?? false,
-    ...(def.sessionType ? { sessionType: def.sessionType } : {}),
-    updatedAt: new Date(),
-  };
-}
-
-function compareSkillVersions(left: string, right: string): number | null {
+/**
+ * Compare dotted skill versions. Exported for the Skill Default Lattice catalog
+ * publisher (server/storage.ts) so version-gated advancement lives in one place.
+ */
+export function compareSkillVersions(left: string, right: string): number | null {
   const parse = (value: string): number[] | null => {
     const core = value.trim().split("-")[0];
     if (!/^\d+(?:\.\d+)*$/.test(core)) return null;
@@ -600,232 +629,10 @@ function compareSkillVersions(left: string, right: string): number | null {
   return 0;
 }
 
-const PLAN_PERIOD_CONTRACT_VERSION = "1.2";
-const PLAN_PERIOD_CONTRACT_MARKER = "## Scheduled Period Contract (v1.2)";
-const PLAN_PERIOD_CONTRACT = `${PLAN_PERIOD_CONTRACT_MARKER}
-
-This contract overrides any conflicting generic period wording below while preserving all customized planning instructions.
-
-For a scheduled run, preContext supplies the authoritative \`planningMode: review_current_plan_next\`, timezone, reviewPeriod, targetPeriod, and parentPeriod. Review-period goals are read-only transition context: classify them as complete, carry forward, change, or drop, but never mutate them. Only goals, artifacts, and check-in metadata scoped to targetPeriod may be created or changed. Use the explicit period keys instead of relative wall-clock interpretations.`;
-
-const PLAN_V11_DESCRIPTION = "Conversation-first parameterized planning skill for daily, weekly, monthly, quarterly, and annual cadences. It starts a short alignment conversation, helps Ray choose up to 3 canonical goals, then creates the plan artifact only after Ray confirms.";
-const PLAN_V11_WHEN_TO_USE = "Use for scheduled or manual planning at any cadence when Ray needs to align on canonical goals for a target period. The first response should be conversational and ask for confirmation, not produce the plan artifact.";
-const PLAN_V11_OUTPUT_SPEC = "Initial turn: a compact planning frame and 1-3 questions/proposed goals for Ray. After Ray confirms: up to 3 canonical goals created/updated/selected, parent links where clear, and a concise Library plan artifact linked through check-in metadata where supported.";
-
-const PLAN_V11_CHECKLIST_REPLACEMENTS = new Map<string, string[]>([
-  [
-    "First response is conversation-first: no Library page, priorities metadata, or goal mutations before Ray confirms the target goals",
-    ["First response is conversation-first: no Library page, check-in metadata, or goal mutations before Ray confirms the target-period goals"],
-  ],
-  [
-    "PreContext cadence and target period are used to identify target horizon, parent horizon, and artifact metadata",
-    ["PreContext planningMode, timezone, reviewPeriod, targetPeriod, and parentPeriod are used exactly; scheduled planning reviews the current period and plans the next period"],
-  ],
-  [
-    "Only future planning context is used by default: parent goals, existing target goals, current projects/decisions, and relevant calendar constraints",
-    [
-      "Review-period goals are used only to classify complete, carry forward, change, or drop; they are never mutated by the planning run",
-      "Opening context stays bounded to parent goals, existing target-period goals, narrow review-period goal status, and relevant future calendar/project constraints",
-    ],
-  ],
-  [
-    "After confirmation, no more than 3 active target-horizon goals are selected/created and parent links are created where clear",
-    ["After confirmation, no more than 3 active goals scoped to targetPeriod are selected/created and parent links are created where clear"],
-  ],
-  [
-    "After confirmation, the plan artifact is saved and linked via supported check-in metadata such as goals.set_daily_plan, goals.set_weekly_plan, goals.set_monthly_plan, or goals.set_quarterly_plan",
-    ["After confirmation, only the targetPeriod plan artifact is saved and linked via supported check-in metadata such as goals.set_daily_plan, goals.set_weekly_plan, goals.set_monthly_plan, or goals.set_quarterly_plan"],
-  ],
-]);
-
-function mergePlanV12Checklist(
-  checklist: unknown,
-  canonicalChecklist: SkillDefault["checklist"],
-): Array<Record<string, unknown> & { check: string; weight: number }> {
-  const existing = Array.isArray(checklist) ? checklist : [];
-  const merged: Array<Record<string, unknown> & { check: string; weight: number }> = [];
-  for (const item of existing) {
-    if (!item || typeof item !== "object") continue;
-    const candidate = item as Record<string, unknown> & { check?: unknown; weight?: unknown };
-    if (typeof candidate.check !== "string" || typeof candidate.weight !== "number") continue;
-    const replacements = PLAN_V11_CHECKLIST_REPLACEMENTS.get(candidate.check);
-    if (!replacements) {
-      merged.push({ ...candidate, check: candidate.check, weight: candidate.weight });
-      continue;
-    }
-    for (const check of replacements) {
-      const canonical = canonicalChecklist?.find((entry) => entry.check === check);
-      merged.push({
-        ...candidate,
-        check,
-        weight: canonical?.weight ?? candidate.weight,
-      });
-    }
-  }
-  for (const required of canonicalChecklist ?? []) {
-    if (!merged.some((item) => item.check === required.check)) merged.push({ ...required });
-  }
-  return merged;
-}
-
-/**
- * Before copy-on-write Skill overrides, edits marked the global built-in row as
- * customized. Preserve that legacy content while merging the safety-critical
- * scheduled-period delta. Current private overrides remain untouched.
- */
-export async function migrateCustomizedPlanPeriodContract(): Promise<void> {
-  const canonical = BUILTIN_SKILL_DEFAULTS.find((definition) => definition.name === "plan");
-  if (!canonical || canonical.version !== PLAN_PERIOD_CONTRACT_VERSION) {
-    log.error("Cannot reconcile customized Plan skill: canonical v1.2 definition is missing");
-    return;
-  }
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const [existing] = await db
-      .select({
-        id: skills.id,
-        author: skills.author,
-        customized: skills.customized,
-        version: skills.version,
-        description: skills.description,
-        process: skills.process,
-        whenToUse: skills.whenToUse,
-        outputSpec: skills.outputSpec,
-        checklist: skills.checklist,
-        updatedAt: skills.updatedAt,
-      })
-      .from(skills)
-      .where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
-    if (!existing || existing.author !== "system" || existing.customized !== true) return;
-    if (existing.version !== "1.1") {
-      const order = compareSkillVersions(existing.version, PLAN_PERIOD_CONTRACT_VERSION);
-      if (order !== null && order >= 0) return;
-      log.warn("Skipped customized Plan period reconciliation", {
-        persistedVersion: existing.version,
-        targetVersion: PLAN_PERIOD_CONTRACT_VERSION,
-        reason: order === null ? "invalid_version" : "unsupported_base_version",
-      });
-      return;
-    }
-
-    const process = existing.process.includes(PLAN_PERIOD_CONTRACT_MARKER)
-      ? existing.process
-      : `${PLAN_PERIOD_CONTRACT}\n\n${existing.process}`;
-    const [updated] = await db
-      .update(skills)
-      .set({
-        description: existing.description === PLAN_V11_DESCRIPTION ? canonical.description : existing.description,
-        process,
-        whenToUse: existing.whenToUse === PLAN_V11_WHEN_TO_USE ? (canonical.whenToUse ?? existing.whenToUse) : existing.whenToUse,
-        outputSpec: existing.outputSpec === PLAN_V11_OUTPUT_SPEC ? (canonical.outputSpec ?? existing.outputSpec) : existing.outputSpec,
-        checklist: mergePlanV12Checklist(existing.checklist, canonical.checklist),
-        version: PLAN_PERIOD_CONTRACT_VERSION,
-        updatedAt: new Date(),
-      })
-      .where(and(
-        eq(skills.id, existing.id),
-        eq(skills.author, "system"),
-        eq(skills.customized, true),
-        eq(skills.version, existing.version),
-        eq(skills.updatedAt, existing.updatedAt),
-      ))
-      .returning({ id: skills.id });
-    if (updated) {
-      log.info("Reconciled customized builtin Plan 1.1 → 1.2 without replacing customized content");
-      return;
-    }
-  }
-}
-
-const DAILY_BRIEF_COMPOSITION_CONTRACT_VERSION = "7.9";
-const DAILY_BRIEF_REQUIRED_CHILD_SKILLS = ["affirm", "learning"] as const;
-
-function mergeDailyBriefCompositionChecklist(
-  checklist: unknown,
-  canonicalChecklist: SkillDefault["checklist"],
-): Array<Record<string, unknown> & { check: string; weight: number }> {
-  const existing = Array.isArray(checklist)
-    ? checklist.filter((item): item is Record<string, unknown> & { check: string; weight: number } => (
-        Boolean(item)
-        && typeof item === "object"
-        && typeof item.check === "string"
-        && typeof item.weight === "number"
-      ))
-    : [];
-  const required = (canonicalChecklist ?? []).filter((item) => (
-    item.kind === "child_skill_invoked"
-    && typeof item.skill === "string"
-    && DAILY_BRIEF_REQUIRED_CHILD_SKILLS.includes(item.skill as typeof DAILY_BRIEF_REQUIRED_CHILD_SKILLS[number])
-  ));
-  const withoutLegacyRequiredChildren = existing.filter((item) => !(
-    item.kind === "child_skill_invoked"
-    && typeof item.skill === "string"
-    && DAILY_BRIEF_REQUIRED_CHILD_SKILLS.includes(item.skill as typeof DAILY_BRIEF_REQUIRED_CHILD_SKILLS[number])
-  ));
-  return [
-    ...required.map((item) => ({ ...item })),
-    ...withoutLegacyRequiredChildren.map((item) => ({ ...item })),
-  ];
-}
-
-/**
- * Legacy edits customized the global Daily Brief row before Skill copy-on-write.
- * Preserve that authored brief while merging only the structural composition
- * gates and nonzero quality threshold required to prevent inline false greens.
- */
-export async function migrateCustomizedDailyBriefCompositionContract(): Promise<void> {
-  const canonical = BUILTIN_SKILL_DEFAULTS.find((definition) => definition.name === "brief-daily");
-  if (!canonical || canonical.version !== DAILY_BRIEF_COMPOSITION_CONTRACT_VERSION) {
-    log.error("Cannot reconcile customized Daily Brief skill: canonical v7.9 definition is missing");
-    return;
-  }
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const [existing] = await db
-      .select({
-        id: skills.id,
-        author: skills.author,
-        customized: skills.customized,
-        version: skills.version,
-        checklist: skills.checklist,
-        updatedAt: skills.updatedAt,
-      })
-      .from(skills)
-      .where(and(eq(skills.scope, "global"), eq(skills.name, "brief-daily")));
-    if (!existing || existing.author !== "system" || existing.customized !== true) return;
-    if (existing.version !== "7.7") {
-      const order = compareSkillVersions(existing.version, DAILY_BRIEF_COMPOSITION_CONTRACT_VERSION);
-      if (order !== null && order >= 0) return;
-      log.warn("Skipped customized Daily Brief composition reconciliation", {
-        persistedVersion: existing.version,
-        targetVersion: DAILY_BRIEF_COMPOSITION_CONTRACT_VERSION,
-        reason: order === null ? "invalid_version" : "unsupported_base_version",
-      });
-      return;
-    }
-
-    const [updated] = await db
-      .update(skills)
-      .set({
-        checklist: mergeDailyBriefCompositionChecklist(existing.checklist, canonical.checklist),
-        scoreThreshold: canonical.scoreThreshold ?? 0.8,
-        version: DAILY_BRIEF_COMPOSITION_CONTRACT_VERSION,
-        updatedAt: new Date(),
-      })
-      .where(and(
-        eq(skills.id, existing.id),
-        eq(skills.author, "system"),
-        eq(skills.customized, true),
-        eq(skills.version, existing.version),
-        eq(skills.updatedAt, existing.updatedAt),
-      ))
-      .returning({ id: skills.id });
-    if (updated) {
-      log.info("Reconciled customized builtin Daily Brief 7.7 → 7.9 with structural composition gates");
-      return;
-    }
-  }
-}
+// Retired in Skill Default Lattice cut 3: the customized Plan (1.1→1.2) and
+// Daily Brief (7.7→7.9) clause merges are superseded by the code-catalog lattice
+// publisher (HybridStorage.syncSkillCatalogToLattice). A code default now offers
+// itself inbound to a customized global instead of a fingerprinted in-place patch.
 
 export async function seedBuiltinSkills(): Promise<void> {
   let inserted = 0;
@@ -892,65 +699,13 @@ export async function seedBuiltinSkills(): Promise<void> {
       }
 
       if (existing) {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const versionOrder = compareSkillVersions(existing.version, defVersion);
-          if (versionOrder === null) {
-            log.warn(`Skipped builtin skill sync for "${def.name}": invalid version ${existing.version} or ${defVersion}`);
-            break;
-          }
-          if (versionOrder > 0) {
-            if (existing.author === "system" && existing.customized !== true) {
-              log.warn(`Skipped builtin skill downgrade for "${def.name}" ${existing.version} → ${defVersion}`);
-            }
-            break;
-          }
-          if (
-            versionOrder === 0 ||
-            existing.author !== "system" ||
-            existing.customized === true
-          ) {
-            break;
-          }
-          const updated = await db
-            .update(skills)
-            .set(builtinSkillDefinitionPatch(def))
-            .where(
-              and(
-                eq(skills.id, existing.id),
-                eq(skills.author, "system"),
-                eq(skills.customized, false),
-                eq(skills.version, existing.version),
-              ),
-            )
-            .returning({ id: skills.id });
-          if (updated.length > 0) {
-            log.info(`Synchronized builtin skill "${def.name}" ${existing.version} → ${defVersion}`);
-            break;
-          }
-          [existing] = await db
-            .select({
-              id: skills.id,
-              name: skills.name,
-              scope: skills.scope,
-              author: skills.author,
-              customized: skills.customized,
-              version: skills.version,
-            })
-            .from(skills)
-            .where(
-              canonicalId
-                ? or(
-                    and(eq(skills.scope, "global"), eq(skills.name, def.name)),
-                    eq(skills.id, canonicalId),
-                  )
-                : and(eq(skills.scope, "global"), eq(skills.name, def.name)),
-            );
-          if (existing && (existing.scope !== "global" || existing.name !== def.name)) {
-            log.warn(`Stopped builtin skill sync for "${def.name}": canonical identity changed during reconciliation`);
-            break;
-          }
-          if (!existing) break;
-        }
+        // Insert-only. Advancing an existing global is no longer an in-place
+        // fingerprinted patch that silently breaks on `customized` — that wall
+        // is retired. The Skill Default Lattice catalog publisher
+        // (HybridStorage.syncSkillCatalogToLattice) mints a platform revision
+        // for a code version bump and publishes it through follower rules:
+        // `following` globals advance, a mixed customized global is offered the
+        // inbound default (update_available) and never overwritten.
         preserved++;
         continue;
       }
@@ -1131,20 +886,6 @@ export async function migrateCanonicalScanToolGate(): Promise<void> {
   }
 }
 
-export async function migrateSkillProcessToToolBased(): Promise<void> {
-  const skillsToMigrate: string[] = [];
-  for (const name of skillsToMigrate) {
-    const [existing] = await db.select({ id: skills.id, process: skills.process }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
-    if (!existing) continue;
-    if (existing.process.includes("Respond with a JSON object")) {
-      const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === name);
-      if (!def) continue;
-      await db.update(skills).set({ process: def.process, updatedAt: new Date() }).where(eq(skills.id, existing.id));
-      log.debug(`Migrated skill "${name}" process from JSON output to tool-based mutations`);
-    }
-  }
-}
-
 export async function deprecateRetiredBuiltinSkills(): Promise<void> {
   // Preserve compatibility rows through the rollback window, but make them inert.
   const retired = ["consolidate", "integrate"];
@@ -1157,178 +898,12 @@ export async function deprecateRetiredBuiltinSkills(): Promise<void> {
   }
 }
 
-const AUTONOMY_MEETING_PROTOCOL_V15 = `## Meeting-readiness protocol
-
-For each upcoming external or high-prep meeting in the relevant planning window:
-
-1. Inspect canonical meeting metadata for a private agenda and inspect linked artifacts for an existing brief.
-2. Apply closed-loop run-history reconciliation using the meeting event ID, title, date, participants, agenda conversation, linked artifacts, and any prior surfaced result. Treat matching unresolved work as \`already_active\`. Never create parallel conversations or duplicate briefs.
-3. If the agenda is missing and no matching active agenda request exists, start one conversation about the agenda. Use the meeting title, date, participants, People records and interactions, related sessions, goals, projects, decisions, email, and relevant memories to make a concrete first draft. Put the proposed agenda directly in the opening chat message, not in a Library page. Ask Ray to confirm or revise it. Record the conversation and resolution criteria in the ledger.
-4. If an agenda exists but no linked brief exists, create or update one canonical Library brief, link it to the meeting with artifact kind \`brief\`, and surface it once for review. Build the brief from the agenda first, then enrich it with participant context, interactions, related sessions, goals, projects, decisions, email, and relevant memories.
-5. If both agenda and linked brief exist, verify readiness and take no duplicate action. Update an existing brief only when new material evidence changes preparation meaningfully.
-6. Never publish a private Mantra agenda into the shared calendar description. Use meeting metadata for agenda and meeting artifact links for briefs.
-
-The dependency is strict: **missing agenda → agenda conversation → confirmed/stored agenda → linked brief**. A brief must never be created before an agenda exists.`;
-
-const AUTONOMY_MEETING_PROTOCOL_V16 = `## Meeting-readiness protocol
-
-For each upcoming external or high-prep meeting in the relevant planning window:
-
-1. Inspect canonical meeting metadata and resolve its single preparation page from \`agendaLibraryPageId\`. Agenda and brief preparation are sections of that page, never separate artifacts.
-2. Apply closed-loop run-history reconciliation using the meeting event ID, title, date, participants, agenda conversation, canonical preparation page, and any prior surfaced result. Treat matching unresolved work as \`already_active\`. Never create parallel conversations or duplicate pages.
-3. If the agenda is missing and no matching active agenda request exists, start one conversation about the agenda. Use the meeting title, date, participants, People records and interactions, related sessions, goals, projects, decisions, email, and relevant memories to make a concrete first draft. Put the proposed agenda directly in the opening chat message. Ask Ray to confirm or revise it. Record the conversation and resolution criteria in the ledger.
-4. Once the agenda is confirmed, resolve the canonical preparation page. If absent, create one page and claim it through meetings action=\`set_metadata\` with \`agendaLibraryPageId\`. If it exists, update that page. Add briefing context beneath the agenda on the same page and surface it once for review.
-5. If the canonical page already contains the agenda and briefing context, verify readiness and take no duplicate action. Update it only when new material evidence changes preparation meaningfully.
-6. Never publish private Mantra preparation into the shared calendar description. Use meeting metadata for the canonical page. Use \`link_artifact\` only for distinct non-preparation artifacts with an explicit kind such as research, follow_up, or recap.
-
-The dependency is strict: **missing agenda → agenda conversation → confirmed agenda → one canonical preparation page**.`;
-
-/**
- * Targeted monotonic migration for the live autonomy v1.5 policy. The checked-in
- * bootstrap fixture is older, so replacing the full definition would erase
- * closed-loop deduplication and opportunity-management policy. Patch only the
- * superseded meeting section and version under the same system/unmodified guard.
- */
-export async function migrateAutonomyCanonicalMeetingPrep(): Promise<void> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const [existing] = await db
-      .select({
-        id: skills.id,
-        author: skills.author,
-        customized: skills.customized,
-        version: skills.version,
-        description: skills.description,
-        process: skills.process,
-        outputSpec: skills.outputSpec,
-        checklist: skills.checklist,
-      })
-      .from(skills)
-      .where(and(eq(skills.scope, "global"), eq(skills.name, "autonomy")));
-    if (!existing || existing.author !== "system" || existing.customized === true) return;
-    const versionOrder = compareSkillVersions(existing.version, "1.6");
-    if (versionOrder === null || versionOrder >= 0) return;
-    if (!existing.process.includes(AUTONOMY_MEETING_PROTOCOL_V15)) {
-      log.warn(`Skipped autonomy canonical prep migration from ${existing.version}: expected v1.5 meeting protocol was not found`);
-      return;
-    }
-
-    const process = existing.process.replace(AUTONOMY_MEETING_PROTOCOL_V15, AUTONOMY_MEETING_PROTOCOL_V16);
-    const description = existing.description
-      .replace("audits meetings for agenda-then-brief readiness", "audits meetings for single-page preparation readiness");
-    const outputSpec = existing.outputSpec
-      .replace("meeting-readiness results showing agenda-before-brief ordering", "meeting-readiness results showing one canonical preparation page");
-    const checklist = (existing.checklist ?? []).map((item: any) => {
-      if (typeof item?.check !== "string") return item;
-      if (item.check.includes("missing agenda → agenda conversation → stored agenda → linked brief")) {
-        return { ...item, check: item.check.replace("missing agenda → agenda conversation → stored agenda → linked brief", "missing agenda → agenda conversation → confirmed agenda → one canonical preparation page") };
-      }
-      if (item.check.includes("single canonical linked meeting brief only after an agenda exists")) {
-        return { ...item, check: "Creates or updates the meeting's single canonical preparation page only after the agenda is confirmed, and continues existing meeting work rather than creating duplicate asks, conversations, or pages" };
-      }
-      return item;
-    });
-
-    const updated = await db
-      .update(skills)
-      .set({ description, process, outputSpec, checklist, version: "1.6", updatedAt: new Date() })
-      .where(and(
-        eq(skills.id, existing.id),
-        eq(skills.author, "system"),
-        eq(skills.customized, false),
-        eq(skills.version, existing.version),
-      ))
-      .returning({ id: skills.id });
-    if (updated.length > 0) {
-      log.info(`Migrated autonomy meeting preparation policy ${existing.version} → 1.6 without replacing newer live content`);
-      return;
-    }
-  }
-}
-
-const AUTONOMY_PROVENANCE_VERIFICATION_V17 = `## Session-ledger verification
-
-Sessions remain the universal execution ledger, but routine reconciliation is provenance-first:
-
-1. Enumerate changed timers, skill runs, plan/workflow attempts, tasks, and sessions from their canonical status/timestamp fields since the last checkpoint.
-2. Retain and follow exact session IDs already attached to those producers. Inspect authoritative messages by exact ID with \`session.get_messages\` when outcome evidence is needed.
-3. Use \`session.list\` for bounded metadata discovery when provenance is incomplete. Reserve \`session.search\` for historical recovery, human recall, or genuinely missing identity; do not use guessed keywords as the normal proof that scheduled work ran.
-4. Reconcile terminal status and canonical artifacts/tasks from exact records. A fuzzy text match is discovery evidence, never execution identity.
-`;
-
-export async function migrateAutonomyProvenanceVerification(): Promise<void> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const [existing] = await db
-      .select({
-        id: skills.id,
-        author: skills.author,
-        customized: skills.customized,
-        version: skills.version,
-        process: skills.process,
-      })
-      .from(skills)
-      .where(and(eq(skills.scope, "global"), eq(skills.name, "autonomy")));
-    if (!existing || existing.author !== "system" || existing.customized === true) return;
-    const versionOrder = compareSkillVersions(existing.version, "1.7");
-    if (versionOrder === null || versionOrder >= 0) return;
-    if (existing.version !== "1.6" || !existing.process.includes(AUTONOMY_MEETING_PROTOCOL_V16)) {
-      log.warn(`Skipped autonomy provenance verification migration from ${existing.version}: expected v1.6 canonical policy was not found`);
-      return;
-    }
-
-    const process = existing.process.includes("## Session-ledger verification")
-      ? existing.process
-      : `${existing.process.trim()}\n\n${AUTONOMY_PROVENANCE_VERIFICATION_V17.trim()}`;
-    const updated = await db
-      .update(skills)
-      .set({ process, version: "1.7", updatedAt: new Date() })
-      .where(and(
-        eq(skills.id, existing.id),
-        eq(skills.author, "system"),
-        eq(skills.customized, false),
-        eq(skills.version, existing.version),
-      ))
-      .returning({ id: skills.id });
-    if (updated.length > 0) {
-      log.info(`Migrated autonomy verification policy ${existing.version} → 1.7 without replacing newer live content`);
-      return;
-    }
-  }
-}
-
-export async function migrateDailyBriefCanonicalMeetingPrep(): Promise<void> {
-  const [existing] = await db
-    .select({ id: skills.id, author: skills.author, customized: skills.customized, version: skills.version, process: skills.process })
-    .from(skills)
-    .where(and(eq(skills.scope, "global"), eq(skills.name, "brief-daily")));
-  if (!existing || existing.author !== "system" || existing.customized === true) return;
-  const versionOrder = compareSkillVersions(existing.version, "7.7");
-  if (versionOrder === null || versionOrder >= 0) return;
-  if (existing.process.includes("A meeting has one canonical preparation page")) return;
-
-  const meetingPrepMarker = "7. **Meeting prep** (progressive disclosure):";
-  const weatherMarker = "8. **Weather:**";
-  const start = existing.process.indexOf(meetingPrepMarker);
-  const end = existing.process.indexOf(weatherMarker, start);
-  if (start < 0 || end < 0) {
-    log.warn(`Skipped Daily Brief canonical prep migration from ${existing.version}: meeting-prep section was not found`);
-    return;
-  }
-  const replacement = `${meetingPrepMarker}\n   - One-liner: time, title, key attendees\n   - People context only if it changes how Ray should show up\n   - On light days (Tue/Thu), just list the schedule without prep notes\n   - A meeting has one canonical preparation page. Resolve it from meeting metadata. If absent, claim the page with meetings action=set_metadata and agendaLibraryPageId. Update that same page for all agenda and brief preparation. Never create or link a second brief page. Use meetings action=link_artifact only for distinct non-preparation artifacts with an explicit kind such as research, follow_up, or recap.\n\n`;
-  const process = `${existing.process.slice(0, start)}${replacement}${existing.process.slice(end)}`;
-  const updated = await db
-    .update(skills)
-    .set({ process, version: "7.7", updatedAt: new Date() })
-    .where(and(
-      eq(skills.id, existing.id),
-      eq(skills.author, "system"),
-      eq(skills.customized, false),
-      eq(skills.version, existing.version),
-    ))
-    .returning({ id: skills.id });
-  if (updated.length > 0) {
-    log.info(`Migrated Daily Brief meeting preparation policy ${existing.version} → 7.7 without replacing newer live content`);
-  }
-}
+// Retired in Skill Default Lattice cut 3: the autonomy meeting-prep (1.5→1.6),
+// autonomy provenance (1.6→1.7), and Daily Brief meeting-prep (→7.7) clause
+// patches are superseded by the code catalog + lattice publisher. The canonical
+// meeting-readiness and session-ledger sections now live in the autonomy code
+// default (server/skill-defaults.ts, v1.7); the lattice offers them inbound to a
+// customized autonomy seat instead of a fingerprinted in-place patch.
 
 const SENTRY_CHANGESET_GATE_VERSION = "1.10";
 const SENTRY_RUN_EVIDENCE_MARKER = "8. Inspect recent `sentry` skill runs and open system issues/tasks/sessions when useful. Deduplicate by normalized signature + environment + likely subsystem. Update or reference an existing incident instead of creating another.";

@@ -29,6 +29,8 @@ import {
   skillRevisionPayload,
   skillPayloadHash,
   changedSkillFields,
+  compareSkillVersions,
+  codeCatalogSkillInputs,
   SKILL_PAYLOAD_FIELDS,
   type SkillRevisionPayload,
 } from "./skill-seed";
@@ -159,6 +161,13 @@ export interface IStorage {
     confirmed: boolean,
   ): Promise<SkillWithReferences | undefined>;
   healLeftoverSkillFollowers(): Promise<{ healed: number; abstained: number }>;
+  syncSkillCatalogToLattice(): Promise<{
+    published: number;
+    advancedFollowers: number;
+    offered: number;
+    skipped: number;
+    downgradeGuarded: number;
+  }>;
   incrementSkillSuccess(id: string): Promise<void>;
   incrementSkillFailure(id: string): Promise<void>;
   // insertSkillScore, getLatestSkillScore, getSkillScores, getSkillLastRuns removed — skill_scores superseded by skill_runs
@@ -1224,6 +1233,135 @@ export class HybridStorage implements IStorage {
       log.info("healLeftoverSkillFollowers complete", { healed, abstained });
     }
     return { healed, abstained };
+  }
+
+  /**
+   * Skill Default Lattice cut 3 — the code catalog is the platform seed identity
+   * (SEED_PERSONAS mirror). A higher code default version mints an immutable
+   * platform revision and publishes it through the same follower rules that
+   * publishPlatformSkillRevision uses. This is the whole global-advancement
+   * surface; boot no longer patches fingerprinted clauses or abstains silently
+   * on a customized row.
+   *
+   * Per def, on the resolved global seat:
+   * - No content drift, or the newest platform revision already carries the code
+   *   payload → skip (idempotent).
+   * - Live payload newer than the code default → downgrade-guarded, never write.
+   * - `following` global → mint a platform revision, advance the seed and its
+   *   `following` copies, mark non-following copies update_available.
+   * - Mixed/customized global → record the inbound default as an available
+   *   platform revision and mark it update_available. The authored payload is
+   *   preserved (never overwritten); the freeze becomes a classified offer.
+   *
+   * System boot path: intentionally not gated on an interactive principal —
+   * this is the code-owned catalog publisher, the analogue of seeding globals.
+   * Human "Apply to Default" onto a customized seat remains publishPlatformSkillRevision.
+   */
+  async syncSkillCatalogToLattice(): Promise<{
+    published: number;
+    advancedFollowers: number;
+    offered: number;
+    skipped: number;
+    downgradeGuarded: number;
+  }> {
+    let published = 0;
+    let advancedFollowers = 0;
+    let offered = 0;
+    let skipped = 0;
+    let downgradeGuarded = 0;
+
+    for (const { name, version: codeVersion, input } of codeCatalogSkillInputs()) {
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(7102, hashtext(${name}))`);
+        const [global] = await tx.select().from(skills).where(and(
+          eq(skills.scope, "global"),
+          eq(skills.name, name),
+        )).limit(1);
+        // Only lattice seats seeded from the code catalog participate here; a
+        // Mod-managed or not-yet-snapshotted row is left to its owner.
+        if (!global || !global.currentRevisionId) { skipped++; return; }
+
+        const currentPayload = await this.buildSkillPayloadTx(tx, global);
+        const codePayload = mergeSkillPayloadInput(currentPayload, input);
+        const codeHash = skillPayloadHash(codePayload);
+        const currentHash = skillPayloadHash(currentPayload);
+
+        const [latestPlatform] = await tx.select().from(skillRevisions).where(and(
+          eq(skillRevisions.skillIdentityId, global.id),
+          eq(skillRevisions.scope, "platform"),
+        )).orderBy(desc(skillRevisions.createdAt)).limit(1);
+
+        // Idempotent: the code payload is already the newest recorded default.
+        if (latestPlatform?.contentHash === codeHash) { skipped++; return; }
+        if (codeHash === currentHash) { skipped++; return; }
+
+        // Never downgrade a live payload that is newer than the code default.
+        const order = compareSkillVersions(global.version, codeVersion);
+        if (order !== null && order > 0) { downgradeGuarded++; return; }
+
+        if (global.updateState === "following") {
+          const revisionId = await this.insertSkillRevisionTx(tx, global, codePayload, {
+            scope: "platform",
+            parentRevisionId: global.currentRevisionId ?? null,
+            platformBaseRevisionId: global.currentRevisionId ?? null,
+            changeSummary: `Code catalog ${codeVersion}`,
+            createdByUserId: null,
+          });
+          await this.applySkillPayloadTx(tx, global.id, codePayload, {
+            baseRevisionId: revisionId,
+            currentRevisionId: revisionId,
+            updateState: "following",
+          });
+          await tx.update(skills).set({ version: codeVersion, updatedAt: new Date() }).where(eq(skills.id, global.id));
+          const followers = await tx.select().from(skills).where(and(
+            eq(skills.templateSkillId, global.id),
+            eq(skills.updateState, "following"),
+          ));
+          for (const follower of followers) {
+            await this.applySkillPayloadTx(tx, follower.id, codePayload, {
+              baseRevisionId: revisionId,
+              currentRevisionId: revisionId,
+              updateState: "following",
+            });
+            await tx.update(skills).set({ version: codeVersion, updatedAt: new Date() }).where(eq(skills.id, follower.id));
+            advancedFollowers++;
+          }
+          await tx.update(skills)
+            .set({ updateState: "update_available", updatedAt: new Date() })
+            .where(and(
+              eq(skills.templateSkillId, global.id),
+              sql`${skills.updateState} <> 'following'`,
+            ));
+          published++;
+          log.info("Skill catalog published platform revision", {
+            name, skillId: global.id, codeVersion, revisionId, advancedFollowers: followers.length,
+          });
+        } else {
+          // Mixed/customized global — offer the inbound default, never overwrite
+          // authored clauses. Its currentRevisionId/payload are untouched; the
+          // freeze is now a classified offer a human can Apply to Default.
+          await this.insertSkillRevisionTx(tx, global, codePayload, {
+            scope: "platform",
+            parentRevisionId: global.currentRevisionId ?? null,
+            platformBaseRevisionId: global.baseRevisionId ?? null,
+            changeSummary: `Code catalog ${codeVersion} (offered inbound)`,
+            createdByUserId: null,
+          });
+          await tx.update(skills)
+            .set({ updateState: "update_available", updatedAt: new Date() })
+            .where(eq(skills.id, global.id));
+          offered++;
+          log.info("Skill catalog offered inbound default to customized global", {
+            name, skillId: global.id, codeVersion, liveVersion: global.version,
+          });
+        }
+      });
+    }
+
+    log.info("Skill catalog lattice sync complete", {
+      published, advancedFollowers, offered, skipped, downgradeGuarded,
+    });
+    return { published, advancedFollowers, offered, skipped, downgradeGuarded };
   }
 
   async deleteSkill(id: string): Promise<boolean> {
