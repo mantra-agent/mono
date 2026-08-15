@@ -1,7 +1,6 @@
 import { pgTable, text, integer, real, boolean, timestamp, jsonb, index, uniqueIndex, doublePrecision } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
-import { businesses } from "./businesses";
 
 // ── Enums ──────────────────────────────────────────────────────────
 
@@ -42,7 +41,10 @@ export const metrics = pgTable(
   "metrics",
   {
     id: text("id").primaryKey(),
-    businessId: text("business_id").references(() => businesses.id, { onDelete: "restrict" }),
+    /** Legacy Business compatibility projection; Core ownership is ownerKind/ownerId. */
+    businessId: text("business_id"),
+    ownerKind: text("owner_kind").notNull().default("account"),
+    ownerId: text("owner_id"),
     name: text("name").notNull(),
     slug: text("slug").notNull(),
     description: text("description").notNull().default(""),
@@ -66,6 +68,7 @@ export const metrics = pgTable(
     accountVaultSlug: uniqueIndex("metrics_account_vault_slug_uidx").on(t.accountId, t.vaultId, t.slug),
     accountVault: index("metrics_account_vault_idx").on(t.accountId, t.vaultId),
     scopeOwner: index("metrics_scope_owner_idx").on(t.scope, t.ownerUserId),
+    owner: index("metrics_owner_idx").on(t.ownerKind, t.ownerId),
   }),
 );
 
@@ -159,6 +162,8 @@ const slugSchema = z
 const nameSchema = z.string().trim().min(1).max(160);
 
 export const metricCreateSchema = z.object({
+  ownerKind: z.string().trim().min(1).max(80).optional().default("account"),
+  ownerId: z.string().trim().min(1).optional(),
   businessId: z.string().trim().min(1).optional(),
   name: nameSchema,
   slug: slugSchema.optional(),
@@ -172,6 +177,8 @@ export const metricCreateSchema = z.object({
 });
 
 export const metricUpdateSchema = z.object({
+  ownerKind: z.string().trim().min(1).max(80).optional(),
+  ownerId: z.string().trim().min(1).optional(),
   businessId: z.string().trim().min(1).optional(),
   name: nameSchema.optional(),
   description: z.string().max(4000).optional(),
@@ -250,6 +257,8 @@ export type MetricSampleCreate = z.infer<typeof metricSampleCreateSchema>;
 
 export interface Metric {
   id: string;
+  ownerKind: string;
+  ownerId: string | null;
   businessId: string | null;
   name: string;
   slug: string;
