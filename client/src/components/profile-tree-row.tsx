@@ -83,12 +83,12 @@ export function ProfileTreeRow({
           : "grid-cols-[minmax(0,1fr)] gap-y-0";
   const stackedValueGrid =
     trailingCount === 3
-      ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto_auto] sm:gap-y-1"
+      ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,max-content)_auto_auto_auto] sm:gap-y-1"
       : trailingCount === 2
-        ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] sm:gap-y-1"
+        ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,max-content)_auto_auto] sm:gap-y-1"
         : trailingCount === 1
-          ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto] sm:gap-y-1"
-          : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)] sm:gap-y-1";
+          ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,max-content)_auto] sm:gap-y-1"
+          : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,max-content)] sm:gap-y-1";
   const stackedNoValueGrid =
     trailingCount === 3
       ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:gap-y-1"
@@ -132,11 +132,10 @@ export function ProfileTreeRow({
             <span
               className={cn(
                 !icon && "w-full",
-                // Inline field labels (Status, Vault, Drive) must stay fully
-                // readable; values absorb overflow, not the fixed labels.
-                mobileLayout === "inline"
-                  ? "shrink-0 whitespace-nowrap"
-                  : "min-w-0 break-words",
+                // Field labels are structural identifiers, not editable content:
+                // keep them on one line and let the value/editor absorb the
+                // remaining width.
+                "shrink-0 whitespace-nowrap",
               )}
             >
               {label}
@@ -151,11 +150,11 @@ export function ProfileTreeRow({
                   : "col-span-2 justify-start pl-6 text-left",
                 valueLayout === "compact"
                   ? "sm:col-span-1 sm:w-auto sm:justify-end sm:overflow-visible sm:pl-0 sm:text-right"
-                  : "sm:col-span-1 sm:w-48 sm:justify-end sm:overflow-visible sm:pl-0 sm:text-right",
-                "[&_input]:h-5 [&_input]:w-48 [&_input]:bg-muted/50 [&_input]:px-1.5 [&_input]:py-0 [&_input]:text-right [&_input]:text-xs [&_input]:leading-none",
+                  : "sm:col-span-1 sm:w-auto sm:justify-end sm:overflow-visible sm:pl-0 sm:text-right",
+                "[&_input]:h-5 [&_input]:w-auto [&_input]:min-w-0 [&_input]:max-w-full [&_input]:bg-muted/50 [&_input]:px-1.5 [&_input]:py-0 [&_input]:text-right [&_input]:text-xs [&_input]:leading-none",
                 "[&_input[type=date]]:[color-scheme:dark] [&_input[type=date]::-webkit-calendar-picker-indicator]:h-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:w-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:opacity-60 [&_input[type=date]::-webkit-calendar-picker-indicator]:invert",
-                "[&_textarea]:bg-muted/50 [&_textarea]:text-xs",
-                "[&_[role=combobox]]:h-5 [&_[role=combobox]]:w-48 [&_[role=combobox]]:justify-end [&_[role=combobox]]:bg-muted/50 [&_[role=combobox]]:px-1.5 [&_[role=combobox]]:py-0 [&_[role=combobox]]:text-right [&_[role=combobox]]:text-xs [&_[role=combobox]>span]:text-right",
+                "[&_textarea]:max-w-full [&_textarea]:bg-muted/50 [&_textarea]:text-xs",
+                "[&_[role=combobox]]:h-5 [&_[role=combobox]]:w-auto [&_[role=combobox]]:min-w-0 [&_[role=combobox]]:max-w-full [&_[role=combobox]]:justify-end [&_[role=combobox]]:bg-muted/50 [&_[role=combobox]]:px-1.5 [&_[role=combobox]]:py-0 [&_[role=combobox]]:text-right [&_[role=combobox]]:text-xs [&_[role=combobox]>span]:text-right",
                 mobileLayout === "inline"
                   ? "[&_button]:min-h-5 [&_button]:px-1.5 [&_button]:text-xs"
                   : "[&_button]:min-h-11 [&_button]:px-2 [&_button]:text-xs sm:[&_button]:min-h-5 sm:[&_button]:px-1.5",
