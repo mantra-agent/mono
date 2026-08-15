@@ -4773,41 +4773,17 @@ function OuraDetail() {
   const missingScopes = account?.missingScopes || [];
 
   return (
-    <div className="space-y-4" data-testid="oura-detail">
-      <Card data-testid="card-oura-account">
-        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <HeartPulse className="h-4 w-4" />
-            Ring Connection
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            {status?.connected && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => syncMutation.mutate()}
-                disabled={syncMutation.isPending}
-                data-testid="button-sync-oura"
-              >
-                {syncMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
-                Sync now
-              </Button>
-            )}
-            {!status?.connected && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={startOuraOAuth}
-                disabled={!status?.oauthConfigured || connectMutation.isPending}
-                data-testid="button-connect-oura"
-              >
-                {connectMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Plug className="h-3.5 w-3.5 mr-1.5" />}
-                Connect Oura
-              </Button>
-            )}
+    <div className="min-w-0 space-y-2" data-testid="oura-detail">
+      <IntegrationTreeSection label="Ring Connection" initialOpen={!status?.connected || warnings.length > 0} testIdPrefix="oura" icon={<HeartPulse className="h-3.5 w-3.5" />}>
+        <ProfileTreeRow label="Status" icon={status?.connected && account?.healthy !== false ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" testId="oura-connection-status"><OuraStatusBadge status={status} /></ProfileTreeRow>
+        <ProfileTreeRow label="Actions" icon={<HeartPulse className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
+          <div className="flex flex-wrap items-center gap-2">
+            {status?.connected ? <Button variant="outline" size="sm" onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending} data-testid="button-sync-oura">{syncMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}Sync now</Button> : <Button variant="outline" size="sm" onClick={startOuraOAuth} disabled={!status?.oauthConfigured || connectMutation.isPending} data-testid="button-connect-oura">{connectMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Plug className="h-3.5 w-3.5 mr-1.5" />}Connect Oura</Button>}
+            {status?.connected && <Button variant="ghost" size="sm" onClick={() => disconnectMutation.mutate()} disabled={disconnectMutation.isPending} data-testid="button-disconnect-oura">{disconnectMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}Disconnect</Button>}
           </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Account" icon={<HeartPulse className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact"><span className="text-muted-foreground">{account?.email || account?.label || (status?.connected ? "Oura Ring" : "Not connected")}</span></ProfileTreeRow>
+        <div className="space-y-4">
           {isLoading ? (
             <div className="space-y-2">
               <Skeleton className="h-16 w-full" />
@@ -4895,58 +4871,10 @@ function OuraDetail() {
               )}
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      {status?.connected && (
-        <div className="grid gap-4 @lg:grid-cols-2">
-          <Card data-testid="card-oura-scopes">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base font-semibold">Scopes</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex flex-wrap gap-2">
-                {scopes.length > 0 ? scopes.map((scope) => (
-                  <Badge key={scope} variant="outline" className="font-mono text-xs" data-testid={`badge-oura-scope-${scope}`}>{scope}</Badge>
-                )) : <span className="text-sm text-muted-foreground">No scopes reported.</span>}
-              </div>
-              {missingScopes.length > 0 && (
-                <p className="text-xs text-destructive">Missing: {missingScopes.join(", ")}</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card data-testid="card-oura-webhooks">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base font-semibold">Automatic Updates</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-muted-foreground">Webhook token</span>
-                <Badge variant={status?.webhookConfigured ? "outline" : "secondary"} data-testid="badge-oura-webhook-token">
-                  {status?.webhookConfigured ? "Configured" : "Not set"}
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-muted-foreground">Subscriptions</span>
-                <span className="text-sm font-medium" data-testid="text-oura-webhook-count">{webhooks?.subscriptions?.length || 0}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-muted-foreground">Last notification</span>
-                <span className="text-sm text-right" data-testid="text-oura-last-webhook">{formatOuraDateTime(webhooks?.lastNotificationAt)}</span>
-              </div>
-              {webhooks?.lastSubscriptionError && (
-                <p className="text-xs text-warning-foreground border-t pt-3" data-testid="text-oura-webhook-warning">{webhooks.lastSubscriptionError}</p>
-              )}
-              <p className="text-xs text-muted-foreground border-t pt-3" data-testid="text-oura-sync-mode">
-                {(webhooks?.subscriptions?.length || 0) > 0
-                  ? "Real-time updates accelerate the hourly periodic sync."
-                  : "Real-time updates are inactive. Oura remains connected and continues syncing periodically every hour."}
-              </p>
-            </CardContent>
-          </Card>
         </div>
-      )}
+      </IntegrationTreeSection>
+      {status?.connected && <IntegrationTreeSection label="Scopes" initialOpen={missingScopes.length > 0} testIdPrefix="oura-scopes"><ProfileTreeRow label="Granted" icon={<CheckCircle2 className="h-3.5 w-3.5 text-active" />} hasValue showEmpty expandedContent={<div className="flex flex-wrap gap-2">{scopes.map((scope) => <Badge key={scope} variant="outline" className="font-mono text-xs">{scope}</Badge>)}</div>}><span className="text-muted-foreground">{scopes.length} scopes</span></ProfileTreeRow>{missingScopes.length > 0 && <ProfileTreeRow label="Missing" icon={<AlertTriangle className="h-3.5 w-3.5 text-warning" />} hasValue showEmpty><span className="text-warning">{missingScopes.join(", ")}</span></ProfileTreeRow>}</IntegrationTreeSection>}
+      {status?.connected && <IntegrationTreeSection label="Automatic Updates" initialOpen={Boolean(webhooks?.lastSubscriptionError) || !status.webhookConfigured} testIdPrefix="oura-updates"><ProfileTreeRow label="Webhook token" icon={status.webhookConfigured ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <AlertTriangle className="h-3.5 w-3.5 text-warning" />} hasValue showEmpty><span className={status.webhookConfigured ? "text-active" : "text-warning"}>{status.webhookConfigured ? "Configured" : "Not set"}</span></ProfileTreeRow><ProfileTreeRow label="Subscriptions" icon={<RefreshCw className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">{webhooks?.subscriptions?.length || 0}</span></ProfileTreeRow><ProfileTreeRow label="Last notification" icon={<Activity className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">{formatOuraDateTime(webhooks?.lastNotificationAt)}</span></ProfileTreeRow>{webhooks?.lastSubscriptionError && <ProfileTreeRow label="Subscription warning" icon={<AlertTriangle className="h-3.5 w-3.5 text-warning" />} hasValue showEmpty><span className="text-warning">{webhooks.lastSubscriptionError}</span></ProfileTreeRow>}</IntegrationTreeSection>}
     </div>
   );
 }
