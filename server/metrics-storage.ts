@@ -244,7 +244,7 @@ async function overlayIdentityStockSample(metric: Metric): Promise<Metric> {
     sourceRef: `internal/${metric.slug}-query-v1`,
     evidence: metric.slug === "accounts"
       ? "Count of identity accounts with status=active."
-      : "Count of registered users in the identity graph.",
+      : "Distinct users with a membership on an active (status=active) account.",
     periodStart: null,
     periodEnd: null,
     createdAt: observedAt,
@@ -588,7 +588,7 @@ export const metricsStorage = {
         evidence: isIdentityStock
           ? (definition.slug === "accounts"
             ? "Count of identity accounts with status=active."
-            : "Count of registered users in the identity graph.")
+            : "Distinct users with a membership on an active (status=active) account.")
           : "Resolved from the owning product system for the selected range.",
         periodStart: isIdentityStock ? null : start.toISOString(),
         periodEnd: isIdentityStock ? null : end.toISOString(),
