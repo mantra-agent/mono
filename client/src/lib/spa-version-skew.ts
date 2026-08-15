@@ -2,6 +2,9 @@ import { createLogger } from "./logger";
 
 const log = createLogger("SpaVersionSkew");
 const AUTO_RELOAD_KEY = "mantra:spa-version-skew:auto-reload";
+// Sentinel reload key for a confirmed chunk failure when the server cannot
+// report its build id. Keeps the one-shot reload bounded without a real SHA.
+const UNKNOWN_BUILD_RELOAD_KEY = "unknown-build";
 const PROMPT_ID = "mantra-version-skew-prompt";
 const MIN_CHECK_INTERVAL_MS = 15_000;
 
@@ -85,6 +88,22 @@ function showUpdatePrompt(): void {
   document.body.append(prompt);
 }
 
+function reloadOnceOrPrompt(reloadKey: string): VersionSkewRecoveryOutcome {
+  try {
+    if (sessionStorage.getItem(AUTO_RELOAD_KEY) === reloadKey) {
+      showUpdatePrompt();
+      return "update_prompted";
+    }
+
+    sessionStorage.setItem(AUTO_RELOAD_KEY, reloadKey);
+    window.location.reload();
+    return "reload_started";
+  } catch {
+    showUpdatePrompt();
+    return "update_prompted";
+  }
+}
+
 async function fetchServerBuildId(): Promise<string | null> {
   const response = await fetch("/api/version", {
     cache: "no-store",
@@ -126,7 +145,17 @@ async function checkForVersionSkew(
   inFlight = (async () => {
     try {
       const serverBuildId = await fetchServerBuildId();
-      if (!serverBuildId) return "same_build";
+      if (!serverBuildId) {
+        // A confirmed chunk failure with no resolvable server build id must not
+        // strand the route on same_build. Attempt one guarded reload keyed by a
+        // fixed sentinel so a stale or dropped asset still gets one recovery
+        // pass without looping; ordinary skew checks keep same_build.
+        if (!recoverChunkFailure) return "same_build";
+        log.warn("SPA chunk failure with unresolved server build id", {
+          clientBuildId: __MANTRA_BUILD_ID__,
+        });
+        return reloadOnceOrPrompt(UNKNOWN_BUILD_RELOAD_KEY);
+      }
 
       const buildChanged = serverBuildId !== __MANTRA_BUILD_ID__;
       if (!buildChanged && !recoverChunkFailure) return "same_build";
@@ -136,19 +165,7 @@ async function checkForVersionSkew(
         serverBuildId,
       });
 
-      try {
-        if (sessionStorage.getItem(AUTO_RELOAD_KEY) === serverBuildId) {
-          showUpdatePrompt();
-          return "update_prompted";
-        }
-
-        sessionStorage.setItem(AUTO_RELOAD_KEY, serverBuildId);
-        window.location.reload();
-        return "reload_started";
-      } catch {
-        showUpdatePrompt();
-        return "update_prompted";
-      }
+      return reloadOnceOrPrompt(serverBuildId);
     } catch (error) {
       log.warn("SPA version check unavailable", {
         error: error instanceof Error ? error.message : String(error),
