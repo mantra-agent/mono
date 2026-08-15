@@ -16,7 +16,7 @@ import type {
   MetricSample,
   StandingObjectiveKey,
 } from "@shared/models/metrics";
-import { kpiStorage, metricsStorage } from "./metrics-storage";
+import { kpiStorage, metricsStorage } from "./metrics/core-engine";
 import { db } from "./db";
 import { getCurrentPrincipal } from "./principal-context";
 

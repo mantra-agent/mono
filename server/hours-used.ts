@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import { createLogger } from "./log";
 import { ensureMetricsSamplesSchema, metricsDb } from "./metrics-db";
 import { enqueueTelemetryWrite } from "./telemetry-write";
-import { ensurePlatformBusinessMetrics, upsertInternalPeriodSample } from "./metrics-storage";
+import { ensurePlatformBusinessMetrics, upsertInternalPeriodSample } from "./metrics/core-engine";
 
 const log = createLogger("HoursUsed");
 export const USAGE_LEASE_TAIL_MS = 45_000;

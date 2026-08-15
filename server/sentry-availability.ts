@@ -1,7 +1,7 @@
 import { getSecret } from "./secrets-store";
 import { getCurrentPrincipal } from "./principal-context";
 import { fetchUptimeAggregate, getSentryConfig, isSentryConfigured, SentryApiError } from "./integrations/sentry/client";
-import { metricsStorage } from "./metrics-storage";
+import { metricsStorage } from "./metrics/core-engine";
 import type { Metric } from "@shared/models/metrics";
 
 const EXPECTED_DAILY_CHECKS = 24 * 60;

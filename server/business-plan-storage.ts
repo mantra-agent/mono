@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { businessPlans, projects, vaults, type BusinessPlan, type BusinessPlanCreate, type BusinessPlanPatch, type InitiativeMeasurementBinding } from "@shared/schema";
 import { db } from "./db";
 import { goalStorage } from "./goal-storage";
-import { kpiStorage, metricsStorage } from "./metrics-storage";
+import { kpiStorage, metricsStorage } from "./metrics/core-engine";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { assertWritable, combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 

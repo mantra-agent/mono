@@ -69,7 +69,7 @@ export async function convergeBootSchema(): Promise<void> {
         const { migrateOpportunitySchema } = await import("./opportunity-storage");
         const { ensureWorkVaultParentSchema, ensureWorkVaultSchema } = await import("./work-vault-schema");
         const { ensureMilestonesSchema } = await import("./milestone-schema");
-        const { ensureMetricsDefinitionsSchema } = await import("./metrics-storage");
+        const { ensureMetricsDefinitionsSchema } = await import("./metrics/core-engine");
         const { ensureBusinessPlansSchema } = await import("./business-plan-storage");
         const { ensureBusinessesSchema } = await import("./business-storage");
         const { ensureBusinessBudgetsSchema } = await import("./business-budget-schema");
