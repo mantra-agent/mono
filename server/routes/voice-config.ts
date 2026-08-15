@@ -43,10 +43,20 @@ const DEFAULT_AUDIO_TAGS: AudioTag[] = [
   { tag: "calm", description: "Relaxed and soothing delivery" },
   { tag: "sighs", description: "Audible sigh expressing emotion" },
   { tag: "laughs", description: "Natural laughter" },
+  { tag: "laughs softly", description: "Light, gentle laughter" },
   { tag: "pause", description: "Brief dramatic pause" },
   { tag: "nervous", description: "Anxious or hesitant tone" },
   { tag: "cheerfully", description: "Upbeat and happy delivery" },
   { tag: "whispers", description: "Soft, hushed voice" },
+  { tag: "curious", description: "Interested, inquisitive, exploratory tone" },
+  { tag: "gravitas", description: "Weighty, profound, serious delivery" },
+  { tag: "warmly", description: "Warm, affectionate, caring tone" },
+  { tag: "gently", description: "Soft, tender, careful delivery" },
+  { tag: "reassuring", description: "Steady, comforting, confidence-building tone" },
+  { tag: "thoughtful", description: "Reflective, measured, considered delivery" },
+  { tag: "playful", description: "Light, teasing, good-humored tone" },
+  { tag: "sincerely", description: "Earnest and genuine delivery" },
+  { tag: "wistful", description: "Quietly nostalgic or bittersweet tone" },
 ];
 
 const TTS_CONFIG_KEY = "voice_tts_config";
