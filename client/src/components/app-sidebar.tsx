@@ -251,6 +251,9 @@ const navSections: NavSection[] = [
       navItem("Library", "navigation.library.open", FolderOpen),
       navItem("Files", "navigation.files.open", HardDrive),
       navItem("Wellness", "navigation.wellness.open", Activity, "muted"),
+      navItem("KPIs", "navigation.kpis.open", Gauge),
+      navItem("Metrics", "navigation.metrics.open", Activity),
+      navItem("Performance", "navigation.performance.open", Gauge),
     ],
   },
   {
@@ -284,8 +287,6 @@ const navSections: NavSection[] = [
       navItem("Budgets", "navigation.budgets.open", DollarSign),
       navItem("Roles", "navigation.roles.open", Briefcase),
       navItem("Hiring", "navigation.hiring.open", UserPlus),
-      navItem("KPIs", "navigation.kpis.open", Gauge),
-      navItem("Metrics", "navigation.metrics.open", Activity),
     ],
   },
   {
@@ -335,7 +336,6 @@ const navSections: NavSection[] = [
     label: "System",
     defaultOpen: false,
     items: [
-      navItem("Performance", "navigation.performance.open", Gauge),
       navItem("Logs", "navigation.logs.open", ScrollText),
       navItem("Events", "navigation.events.open", Zap),
       navItem("Tools", "navigation.tools.open", Wrench),

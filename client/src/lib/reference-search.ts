@@ -361,14 +361,14 @@ export async function loadReferenceSuggestions(
         : Promise.resolve(null),
       allow("metric")
         ? fetchJson<unknown>(
-            `/api/business/metrics${query ? `?query=${encoded}` : ""}`,
+            `/api/metrics${query ? `?query=${encoded}` : ""}`,
             signal,
           )
         : Promise.resolve(null),
       // KPI list is canonically `{ kpis: [...] }`; search param is `query`, not `q`.
       allow("kpi")
         ? fetchJson<unknown>(
-            `/api/business/kpis${query ? `?query=${encoded}` : ""}`,
+            `/api/kpis${query ? `?query=${encoded}` : ""}`,
             signal,
           )
         : Promise.resolve(null),

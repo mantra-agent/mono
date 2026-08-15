@@ -29,7 +29,7 @@ const INVALIDATION_MAP: Record<string, string[][]> = {
   "data:sessions_changed": [["/api/sessions"]],
   "data:tasks_changed": [["/api/projects/tasks"], ["/api/projects/todo"], ["/api/home/feed"]],
   "data:projects_changed": [["/api/projects/projects"], ["/api/home/feed"]],
-  "data:metrics_changed": [["/api/business/metrics"], ["/api/business/kpis"], ["/api/business/kpis/standing-scores"]],
+  "data:metrics_changed": [["/api/metrics"], ["/api/kpis"], ["/api/kpis/standing-scores"]],
   "data:library_changed": [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library/unread"], ["/api/library/index"]],
   "data:product_composition_changed": [["/api/mods"], ["/api/product-composition?modality=web"], ["/api/home/feed"]],
   "data:home_changed": [["/api/home/feed"]],

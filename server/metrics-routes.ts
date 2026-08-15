@@ -79,6 +79,17 @@ async function ensureSeeded(): Promise<void> {
 }
 
 export function registerMetricsRoutes(app: Express): void {
+  // Core owns the measurement contract. Keep the Business paths as compatibility
+  // aliases while callers migrate to the neutral Tools/Core API surface.
+  app.use("/api/metrics", (req, _res, next) => {
+    req.url = `/api/business/metrics${req.url === "/" ? "" : req.url}`;
+    next();
+  });
+  app.use("/api/kpis", (req, _res, next) => {
+    req.url = `/api/business/kpis${req.url === "/" ? "" : req.url}`;
+    next();
+  });
+
   // ── Metrics ──────────────────────────────────────────────────────
   app.get(
     "/api/business/metrics",

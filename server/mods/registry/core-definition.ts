@@ -72,6 +72,9 @@ export const coreDefinition: CoreDefinition = {
       clientRoute("core.route.vaults", "/vaults", "vaults"),
       clientRoute("core.route.teams", "/teams", "teams"),
       clientRoute("core.route.decisions", "/decisions", "decisions"),
+      clientRoute("core.route.metrics", "/tools/metrics", "business-metrics", { requiredPermissions: ["system:read"] }),
+      clientRoute("core.route.kpis", "/tools/kpis", "business-kpis", { requiredPermissions: ["system:read"] }),
+      clientRoute("core.route.performance", "/tools/performance", "performance-screen", { requiredPermissions: ["system:read"] }),
     ],
     navigation: [
       // Tools
@@ -97,8 +100,12 @@ export const coreDefinition: CoreDefinition = {
       nav("core.nav.memory-graph", "Memory", "Graph", "Share2", "navigation.memoryGraph.open", "core.route.memory", 2),
       nav("core.nav.memory-journal", "Memory", "Journal", "ScrollText", "navigation.memoryJournal.open", "core.route.memory", 3),
       nav("core.nav.tags", "Memory", "Tags", "Tags", "navigation.tags.open", "core.route.tags", 4),
+      // Tools
+      nav("core.nav.metrics", "Tools", "Metrics", "Activity", "navigation.metrics.open", "core.route.metrics", 7, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.kpis", "Tools", "KPIs", "Gauge", "navigation.kpis.open", "core.route.kpis", 8, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.performance", "Tools", "Performance", "Gauge", "navigation.performance.open", "core.route.performance", 9, { requiredPermissions: ["system:read"] }),
       // System
-      nav("core.nav.performance", "System", "Performance", "Gauge", "navigation.performance.open", "core.route.system", 1, { requiredPermissions: ["system:read"] }),
+
       nav("core.nav.logs", "System", "Logs", "ScrollText", "navigation.logs.open", "core.route.system", 2, { requiredPermissions: ["system:read"] }),
       nav("core.nav.events", "System", "Events", "Zap", "navigation.events.open", "core.route.system", 3, { requiredPermissions: ["system:read"] }),
       nav("core.nav.tools", "System", "Tools", "Wrench", "navigation.tools.open", "core.route.system", 4, { requiredPermissions: ["system:read"] }),
