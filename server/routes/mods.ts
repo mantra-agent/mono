@@ -6,6 +6,7 @@
 // entitlement/installation state — never a second source of truth.
 
 import type { Express, Request, Response } from "express";
+import { eq } from "drizzle-orm";
 import { requireAuth } from "../auth";
 import { requirePermission, principalHasPermission } from "../permissions";
 import { createLogger } from "../log";
@@ -16,8 +17,9 @@ import {
   modLifecycleService,
 } from "../mods/mod-lifecycle-service";
 import { BASELINE_MOD_KEYS } from "../mods/mod-lifecycle-service";
-import type { ModInstallationRow, ModKey } from "@shared/schema";
-import type { Principal } from "../principal";
+import { accounts, users, type ModInstallationRow, type ModKey } from "@shared/schema";
+import { createUserPrincipalFromUser, getPrincipal, recordPrivilegedAccess, type Principal } from "../principal";
+import { db } from "../db";
 
 const log = createLogger("mods-route");
 
@@ -84,6 +86,23 @@ function normalizeKeyParam(res: Response, raw: string): ModKey | null {
   return key as ModKey;
 }
 
+async function targetAccountPrincipal(req: Request, accountId: string, write: boolean): Promise<Principal> {
+  const operator = getPrincipal(req);
+  const required = write ? "users:write" : "users:read";
+  if (!operator || !principalHasPermission(operator, required)) {
+    throw new ModPlatformError("account_admin_required", "Account administration required", 403);
+  }
+  const [account] = await db.select({ id: accounts.id, ownerUserId: accounts.ownerUserId })
+    .from(accounts).where(eq(accounts.id, accountId)).limit(1);
+  if (!account) throw new ModPlatformError("account_not_found", "Account not found", 404);
+  if (!account.ownerUserId) throw new ModPlatformError("account_owner_required", "Account owner required", 400);
+  const [owner] = await db.select().from(users).where(eq(users.id, account.ownerUserId)).limit(1);
+  if (!owner) throw new ModPlatformError("account_owner_not_found", "Account owner not found", 404);
+  const principal = createUserPrincipalFromUser(owner, account.id);
+  principal.permissions = write ? ["mods:read", "mods:manage"] : ["mods:read"];
+  return principal;
+}
+
 export function registerModsRoutes(app: Express): void {
   // Catalog: derived join of registry + account state. Ensures the baseline
   // (Planning + Network) is provisioned idempotently before projecting.
@@ -116,6 +135,42 @@ export function registerModsRoutes(app: Express): void {
       });
 
       return res.json({ mods, canManage });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  app.get("/api/admin/accounts/:accountId/mods", requireAuth, requirePermission("users:read"), async (req, res) => {
+    try {
+      const principal = await targetAccountPrincipal(req, req.params.accountId, false);
+      await modLifecycleService.ensureBaseline(principal);
+      const { installations } = await modLifecycleService.listAccountState(principal);
+      const byKey = new Map(installations.map((row) => [row.modKey, row]));
+      return res.json({
+        mods: modRegistry.mods.map((mod) => ({ key: mod.key, name: mod.name, status: statusFromInstallation(byKey.get(mod.key)) })),
+        canManage: principalHasPermission(getPrincipal(req)!, "users:write"),
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  app.post("/api/admin/accounts/:accountId/mods/:key/:action", requireAuth, requirePermission("users:write"), async (req, res) => {
+    try {
+      const operator = getPrincipal(req);
+      const principal = await targetAccountPrincipal(req, req.params.accountId, true);
+      const key = normalizeKeyParam(res, req.params.key);
+      if (!key) return res;
+      const action = req.params.action;
+      const row = action === "disable"
+        ? await modLifecycleService.disable(principal, { modKey: key })
+        : action === "install"
+          ? await modLifecycleService.installProductMod(principal, key)
+          : null;
+      if (!row) return res.status(400).json({ error: "Unknown Mod action" });
+      publishCompositionChanged(principal, key, action as "install" | "disable");
+      await recordPrivilegedAccess({ principal: operator!, action: `account_mod_${action}`, reason: "admin account Mod lifecycle", metadata: { accountId: req.params.accountId, modKey: key } });
+      return res.json({ key, status: statusFromInstallation(row) });
     } catch (error) {
       return handleError(res, error);
     }
