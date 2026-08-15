@@ -87,7 +87,7 @@ export const TOOL_DOMAIN_ADAPTERS: readonly ToolDomainAdapter[] = [
   {
     id: "relationships",
     owner: "core-relationships",
-    tools: ["people", "companies", "pronunciation"],
+    tools: ["people", "companies", "pronunciation", "blocking_graph"],
     authorizationDependencies: ["principal-context", "People Vault membership", "company membership"],
     normalizationExtensions: ["Person identity resolution", "contact metadata policy", "Vault membership sets"],
     artifactKinds: ["person", "interaction"],

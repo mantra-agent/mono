@@ -175,6 +175,11 @@ export async function ensureLifeAddressingSchema(pool: Pool): Promise<void> {
       ON address_links(scope, owner_user_id, account_id, lifecycle)
     `);
     await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uk_address_links_active_relationship
+      ON address_links(owner_user_id, account_id, source_address, predicate, target_address)
+      WHERE lifecycle = 'active'
+    `);
+    await client.query(`
       ALTER TABLE decision_links ADD COLUMN IF NOT EXISTS address_link_id UUID REFERENCES address_links(id) ON DELETE SET NULL
     `);
     await client.query(`
