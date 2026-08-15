@@ -1,28 +1,141 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Search, Plus } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { ChevronRight, Loader2, Plus } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
-import { apiRequest } from "@/lib/queryClient";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
+import {
+  HIERARCHY_PRIMARY_ACTION_CLASS,
+  HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 
 const stages = ["idea", "spec", "develop", "test", "calibrate", "maintain", "deprecate"] as const;
 type Feature = { id: string; summary: string; stage: typeof stages[number]; status: string; product_name?: string };
+type Product = { id: number; name: string };
+
+function formatStage(stage: typeof stages[number]) {
+  return stage.charAt(0).toUpperCase() + stage.slice(1);
+}
+
+function CreateFeatureDialog({ products, onCreated }: { products: Product[]; onCreated: () => void }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [summary, setSummary] = useState("");
+  const [productId, setProductId] = useState("");
+  const [owner, setOwner] = useState<ReferencePickerValue[]>([]);
+  const create = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/features", {
+        summary: summary.trim(),
+        productId: Number(productId),
+        ownerPersonId: owner[0]?.id,
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/features"] });
+      toast({ title: "Feature created", description: summary.trim() });
+      setSummary("");
+      setProductId("");
+      setOwner([]);
+      setOpen(false);
+      onCreated();
+    },
+    onError: (error: unknown) => toast({
+      title: "Failed to create Feature",
+      description: error instanceof Error ? error.message : "Unknown error",
+      variant: "destructive",
+    }),
+  });
+  const valid = summary.trim().length > 0 && Boolean(productId) && Boolean(owner[0]?.id);
+
+  return (
+    <>
+      <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => setOpen(true)} data-testid="button-new-feature">
+        <Plus className="h-3.5 w-3.5 shrink-0" />
+        <span>New Feature</span>
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Feature</DialogTitle>
+            <DialogDescription>Give the roadmap item a clear summary, Product, and Owner.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input autoFocus placeholder="Feature summary" value={summary} onChange={(event) => setSummary(event.target.value)} data-testid="input-feature-summary" />
+            <Select value={productId} onValueChange={setProductId}>
+              <SelectTrigger data-testid="select-feature-product"><SelectValue placeholder="Product" /></SelectTrigger>
+              <SelectContent>{products.map((product) => <SelectItem key={product.id} value={String(product.id)}>{product.name}</SelectItem>)}</SelectContent>
+            </Select>
+            <ReferencePicker
+              types={["person"]}
+              mode="single"
+              variant="compact"
+              placeholder="Owner"
+              value={owner}
+              onChange={setOwner}
+              testId="picker-feature-owner"
+            />
+          </div>
+          <DialogFooter>
+            <Button onClick={() => create.mutate()} disabled={!valid || create.isPending} data-testid="button-create-feature">
+              {create.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+              Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
 export default function FeaturesPage() {
   const [search, setSearch] = useState("");
-  const features = useQuery<Feature[]>({ queryKey: ["/api/features", search], queryFn: async () => apiRequest("GET", `/api/features${search ? `?search=${encodeURIComponent(search)}` : ""}`) });
-  const grouped = useMemo(() => stages.map(stage => ({ stage, rows: (features.data ?? []).filter(row => row.stage === stage) })), [features.data]);
-  return <div className="flex h-full min-w-0 flex-col gap-4 bg-background p-4">
-    <div className="flex items-center gap-2">
-      <div className="relative min-w-0 flex-1"><Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search Features" className="pl-8" aria-label="Search Features" /></div>
-      <Button className="bg-cta text-cta-foreground"><Plus className="mr-2 h-3.5 w-3.5" />New Feature</Button>
+  const features = useQuery<Feature[]>({
+    queryKey: ["/api/features", search],
+    queryFn: async () => apiRequest("GET", `/api/features${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+  });
+  const products = useQuery<Product[]>({ queryKey: ["/api/products"] });
+  const grouped = useMemo(
+    () => stages.map((stage) => ({ stage, rows: (features.data ?? []).filter((row) => row.stage === stage) })),
+    [features.data],
+  );
+
+  return (
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className={HIERARCHY_TREE_STACK_CLASS} data-testid="features-page">
+          <HierarchySearchInput value={search} onChange={setSearch} inputTestId="input-search-features" clearTestId="button-clear-feature-search" ariaLabel="Search features" />
+          <CreateFeatureDialog products={products.data ?? []} onCreated={() => features.refetch()} />
+          {grouped.map(({ stage, rows }) => (
+            <Collapsible key={stage} defaultOpen>
+              <CollapsibleTrigger className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}>
+                <ChevronRight className="h-3 w-3 shrink-0" />
+                {formatStage(stage)}
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                {rows.length ? rows.map((feature, index) => (
+                  <HierarchyTreeRow key={feature.id} continues={index < rows.length - 1} connectorAnchor="first-row-center">
+                    <ProfileTreeRow label={feature.summary} hasValue showEmpty mobileLayout="inline" valueLayout="compact" testId={`feature-row-${feature.id}`}>
+                      <span className="truncate text-muted-foreground">{feature.product_name ?? "Product"} · {feature.status.replace("_", " ")}</span>
+                    </ProfileTreeRow>
+                  </HierarchyTreeRow>
+                )) : <div className="px-2 py-1.5 text-sm text-muted-foreground">No Features</div>}
+              </CollapsibleContent>
+            </Collapsible>
+          ))}
+        </div>
+      </div>
     </div>
-    <div className="flex min-w-0 flex-col gap-2">
-      {grouped.map(({ stage, rows }) => <section key={stage} className="border-b border-border/30 pb-2">
-        <h2 className="px-2 py-1 text-sm font-medium capitalize text-foreground">{stage}</h2>
-        {rows.length ? rows.map(feature => <HierarchyTreeRow key={feature.id} label={feature.summary} meta={`${feature.product_name ?? "Product"} · ${feature.status.replace("_", " ")}`} />) : <div className="px-2 py-1.5 text-sm text-muted-foreground">No Features</div>}
-      </section>)}
-    </div>
-  </div>;
+  );
 }
