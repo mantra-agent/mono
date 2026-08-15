@@ -1,5 +1,5 @@
-import { and, count, eq, gte, isNotNull, lt, min } from "drizzle-orm";
-import { accounts, users } from "@shared/schema";
+import { and, count, countDistinct, eq, gte, isNotNull, lt, min } from "drizzle-orm";
+import { accounts, memberships, users } from "@shared/schema";
 import { db } from "./db";
 
 export interface NewUsersCoverage {
@@ -20,9 +20,11 @@ export interface IdentityRangeSample extends IdentityStockSample {
 
 /**
  * Point-in-time identity stocks. Accounts are ordinary live rows
- * (`status = active`). Users are every registered login. Archived and
- * suspended accounts are excluded; presence and password-signup provenance
- * are different quantities.
+ * (`status = active`). Users is the living identity base: distinct users with
+ * at least one membership on an active Account. Users have no lifecycle field
+ * of their own, so Account status is the sole discriminant — a user whose only
+ * Accounts are archived or suspended is not counted. Presence and
+ * password-signup provenance are different quantities.
  */
 export async function sampleIdentityStock(): Promise<IdentityStockSample> {
   const [[accountStock], [userStock]] = await Promise.all([
@@ -31,8 +33,10 @@ export async function sampleIdentityStock(): Promise<IdentityStockSample> {
       .from(accounts)
       .where(eq(accounts.status, "active")),
     db
-      .select({ value: count() })
-      .from(users),
+      .select({ value: countDistinct(memberships.userId) })
+      .from(memberships)
+      .innerJoin(accounts, eq(accounts.id, memberships.accountId))
+      .where(eq(accounts.status, "active")),
   ]);
 
   return {
