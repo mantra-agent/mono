@@ -1,3 +1,10 @@
+<!-- 2026-08-14 People Slack User ID is an address, not a Principal:
+- Assets/data: A01 Person contact identity (`persons.social_profiles.slack`, S1 Slack User ID). No token, mapping, Session, or send authority.
+- Flow/threat: People profile -> typed Slack User ID (`U…`) stored like Instagram. Credible abuse is treating that field as inbound Slack identity, auto-discovering IDs, or posting from it (STRIDE spoofing/elevation; IAM-01/AGENT-03).
+- Deterministic controls/owner: `savePerson` persists only a Slack User ID matching U followed by 1-31 A-Z/0-9 characters. `slack_principal_mappings` remains the only inbound User locator. No `users:read`, workspace catalog, Slack tool, or outbound origin is added. Owner: Core People. Severity: medium integrity. SLA: immediate.
+- Residual/rollback: a Person Slack ID cannot run a Session or send. Revert the socialProfiles.slack field, sanitizer, profile row, and this finding together.
+-->
+
 <!-- 2026-08-14 Leftover catalog followers rebase:
 - Assets/data: A04/A06 selectable Persona identity (S2 mind configuration). updateState is follow vs customize, not a second seat.
 - Flow/threat: Operator→Executive (and Persuader/Creative) kept the old overlay on user copies. Lineage hashed that leftover against the new seed, marked pinned_legacy, then Apply to Default only pushed following copies. Uncustomized accounts stayed on a retired card and missed every later publish (STRIDE spoofing/elevation analogue; AGENT-03).

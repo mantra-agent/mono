@@ -265,6 +265,9 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
       });
       res.json(person);
     } catch (error: any) {
+      if (typeof error.message === "string" && error.message.includes("Slack User ID must look like")) {
+        return res.status(400).json({ error: error.message });
+      }
       log.error(`POST /api/people error:`, error.message);
       res.status(500).json({ error: error.message });
     }
@@ -369,6 +372,9 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
     } catch (error: any) {
       if (error.message.includes("not found")) {
         return res.status(404).json({ error: error.message });
+      }
+      if (typeof error.message === "string" && error.message.includes("Slack User ID must look like")) {
+        return res.status(400).json({ error: error.message });
       }
       log.error(`PATCH /api/people/${req.params.id} error:`, error.message);
       res.status(500).json({ error: error.message });
