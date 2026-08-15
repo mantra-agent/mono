@@ -467,9 +467,11 @@ export async function registerOuraRoutes(app: Express): Promise<void> {
         permissions: { scopes: OURA_OAUTH_SCOPES },
       });
       await updateAccount(OURA_ACCOUNT_ID, { healthy: true, healthError: null, healthCheckedAt: new Date(), missingScopes: null });
-      await attemptOuraWebhookSubscription(OURA_ACCOUNT_ID, `${getRequestOrigin(req)}/api/oura/webhook`);
       log.log(`oauth connected accountId=${OURA_ACCOUNT_ID} hasEmail=${!!email} scopes=${OURA_OAUTH_SCOPES.join(",")}`);
       sendCallbackHtml(res, { ok: true, title: label, body: "Oura Ring is connected." });
+      void attemptOuraWebhookSubscription(OURA_ACCOUNT_ID, `${getRequestOrigin(req)}/api/oura/webhook`).catch((error: unknown) => {
+        log.warn(`post-connect webhook setup failed errorClass=${classifyOuraRouteError(error)}`);
+      });
     } catch (error: unknown) {
       const publicError = toPublicError(error);
       log.error(`oauth callback failed errorClass=${classifyOuraRouteError(error)} status=${publicError.status} message=${publicError.message}`);

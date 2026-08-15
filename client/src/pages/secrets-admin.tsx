@@ -42,6 +42,10 @@ export default function SecretsAdminPage() {
       <ProfileDetailSection title="Sentry" defaultOpen testId="secrets-section-sentry">
         <SecretsForSection section="sentry" />
       </ProfileDetailSection>
+
+      <ProfileDetailSection title="Oura" defaultOpen testId="secrets-section-oura">
+        <SecretsForSection section="oura" />
+      </ProfileDetailSection>
     </div>
   );
 }
