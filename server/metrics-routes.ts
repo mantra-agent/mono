@@ -5,7 +5,7 @@ import {
   ensureMetricsDefinitionsSchema,
   kpiStorage,
   metricsStorage,
-} from "./metrics-storage";
+} from "./metrics/core-engine";
 import {
   kpiCreateSchema,
   kpiUpdateSchema,

@@ -6,7 +6,7 @@ import {
   ensurePlatformBusinessMetrics,
   upsertInternalPeriodSample,
   type InternalBusinessMetricDefinition,
-} from "./metrics-storage";
+} from "./metrics/core-engine";
 
 const log = createLogger("UserMemory");
 const ROLLUP_INTERVAL_MS = 60 * 60 * 1000;

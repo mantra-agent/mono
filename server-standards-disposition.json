@@ -58,6 +58,15 @@
       "reviewTrigger": "Voice session, provider, streaming, or speech ownership changes"
     },
     {
+      "id": "server-metrics-core",
+      "status": "reviewed",
+      "paths": ["server/metrics/core-engine.ts"],
+      "owner": "Core Measurement Engine",
+      "principles": ["Single Source of Truth", "Modular Systems", "Canonical Mutation Path", "Principal Scope", "Replayability"],
+      "evidence": "Neutral Core measurement facade delegates definitions, samples, ingest, query, freshness, and KPI evaluation to the existing principal-scoped metrics storage without duplicating persistence or changing identifiers.",
+      "reviewTrigger": "Core measurement engine contract, metric/KPI storage, sample ingest, or domain adapter migration"
+    },
+    {
       "id": "server-routes",
       "status": "reviewed",
       "prefixes": ["server/routes/"],
