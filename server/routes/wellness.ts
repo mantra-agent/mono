@@ -670,18 +670,23 @@ export async function upsertHealthMetricsAndProcessCompletions(
   rows: InsertHealthMetric[],
   opts: { logPrefix?: string; swallowCompletionErrors?: boolean } = {},
 ): Promise<HealthMetricUpsertResult> {
+  // Resolve ownership once. If the principal cannot be resolved, that is a
+  // caller/context defect and must surface to the caller, not be swallowed per row.
+  const ownership = sensitiveOwnershipValues(requireCurrentPrincipal());
   let inserted = 0;
   const affectedPairs: HealthMetricAffectedPair[] = [];
 
   for (const row of rows) {
     try {
-      await db.insert(healthMetrics).values({ ...row, ...sensitiveOwnershipValues(requireCurrentPrincipal()) }).onConflictDoNothing();
-      // Preserve webhook behavior: this counts accepted insert attempts, including
-      // conflict-noop duplicates, because callers historically observed this value.
+      await db.insert(healthMetrics).values({ ...row, ...ownership }).onConflictDoNothing();
+      // Counts accepted insert attempts, including conflict-noop duplicates,
+      // because callers historically observed this value.
       inserted++;
-    } catch {
-      // Preserve webhook behavior: invalid individual rows are ignored so a single
-      // bad metric never prevents the rest of a health payload from landing.
+    } catch (err: any) {
+      // A single bad metric must never block the rest of a health payload, but the
+      // failure must be visible (Fail Loudly). A silent swallow here previously hid
+      // an entire Oura payload dropping with inserted=0 and no diagnostic.
+      log.warn(`[HealthMetrics] insert failed metricType=${row.metricType} date=${row.date} sqlstate=${err?.code ?? "unknown"} message=${err?.message ?? String(err)}`);
     }
     affectedPairs.push({ metricType: row.metricType, date: row.date });
   }
