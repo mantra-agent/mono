@@ -6716,11 +6716,25 @@ ${refs}` : ""),
 
       if (["list_features", "get_feature", "create_feature", "update_feature", "archive_feature", "delete_feature", "link_feature_kpi", "unlink_feature_kpi"].includes(action)) {
         const { featureStorage } = await import("./feature-storage");
+        if (action === "list_features") {
+          return {
+            result: JSON.stringify(
+              await featureStorage.list({
+                productId: positiveId(args.productId),
+                search: typeof args.search === "string" ? args.search : undefined,
+              }),
+              null,
+              2,
+            ),
+          };
+        }
+        // Create has no Feature id — storage mints UUID identity.
+        if (action === "create_feature") {
+          return { result: JSON.stringify(await featureStorage.create(args), null, 2) };
+        }
         const featureId = typeof args.featureId === "string" ? args.featureId : typeof args.id === "string" ? args.id : "";
-        if (action === "list_features") return { result: JSON.stringify(await featureStorage.list({ productId: positiveId(args.productId), search: typeof args.search === "string" ? args.search : undefined }), null, 2) };
         if (!featureId) return { result: "Feature id is required", error: true };
         if (action === "get_feature") return { result: JSON.stringify(await featureStorage.get(featureId), null, 2) };
-        if (action === "create_feature") return { result: JSON.stringify(await featureStorage.create(args), null, 2) };
         if (action === "update_feature") return { result: JSON.stringify(await featureStorage.update(featureId, args), null, 2) };
         if (action === "archive_feature") return { result: JSON.stringify(await featureStorage.archive(featureId), null, 2) };
         if (action === "delete_feature") return { result: JSON.stringify({ success: await featureStorage.permanentlyDelete(featureId, args.confirm === true) }, null, 2) };
