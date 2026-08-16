@@ -2013,11 +2013,69 @@ export function emailDraftIdsFromSegments(segments: MessageSegment[]): {
   return { fromContent, fromToolResults };
 }
 
+function isMeetingDraftReviewAction(step: ExecutionStep): boolean {
+  if (step.type !== "tool_call" || step.toolName !== "meetings") return false;
+  const action = typeof step.arguments?.action === "string" ? step.arguments.action : null;
+  return action === "add";
+}
+
+/**
+ * Extracts meeting draft reference IDs from message segments — both from
+ * assistant prose and from meetings.add tool results. Mirrors email drafts so
+ * the approval widget appears even when the model never repeats the ref in
+ * final content (or wraps it in backticks, which the reference parser skips).
+ */
+export function meetingDraftIdsFromSegments(segments: MessageSegment[]): {
+  fromContent: string[];
+  fromToolResults: string[];
+} {
+  const fromContent = segments.flatMap((segment) =>
+    segment.type === "content"
+      ? parseReferenceText(segment.content)
+          .filter(
+            (part) =>
+              part.kind === "reference"
+              && part.ref.type === "meeting_draft"
+              && isValidReferenceIdentifier("meeting_draft", part.ref.id),
+          )
+          .map((part) => part.ref.id)
+      : [],
+  );
+  const fromToolResults = [
+    ...new Set(
+      segments.flatMap((segment) => {
+        if (segment.type !== "timeline") return [];
+        return segment.steps.flatMap((tool) => {
+          if (!isMeetingDraftReviewAction(tool)) return [];
+          if (typeof tool.result !== "string") return [];
+          return parseReferenceText(tool.result)
+            .filter(
+              (part) =>
+                part.kind === "reference"
+                && part.ref.type === "meeting_draft"
+                && isValidReferenceIdentifier("meeting_draft", part.ref.id),
+            )
+            .map((part) => part.ref.id);
+        });
+      }),
+    ),
+  ];
+  return { fromContent, fromToolResults };
+}
+
 /**
  * Draft IDs whose inline widgets are superseded by a later occurrence in the
  * same chat. Latest occurrence wins; earlier inline widgets are hidden.
  */
 export const SuppressedEmailDraftsContext = createContext<ReadonlySet<string>>(
+  new Set(),
+);
+
+/**
+ * Meeting draft IDs whose inline widgets are superseded by a later occurrence
+ * in the same chat. Latest occurrence wins; earlier inline widgets are hidden.
+ */
+export const SuppressedMeetingDraftsContext = createContext<ReadonlySet<string>>(
   new Set(),
 );
 
@@ -2264,6 +2322,7 @@ export function MarkdownContent({
 
   // Extract references that promote into block-level widgets.
   const suppressedDrafts = useContext(SuppressedEmailDraftsContext);
+  const suppressedMeetingDrafts = useContext(SuppressedMeetingDraftsContext);
   const parts = parseReferenceText(remaining);
   const draftIds: string[] = [];
   const meetingDraftIds: string[] = [];
@@ -2329,9 +2388,11 @@ export function MarkdownContent({
         .map((id) => (
           <EmailDraftWidget key={id} draftId={id} />
         ))}
-      {meetingDraftIds.map((id) => (
-        <MeetingDraftWidget key={id} draftId={id} />
-      ))}
+      {meetingDraftIds
+        .filter((id) => !suppressedMeetingDrafts.has(id))
+        .map((id) => (
+          <MeetingDraftWidget key={id} draftId={id} />
+        ))}
     </>
   );
 }
@@ -2727,6 +2788,7 @@ export const ChatTurn = memo(function ChatTurn({
   historical = false,
   compactReferences = false,
   suppressedEmailDraftIds,
+  suppressedMeetingDraftIds,
   suppressedQuestionToolCallIds,
   questionResponses,
   activeQuestionToolCallId,
@@ -2746,6 +2808,7 @@ export const ChatTurn = memo(function ChatTurn({
   historical?: boolean;
   compactReferences?: boolean;
   suppressedEmailDraftIds?: string;
+  suppressedMeetingDraftIds?: string;
   suppressedQuestionToolCallIds?: string;
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
   activeQuestionToolCallId: string | null;
@@ -2847,8 +2910,15 @@ export const ChatTurn = memo(function ChatTurn({
     fromContent: draftIdsFromContent,
     fromToolResults: draftIdsFromToolResults,
   } = emailDraftIdsFromSegments(segments);
+  const {
+    fromContent: meetingDraftIdsFromContent,
+    fromToolResults: meetingDraftIdsFromToolResults,
+  } = meetingDraftIdsFromSegments(segments);
   const visibleEmailDraftIds = [
     ...new Set([...draftIdsFromContent, ...draftIdsFromToolResults]),
+  ];
+  const visibleMeetingDraftIds = [
+    ...new Set([...meetingDraftIdsFromContent, ...meetingDraftIdsFromToolResults]),
   ];
   const suppressedDraftIds = useMemo(
     () =>
@@ -2856,6 +2926,13 @@ export const ChatTurn = memo(function ChatTurn({
         suppressedEmailDraftIds ? suppressedEmailDraftIds.split("|") : [],
       ),
     [suppressedEmailDraftIds],
+  );
+  const suppressedMeetingDraftIdSet = useMemo(
+    () =>
+      new Set<string>(
+        suppressedMeetingDraftIds ? suppressedMeetingDraftIds.split("|") : [],
+      ),
+    [suppressedMeetingDraftIds],
   );
   const suppressedQuestionIds = useMemo(
     () =>
@@ -2867,7 +2944,13 @@ export const ChatTurn = memo(function ChatTurn({
   const unpromotedDraftIds = draftIdsFromToolResults.filter(
     (id) => !draftIdsFromContent.includes(id) && !suppressedDraftIds.has(id),
   );
+  const unpromotedMeetingDraftIds = meetingDraftIdsFromToolResults.filter(
+    (id) =>
+      !meetingDraftIdsFromContent.includes(id)
+      && !suppressedMeetingDraftIdSet.has(id),
+  );
   const hasUnpromotedDraftWidget = unpromotedDraftIds.length > 0;
+  const hasUnpromotedMeetingDraftWidget = unpromotedMeetingDraftIds.length > 0;
   const failedGmailDraftSteps = gmailDraftFailureSteps(segments);
   // One logical question toolCallId paints once per carrier. Chronology can
   // emit the same tool call in multiple timeline steps (replay + live merge);
@@ -3015,6 +3098,27 @@ export const ChatTurn = memo(function ChatTurn({
     draftIdsFromToolResults.length,
     hasUnpromotedDraftWidget,
     suppressedDraftIds.size,
+    isActiveStreaming,
+  ]);
+
+  useEffect(() => {
+    if (visibleMeetingDraftIds.length === 0) return;
+    log.debug("MEETING_DRAFT_WIDGET:DERIVED", {
+      messageId: message.id,
+      draftIds: visibleMeetingDraftIds,
+      contentDraftCount: meetingDraftIdsFromContent.length,
+      toolResultDraftCount: meetingDraftIdsFromToolResults.length,
+      promotedFromToolResult: hasUnpromotedMeetingDraftWidget,
+      suppressedDraftCount: suppressedMeetingDraftIdSet.size,
+      isStreaming: isActiveStreaming,
+    });
+  }, [
+    message.id,
+    visibleMeetingDraftIds.join("|"),
+    meetingDraftIdsFromContent.length,
+    meetingDraftIdsFromToolResults.length,
+    hasUnpromotedMeetingDraftWidget,
+    suppressedMeetingDraftIdSet.size,
     isActiveStreaming,
   ]);
 
@@ -3229,81 +3333,86 @@ export const ChatTurn = memo(function ChatTurn({
         )}
         <div className="space-y-2">
           <SuppressedEmailDraftsContext.Provider value={suppressedDraftIds}>
-            {segments.length > 0 || isActiveStreaming ? (
-              <SegmentStream
-                segments={segments}
-                isStreaming={isActiveStreaming}
-                layer={layer}
-                stripTags={shouldStripTags}
-                contentCompact
-                planSessionId={message.sessionId}
-                renderAfterTimelineSegment={(segmentIndex) => {
-                  const planIds = planWidgetIdsBySegment.get(segmentIndex);
-                  if (!planIds || planIds.length === 0) return null;
-                  return planIds.filter((id) => id !== suppressedPlanId).map((id) => (
-                    <InlinePlanWidget
-                      key={`tool-plan-${id}`}
-                      planId={id}
-                      sessionId={message.sessionId}
-                      ownedChildBlocks={planOwnedChildBlocks}
-                      sessionTitleById={sessionTitleById}
-                      sessionStreams={sessionStreams}
+            <SuppressedMeetingDraftsContext.Provider value={suppressedMeetingDraftIdSet}>
+              {segments.length > 0 || isActiveStreaming ? (
+                <SegmentStream
+                  segments={segments}
+                  isStreaming={isActiveStreaming}
+                  layer={layer}
+                  stripTags={shouldStripTags}
+                  contentCompact
+                  planSessionId={message.sessionId}
+                  renderAfterTimelineSegment={(segmentIndex) => {
+                    const planIds = planWidgetIdsBySegment.get(segmentIndex);
+                    if (!planIds || planIds.length === 0) return null;
+                    return planIds.filter((id) => id !== suppressedPlanId).map((id) => (
+                      <InlinePlanWidget
+                        key={`tool-plan-${id}`}
+                        planId={id}
+                        sessionId={message.sessionId}
+                        ownedChildBlocks={planOwnedChildBlocks}
+                        sessionTitleById={sessionTitleById}
+                        sessionStreams={sessionStreams}
+                      />
+                    ));
+                  }}
+                  ActiveThinkingStatusComponent={ActiveThinkingStatus}
+                  ExecutionTimelineComponent={ExecutionTimeline}
+                  MarkdownContentComponent={MarkdownContent}
+                  getThinkingStartTime={findThinkingStartTime}
+                />
+              ) : (
+                message.content && (
+                  <div
+                    className={cn(
+                      isErrorMessage &&
+                        "rounded-2xl rounded-bl-sm border border-destructive/30 bg-destructive/5 px-4 py-2.5",
+                    )}
+                  >
+                    <MarkdownContent
+                      content={message.content}
+                      stripTags={shouldStripTags}
+                      compact
+                      planSessionId={message.sessionId}
                     />
-                  ));
-                }}
-                ActiveThinkingStatusComponent={ActiveThinkingStatus}
-                ExecutionTimelineComponent={ExecutionTimeline}
-                MarkdownContentComponent={MarkdownContent}
-                getThinkingStartTime={findThinkingStartTime}
-              />
-            ) : (
-              message.content && (
-                <div
-                  className={cn(
-                    isErrorMessage &&
-                      "rounded-2xl rounded-bl-sm border border-destructive/30 bg-destructive/5 px-4 py-2.5",
-                  )}
-                >
-                  <MarkdownContent
-                    content={message.content}
-                    stripTags={shouldStripTags}
-                    compact
-                    planSessionId={message.sessionId}
+                  </div>
+                )
+              )}
+              {layer > 0 && unpromotedDraftIds.map((id) => (
+                <EmailDraftWidget key={`tool-draft-${id}`} draftId={id} />
+              ))}
+              {layer > 0 && unpromotedMeetingDraftIds.map((id) => (
+                <MeetingDraftWidget key={`tool-meeting-draft-${id}`} draftId={id} />
+              ))}
+              {layer <= 1 && failedGmailDraftSteps.map((step) => (
+                <GmailDraftFailureNotice key={`gmail-draft-error-${step.id}`} step={step} />
+              ))}
+              {questionPromptOccurrences
+                .filter(({ prompt }) =>
+                  !suppressedQuestionIds.has(prompt.toolCallId) &&
+                  (prompt.toolCallId === activeQuestionToolCallId ||
+                    questionResponses?.has(prompt.toolCallId)),
+                )
+                .map(({ prompt, renderProvenance }) => (
+                  <QuestionWidget
+                    key={prompt.toolCallId}
+                    prompt={prompt}
+                    response={questionResponses?.get(prompt.toolCallId)}
+                    onSubmit={onQuestionSubmit}
+                    onCancel={onQuestionCancel}
+                    renderProvenance={renderProvenance}
                   />
-                </div>
-              )
-            )}
-            {layer > 0 && unpromotedDraftIds.map((id) => (
-              <EmailDraftWidget key={`tool-draft-${id}`} draftId={id} />
-            ))}
-            {layer <= 1 && failedGmailDraftSteps.map((step) => (
-              <GmailDraftFailureNotice key={`gmail-draft-error-${step.id}`} step={step} />
-            ))}
-            {questionPromptOccurrences
-              .filter(({ prompt }) =>
-                !suppressedQuestionIds.has(prompt.toolCallId) &&
-                (prompt.toolCallId === activeQuestionToolCallId ||
-                  questionResponses?.has(prompt.toolCallId)),
-              )
-              .map(({ prompt, renderProvenance }) => (
-                <QuestionWidget
-                  key={prompt.toolCallId}
-                  prompt={prompt}
-                  response={questionResponses?.get(prompt.toolCallId)}
-                  onSubmit={onQuestionSubmit}
-                  onCancel={onQuestionCancel}
-                  renderProvenance={renderProvenance}
+                ))}
+              {layer > 0 && workflowWidgetIds.map((id) => (
+                <InlineWorkflowWidget
+                  key={`tool-workflow-${id}`}
+                  workflowId={id}
+                  sessionId={message.sessionId}
+                  sessionTitleById={sessionTitleById}
+                  sessionStreams={sessionStreams}
                 />
               ))}
-            {layer > 0 && workflowWidgetIds.map((id) => (
-              <InlineWorkflowWidget
-                key={`tool-workflow-${id}`}
-                workflowId={id}
-                sessionId={message.sessionId}
-                sessionTitleById={sessionTitleById}
-                sessionStreams={sessionStreams}
-              />
-            ))}
+            </SuppressedMeetingDraftsContext.Provider>
           </SuppressedEmailDraftsContext.Provider>
         </div>
         {layer === 4 && message.assistantState === "settled" && message.historicalSummary?.trim() && (
