@@ -137,7 +137,19 @@ function TierSettingSelect<T extends string>({
   </div>;
 }
 
-function ConnectorTierTree({ connector, models, title, nested = false }: { connector: ModelConnectorDetail; models: ModelProviderDetail["models"]; title: string; nested?: boolean }) {
+function ConnectorTierTree({
+  connector,
+  models,
+  title,
+  nested = false,
+  invalidateQueryKeys,
+}: {
+  connector: ModelConnectorDetail;
+  models: ModelProviderDetail["models"];
+  title: string;
+  nested?: boolean;
+  invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
+}) {
   const { toast } = useToast();
   const isOpenAI = isOpenAIProvider(connector.provider);
   const isClaude = connector.provider === "claude-cli";
@@ -145,7 +157,14 @@ function ConnectorTierTree({ connector, models, title, nested = false }: { conne
   const isGrok = isGrokProvider(connector.provider);
   const mutation = useMutation({
     mutationFn: async (tierMappings: Record<SemanticTier, Exclude<TierModelConfig, string> | string>) => (await apiRequest("PATCH", `/api/models/connectors/${connector.id}`, { tierMappings })).json(),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] });
+      if (invalidateQueryKeys) {
+        await Promise.all(
+          invalidateQueryKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey: [...queryKey] })),
+        );
+      }
+    },
     onError: (error: Error) => toast({ title: "Model mapping failed", description: error.message, variant: "destructive" }),
   });
   const mappings = Object.fromEntries(MODEL_TIERS.map((tier) => {
@@ -330,12 +349,33 @@ function ConnectorTierTree({ connector, models, title, nested = false }: { conne
  * or by `provider` (the Integrations detail screen, one connector per provider),
  * then renders its semantic-tier → model mapping tree.
  */
-export function ModelConnectorSection({ provider, connectorId, title = "Model mapping", nested = false }: { provider?: ModelConnectorProvider; connectorId?: number; title?: string; nested?: boolean }) {
-  const { data } = useQuery<{ connectors: ModelConnectorDetail[] }>({ queryKey: ["/api/models/connectors"] });
+export function ModelConnectorSection({
+  provider,
+  connectorId,
+  connector: connectorProp,
+  title = "Model mapping",
+  nested = false,
+  invalidateQueryKeys,
+}: {
+  provider?: ModelConnectorProvider;
+  connectorId?: number;
+  /** Prefer when the parent already loaded the connector (Routers pools are not on the legacy list). */
+  connector?: ModelConnectorDetail;
+  title?: string;
+  nested?: boolean;
+  /** Extra React Query keys to invalidate after a successful tier mapping write. */
+  invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
+}) {
+  // Legacy global chain only — Integrations/Models. Router-scoped connectors must pass `connector`.
+  const { data } = useQuery<{ connectors: ModelConnectorDetail[] }>({
+    queryKey: ["/api/models/connectors"],
+    enabled: connectorProp == null,
+  });
   const { data: modelsData } = useQuery<{ providers: ModelProviderDetail[] }>({ queryKey: ["/api/models/available"] });
-  const connector = connectorId != null
-    ? data?.connectors?.find((item) => item.id === connectorId)
-    : data?.connectors?.find((item) => item.provider === provider);
+  const connector = connectorProp
+    ?? (connectorId != null
+      ? data?.connectors?.find((item) => item.id === connectorId)
+      : data?.connectors?.find((item) => item.provider === provider));
   const resolvedProvider = connector?.provider ?? provider;
   const models = modelsData?.providers?.find((item) => item.id === resolvedProvider)?.models ?? [];
   if (!connector) {
@@ -355,7 +395,15 @@ export function ModelConnectorSection({ provider, connectorId, title = "Model ma
     || connector.provider === "anthropic"
     || isGrokProvider(connector.provider)
   ) {
-    return <ConnectorTierTree connector={connector} models={models} title={title} nested={nested} />;
+    return (
+      <ConnectorTierTree
+        connector={connector}
+        models={models}
+        title={title}
+        nested={nested}
+        invalidateQueryKeys={invalidateQueryKeys}
+      />
+    );
   }
   return (
     <div className="min-w-0">

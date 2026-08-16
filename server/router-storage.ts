@@ -250,6 +250,8 @@ export async function listLegacyModelConnectors(): Promise<ModelConnector[]> {
   return rows.map(mapConnector);
 }
 
+// Model IDs must belong to the connector's provider in model-registry.
+// API providers use bare API ids; subscription/cli providers use their *-sub registry ids.
 const DEFAULT_TIER_MODELS: Record<ModelConnectorProvider, { max: string; high: string; balanced: string; fast: string }> = {
   anthropic: {
     max: "claude-opus-4-6",
@@ -264,16 +266,16 @@ const DEFAULT_TIER_MODELS: Record<ModelConnectorProvider, { max: string; high: s
     fast: "gpt-5.4-mini",
   },
   "openai-subscription": {
-    max: "gpt-5.4",
-    high: "gpt-5.4",
-    balanced: "gpt-5.4-mini",
-    fast: "gpt-5.4-mini",
+    max: "gpt-5.4-sub",
+    high: "gpt-5.4-sub",
+    balanced: "gpt-5.4-mini-sub",
+    fast: "gpt-5.4-mini-sub",
   },
   "claude-cli": {
-    max: "claude-opus-4-6",
-    high: "claude-sonnet-4-6",
-    balanced: "claude-sonnet-4-6",
-    fast: "claude-haiku-4-5-20251001",
+    max: "claude-opus-4-6-sub",
+    high: "claude-sonnet-sub",
+    balanced: "claude-sonnet-sub",
+    fast: "claude-haiku-sub",
   },
   "grok-subscription": {
     max: "grok-4.6",
