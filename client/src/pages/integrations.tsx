@@ -3557,10 +3557,10 @@ function DeepgramDetail() {
 }
 
 type SentryAvailabilityStatus =
-  | { status: "not_configured"; configured: false; missing: string[] }
-  | { status: "monitor_pending"; configured: true; checkCount: number; expectedChecks: number; coverage: number; periodStart: string; periodEnd: string }
-  | { status: "ready"; configured: true; checkCount: number; expectedChecks: number; coverage: number; availability: number; failureRate: number; periodStart: string; periodEnd: string }
-  | { status: "unavailable"; configured: true; error: string };
+  | { status: "not_configured"; configured: false; crashReportingConfigured: false; missing: string[] }
+  | { status: "monitor_pending"; configured: true; crashReportingConfigured: true; checkCount: number; expectedChecks: number; coverage: number; periodStart: string; periodEnd: string }
+  | { status: "ready"; configured: true; crashReportingConfigured: true; checkCount: number; expectedChecks: number; coverage: number; availability: number; failureRate: number; periodStart: string; periodEnd: string }
+  | { status: "unavailable"; configured: true; crashReportingConfigured: true; error: string };
 
 function SentryDetail() {
   const { toast } = useToast();
@@ -3591,7 +3591,7 @@ function SentryDetail() {
     <div className="min-w-0 space-y-2">
       <IntegrationTreeSection label="Crash reporting" initialOpen={status?.status === "not_configured"} testIdPrefix="sentry">
         <ProfileTreeRow label="Web · Mobile · Server" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
-          <span className={status?.configured ? "text-active" : "text-muted-foreground"}>{status?.configured ? "One setup arms all surfaces" : "Needs DSN + API credentials"}</span>
+          <span className={status?.crashReportingConfigured ? "text-active" : "text-muted-foreground"}>{status?.crashReportingConfigured ? "One setup arms all surfaces" : "Needs DSN + API credentials"}</span>
         </ProfileTreeRow>
         <div className="min-w-0 px-2 py-1.5"><SecretsForSection section="sentry" /></div>
       </IntegrationTreeSection>
