@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronRight, Loader2, Plus } from "lucide-react";
+import { Activity, ChevronRight, Loader2, Package, Plus, User } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -20,7 +21,7 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
 const stages = ["idea", "spec", "develop", "test", "calibrate", "maintain", "deprecate"] as const;
-type Feature = { id: string; summary: string; stage: typeof stages[number]; status: string; product_name?: string };
+type Feature = { id: string; summary: string; stage: typeof stages[number]; status: string; product_name?: string; owner_person_id?: string; spec_page_id?: string | null };
 type Product = { id: number; name: string };
 type Person = { id: string; name: string; cabinetLevel?: string };
 
@@ -128,7 +129,29 @@ export default function FeaturesPage() {
               <CollapsibleContent>
                 {rows.length ? rows.map((feature, index) => (
                   <HierarchyTreeRow key={feature.id} continues={index < rows.length - 1} connectorAnchor="first-row-center">
-                    <ProfileTreeRow label={feature.summary} hasValue showEmpty mobileLayout="inline" valueLayout="compact" testId={`feature-row-${feature.id}`}>
+                    <ProfileTreeRow
+                      label={feature.summary}
+                      hasValue
+                      showEmpty
+                      mobileLayout="inline"
+                      valueLayout="compact"
+                      testId={`feature-row-${feature.id}`}
+                      expandedContent={(
+                        <div className="space-y-0.5">
+                          <ProfileTreeRow label="Product" icon={<Package className="h-3.5 w-3.5" />} hasValue={Boolean(feature.product_name)} showEmpty mobileLayout="inline"><span>{feature.product_name ?? "Product"}</span></ProfileTreeRow>
+                          <ProfileTreeRow label="Stage" icon={<Activity className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline"><span>{formatStage(feature.stage)}</span></ProfileTreeRow>
+                          <ProfileTreeRow label="Status" icon={<Activity className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline"><span>{feature.status.replace("_", " ")}</span></ProfileTreeRow>
+                          <ProfileTreeRow label="Owner" icon={<User className="h-3.5 w-3.5" />} hasValue={Boolean(feature.owner_person_id)} showEmpty mobileLayout="inline"><span>{feature.owner_person_id ?? "Unassigned"}</span></ProfileTreeRow>
+                          <ProfileTreeRow label="Spec" icon={<Package className="h-3.5 w-3.5" />} hasValue={Boolean(feature.spec_page_id)} showEmpty mobileLayout="inline"><span>{feature.spec_page_id ?? "Not linked"}</span></ProfileTreeRow>
+                        </div>
+                      )}
+                      menuContent={(
+                        <>
+                          <DropdownMenuItem onSelect={() => apiRequest("POST", `/api/features/${feature.id}/archive`, { confirm: true }).then(() => { queryClient.invalidateQueries({ queryKey: ["/api/features"] }); })}>Archive</DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive" onSelect={() => apiRequest("DELETE", `/api/features/${feature.id}`, { confirm: true }).then(() => { queryClient.invalidateQueries({ queryKey: ["/api/features"] }); })}>Delete</DropdownMenuItem>
+                        </>
+                      )}
+                    >
                       <span className="truncate text-muted-foreground">{feature.product_name ?? "Product"} · {feature.status.replace("_", " ")}</span>
                     </ProfileTreeRow>
                   </HierarchyTreeRow>
