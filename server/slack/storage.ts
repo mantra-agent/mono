@@ -3,8 +3,9 @@ import { and, eq, sql } from "drizzle-orm";
 import { db, runWithDatabaseTransaction } from "../db";
 import { chatFileStorage } from "../chat-file-storage";
 import type { Principal } from "../principal";
-import { runWithPrincipal } from "../principal-context";
+import { getCurrentPrincipal, runWithPrincipal } from "../principal-context";
 import { resolveCurrentProfileIdentity } from "../profile-identity";
+import { peopleStorage } from "../people-storage";
 import { users } from "@shared/schema";
 import type { AdmittedSlackEvent, SlackEventStatus } from "./contracts";
 
@@ -331,7 +332,7 @@ export async function acceptCanonicalTurn(principal: Principal, event: ClaimedSl
     const speaker = event.eventType === "app_mention"
       ? {
           key: `slack:${event.slackUserId}`,
-          label: await resolveSlackSpeakerName(),
+          ...(await resolveSlackSpeaker()),
         }
       : undefined;
     const accepted = await chatFileStorage.createUserMessageOnce(
@@ -353,9 +354,35 @@ export async function acceptCanonicalTurn(principal: Principal, event: ClaimedSl
   });
 }
 
-async function resolveSlackSpeakerName(): Promise<string> {
+async function resolveSlackSpeakerPerson(): Promise<{ id: string; name: string } | null> {
+  const principal = getCurrentPrincipal();
+  if (!principal?.userId) return null;
+  const [user] = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, principal.userId))
+    .limit(1);
+  const email = user?.email?.trim().toLowerCase();
+  if (!email || !email.includes("@")) return null;
+  try {
+    const person = await peopleStorage.getPersonByEmail(email);
+    return person ? { id: person.id, name: person.name } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveSlackSpeaker(): Promise<{ label: string; personId?: string }> {
   const identity = await resolveCurrentProfileIdentity();
-  return identity.userName || identity.userFirstName;
+  const person = await resolveSlackSpeakerPerson();
+  return {
+    label: person?.name || identity.userName || identity.userFirstName,
+    ...(person ? { personId: person.id } : {}),
+  };
+}
+
+async function resolveSlackSpeakerName(): Promise<string> {
+  return (await resolveSlackSpeaker()).label;
 }
 
 export async function settleEvent(eventId: string, status: SlackEventStatus, input: { response?: string; deliveryState?: string; deliveryTs?: string; failureCode?: string } = {}): Promise<void> {
