@@ -4,14 +4,16 @@ import type { JSONContent } from "@tiptap/core";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -20,9 +22,17 @@ import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from "@/components/ui/command";
 import {
-  Plus, Loader2, MoreHorizontal, Trash2, Lock, Link2, X,
+  Plus, Loader2, Trash2, Lock, Link2, X,
   ChevronRight, ChevronsUpDown, Check, Scale,
 } from "lucide-react";
+import { HierarchyTreeRow } from "@/components/hierarchy-tree";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
+import {
+  HIERARCHY_PRIMARY_ACTION_CLASS,
+  HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { RichTextEditor } from "@/components/rich-text-editor";
@@ -100,6 +110,66 @@ const TRAFFIC_LABEL: Record<DecisionTrafficLight, string> = {
 
 const SAVE_DEBOUNCE_MS = 800;
 
+function matchesDecisionSearch(decision: Decision, search: string) {
+  if (!search.trim()) return true;
+  const q = search.trim().toLowerCase();
+  return (
+    decision.title.toLowerCase().includes(q) ||
+    (decision.description ?? "").toLowerCase().includes(q)
+  );
+}
+
+function DecisionRow({
+  decision,
+  onDelete,
+}: {
+  decision: Decision;
+  onDelete: () => void;
+}) {
+  const statusMeta =
+    decision.status === "closed" && decision.trafficLight
+      ? TRAFFIC_LABEL[decision.trafficLight]
+      : decision.status === "closed"
+        ? "Closed"
+        : "Open";
+
+  return (
+    <ProfileTreeRow
+      label={<span data-testid={`text-decision-title-${decision.id}`}>{decision.title}</span>}
+      icon={<Scale className="h-3.5 w-3.5" />}
+      hasValue
+      showEmpty
+      mobileLayout="inline"
+      valueLayout="compact"
+      testId={`decision-row-${decision.id}`}
+      expandedContentClassName="px-2 pb-2 pl-2"
+      expandedContent={(
+        <DecisionInlineEditor
+          decisionId={decision.id}
+          onDelete={() => onDelete()}
+        />
+      )}
+      menuContent={(
+        <DropdownMenuItem
+          className="text-destructive focus:text-destructive"
+          onSelect={onDelete}
+          data-testid={`button-delete-decision-${decision.id}`}
+        >
+          <Trash2 className="mr-2 h-3.5 w-3.5" />
+          Delete
+        </DropdownMenuItem>
+      )}
+    >
+      <span className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
+        {decision.status === "closed" && decision.trafficLight ? (
+          <span className={cn("h-2 w-2 shrink-0 rounded-full", TRAFFIC_DOT[decision.trafficLight])} />
+        ) : null}
+        <span className="truncate">{statusMeta}</span>
+      </span>
+    </ProfileTreeRow>
+  );
+}
+
 // ─── Main Tab ───
 
 export default function StrategyDecisionsTab() {
@@ -108,13 +178,17 @@ export default function StrategyDecisionsTab() {
     queryKey: ["/api/decisions"],
   });
 
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [openExpanded, setOpenExpanded] = useState(true);
-  const [closedExpanded, setClosedExpanded] = useState(false);
+  const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Decision | null>(null);
 
-  const openList = useMemo(() => decisions.filter(d => d.status === "open"), [decisions]);
-  const closedList = useMemo(() => decisions.filter(d => d.status === "closed"), [decisions]);
+  const filtered = useMemo(
+    () => decisions.filter((decision) => matchesDecisionSearch(decision, search)),
+    [decisions, search],
+  );
+  const openList = filtered.filter((d) => d.status === "open");
+  const closedList = filtered.filter((d) => d.status === "closed");
+  const hasAny = decisions.length > 0;
+  const searchActive = search.trim().length > 0;
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -124,10 +198,8 @@ export default function StrategyDecisionsTab() {
       });
       return res.json() as Promise<Decision>;
     },
-    onSuccess: (d) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/decisions"] });
-      setExpandedId(d.id);
-      setOpenExpanded(true);
     },
     onError: (err: Error) => toast({ title: "Failed to create", description: err.message, variant: "destructive" }),
   });
@@ -136,155 +208,103 @@ export default function StrategyDecisionsTab() {
     mutationFn: async (id: string) => { await apiRequest("DELETE", `/api/decisions/${id}`); },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/decisions"] });
-      if (deleteTarget && expandedId === deleteTarget.id) setExpandedId(null);
       setDeleteTarget(null);
     },
     onError: (err: Error) => toast({ title: "Failed to delete", description: err.message, variant: "destructive" }),
   });
 
-  const toggleExpand = (id: string) => setExpandedId(prev => prev === id ? null : id);
+  const renderRows = (rows: Decision[], emptyCopy: string) => {
+    if (rows.length === 0) {
+      return <div className="px-2 py-1.5 text-sm text-muted-foreground">{emptyCopy}</div>;
+    }
 
-  const renderItem = (d: Decision) => (
-    <div key={d.id}>
-      <div
-        className={cn(
-          "group flex items-center gap-1.5 py-1.5 px-2 rounded-md cursor-pointer transition-colors hover:bg-accent/50",
-          expandedId === d.id && "bg-accent/30",
-        )}
-        onClick={() => toggleExpand(d.id)}
-        data-testid={`decision-row-${d.id}`}
+    return rows.map((decision, index) => (
+      <HierarchyTreeRow
+        key={decision.id}
+        continues={index < rows.length - 1}
+        connectorAnchor="first-row-center"
       >
-        {/* Icon */}
-        <Scale className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-
-        {/* Traffic light dot for closed decisions */}
-        {d.status === "closed" && d.trafficLight && (
-          <span className={cn("h-2 w-2 rounded-full shrink-0", TRAFFIC_DOT[d.trafficLight])} />
-        )}
-
-        {/* Title */}
-        <span className="flex-1 min-w-0 truncate text-sm font-medium">{d.title}</span>
-
-        {/* Expander */}
-        <button
-          type="button"
-          className="flex w-5 shrink-0 items-center justify-center rounded p-0.5 hover:bg-accent/60"
-          onClick={(e) => { e.stopPropagation(); toggleExpand(d.id); }}
-          aria-label={expandedId === d.id ? "Collapse" : "Expand"}
-        >
-          <ChevronRight className={cn(
-            "h-3.5 w-3.5 text-muted-foreground transition-transform",
-            expandedId === d.id && "rotate-90",
-          )} />
-        </button>
-
-        {/* Overflow menu */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="flex w-5 shrink-0 items-center justify-center rounded p-0.5 opacity-0 transition-opacity hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-              aria-label={`Actions for ${d.title}`}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onClick={() => setDeleteTarget(d)}
-              data-testid={`button-delete-decision-${d.id}`}
-            >
-              <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
-      {/* Inline expanded detail */}
-      {expandedId === d.id && (
-        <div className="pl-5 pr-1 pb-3">
-          <DecisionInlineEditor
-            decisionId={d.id}
-            onDelete={(dec) => setDeleteTarget(dec)}
-          />
-        </div>
-      )}
-    </div>
-  );
+        <DecisionRow
+          decision={decision}
+          onDelete={() => setDeleteTarget(decision)}
+        />
+      </HierarchyTreeRow>
+    ));
+  };
 
   return (
-    <div className="flex flex-col h-full overflow-auto p-4" data-testid="decisions-tab">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold">Decisions</h2>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 w-7 p-0"
-          onClick={() => createMutation.mutate()}
-          disabled={createMutation.isPending}
-          data-testid="button-create-decision"
-        >
-          {createMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-        </Button>
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background text-foreground" data-testid="decisions-tab">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className={HIERARCHY_TREE_STACK_CLASS}>
+          <HierarchySearchInput
+            value={search}
+            onChange={setSearch}
+            inputTestId="input-search-decisions"
+            clearTestId="button-clear-decision-search"
+            ariaLabel="Search decisions"
+          />
+
+          <button
+            type="button"
+            className={HIERARCHY_PRIMARY_ACTION_CLASS}
+            onClick={() => createMutation.mutate()}
+            disabled={createMutation.isPending}
+            data-testid="button-create-decision"
+          >
+            {createMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            ) : (
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+            )}
+            <span>New Decision</span>
+          </button>
+
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : !hasAny ? (
+            <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-no-decisions">
+              No decisions yet.
+            </div>
+          ) : (
+            <>
+              <Collapsible defaultOpen data-testid="group-open-decisions">
+                <CollapsibleTrigger
+                  className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
+                  data-testid="toggle-group-open"
+                >
+                  <ChevronRight className="h-3 w-3 shrink-0" />
+                  Open
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  {renderRows(
+                    openList,
+                    searchActive ? "No matching open decisions." : "No open decisions.",
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
+
+              <Collapsible defaultOpen={searchActive && closedList.length > 0} data-testid="group-closed-decisions">
+                <CollapsibleTrigger
+                  className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
+                  data-testid="toggle-group-closed"
+                >
+                  <ChevronRight className="h-3 w-3 shrink-0" />
+                  Closed
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  {renderRows(
+                    closedList,
+                    searchActive ? "No matching closed decisions." : "No closed decisions.",
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
+            </>
+          )}
+        </div>
       </div>
 
-      {isLoading ? (
-        <div className="space-y-2">
-          {[1, 2, 3].map(i => <Skeleton key={i} className="h-10 w-full" />)}
-        </div>
-      ) : decisions.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground" data-testid="text-no-decisions">
-          <Scale className="h-6 w-6 mb-2" />
-          <span className="text-sm">No decisions yet</span>
-        </div>
-      ) : (
-        <div className="space-y-1">
-          {/* Open section */}
-          <div data-testid="group-open-decisions">
-            <button
-              type="button"
-              onClick={() => setOpenExpanded(v => !v)}
-              className="w-full flex items-center gap-1 px-1 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-accent/30 rounded"
-              data-testid="toggle-group-open"
-            >
-              <ChevronRight className={cn("h-3 w-3 transition-transform", openExpanded && "rotate-90")} />
-              <span>Open ({openList.length})</span>
-            </button>
-            {openExpanded && (
-              <div className="mt-1">
-                {openList.length === 0 ? (
-                  <div className="text-xs text-muted-foreground px-2 py-1">None</div>
-                ) : openList.map(renderItem)}
-              </div>
-            )}
-          </div>
-
-          {/* Closed section — collapsed by default */}
-          <div data-testid="group-closed-decisions">
-            <button
-              type="button"
-              onClick={() => setClosedExpanded(v => !v)}
-              className="w-full flex items-center gap-1 px-1 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-accent/30 rounded"
-              data-testid="toggle-group-closed"
-            >
-              <ChevronRight className={cn("h-3 w-3 transition-transform", closedExpanded && "rotate-90")} />
-              <span>Closed ({closedList.length})</span>
-            </button>
-            {closedExpanded && (
-              <div className="mt-1">
-                {closedList.length === 0 ? (
-                  <div className="text-xs text-muted-foreground px-2 py-1">None</div>
-                ) : closedList.map(renderItem)}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Delete confirmation */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
