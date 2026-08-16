@@ -9,6 +9,7 @@ import {
   } from "./job-profiles";
   import { getInstanceName } from "@shared/instance-config";
   import { composeFeaturePipelineSkillProcess } from "@shared/feature-pipeline";
+  import { composeIssueFeatureSkillProcess } from "@shared/issue-feature";
 
   export interface SkillDefault {
     name: string;
@@ -1624,5 +1625,26 @@ This is developmental coaching, not medical or mental-health treatment. If Ray i
       { check: "Updated the Feature stage or specPageId only when the assigned stage's exit criteria require it", weight: 3 },
     ],
     process: composeFeaturePipelineSkillProcess(),
+  },
+  {
+    name: "issue-feature",
+    recommendedPersona: "Visionary",
+    description: "Interactive Issue launcher. Converts one product Issue into a Feature idea, then deletes the source Issue. Context is the Issue; procedure is this Skill.",
+    category: "build",
+    activity: ACTIVITY_WORK,
+    author: "system",
+    version: "1.0",
+    addToMemory: false,
+    pinnedToContext: false,
+    sessionType: "agent",
+    whenToUse: "Used when an Issues row launches Issue → Feature. Do not run as a scheduled autonomous Skill.",
+    outputSpec: "One Feature idea (@feature) created from the Issue, with the source Issue deleted after successful create. Residual blockers leave the Issue untouched.",
+    checklist: [
+      { check: "Loaded the Issue (@issue) before creating a Feature", weight: 3 },
+      { check: "Created exactly one Feature idea via platforms.create_feature with product and owner resolved from tools", weight: 4, kind: "tool_invoked", tool: "platforms", action: "create_feature" },
+      { check: "Deleted the source Issue only after Feature create succeeded", weight: 4, kind: "tool_invoked", tool: "issues", action: "delete" },
+      { check: "Did not invent a second Feature or leave a resolved Issue shell behind on success", weight: 3 },
+    ],
+    process: composeIssueFeatureSkillProcess(),
   },
 ];

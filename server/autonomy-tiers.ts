@@ -108,7 +108,7 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   } },
   settings: { default: 1, actions: { get: 0 } },
   system: { default: 0, actions: { save_history_rollup: 1 } },
-  issues: { default: 1, actions: { list: 0, list_reported: 0, get: 0 } },
+  issues: { default: 1, actions: { list: 0, list_reported: 0, get: 0, delete: 2 } },
   workflows: { default: 2, actions: {
     list_templates: 0, get_template: 0, list_runs: 0, get_run: 0,
   } },

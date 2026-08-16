@@ -972,14 +972,14 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   issues: {
-    description: "Track product Issues — create, page unresolved tracked Issues, page the admin Reported queue with list_reported, fetch one by ID, resolve one with affirmative evidence, or append a dated log entry with add_note. Each add_note pushes an immutable, timestamped entry onto the Issue's append-only notes log (use get to read the full notes array back — e.g. to record what happened at each regression run). Create requires explicit reproSteps; platformEnvironmentId and buildId attach automatically from runtime identity when omitted. list never includes kind=reported; list_reported requires system:read and returns only reported Issues.",
+    description: "Track product Issues — create, page unresolved tracked Issues, page the admin Reported queue with list_reported, fetch one by ID, resolve one with affirmative evidence, append a dated log entry with add_note, or permanently delete with confirm=true. Each add_note pushes an immutable, timestamped entry onto the Issue's append-only notes log (use get to read the full notes array back — e.g. to record what happened at each regression run). Create requires explicit reproSteps; platformEnvironmentId and buildId attach automatically from runtime identity when omitted. list never includes kind=reported; list_reported requires system:read and returns only reported Issues. delete requires confirm=true and is for intentional removal (e.g. Issue → Feature conversion), not ordinary resolution.",
     category: "system",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["create", "list", "list_reported", "get", "resolve", "add_note", "list_errors", "dismiss_error"], description: "Action" },
-        id: { type: "string", description: "Issue ID (get/resolve/add_note)" },
+        action: { type: "string", enum: ["create", "list", "list_reported", "get", "resolve", "add_note", "delete", "list_errors", "dismiss_error"], description: "Action" },
+        id: { type: "string", description: "Issue ID (get/resolve/add_note/delete)" },
         fingerprint: { type: "string", description: "Aggregated error fingerprint — 64-char hex identity from list_errors (dismiss_error). Dismiss hides the error until it recurs; a new occurrence resurfaces it." },
         text: { type: "string", description: "Dated log entry text to append to the Issue's append-only notes log, 1-5000 characters (add_note)" },
         status: { type: "string", enum: ["open", "in_progress", "in_review", "resolved"], description: "Issue status filter (list, list_reported)" },
@@ -987,6 +987,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         offset: { type: "number", description: "Pagination offset (list, list_reported, default 0)" },
         limit: { type: "number", description: "Page size (list, list_reported, default 100, max 500)" },
         evidence: { type: "string", description: "Concise affirmative evidence note, 1-2000 characters (resolve)" },
+        confirm: { type: "boolean", description: "Required true for delete permanent removal" },
         title: { type: "string", description: "Issue title (create)" },
         description: { type: "string", description: "Issue description (create)" },
         reproSteps: { type: "string", description: "Explicit reproduction steps — required for create; title-only shells are rejected" },

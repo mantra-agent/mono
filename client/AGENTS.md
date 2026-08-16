@@ -194,7 +194,7 @@ When adding admin or system UI:
 
 ## Session Launch
 
-`useSessionLaunch` is the interactive create-session + optional first-message + Focus-open primitive. Discuss call sites compose context only. Deliverable-producing buttons compose Feature/object context plus a Skill or shared contract body — never a bespoke prompt string invented at the row. `useAgendaDiscussion` is a compatibility alias.
+`useSessionLaunch` is the interactive create-session + optional first-message + Focus-open primitive. Discuss call sites compose context only. Deliverable-producing buttons compose Feature/object context plus a Skill or shared contract body — never a bespoke prompt string invented at the row. Issues **Launch** converts an Issue into a Feature idea through the `issue-feature` Skill (Visionary). `useAgendaDiscussion` is a compatibility alias.
 
 ## Badge System
 
