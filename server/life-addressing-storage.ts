@@ -310,34 +310,95 @@ export async function createAddressLink(principal: Principal, input: CreateAddre
   if (canonicalSource === canonicalTarget) throw Object.assign(new Error("Address link cannot target itself"), { status: 400 });
 
   const writeLink = async (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => {
+    // Serialize both key-replay and active-relationship uniqueness under one
+    // account-scoped lock order so concurrent producers with different
+    // idempotency keys cannot insert duplicate active edges.
+    const relationshipLockKey = `${principal.accountId}:${canonicalSource}:${predicate}:${canonicalTarget}`;
+    await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.ADDRESS_LINK, relationshipLockKey);
     await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.ADDRESS_LINK, `${principal.accountId}:${idempotencyKey}`);
-    const [existing] = await tx.select().from(addressLinks)
+
+    const [existingByKey] = await tx.select().from(addressLinks)
       .where(combineWithWritableScope(principal, linkScope, eq(addressLinks.idempotencyKey, idempotencyKey)))
       .limit(1);
-    if (existing) {
-      const same = existing.sourceAddress === canonicalSource
-        && existing.targetAddress === canonicalTarget
-        && existing.predicate === predicate
-        && (existing.provenanceAddress ?? undefined) === canonicalProvenance
-        && existing.createdBy === createdBy;
+    if (existingByKey) {
+      const same = existingByKey.sourceAddress === canonicalSource
+        && existingByKey.targetAddress === canonicalTarget
+        && existingByKey.predicate === predicate
+        && (existingByKey.provenanceAddress ?? undefined) === canonicalProvenance
+        && existingByKey.createdBy === createdBy;
       if (!same) throw Object.assign(new Error("idempotencyKey already names a different address link"), { status: 409 });
-      return publicLink(existing);
+      return publicLink(existingByKey);
     }
-    const [created] = await tx.insert(addressLinks).values({
-      sourceAddress: canonicalSource,
-      predicate,
-      targetAddress: canonicalTarget,
-      provenanceAddress: canonicalProvenance ?? null,
-      createdBy,
-      idempotencyKey,
-      lifecycle: "active",
-      ...ownedInsertValues(principal, linkScope),
-      createdByUserId: principal.userId,
-      updatedByUserId: principal.userId,
-    }).returning();
-    if (!created) throw new Error("Address link creation failed");
-    log.info(JSON.stringify({ event: "life_addressing.address_link_created", linkId: created.id, predicate }));
-    return publicLink(created);
+
+    const [existingActive] = await tx.select().from(addressLinks)
+      .where(combineWithWritableScope(
+        principal,
+        linkScope,
+        and(
+          eq(addressLinks.sourceAddress, canonicalSource),
+          eq(addressLinks.predicate, predicate),
+          eq(addressLinks.targetAddress, canonicalTarget),
+          eq(addressLinks.lifecycle, "active"),
+        ),
+      ))
+      .orderBy(asc(addressLinks.createdAt), asc(addressLinks.id))
+      .limit(1);
+    if (existingActive) {
+      log.info(JSON.stringify({
+        event: "life_addressing.address_link_reused_active_relationship",
+        linkId: existingActive.id,
+        predicate,
+        idempotencyKey,
+      }));
+      return publicLink(existingActive);
+    }
+
+    try {
+      const [created] = await tx.insert(addressLinks).values({
+        sourceAddress: canonicalSource,
+        predicate,
+        targetAddress: canonicalTarget,
+        provenanceAddress: canonicalProvenance ?? null,
+        createdBy,
+        idempotencyKey,
+        lifecycle: "active",
+        ...ownedInsertValues(principal, linkScope),
+        createdByUserId: principal.userId,
+        updatedByUserId: principal.userId,
+      }).returning();
+      if (!created) throw new Error("Address link creation failed");
+      log.info(JSON.stringify({ event: "life_addressing.address_link_created", linkId: created.id, predicate }));
+      return publicLink(created);
+    } catch (error) {
+      const code = typeof error === "object" && error && "code" in error
+        ? String((error as { code?: unknown }).code ?? "")
+        : "";
+      const message = error instanceof Error ? error.message : String(error);
+      const isActiveRelationshipDuplicate = code === "23505"
+        && /uk_address_links_active_relationship|duplicate key value/i.test(message);
+      if (!isActiveRelationshipDuplicate) throw error;
+      const [raced] = await tx.select().from(addressLinks)
+        .where(combineWithWritableScope(
+          principal,
+          linkScope,
+          and(
+            eq(addressLinks.sourceAddress, canonicalSource),
+            eq(addressLinks.predicate, predicate),
+            eq(addressLinks.targetAddress, canonicalTarget),
+            eq(addressLinks.lifecycle, "active"),
+          ),
+        ))
+        .orderBy(asc(addressLinks.createdAt), asc(addressLinks.id))
+        .limit(1);
+      if (!raced) throw error;
+      log.info(JSON.stringify({
+        event: "life_addressing.address_link_race_reused_active_relationship",
+        linkId: raced.id,
+        predicate,
+        idempotencyKey,
+      }));
+      return publicLink(raced);
+    }
   };
 
   // Reuse ambient business transaction (e.g. recordJudgment) instead of nesting db.transaction.
