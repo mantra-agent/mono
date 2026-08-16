@@ -7,7 +7,7 @@ This file is the canonical planning workflow. Use it for any complex task. For i
 
 Before doing non-trivial work, create or identify a corresponding task. Every such task must be attached to at least one durable work container: a project or a milestone. Best case: attach it to the right project and the right milestone. Prefer existing projects and milestones. Do not create new projects unless Ray asks or the need is acute.
 
-Every milestone and task Agent creates while planning must carry a deliberate, real due date. The exact runtime fields, fallback horizons, and sequencing guidance are owned once in `server/planning-instructions.ts` and injected into both normal planning context and FTUE planning; do not restate or fork that policy here.
+Every milestone and task Agent creates while planning must carry a deliberate, real due date. Runtime planning-aware context loads this file as the canonical policy; do not restate or fork this policy in code or another artifact.
 
 If a relevant project exists but no existing milestone fits, keep the task on the relevant project and suggest a new milestone aligned with near-term goals/projects. Create a new milestone only when the work clearly needs one and the placement is obvious; otherwise ask Ray to confirm.
 

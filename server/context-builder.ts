@@ -53,7 +53,6 @@ import {
   RULES_TOOL_DESCRIPTION,
   UNIVERSAL_CONVERSATION_CONTEXT,
 } from "./personal-rule-policy";
-import { AGENT_WORK_DEADLINE_INSTRUCTION } from "./planning-instructions";
 
 const STRUCTURAL_TAG_PATTERN = /(<\/?(?:entry|turn|concept|thought|link|claim|evidence)(?:\s[^>]*)?>)/g;
 
@@ -2016,24 +2015,23 @@ WARNING: Coding instructions could not be loaded from any source (filesystem COD
 }
 
 async function resolvePlanningInstructions(): Promise<string> {
-  // Reference-only: render a compact pointer that preserves the load-bearing
-  // invariants. The full planning process (planning_process context artifact /
-  // PLANNING.md) is retrieved on demand for complex, multi-step planning work.
-  return [
-    "## Planning Instructions (reference)",
-    "",
-    "Compact pointer — the full planning process is not inlined. The load-bearing rules:",
-    "",
-    "- Agenda vs Plan discriminant: a Session Agenda tracks live multi-turn conversation with the user in this session; a Plan runs multi-step work you execute without ongoing user intervention (child sessions, durable steps). Never use an Agenda as a substitute for a Plan, or a Plan to choreograph ordinary back-and-forth in the current conversation.",
-    "- Work-tracking invariant: before non-trivial work, create or identify a task attached to a project and one of that project's milestones. Find the appropriate existing milestone first; if none clearly fits, ask the user where the task belongs before doing untracked work.",
-    "- Close-out invariant: before ending non-trivial work, update its task to the truthful terminal state (completed, blocked, or an accurate status) with the outcome or blocker, so the canonical work record reflects reality.",
-    `- Deadline invariant: ${AGENT_WORK_DEADLINE_INSTRUCTION}`,
-    "- Plan when work needs more than ~3 turns of autonomous execution, spans systems, touches core architecture, needs research, or is expensive to reverse — and the work should proceed without turn-by-turn user steering. Skip for single clear actions, brainstorming, or live conversation tracking (use a Session Agenda for the last).",
-    "- Before planning, resolve silently: goal/definition-of-done, assumptions, research needed, domain docs to load, simplest approach, and any genuine forks worth asking about.",
-    "- Order steps by dependency; each step independently executable in a child session; begin execution immediately after creation.",
-    "- Every step must ship a durable, verifiable deliverable produced by at least one successful tool call — a merged PR, a written Library page or spec, a persisted artifact. A step whose instruction is 'write a paragraph and stop' or that only emits prose cannot complete: session end is not ship evidence, and the executor's hollow-completion guard will fail it. If a step's output is analysis, name where it gets persisted.",
-    "- Surface Ray-facing decision artifacts to Home/Inbox on completion; pause abandoned plans with a note rather than leaving them running.",
-  ].join("\n");
+  const header = "## Planning Instructions (reference)";
+  try {
+    const planningPath = path.resolve(process.cwd(), "PLANNING.md");
+    const filesystemBody = (await readFile(planningPath, "utf-8")).trim();
+    if (filesystemBody) return `${header}\n\n${filesystemBody}`;
+  } catch {
+    // Fall through to the principal-visible planning artifact when the repository policy is unavailable in a mounted runtime.
+  }
+  try {
+    const { listVisibleProductContextPages } = await import("./platforms/context-artifact-access");
+    const pages = await listVisibleProductContextPages(["planning_process"]);
+    const body = pages.map((page) => page.content.trim()).filter(Boolean).join("\n\n---\n\n");
+    if (body) return `${header}\n\n${body}`;
+  } catch (err) {
+    log.warn("Failed to load planning policy from product context", { error: err instanceof Error ? err.message : String(err) });
+  }
+  return `${header}\n\nWARNING: Canonical planning policy could not be loaded from PLANNING.md or a product context artifact.`;
 }
 
 async function resolveGoalsInstructions(): Promise<string> {
