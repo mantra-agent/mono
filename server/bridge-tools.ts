@@ -2104,7 +2104,40 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
     }
 
-    return { result: `Unknown issues action: ${action}. Available: create, list, list_reported, get, resolve, add_note, list_errors, dismiss_error`, error: true };
+    if (action === "delete") {
+      const rawId = args.id;
+      if (rawId === undefined || rawId === null || rawId === "") {
+        return { result: "Missing issue id", error: true };
+      }
+      const idNum = typeof rawId === "number" ? rawId : Number(String(rawId).trim());
+      if (!Number.isFinite(idNum) || !Number.isInteger(idNum) || idNum <= 0) {
+        return { result: `Invalid issue id '${rawId}'; expected a positive integer`, error: true };
+      }
+      if (args.confirm !== true) {
+        return {
+          result: "delete requires confirm=true. Permanent removal is intentional (e.g. Issue → Feature conversion), not ordinary resolution.",
+          error: true,
+          failure: inputFailure("issue_delete_unconfirmed"),
+        };
+      }
+      try {
+        const { requireCurrentPrincipal } = await import("./principal-context");
+        const { principalHasPermission } = await import("./permissions");
+        const principal = requireCurrentPrincipal();
+        // Own Issues delete under ordinary scope. Cross-owner browser reports
+        // require the Build admin path under system:write, matching HTTP delete.
+        const deleted = principalHasPermission(principal, "system:write")
+          ? await storage.deleteIssueForAdmin(principal, idNum)
+          : await storage.deleteIssue(idNum);
+        if (!deleted) return { result: `Issue ${idNum} not found`, error: true };
+        return { result: JSON.stringify({ success: true, id: idNum, deleted: true }) };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { result: `Failed to delete issue ${idNum}: ${message}`, error: true };
+      }
+    }
+
+    return { result: `Unknown issues action: ${action}. Available: create, list, list_reported, get, resolve, add_note, delete, list_errors, dismiss_error`, error: true };
   },
 
   async goals(args) {
