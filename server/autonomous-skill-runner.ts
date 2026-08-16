@@ -759,6 +759,10 @@ export async function executeAutonomousSkillRun(
         if (skillRecord.sessionType === "autonomous" || skillRecord.sessionType === "agent") {
           resolvedSessionType = skillRecord.sessionType;
         }
+        const rowTimeoutMs = parseEstimatedDurationMs(skillRecord.estimatedDuration);
+        if (rowTimeoutMs && rowTimeoutMs > config.timeoutMs) {
+          config = { ...config, timeoutMs: rowTimeoutMs };
+        }
         try {
           const { resolveSkillRunPersona } = await import("./skill-persona-service");
           resolvedPersona = await resolveSkillRunPersona(skillRecord);
