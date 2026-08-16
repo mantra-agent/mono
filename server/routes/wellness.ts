@@ -678,7 +678,13 @@ export async function upsertHealthMetricsAndProcessCompletions(
 
   for (const row of rows) {
     try {
-      await db.insert(healthMetrics).values({ ...row, ...ownership }).onConflictDoNothing();
+      await db.insert(healthMetrics).values({
+        ...row,
+        ...ownership,
+        // Live health_metrics.recorded_at is NOT NULL without a column default, so
+        // drizzle's omitted-column DEFAULT becomes NULL and 23502s every Oura row.
+        recordedAt: new Date(),
+      }).onConflictDoNothing();
       // Counts accepted insert attempts, including conflict-noop duplicates,
       // because callers historically observed this value.
       inserted++;

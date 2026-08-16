@@ -5207,6 +5207,15 @@ export async function runSchemaBootstrap(
     await runWellnessTimestamptzMigration();
   });
 
+  await heal("health_metrics.recorded_at default", async () => {
+    // Drizzle declares DEFAULT CURRENT_TIMESTAMP. Live drifted to NOT NULL with
+    // no default, so omitted recorded_at inserts emit SQL DEFAULT -> NULL.
+    await pool.query(`
+      ALTER TABLE health_metrics
+      ALTER COLUMN recorded_at SET DEFAULT CURRENT_TIMESTAMP
+    `);
+  });
+
   await heal("all naked timestamps -> timestamptz", async () => {
     const { runNakedTimestamptzMigration } =
       await import("./migrations/naked-timestamps-to-timestamptz");
