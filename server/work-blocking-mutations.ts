@@ -1,3 +1,9 @@
+/**
+ * Work-mutation convenience for the universal blocked_by protocol
+ * (`shared/blocked-by-protocol.ts`, PLANNING.md). Projects additive
+ * prerequisites into the Core blocking graph only — never a domain-row
+ * dependency array.
+ */
 import { blockingGraphService } from "./blocking-graph-service";
 
 export type BlockingMutationInput = {

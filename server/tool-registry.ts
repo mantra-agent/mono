@@ -597,13 +597,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   blocking_graph: {
-    description: "Manage the universal Core blocking graph over canonical typed addresses using one blocked_by predicate.",
+    description: "Universal Core blocked_by graph over typed canonical addresses (PLANNING.md § Universal blocked_by protocol; shared/blocked-by-protocol.ts). One predicate only; source waits on target; no self-edges/cycles; no second dependency store.",
     category: "work",
     parameters: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["list_blockers", "list_blocked_items", "add_blocker", "remove_blocker"], description: "Blocking graph action" },
-        sourceAddress: { type: "string", description: "Canonical source address of the blocked item" },
+        sourceAddress: { type: "string", description: "Canonical source address of the blocked item (waits on target)" },
         targetAddress: { type: "string", description: "Canonical address of the blocking prerequisite" },
         linkId: { type: "string", description: "Blocking edge id for remove_blocker" },
         idempotencyKey: { type: "string", description: "Required replay-safe key for add_blocker" },
@@ -884,7 +884,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         people: { type: "array", items: { type: "string" }, description: "People (create_project)" },
         status: { type: "string", enum: ["idea", "planning", "active", "on_hold", "completed"], description: "Project status (set_status) or status filter (list_projects)" },
         goalId: { type: ["string", "null"], description: "Goal ID (set_goal/create_project)" },
-        blockedBy: { type: "array", items: { type: "string" }, description: "Optional canonical addresses that block the created or updated work item" },
+        blockedBy: { type: "array", items: { type: "string" }, description: "Optional prerequisite addresses projected into the Core blocked_by graph only (not a domain-row dependency field)" },
         fileId: { type: "string", description: "File ID (read_file/remove_file)" },
         fileName: { type: "string", description: "File name (add_file)" },
         fileMimeType: { type: "string", description: "MIME type (add_file)" },
@@ -930,7 +930,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         projectId: { type: "number", description: "Project ID to link" },
         milestoneId: { type: "number", description: "Required for create: positive milestone ID belonging to projectId. If the right milestone is unclear, find one or ask the user before creating the task." },
         deadline: { type: "string", description: "Deadline date (ISO string)" },
-        blockedBy: { type: "array", items: { type: "string" }, description: "Optional canonical addresses that block the task" },
+        blockedBy: { type: "array", items: { type: "string" }, description: "Optional prerequisite addresses projected into the Core blocked_by graph only (not a domain-row dependency field)" },
         clearFields: { type: "array", items: { type: "string" }, description: "Fields to explicitly clear (set to null). Allowed: description, assigneeSubjectType + assigneeSubjectId together, deadline. Project and milestone placement cannot be cleared. (update)" },
         confirmDestructiveUpdate: { type: "boolean", description: "Required confirmation when clearing destructive fields like description (update)" },
         destructiveUpdateReason: { type: "string", description: "Reason for destructive clear — required with confirmDestructiveUpdate (update)" },
