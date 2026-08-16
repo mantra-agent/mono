@@ -52,6 +52,7 @@ import {
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -355,6 +356,7 @@ function CreateMetricDialog() {
 
 export default function BusinessMetricsPage() {
   const { toast } = useToast();
+  usePageHeader({ title: "Metrics" });
   const [query, setQuery] = useState("");
   const [sampleSpan, setSampleSpan] = useState<SampleSpan>("today");
   const [deleteTarget, setDeleteTarget] = useState<Metric | null>(null);
