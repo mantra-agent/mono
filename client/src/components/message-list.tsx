@@ -5,6 +5,7 @@ import {
   ChatTurn,
   segmentsFromSavedMessage,
   emailDraftIdsFromSegments,
+  meetingDraftIdsFromSegments,
   referenceIdsFromSegments,
   isPlanWidgetToolCall,
   InlinePlanWidget,
@@ -31,6 +32,7 @@ import { createLogger } from "@/lib/logger";
 // Cache of email draft IDs extracted from saved messages, keyed by message
 // object identity — avoids reparsing segments/tool results on every render.
 const savedDraftIdCache = new WeakMap<Message, string[]>();
+const savedMeetingDraftIdCache = new WeakMap<Message, string[]>();
 const savedQuestionIdCache = new WeakMap<Message, string[]>();
 
 function draftIdsForSavedMessage(msg: Message): string[] {
@@ -39,6 +41,15 @@ function draftIdsForSavedMessage(msg: Message): string[] {
   const { fromContent, fromToolResults } = emailDraftIdsFromSegments(segmentsFromSavedMessage(msg));
   const ids = [...new Set([...fromContent, ...fromToolResults])];
   savedDraftIdCache.set(msg, ids);
+  return ids;
+}
+
+function meetingDraftIdsForSavedMessage(msg: Message): string[] {
+  const cached = savedMeetingDraftIdCache.get(msg);
+  if (cached) return cached;
+  const { fromContent, fromToolResults } = meetingDraftIdsFromSegments(segmentsFromSavedMessage(msg));
+  const ids = [...new Set([...fromContent, ...fromToolResults])];
+  savedMeetingDraftIdCache.set(msg, ids);
   return ids;
 }
 
@@ -884,6 +895,24 @@ export function MessageList({
     for (const id of ids) emailDraftOwnerByDraftId.set(id, it.msg.id);
   }
 
+  // Same latest-wins ownership for meeting draft approval widgets.
+  const meetingDraftOwnerByDraftId = new Map<string, string>();
+  const meetingDraftIdsByMessageId = new Map<string, string[]>();
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.kind !== "message") continue;
+    const useStreamingSegments = i === streamingTargetIdx && effectiveStreaming.segments.length > 0;
+    const ids = useStreamingSegments
+      ? (() => {
+          const { fromContent, fromToolResults } = meetingDraftIdsFromSegments(effectiveStreaming.segments);
+          return [...new Set([...fromContent, ...fromToolResults])];
+        })()
+      : meetingDraftIdsForSavedMessage(it.msg);
+    if (ids.length === 0) continue;
+    meetingDraftIdsByMessageId.set(it.msg.id, ids);
+    for (const id of ids) meetingDraftOwnerByDraftId.set(id, it.msg.id);
+  }
+
   // Question ownership spans the visible transcript and every recursively loaded
   // history page. Newer pages claim IDs first; each page then assigns its
   // remaining IDs to the latest local occurrence. Ownership must scan the same
@@ -1039,6 +1068,9 @@ export function MessageList({
       }
     }
     const suppressed = draftIdsByMessageId.get(msg.id)?.filter((id) => emailDraftOwnerByDraftId.get(id) !== msg.id);
+    const suppressedMeetingDrafts = meetingDraftIdsByMessageId
+      .get(msg.id)
+      ?.filter((id) => meetingDraftOwnerByDraftId.get(id) !== msg.id);
     const suppressedQuestionIds = questionToolCallIdsByMessageId
       .get(msg.id)
       ?.filter((id) =>
@@ -1092,6 +1124,7 @@ export function MessageList({
         historical={historical}
         compactReferences={compactReferences}
         suppressedEmailDraftIds={suppressed && suppressed.length > 0 ? suppressed.join("|") : undefined}
+        suppressedMeetingDraftIds={suppressedMeetingDrafts && suppressedMeetingDrafts.length > 0 ? suppressedMeetingDrafts.join("|") : undefined}
         suppressedQuestionToolCallIds={suppressedQuestionIds && suppressedQuestionIds.length > 0 ? suppressedQuestionIds.join("|") : undefined}
         questionResponses={questionResponses}
         activeQuestionToolCallId={activeQuestionToolCallId}
