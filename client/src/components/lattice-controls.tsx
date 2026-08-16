@@ -1,17 +1,16 @@
 // Shared morphogenic-lattice UI grammar for editable platform defaults.
 //
-// One motif, reused by both the Personas page and the Skills page: a green
-// inbound "default advanced" mark, an amber "edited locally" mark, a
-// current-vs-default diff view, an Apply/Revert-to-default confirmation, and the
-// inbound Keep-mine / Use-updated-default acknowledgement row. Persona- and
-// Skill-specific payload builders live in their own pages; everything that is
-// payload-agnostic lives here so the two catalogs cannot drift into a second
-// motif.
+// One motif, reused by both the Personas page and the Skills page: one row
+// discriminant (green inbound if a default is waiting, otherwise amber local
+// drift), a current-vs-default diff view, an Apply/Revert-to-default
+// confirmation, and inbound acknowledgement actions in the overflow menu.
+// Persona- and Skill-specific payload builders live in their own pages;
+// everything that is payload-agnostic lives here so the two catalogs cannot
+// drift into a second motif.
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,7 +21,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
 import { useToast } from "@/hooks/use-toast";
 
 export interface ApplyDiffRow {
@@ -174,25 +172,4 @@ export function DefaultSyncDialog({ sync }: { sync: ReturnType<typeof useDefault
   );
 }
 
-/** Inbound acknowledgement row: accept the advanced default or stay customized. */
-export function UpdateAvailableActions({
-  onKeepMine,
-  onUseUpdatedDefault,
-  working,
-}: {
-  onKeepMine: () => void;
-  onUseUpdatedDefault: () => void;
-  working?: boolean;
-}) {
-  return (
-    <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default")}>
-      <div className="min-w-0 flex-1 text-sm">
-        <p className="font-medium">Update available</p>
-        <div className="mt-1 flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" disabled={working} onClick={onKeepMine}>Keep mine</Button>
-          <Button size="sm" disabled={working} onClick={onUseUpdatedDefault}>Use updated default</Button>
-        </div>
-      </div>
-    </div>
-  );
-}
+
