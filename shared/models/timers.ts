@@ -56,6 +56,7 @@ export const timerSchema = z.object({
   scope: z.enum(timerScopes),
   ownerUserId: z.string().optional(),
   accountId: z.string().optional(),
+  instanceId: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -70,6 +71,7 @@ export const insertTimerSchema = timerSchema.omit({
   scope: true,
   ownerUserId: true,
   accountId: true,
+  instanceId: true,
   createdAt: true,
   updatedAt: true,
 });

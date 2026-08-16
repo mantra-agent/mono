@@ -1,7 +1,7 @@
 import { createLogger } from "./log";
 
-const log = createLogger("PersonaInstanceSchema");
-const MIGRATION_LOCK_KEY = "migration.persona-instance-ownership.v1";
+const log = createLogger("TimerSkillInstanceSchema");
+const MIGRATION_LOCK_KEY = "migration.timer-skill-instance-ownership.v1";
 
 type QueryableClient = {
   query: (sql: string, params?: unknown[]) => Promise<{ rows?: Array<Record<string, unknown>>; rowCount?: number }>;
@@ -13,27 +13,29 @@ type ConnectionPool = {
 };
 
 /**
- * Phase 2 mind seam: stamp personas + affect with pinned Agent Instance.
+ * Phase 2 mind seam: stamp live Timers and Skills with the pinned Agent Instance.
  *
  * Additive only:
- * - nullable instance_id on personas, persona_revisions, persona_preferences, emotional_states
+ * - nullable instance_id on timers, responsibility_runs, skills, skill_revisions, skill_runs
  * - backfill from agent_instance_memberships (owner_user_id + account_id)
  * - leave instance_id null when no pin so rows stay owner-visible
  *
- * Dual-write/read lives in scoped-storage + PersonaStorage / emotional-state.
- * Do not empty tables. Runtime and conversations stay User-keyed.
+ * Mods still own seeds/defaults/lifecycle. Users still own authorship, overlays,
+ * credentials, and delivery. Uniqueness stays owner-scoped during the dual-write
+ * window. Do not empty tables. Do not move runtime or conversations.
  */
-export async function ensurePersonaInstanceOwnershipSchema(pool: ConnectionPool): Promise<void> {
+export async function ensureTimerSkillInstanceOwnershipSchema(pool: ConnectionPool): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     await client.query(`SELECT pg_advisory_xact_lock(hashtext('${MIGRATION_LOCK_KEY}'))`);
 
     const tables = [
-      "personas",
-      "persona_revisions",
-      "persona_preferences",
-      "emotional_states",
+      "timers",
+      "responsibility_runs",
+      "skills",
+      "skill_revisions",
+      "skill_runs",
     ] as const;
 
     for (const table of tables) {
@@ -67,12 +69,12 @@ export async function ensurePersonaInstanceOwnershipSchema(pool: ConnectionPool)
       `);
     }
 
-    // Backfill from the writer's Account pin. Leave null when no membership.
     const backfillSpecs: Array<{ table: string; ownerColumn: string; accountColumn: string }> = [
-      { table: "personas", ownerColumn: "owner_user_id", accountColumn: "account_id" },
-      { table: "persona_revisions", ownerColumn: "owner_user_id", accountColumn: "account_id" },
-      { table: "persona_preferences", ownerColumn: "owner_user_id", accountColumn: "account_id" },
-      { table: "emotional_states", ownerColumn: "owner_user_id", accountColumn: "account_id" },
+      { table: "timers", ownerColumn: "owner_user_id", accountColumn: "account_id" },
+      { table: "responsibility_runs", ownerColumn: "owner_user_id", accountColumn: "account_id" },
+      { table: "skills", ownerColumn: "owner_user_id", accountColumn: "account_id" },
+      { table: "skill_revisions", ownerColumn: "owner_user_id", accountColumn: "account_id" },
+      { table: "skill_runs", ownerColumn: "owner_user_id", accountColumn: "account_id" },
     ];
 
     const counts: Record<string, number> = {};
@@ -97,7 +99,7 @@ export async function ensurePersonaInstanceOwnershipSchema(pool: ConnectionPool)
       counts[spec.table] = result.rowCount ?? 0;
     }
 
-    log.info("persona/affect instance ownership convergence complete", counts);
+    log.info("timer/skill instance ownership convergence complete", counts);
 
     await client.query("COMMIT");
   } catch (error) {

@@ -240,6 +240,7 @@ async function adoptOrCreateTimer(
       scope: "user",
       ownerUserId: principal.userId!,
       accountId: principal.accountId!,
+      instanceId: principal.instanceId ?? null,
       createdAt: now,
     })
     .returning({ id: timers.id });

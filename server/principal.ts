@@ -64,7 +64,7 @@ export interface Principal {
   /**
    * Pinned Agent Instance for this Account (mind / continuity boundary).
    * Null for system/service principals or when the pin is unresolved.
-   * Memory dual-write/read opts in via ScopeColumns.instanceId.
+   * Memory, personas, Timers, and Skills dual-write/read via ScopeColumns.instanceId.
    */
   instanceId: string | null;
   /** Named system job for vault allowlist enforcement. Only set on system principals. */

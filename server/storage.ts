@@ -264,7 +264,7 @@ export interface IStorage {
 }
 
 const log = createLogger("Storage");
-const skillScopeColumns = { scope: skills.scope, ownerUserId: skills.ownerUserId, accountId: skills.accountId, vaultId: skills.vaultId };
+const skillScopeColumns = { scope: skills.scope, ownerUserId: skills.ownerUserId, accountId: skills.accountId, vaultId: skills.vaultId, instanceId: skills.instanceId };
 
 /** Exact Drizzle transaction handle type used by the skill lattice helpers. */
 type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -288,7 +288,7 @@ function mergeSkillPayloadInput(
   return merged;
 }
 const promptModuleScopeColumns = { scope: promptModules.scope, ownerUserId: promptModules.ownerUserId, accountId: promptModules.accountId };
-const skillRunScopeColumns = { ownerUserId: skillRuns.ownerUserId, accountId: skillRuns.accountId, vaultId: skillRuns.vaultId };
+const skillRunScopeColumns = { ownerUserId: skillRuns.ownerUserId, accountId: skillRuns.accountId, vaultId: skillRuns.vaultId, instanceId: skillRuns.instanceId };
 // skillScoreScopeColumns removed — skill_scores superseded by skill_runs
 const skillDismissalScopeColumns = { ownerUserId: skillFailureDismissals.ownerUserId, accountId: skillFailureDismissals.accountId };
 
@@ -466,14 +466,7 @@ export class HybridStorage implements IStorage {
     const scoped = combineWithVisibleScope(principal, skillScopeColumns, predicate);
     if (principal.actorType === "system") return scoped;
     if (!principal.userId || !principal.accountId) return sql`FALSE`;
-    return and(scoped, or(
-      eq(skills.scope, "global"),
-      and(
-        eq(skills.scope, "user"),
-        eq(skills.ownerUserId, principal.userId),
-        eq(skills.accountId, principal.accountId),
-      ),
-    ))!;
+    return and(scoped, or(eq(skills.scope, "global"), eq(skills.scope, "user")))!;
   }
 
   private skillWritable(predicate?: SQL): SQL {
@@ -483,8 +476,6 @@ export class HybridStorage implements IStorage {
     return and(
       combineWithWritableScope(principal, skillScopeColumns, predicate),
       eq(skills.scope, "user"),
-      eq(skills.ownerUserId, principal.userId),
-      eq(skills.accountId, principal.accountId),
     )!;
   }
 
@@ -502,26 +493,24 @@ export class HybridStorage implements IStorage {
 
   private runVisible(predicate?: SQL): SQL {
     const principal = requireCurrentPrincipal();
-    const scoped = combineWithVisibleScope(principal, skillRunScopeColumns, predicate);
-    if (principal.actorType === "system") return scoped;
-    if (!principal.userId || !principal.accountId) return sql`FALSE`;
-    return and(
-      scoped,
-      eq(skillRuns.ownerUserId, principal.userId),
-      eq(skillRuns.accountId, principal.accountId),
-    )!;
+    if (!principal.userId || !principal.accountId) {
+      if (principal.actorType === "system") {
+        return combineWithVisibleScope(principal, skillRunScopeColumns, predicate);
+      }
+      return sql`FALSE`;
+    }
+    return combineWithVisibleScope(principal, skillRunScopeColumns, predicate);
   }
 
   private runWritable(predicate?: SQL): SQL {
     const principal = requireCurrentPrincipal();
-    const scoped = combineWithWritableScope(principal, skillRunScopeColumns, predicate);
-    if (principal.actorType === "system") return scoped;
-    if (!principal.userId || !principal.accountId) return sql`FALSE`;
-    return and(
-      scoped,
-      eq(skillRuns.ownerUserId, principal.userId),
-      eq(skillRuns.accountId, principal.accountId),
-    )!;
+    if (!principal.userId || !principal.accountId) {
+      if (principal.actorType === "system") {
+        return combineWithWritableScope(principal, skillRunScopeColumns, predicate);
+      }
+      return sql`FALSE`;
+    }
+    return combineWithWritableScope(principal, skillRunScopeColumns, predicate);
   }
 
   private dismissalVisible(predicate?: SQL): SQL {
@@ -726,11 +715,15 @@ export class HybridStorage implements IStorage {
     const namespaceOrder = principal.actorType === "user" && principal.userId && principal.accountId
       ? sql`CASE
           WHEN ${skills.scope} = 'user'
-            AND ${skills.ownerUserId} = ${principal.userId}
-            AND ${skills.accountId} = ${principal.accountId}
+            AND ${principal.instanceId} IS NOT NULL
+            AND ${skills.instanceId} = ${principal.instanceId}
           THEN 0
-          WHEN ${skills.scope} = 'global' THEN 1
-          ELSE 2
+          WHEN ${skills.scope} = 'user'
+            AND ${skills.instanceId} IS NULL
+            AND ${skills.ownerUserId} = ${principal.userId}
+          THEN 1
+          WHEN ${skills.scope} = 'global' THEN 2
+          ELSE 3
         END`
       : sql`CASE WHEN ${skills.scope} = 'global' THEN 0 ELSE 1 END`;
     const rows = await db
@@ -794,6 +787,7 @@ export class HybridStorage implements IStorage {
             userId: principal.userId,
             accountId: principal.accountId,
             vaultId: principal.activeVaultId,
+            instanceId: principal.instanceId,
           });
         }
       }
@@ -850,7 +844,7 @@ export class HybridStorage implements IStorage {
   private async forkFollowingSkillCopyTx(
     tx: DbTransaction,
     visible: typeof skills.$inferSelect,
-    owner: { userId: string; accountId: string; vaultId: string | null | undefined },
+    owner: { userId: string; accountId: string; vaultId: string | null | undefined; instanceId?: string | null },
   ): Promise<typeof skills.$inferSelect> {
     const {
       id: _id,
@@ -862,6 +856,7 @@ export class HybridStorage implements IStorage {
       ownerUserId: _ownerUserId,
       accountId: _accountId,
       vaultId: _vaultId,
+      instanceId: _instanceId,
       templateSkillId: _templateSkillId,
       baseRevisionId: _baseRevisionId,
       currentRevisionId: _currentRevisionId,
@@ -881,6 +876,7 @@ export class HybridStorage implements IStorage {
       ownerUserId: owner.userId,
       accountId: owner.accountId,
       vaultId: owner.vaultId,
+      instanceId: owner.instanceId ?? null,
       successCount: 0,
       failureCount: 0,
       createdAt: new Date(),
@@ -943,6 +939,7 @@ export class HybridStorage implements IStorage {
       scope: opts.scope,
       ownerUserId: opts.scope === "user" ? row.ownerUserId : null,
       accountId: opts.scope === "user" ? row.accountId : null,
+      instanceId: opts.scope === "user" ? row.instanceId ?? null : null,
       parentRevisionId: opts.parentRevisionId ?? null,
       platformBaseRevisionId: opts.platformBaseRevisionId ?? null,
       payload,
@@ -1029,6 +1026,7 @@ export class HybridStorage implements IStorage {
         userId: principal.userId,
         accountId: principal.accountId,
         vaultId: principal.activeVaultId,
+        instanceId: principal.instanceId,
       });
     });
     if (!owned) return undefined;

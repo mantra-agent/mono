@@ -114,6 +114,8 @@ export const skills = pgTable("skills", {
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
   vaultId: text("vault_id"),
+  /** Pinned Agent Instance mind owner; owner_user_id stays created_by. */
+  instanceId: text("instance_id"),
 
   /** Same-name global template this user shadow follows (Persona templatePersonaId). */
   templateSkillId: varchar("template_skill_id"),
@@ -133,6 +135,7 @@ export const skills = pgTable("skills", {
 }, (table) => [
   index("idx_skills_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_skills_account").on(table.accountId),
+  index("idx_skills_instance").on(table.instanceId),
   index("idx_skills_template").on(table.templateSkillId),
   uniqueIndex("idx_skills_global_name_unique").on(table.name).where(sql`${table.scope} = 'global'`),
   uniqueIndex("idx_skills_owner_name_unique").on(table.ownerUserId, table.accountId, table.name).where(sql`${table.scope} = 'user'`),
@@ -152,6 +155,8 @@ export const skillRevisions = pgTable(
     scope: text("scope").notNull(), // platform | user
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
+    /** Pinned Agent Instance mind owner for user revisions; platform rows stay null. */
+    instanceId: text("instance_id"),
     parentRevisionId: text("parent_revision_id"),
     platformBaseRevisionId: text("platform_base_revision_id"),
     payload: jsonb("payload").notNull(),
@@ -165,6 +170,7 @@ export const skillRevisions = pgTable(
   (table) => [
     index("idx_skill_revisions_identity_created").on(table.skillIdentityId, table.createdAt),
     index("idx_skill_revisions_scope_owner").on(table.scope, table.ownerUserId),
+    index("idx_skill_revisions_instance").on(table.instanceId),
     index("idx_skill_revisions_identity_hash").on(table.skillIdentityId, table.contentHash),
   ],
 );
@@ -199,9 +205,12 @@ export const skillRuns = pgTable("skill_runs", {
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
   vaultId: text("vault_id"),
+  /** Pinned Agent Instance mind owner; owner_user_id stays created_by. */
+  instanceId: text("instance_id"),
 }, (table) => [
   index("idx_skill_runs_owner_started").on(table.ownerUserId, table.startedAt),
   index("idx_skill_runs_account_started").on(table.accountId, table.startedAt),
+  index("idx_skill_runs_instance").on(table.instanceId),
   index("idx_skill_runs_parent_lineage").on(table.parentSkillRunId, table.parentToolCallId, table.skillName),
   uniqueIndex("idx_skill_runs_runtime_run_unique").on(table.runtimeRunId).where(sql`${table.runtimeRunId} IS NOT NULL`),
 ]);
@@ -227,6 +236,7 @@ export const insertSkillSchema = createInsertSchema(skills).omit({
   baseRevisionId: true,
   currentRevisionId: true,
   updateState: true,
+  instanceId: true,
 }).extend({
   name: z.string().min(1).max(64).regex(/^[a-z][a-z0-9-]*$/, "Lowercase letters, numbers, and hyphens only"),
   description: z.string().min(1).max(1024),

@@ -233,6 +233,7 @@ export async function initializeSkillRevisionLineage(): Promise<void> {
         scope: revisionScope,
         ownerUserId: revisionScope === "user" ? row.ownerUserId : null,
         accountId: revisionScope === "user" ? row.accountId : null,
+        instanceId: revisionScope === "user" ? row.instanceId ?? null : null,
         parentRevisionId: null,
         platformBaseRevisionId: null,
         payload,

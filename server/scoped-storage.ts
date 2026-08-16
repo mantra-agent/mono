@@ -15,7 +15,8 @@ export interface ScopeColumns {
   /**
    * Optional Instance ownership column (same opt-in as vaultId).
    * Mind seams that opt in today: memory claim graph, personas, persona_revisions,
-   * persona_preferences, emotional_states. When present:
+   * persona_preferences, emotional_states, timers, responsibility_runs, skills,
+   * skill_revisions, skill_runs. When present:
    * - reads match pinned Instance OR (NULL instance + owner_user_id)
    * - inserts stamp principal.instanceId when set
    * - account_id is not used for visibility (prevents Business Instance leak)

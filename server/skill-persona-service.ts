@@ -31,6 +31,7 @@ const skillScopeColumns = {
   ownerUserId: skills.ownerUserId,
   accountId: skills.accountId,
   vaultId: skills.vaultId,
+  instanceId: skills.instanceId,
 };
 
 export async function listSkillPersonaConfiguration(): Promise<SkillPersonaConfiguration> {
