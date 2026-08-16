@@ -1,6 +1,21 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Activity, ChevronRight, FileText, Loader2, Package, PenLine, Plus, User } from "lucide-react";
+import {
+  Activity,
+  Archive,
+  ChevronRight,
+  FileText,
+  FlaskConical,
+  Hammer,
+  Lightbulb,
+  Loader2,
+  Package,
+  PenLine,
+  Plus,
+  SlidersHorizontal,
+  User,
+  Wrench,
+} from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -12,6 +27,8 @@ import { ReferenceText } from "@/components/references/reference-text";
 import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
+import { ChildSessionBlock } from "@/components/inline-session-blocks";
+import { ActiveStatusSpinner } from "@/components/nav-dot";
 import { useSessionLaunch } from "@/hooks/use-session-launch";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
@@ -31,6 +48,8 @@ import {
   type FeatureStage,
   type FeatureStatus,
 } from "@shared/feature-pipeline";
+import type { ChatSession, ChildSessionBlockMeta } from "@shared/models/chat";
+import { isDurablyActiveSession } from "@shared/models/chat";
 
 const stages = FEATURE_STAGES;
 const statuses = FEATURE_STATUSES;
@@ -47,6 +66,16 @@ type Feature = {
 };
 type Product = { id: number; name: string };
 type Person = { id: string; name: string; cabinetLevel?: string };
+type FeatureSessionLink = {
+  sessionId: string;
+  title: string;
+  evidenceType: "explicit" | "discovered";
+  createdAt?: string | null;
+};
+
+/** Same chrome as expanded Project summary — bordered card frame, capped height. */
+const FEATURE_DESCRIPTION_FRAME_CLASS =
+  "max-h-40 overflow-y-auto rounded-md border border-border/30 bg-card/40 p-2";
 
 const STATUS_LABELS: Record<FeatureStatus, string> = {
   ready: "Ready",
@@ -54,8 +83,23 @@ const STATUS_LABELS: Record<FeatureStatus, string> = {
   needs_review: "Needs Review",
 };
 
+const STAGE_ICONS: Record<FeatureStage, ReactNode> = {
+  idea: <Lightbulb className="h-3.5 w-3.5" />,
+  spec: <FileText className="h-3.5 w-3.5" />,
+  develop: <Hammer className="h-3.5 w-3.5" />,
+  test: <FlaskConical className="h-3.5 w-3.5" />,
+  calibrate: <SlidersHorizontal className="h-3.5 w-3.5" />,
+  maintain: <Wrench className="h-3.5 w-3.5" />,
+  deprecate: <Archive className="h-3.5 w-3.5" />,
+};
+
 function formatStage(stage: FeatureStage) {
   return formatFeatureStage(stage);
+}
+
+function isActivePipelineSession(session: ChatSession | undefined | null): boolean {
+  if (!session) return false;
+  return isDurablyActiveSession(session) || session.status === "streaming";
 }
 
 function NewFeature({
@@ -179,6 +223,8 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
   const [editingOwner, setEditingOwner] = useState(false);
   const [editingSpec, setEditingSpec] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
+  /** Optimistic link after a row launch, before discovery/artifact indexing catches up. */
+  const [launchedSessionId, setLaunchedSessionId] = useState<string | null>(null);
 
   const update = useMutation({
     mutationFn: async (patch: Record<string, unknown>) => {
@@ -196,6 +242,70 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
       }),
   });
 
+  const { data: linkedSessions = [] } = useQuery<FeatureSessionLink[]>({
+    queryKey: ["/api/features", feature.id, "sessions"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", `/api/features/${feature.id}/sessions`);
+      return response.json();
+    },
+    staleTime: 5_000,
+  });
+
+  const { data: allSessions = [] } = useQuery<ChatSession[]>({
+    queryKey: ["/api/sessions"],
+  });
+
+  const sessionsById = useMemo(() => {
+    const map = new Map<string, ChatSession>();
+    for (const session of allSessions) map.set(session.id, session);
+    return map;
+  }, [allSessions]);
+
+  const activeSession = useMemo(() => {
+    const candidates = new Map<string, ChatSession>();
+    for (const link of linkedSessions) {
+      const session = sessionsById.get(link.sessionId);
+      if (session) candidates.set(session.id, session);
+    }
+    if (launchedSessionId) {
+      const launched = sessionsById.get(launchedSessionId);
+      if (launched) candidates.set(launched.id, launched);
+    }
+    // Title match covers the gap before @feature discovery indexes the launch message.
+    const summary = feature.summary.trim();
+    if (summary) {
+      for (const session of allSessions) {
+        if (!session.title?.includes(summary)) continue;
+        candidates.set(session.id, session);
+      }
+    }
+    const active = [...candidates.values()]
+      .filter((session) => isActivePipelineSession(session))
+      .sort((a, b) => Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt));
+    return active[0] ?? null;
+  }, [allSessions, feature.summary, launchedSessionId, linkedSessions, sessionsById]);
+
+  const isSessionInProgress = Boolean(activeSession);
+
+  useEffect(() => {
+    if (!launchedSessionId) return;
+    const session = sessionsById.get(launchedSessionId);
+    if (session && !isActivePipelineSession(session)) {
+      setLaunchedSessionId(null);
+    }
+  }, [launchedSessionId, sessionsById]);
+
+  const activeSessionMeta: ChildSessionBlockMeta | null = activeSession
+    ? {
+        childSessionId: activeSession.id,
+        parentSessionId: activeSession.parentSessionId || activeSession.id,
+        role: activeSession.title || "Feature session",
+        startedAt: activeSession.createdAt,
+        updatedAt: activeSession.updatedAt,
+        summary: activeSession.summary ?? null,
+      }
+    : null;
+
   const ownerValue: ReferencePickerValue[] = feature.owner_person_id
     ? [{ type: "person", id: feature.owner_person_id, label: feature.owner_person_id }]
     : [];
@@ -205,7 +315,22 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
 
   return (
     <ProfileTreeRow
-      label={feature.summary}
+      label={(
+        <span
+          className={cn(
+            "truncate",
+            isSessionInProgress && "text-active font-medium motion-safe:animate-pulse",
+          )}
+          data-testid={`text-feature-title-${feature.id}`}
+        >
+          {feature.summary}
+        </span>
+      )}
+      icon={
+        isSessionInProgress
+          ? <ActiveStatusSpinner className="h-3.5 w-3.5" />
+          : STAGE_ICONS[feature.stage]
+      }
       hasValue
       showEmpty
       mobileLayout="inline"
@@ -214,13 +339,16 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
       expandedContentClassName="px-2 pb-2 pl-2"
       expandedContent={(
         <div className="space-y-0.5">
-          <div className="px-1 pb-1.5 pt-0.5" data-testid={`feature-description-${feature.id}`}>
+          <div
+            className={cn(FEATURE_DESCRIPTION_FRAME_CLASS, "mb-1.5")}
+            data-testid={`feature-description-${feature.id}`}
+          >
             {editingDescription ? (
               <Textarea
                 autoFocus
                 defaultValue={feature.description ?? ""}
                 placeholder="Add a description…"
-                className="min-h-20 text-xs"
+                className="min-h-16 resize-none border-0 bg-transparent p-0 text-xs leading-relaxed shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
                 onBlur={(event) => {
                   const next = event.target.value.trim();
                   if (next === (feature.description ?? "").trim()) {
@@ -234,7 +362,7 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
             ) : feature.description?.trim() ? (
               <button
                 type="button"
-                className="block w-full text-left prose prose-sm dark:prose-invert max-w-none text-xs leading-relaxed [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0"
+                className="block w-full text-left text-xs leading-relaxed text-muted-foreground hover:text-foreground"
                 onClick={() => setEditingDescription(true)}
                 data-testid={`button-edit-feature-description-${feature.id}`}
               >
@@ -243,7 +371,7 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
             ) : (
               <button
                 type="button"
-                className="text-xs text-muted-foreground hover:text-foreground"
+                className="text-xs text-muted-foreground/50 hover:text-muted-foreground"
                 onClick={() => setEditingDescription(true)}
                 data-testid={`button-add-feature-description-${feature.id}`}
               >
@@ -415,6 +543,15 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
               </button>
             )}
           </ProfileTreeRow>
+
+          {activeSessionMeta ? (
+            <div className="pt-1.5" data-testid={`feature-active-session-${feature.id}`}>
+              <ChildSessionBlock
+                meta={activeSessionMeta}
+                defaultExpanded={false}
+              />
+            </div>
+          ) : null}
         </div>
       )}
       menuContent={(
@@ -430,24 +567,32 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
                 disabled={launch.isPending}
                 onSelect={(event) => {
                   event.preventDefault();
-                  launch.mutate({
-                    pendingKey,
-                    title: `${contract.actionLabel}: ${feature.summary}`.slice(0, 80),
-                    personaName: contract.persona,
-                    message: composeFeatureLaunchMessage({
-                      id: feature.id,
-                      summary: feature.summary,
-                      stage: feature.stage,
-                      status: feature.status,
-                      productName: feature.product_name,
-                      productId: feature.product_id,
-                      ownerPersonId: feature.owner_person_id,
-                      specPageId: feature.spec_page_id,
-                      description: feature.description,
-                    }, job),
-                    clientTurnSuffix: pendingKey,
-                    errorTitle: `Could not start ${contract.actionLabel.toLowerCase()} session`,
-                  });
+                  launch.mutate(
+                    {
+                      pendingKey,
+                      title: `${contract.actionLabel}: ${feature.summary}`.slice(0, 80),
+                      personaName: contract.persona,
+                      message: composeFeatureLaunchMessage({
+                        id: feature.id,
+                        summary: feature.summary,
+                        stage: feature.stage,
+                        status: feature.status,
+                        productName: feature.product_name,
+                        productId: feature.product_id,
+                        ownerPersonId: feature.owner_person_id,
+                        specPageId: feature.spec_page_id,
+                        description: feature.description,
+                      }, job),
+                      clientTurnSuffix: pendingKey,
+                      errorTitle: `Could not start ${contract.actionLabel.toLowerCase()} session`,
+                    },
+                    {
+                      onSuccess: (session) => {
+                        setLaunchedSessionId(session.id);
+                        queryClient.invalidateQueries({ queryKey: ["/api/features", feature.id, "sessions"] });
+                      },
+                    },
+                  );
                 }}
                 data-testid={`button-feature-launch-${feature.stage}-${job}-${feature.id}`}
               >
