@@ -73,31 +73,6 @@ export const CONTEXT_GROUP_SECTION_IDS: ReadonlySet<string> = new Set(
   CONTEXT_GROUP_DEFINITIONS.flatMap((group) => [...group.sectionIds]),
 );
 
-/**
- * Canonical optional context maps for selectable personas after the Root ∪
- * five-group cut. Keys are lowercase persona names. Values use group IDs only.
- * Empty object means Root-owned context only (History, Memory, Current Session,
- * partner Identity). Life is retired: Identity is Root; goals through quarter
- * live on Schedule. Development owns CODING.md. Longer horizons load via tools.
- * operator/creative/persuader remain rename aliases. There is no Default seat.
- */
-export const PERSONA_CONTEXT_MAPS: Readonly<Record<string, Readonly<Record<string, boolean>>>> = {
-  architect: { principles: true, development: true },
-  engineer: { development: true },
-  operator: { schedule: true },
-  executive: { schedule: true },
-  producer: { schedule: true },
-  coach: { emotions: true, schedule: true, people: true, principles: true },
-  companion: { emotions: true, schedule: true, people: true },
-  strategist: { principles: true, schedule: true },
-  investigator: { people: true, schedule: true },
-  persuader: { people: true, emotions: true },
-  advocate: { people: true, emotions: true },
-  visionary: {},
-  creative: {},
-  router: {},
-};
-
 export function sectionIdsForEnabledGroups(flags: Record<string, boolean> | null | undefined): string[] {
   if (!flags) return [];
   const ids = new Set<string>();
