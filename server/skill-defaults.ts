@@ -33,6 +33,8 @@ import {
 
     pinnedToContext?: boolean;
     sessionType?: "autonomous" | "agent";
+    /** When true, autonomous runs may mint a visible conversation. Inspect skills stay silent. */
+    mayInitiateConversation?: boolean;
   }
 
   export const TRIAGE_LOOKBACK_DAYS = 3;
@@ -624,6 +626,7 @@ Return a compact operational report:
   {
       name: "wonder",
     recommendedPersona: "Coach",
+    mayInitiateConversation: true,
       description: "Weekly deep question for Ray. Draws from the full spectrum — growth edges, creative synthesis, emerging opportunities, intellectual curiosity, and unresolved tensions — to ask one genuine, well-timed question that opens a door. Not coaching. Not poking soft spots. A real question from someone who sees the whole picture and is genuinely curious.",
       category: "relationship",
       activity: ACTIVITY_CHAT,
@@ -761,6 +764,7 @@ This skill runs in the background. Do NOT create a conversation or set attention
   {
     name: "ideate",
     recommendedPersona: "Architect",
+    mayInitiateConversation: true,
     description: "Generate the top 3 ideas to improve Agent, Ray's life, or their collaborative efforts. Research-backed, historically grounded, practically actionable. Surfaced as a conversation.",
     category: "growth",
     activity: ACTIVITY_THINKING,
@@ -1413,6 +1417,7 @@ Return a 3-5 line summary: goals reviewed, mutations by type, count flagged, and
   {
     name: "streamline",
     recommendedPersona: "Producer",
+    mayInitiateConversation: true,
     description: "Quiet Thursday-night bandwidth maintenance before Friday planning. Reconciles Ray's real commitments against capacity, repairs safe date and priority drift, recalibrates task effort from execution evidence, writes one short running log entry, and starts a focused conversation only when an irreducible tradeoff remains.",
     category: "thinking",
     activity: ACTIVITY_THINKING,

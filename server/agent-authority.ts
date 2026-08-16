@@ -22,6 +22,11 @@ export interface AgentAuthorityContext {
   /** Canonical DB skill row ID and name, resolved by the autonomous runner. Never model-provided. */
   skillId?: string;
   skillName?: string;
+  /**
+   * Runner-derived: the skill's deliverable is a conversation.
+   * Never accepted from model arguments. Inspect skills stay silent.
+   */
+  mayInitiateConversation?: boolean;
   /** Native Runtime ownership, injected by the runner and never accepted from model arguments. */
   runtimeRunId?: string;
   runtimeAttemptId?: string;
@@ -176,6 +181,15 @@ export function authorizeToolInvocation(
 
   if (origin === "timer" && toolName === "session" && (action === "initiate" || action === "set_attention")) {
     return { allowed: false, reason: "timer_attention_owned_by_scheduler" };
+  }
+
+  // Autonomous conversation mint is an external page. Allowed only when the
+  // runner-derived skill carries the deliverable flag. Inspect skills stay
+  // silent. Hook origin stays on the generic allowlist (human-configured).
+  if (origin === "autonomous" && toolName === "session" && action === "initiate") {
+    if (!context.skillId || context.mayInitiateConversation !== true) {
+      return { allowed: false, reason: "conversation_mint_requires_deliverable" };
+    }
   }
 
   if (toolName === "workflows" && context.trustedDelegation === "workflow" && !isWorkflowStageAction(action)) {

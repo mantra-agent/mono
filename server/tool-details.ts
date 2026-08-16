@@ -293,10 +293,10 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     },
   },
   converse: {
-    description: "Communication with the user. Start a new session or flag an existing one for user attention.",
-    whenToUse: "When you need to proactively reach out to the user about something, or when you want to draw their attention to an existing session.",
+    description: "Start a conversation whose deliverable is the conversation itself. Not a pager for work that lives elsewhere.",
+    whenToUse: "Only when the skill's deliverable is a conversation (Wonder, Ideate, Streamline escalation). Inspect and report skills stay silent.",
     actions: {
-      initiate: { description: "Start a new session with the user.", optionalParams: ["topic", "message"] },
+      initiate: { description: "Mint a visible conversation. Autonomous inspect skills cannot call this.", optionalParams: ["topic", "message"] },
       set_attention: { description: "Flag an existing conversation so the user sees a pin badge.", optionalParams: ["sessionId", "isPinned"] },
     },
   },
