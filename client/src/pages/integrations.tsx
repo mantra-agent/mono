@@ -1433,7 +1433,7 @@ function formatSettingsUptime(seconds?: number): string {
 
 
 
-function OpenAISubscriptionSection() {
+function OpenAISubscriptionSection({ children }: { children?: React.ReactNode }) {
   const { toast } = useToast();
   const { hasPermission } = useAuth();
   const canManageSystemIntegrations = hasPermission("system:write");
@@ -1590,12 +1590,13 @@ function OpenAISubscriptionSection() {
           </div>
         </ProfileTreeRow>
         {!canManageSystemIntegrations && <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">Admin only</span></ProfileTreeRow>}
+        {children}
       </IntegrationTreeSection>
     </div>
   );
 }
 
-function GrokSubscriptionSection() {
+function GrokSubscriptionSection({ children }: { children?: React.ReactNode }) {
   const { toast } = useToast();
   const { hasPermission } = useAuth();
   const canManageSystemIntegrations = hasPermission("system:write");
@@ -1731,6 +1732,7 @@ function GrokSubscriptionSection() {
           </div>
         </ProfileTreeRow>
         {!canManageSystemIntegrations && <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">Admin only</span></ProfileTreeRow>}
+        {children}
       </IntegrationTreeSection>
     </div>
   );
@@ -3212,7 +3214,7 @@ function IntegrationTreeSection({
         {actions}
       </div>
       <CollapsibleContent>
-        <div className="mt-0 space-y-1">{children}</div>
+        <div className="mt-0 space-y-0">{children}</div>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -5727,7 +5729,7 @@ function TierSettingSelect<T extends string>({
   </div>;
 }
 
-function ConnectorTierTree({ connector, models, title }: { connector: ModelConnectorDetail; models: ModelProviderDetail["models"]; title: string }) {
+function ConnectorTierTree({ connector, models, title, nested = false }: { connector: ModelConnectorDetail; models: ModelProviderDetail["models"]; title: string; nested?: boolean }) {
   const { toast } = useToast();
   const isOpenAI = isOpenAIProvider(connector.provider);
   const isClaude = connector.provider === "claude-cli";
@@ -5760,7 +5762,7 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
 
   return (
     <div className="min-w-0">
-      <IntegrationTreeSection label={title} initialOpen icon={<Bot className="h-3.5 w-3.5" />} testIdPrefix={testIdPrefix}>
+      <IntegrationTreeSection label={title} initialOpen icon={<Bot className="h-3.5 w-3.5" />} testIdPrefix={testIdPrefix} variant={nested ? "item" : "section"}>
         {MODEL_TIERS.map((tier) => {
           const config = mappings[tier];
           const model = models.find((item) => item.id === config.model || `${connector.provider}/${item.id}` === config.model);
@@ -5903,7 +5905,7 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
   );
 }
 
-function ModelConnectorSection({ provider, title = "Model mapping" }: { provider: ModelConnectorProvider; title?: string }) {
+function ModelConnectorSection({ provider, title = "Model mapping", nested = false }: { provider: ModelConnectorProvider; title?: string; nested?: boolean }) {
   const { toast } = useToast();
   const { data } = useQuery<{ connectors: ModelConnectorDetail[] }>({ queryKey: ["/api/models/connectors"] });
   const { data: modelsData } = useQuery<{ providers: ModelProviderDetail[] }>({ queryKey: ["/api/models/available"] });
@@ -5917,7 +5919,7 @@ function ModelConnectorSection({ provider, title = "Model mapping" }: { provider
   if (!connector) {
     return (
       <div className="min-w-0">
-        <IntegrationTreeSection label={title} initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
+        <IntegrationTreeSection label={title} initialOpen icon={<Bot className="h-3.5 w-3.5" />} variant={nested ? "item" : "section"}>
           <ProfileTreeRow label="Status" icon={<XCircle className="h-3.5 w-3.5 text-muted-foreground" />} hasValue showEmpty>
             <span className="text-muted-foreground">Not configured</span>
           </ProfileTreeRow>
@@ -5926,11 +5928,11 @@ function ModelConnectorSection({ provider, title = "Model mapping" }: { provider
     );
   }
   if (isOpenAIProvider(provider) || provider === "claude-cli" || isGrokProvider(provider)) {
-    return <ConnectorTierTree connector={connector} models={models} title={title} />;
+    return <ConnectorTierTree connector={connector} models={models} title={title} nested={nested} />;
   }
   return (
     <div className="min-w-0">
-      <IntegrationTreeSection label={title} initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
+      <IntegrationTreeSection label={title} initialOpen icon={<Bot className="h-3.5 w-3.5" />} variant={nested ? "item" : "section"}>
         {MODEL_TIERS.map((tier) => {
           const selected = tierConfigModel(connector.config.tierMappings[tier]);
           const selectedModel = models.find((model) => `${provider}/${model.id}` === selected || model.id === selected);
@@ -6028,15 +6030,29 @@ function IntegrationDetail({ provider }: { provider: string }) {
       )}
 
       {provider === "anthropic" && (
-        <div className="space-y-4"><Card className="overflow-hidden min-w-0"><CardHeader><CardTitle className="text-base font-semibold">Anthropic API</CardTitle></CardHeader><CardContent><SecretsForSection section="anthropic" /></CardContent></Card><ModelConnectorSection provider="anthropic" /></div>
+        <div className="min-w-0">
+          <IntegrationTreeSection label="Anthropic API" initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
+            <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
+              <div className="min-w-0 w-full"><SecretsForSection section="anthropic" /></div>
+            </ProfileTreeRow>
+            <ModelConnectorSection provider="anthropic" title="Model mapping" nested />
+          </IntegrationTreeSection>
+        </div>
       )}
 
       {provider === "openai" && (
         <div className="space-y-4">
-          <OpenAISubscriptionSection />
-          <ModelConnectorSection provider="openai-subscription" title="Subscription model mapping" />
-          <Card className="overflow-hidden min-w-0"><CardHeader><CardTitle className="text-base font-semibold">OpenAI API</CardTitle></CardHeader><CardContent><SecretsForSection section="openai" /></CardContent></Card>
-          <ModelConnectorSection provider="openai" title="API model mapping" />
+          <OpenAISubscriptionSection>
+            <ModelConnectorSection provider="openai-subscription" title="Model mapping" nested />
+          </OpenAISubscriptionSection>
+          <div className="min-w-0">
+            <IntegrationTreeSection label="OpenAI API" initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
+              <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
+                <div className="min-w-0 w-full"><SecretsForSection section="openai" /></div>
+              </ProfileTreeRow>
+              <ModelConnectorSection provider="openai" title="Model mapping" nested />
+            </IntegrationTreeSection>
+          </div>
         </div>
       )}
 
@@ -6049,16 +6065,17 @@ function IntegrationDetail({ provider }: { provider: string }) {
                   <SecretsForSection section="claude-cli" />
                 </div>
               </ProfileTreeRow>
+              <ModelConnectorSection provider="claude-cli" title="Model mapping" nested />
             </IntegrationTreeSection>
           </div>
-          <ModelConnectorSection provider="claude-cli" />
         </div>
       )}
 
       {provider === "grok" && (
         <div className="space-y-4">
-          <GrokSubscriptionSection />
-          <ModelConnectorSection provider="grok-subscription" title="Subscription model mapping" />
+          <GrokSubscriptionSection>
+            <ModelConnectorSection provider="grok-subscription" title="Model mapping" nested />
+          </GrokSubscriptionSection>
         </div>
       )}
 
