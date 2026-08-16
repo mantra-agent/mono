@@ -88,7 +88,7 @@ const build: ModDefinition = {
       clientRoute("build.route.issue-detail", "/issues/:id", "issue-detail", { requiredPermissions: ["build:read"] }),
     ],
     navigation: [
-      nav("build.nav.platforms", "Build", "Platforms", "Boxes", "navigation.platforms.open", "build.route.platforms", 1, { requiredPermissions: ["build:read"] }),
+      nav("build.nav.platforms", "Build", "Platforms", "Server", "navigation.platforms.open", "build.route.platforms", 1, { requiredPermissions: ["build:read"] }),
       nav("build.nav.products", "Build", "Products", "Boxes", "navigation.products.open", "build.route.products", 2, { requiredPermissions: ["build:read"] }),
       nav("build.nav.features", "Build", "Features", "ClipboardList", "navigation.features.open", "build.route.features", 4, { requiredPermissions: ["build:read"] }),
       nav("build.nav.design", "Build", "Design", "Palette", "navigation.design.open", "build.route.design", 4, { requiredPermissions: ["build:read"] }),
