@@ -1,5 +1,5 @@
 import { db, pool, type DrizzleTx } from "../db";
-import { timers, responsibilityRuns, modInstallationResources, modInstallations } from "@shared/schema";
+import { accounts, timers, responsibilityRuns, modInstallationResources, modInstallations } from "@shared/schema";
 import { and, eq, desc, count, ilike, or, isNotNull, isNull, gte, lte, inArray, sql } from "drizzle-orm";
 import { getSetting, setSetting } from "../system-settings";
 import { TTLCache } from "../utils/ttl-cache";
@@ -104,9 +104,23 @@ function userTimerPredicate(principal: Principal) {
   return combineWithWritableScope(principal, timerScopeColumns, eq(timers.scope, "user"));
 }
 
+/**
+ * Scheduler may only see executable Timers:
+ * - user Timers owned by an *active* personal Account
+ * - system Timers with a system key
+ *
+ * Suspended/archived owners must not enter the wall-clock schedule set.
+ * Without this producer filter, Skill enqueue authorizes under a broken
+ * principal and floods TIMER_HANDLER_FAILED every cadence.
+ */
 function validSchedulerTimerPredicate() {
   return or(
-    and(eq(timers.scope, "user"), isNotNull(timers.ownerUserId), isNotNull(timers.accountId)),
+    and(
+      eq(timers.scope, "user"),
+      isNotNull(timers.ownerUserId),
+      isNotNull(timers.accountId),
+      eq(accounts.status, "active"),
+    ),
     and(eq(timers.scope, "system"), eq(timers.type, "system"), isNotNull(timers.systemKey)),
   )!;
 }
@@ -161,10 +175,17 @@ export class FileTimerStorage {
   }
 
   async getAllForScheduler(): Promise<Timer[]> {
-    return this._cache.getOrFetch("scheduler:valid", async () => {
-      const rows = await db.select().from(timers).where(validSchedulerTimerPredicate());
-      return rows.map(rowToTimer).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-    });
+    // Live join against accounts.status — do not Infinity-cache this list.
+    // Account archive/suspend must drop owners from the schedule set without
+    // waiting for a Timer mutation or process restart.
+    const rows = await db
+      .select({ timer: timers })
+      .from(timers)
+      .leftJoin(accounts, eq(accounts.id, timers.accountId))
+      .where(validSchedulerTimerPredicate());
+    return rows
+      .map((row) => rowToTimer(row.timer))
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }
 
   async getAllSystemFresh(): Promise<Timer[]> {
@@ -203,8 +224,13 @@ export class FileTimerStorage {
   }
 
   async getForScheduler(id: string): Promise<Timer | null> {
-    const rows = await db.select().from(timers).where(and(eq(timers.id, id), validSchedulerTimerPredicate())).limit(1);
-    return rows[0] ? rowToTimer(rows[0]) : null;
+    const rows = await db
+      .select({ timer: timers })
+      .from(timers)
+      .leftJoin(accounts, eq(accounts.id, timers.accountId))
+      .where(and(eq(timers.id, id), validSchedulerTimerPredicate()))
+      .limit(1);
+    return rows[0] ? rowToTimer(rows[0].timer) : null;
   }
 
   async searchByName(name: string, limit = 20): Promise<Timer[]> {
