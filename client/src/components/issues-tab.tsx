@@ -1,7 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { IssueInlineProfile } from "@/components/issue-inline-profile";
-import { SimpleTextFrame } from "@/components/home/simple-text-frame";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -20,6 +19,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useProductComposition } from "@/hooks/use-product-composition";
 import { useSessionLaunch } from "@/hooks/use-session-launch";
 import { useToast } from "@/hooks/use-toast";
 import { useTimezone } from "@/hooks/use-timezone";
@@ -38,10 +38,14 @@ import {
   MoreHorizontal,
   Plus,
   Rocket,
+  Wrench,
   X,
 } from "lucide-react";
 import type { Issue, IssueStatus } from "@shared/schema";
 import { composeIssueFeatureLaunchMessage } from "@shared/issue-feature";
+
+/** Build-owned ERRORS backlog repair skill — catalog identity, not a code branch set. */
+const SELF_HEAL_SKILL_NAME = "self-heal";
 
 const STATUS_CYCLE: IssueStatus[] = ["open", "in_progress", "in_review", "resolved"];
 
@@ -407,15 +411,76 @@ function ErrorTreeRow({
   );
 }
 
+/** Section label + hover `…` chrome (Agenda geometry). menuContent may be empty until verbs land. */
+function IssuesSectionHeader({
+  label,
+  count,
+  open,
+  onOpenChange,
+  testId,
+  menuTestId,
+  menuLabel,
+  menuContent,
+}: {
+  label: string;
+  count: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  testId: string;
+  menuTestId: string;
+  menuLabel: string;
+  menuContent?: ReactNode;
+}) {
+  return (
+    <div className="group relative min-w-0">
+      <button
+        type="button"
+        onClick={() => onOpenChange(!open)}
+        className={cn(HIERARCHY_SECTION_HEADER_CLASS, "pr-9 hover-elevate")}
+        data-testid={testId}
+        aria-expanded={open}
+      >
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+        <span className="truncate">{label}</span>
+        <span className="ml-auto font-normal tabular-nums text-muted-foreground/70">{count}</span>
+      </button>
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              "absolute right-1 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-border/40 bg-background text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100",
+            )}
+            data-testid={menuTestId}
+            onClick={(event) => event.stopPropagation()}
+            aria-label={menuLabel}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          className="min-w-[140px]"
+          onCloseAutoFocus={(event) => event.preventDefault()}
+        >
+          {menuContent}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
 interface IssueTreeSectionProps {
   label: string;
   issues: Issue[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   testId: string;
+  menuTestId: string;
   count?: number;
   loading?: boolean;
   emptyLabel?: string;
+  menuContent?: ReactNode;
   renderIssue: (issue: Issue) => ReactNode;
 }
 
@@ -425,26 +490,25 @@ function IssueTreeSection({
   open,
   onOpenChange,
   testId,
+  menuTestId,
   count,
   loading,
   emptyLabel,
+  menuContent,
   renderIssue,
 }: IssueTreeSectionProps) {
   return (
     <section className="min-w-0">
-      <button
-        type="button"
-        onClick={() => onOpenChange(!open)}
-        className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
-        data-testid={testId}
-        aria-expanded={open}
-      >
-        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
-        <span className="truncate">{label}</span>
-        <span className="ml-auto font-normal tabular-nums text-muted-foreground/70">
-          {count ?? issues.length}
-        </span>
-      </button>
+      <IssuesSectionHeader
+        label={label}
+        count={count ?? issues.length}
+        open={open}
+        onOpenChange={onOpenChange}
+        testId={testId}
+        menuTestId={menuTestId}
+        menuLabel={`${label} actions`}
+        menuContent={menuContent}
+      />
       {open ? (
         <div className="min-w-0">
           {loading ? (
@@ -468,8 +532,10 @@ interface ErrorTreeSectionProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   testId: string;
+  menuTestId: string;
   loading?: boolean;
   emptyLabel?: string;
+  menuContent?: ReactNode;
   renderError: (error: AggregatedApplicationError) => ReactNode;
 }
 
@@ -479,25 +545,24 @@ function ErrorTreeSection({
   open,
   onOpenChange,
   testId,
+  menuTestId,
   loading,
   emptyLabel,
+  menuContent,
   renderError,
 }: ErrorTreeSectionProps) {
   return (
     <section className="min-w-0">
-      <button
-        type="button"
-        onClick={() => onOpenChange(!open)}
-        className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
-        data-testid={testId}
-        aria-expanded={open}
-      >
-        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
-        <span className="truncate">{label}</span>
-        <span className="ml-auto font-normal tabular-nums text-muted-foreground/70">
-          {errors.length}
-        </span>
-      </button>
+      <IssuesSectionHeader
+        label={label}
+        count={errors.length}
+        open={open}
+        onOpenChange={onOpenChange}
+        testId={testId}
+        menuTestId={menuTestId}
+        menuLabel={`${label} actions`}
+        menuContent={menuContent}
+      />
       {open ? (
         <div className="min-w-0">
           {loading ? (
@@ -523,6 +588,8 @@ function matchesQuery(haystack: string, query: string): boolean {
 export function IssuesTab() {
   const { toast } = useToast();
   const launch = useSessionLaunch();
+  const { data: composition } = useProductComposition();
+  const buildInstalled = Boolean(composition?.activeMods.some((mod) => mod.key === "build"));
   const [search, setSearch] = useState("");
   const [errorsOpen, setErrorsOpen] = useState(true);
   const [reportedOpen, setReportedOpen] = useState(true);
@@ -565,6 +632,39 @@ export function IssuesTab() {
 
   const { data: errorsData, isLoading: errorsLoading } = useQuery<AggregatedApplicationError[]>({
     queryKey: ["/api/issues/errors/recent"],
+  });
+
+  // Self Heal is Build-owned; only resolve the catalog row when Build is installed.
+  const { data: skillsData } = useQuery<Array<{ id: string; name: string; status?: string }>>({
+    queryKey: ["/api/skills"],
+    enabled: buildInstalled,
+  });
+  const selfHealSkill = useMemo(
+    () =>
+      (skillsData ?? []).find(
+        (skill) => skill.name === SELF_HEAL_SKILL_NAME && (skill.status == null || skill.status === "active"),
+      ),
+    [skillsData],
+  );
+
+  const selfHealMutation = useMutation({
+    mutationFn: async (skillId: string) => {
+      const response = await apiRequest("POST", `/api/skills/${skillId}/run`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/skills/last-runs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/skills", SELF_HEAL_SKILL_NAME, "runs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/issues/errors/recent"] });
+      toast({ title: "Self Heal started" });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to start Self Heal",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
   });
 
   const updateMutation = useMutation({
@@ -767,6 +867,7 @@ export function IssuesTab() {
           open={reportedOpen}
           onOpenChange={setReportedOpen}
           testId="button-toggle-reported-group"
+          menuTestId="button-reported-section-menu"
           count={reportedIssues.length}
           loading={isLoading}
           emptyLabel="No reported issues."
@@ -779,8 +880,28 @@ export function IssuesTab() {
           open={errorsOpen}
           onOpenChange={setErrorsOpen}
           testId="button-toggle-errors-group"
+          menuTestId="button-errors-section-menu"
           loading={errorsLoading}
           emptyLabel="No recent errors."
+          menuContent={
+            selfHealSkill ? (
+              <DropdownMenuItem
+                disabled={selfHealMutation.isPending}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  selfHealMutation.mutate(selfHealSkill.id);
+                }}
+                data-testid="menu-errors-self-heal"
+              >
+                {selfHealMutation.isPending ? (
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Wrench className="mr-2 h-3.5 w-3.5" />
+                )}
+                Self Heal
+              </DropdownMenuItem>
+            ) : undefined
+          }
           renderError={(error) => (
             <ErrorTreeRow
               key={error.fingerprint}
@@ -800,6 +921,7 @@ export function IssuesTab() {
           open={openOpen}
           onOpenChange={setOpenOpen}
           testId="button-toggle-open-group"
+          menuTestId="button-open-section-menu"
           count={openIssues.length}
           loading={isLoading}
           emptyLabel="No open issues."
@@ -812,6 +934,7 @@ export function IssuesTab() {
           open={inProgressOpen}
           onOpenChange={setInProgressOpen}
           testId="button-toggle-in-progress-group"
+          menuTestId="button-in-progress-section-menu"
           count={inProgressIssues.length}
           loading={isLoading}
           emptyLabel="No in-progress issues."
@@ -824,6 +947,7 @@ export function IssuesTab() {
           open={inReviewOpen}
           onOpenChange={setInReviewOpen}
           testId="button-toggle-in-review-group"
+          menuTestId="button-in-review-section-menu"
           count={inReviewIssues.length}
           loading={isLoading}
           emptyLabel="No issues in review."
@@ -836,6 +960,7 @@ export function IssuesTab() {
           open={resolvedOpen}
           onOpenChange={setResolvedOpen}
           testId="button-toggle-resolved-group"
+          menuTestId="button-resolved-section-menu"
           count={resolvedData ? resolvedIssues.length : 0}
           loading={resolvedLoading}
           emptyLabel="No resolved issues."
