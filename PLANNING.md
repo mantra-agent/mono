@@ -15,6 +15,40 @@ If the work does not fit cleanly into the current project stack, pause and ask w
 
 Before ending the work, update the task to the truthful state: completed, blocked, active, or another accurate status. Include the outcome or blocker so the canonical work record reflects reality.
 
+## Universal blocked_by protocol
+
+Durable work prerequisites live in one Core graph: `address_links` rows with predicate `blocked_by`, mutated only through the blocking graph boundary (`blocking_graph` tool, `/api/blocking-graph/*`, `BlockingGraphService`). Domain objects stay authoritative in their own stores. The shared contract is `shared/blocked-by-protocol.ts`. Do not create a second dependency graph, a `dependencies[]` field on tasks/plans, or per-skill dependency vocabularies.
+
+### Semantics
+
+- **One relationship.** `blocked_by` is the only prerequisite predicate.
+- **Direction.** `sourceAddress` is the blocked item; `targetAddress` is the prerequisite that must clear first. Reading “source blocked_by target” means source waits on target.
+- **Typed canonical addresses.** Endpoints are `@type:id` protocol addresses (for example `@task:123`, `@project:33`, `@milestone:33~12`, `@page:…`). Normalize and validate before write; unknown or invisible endpoints fail closed at the boundary.
+- **Not task status.** Graph edges are prerequisite truth. Task/project status (`ready`, `active`, `blocked`, `done`, …) remains a separate domain field. An active edge may justify reporting work as blocked; status must not invent or replace edges.
+- **Not plan step order.** Plan step sequence is execution order inside one Plan run. It is not durable cross-object prerequisite truth and must not be treated as a `blocked_by` substitute.
+
+### Operating rules
+
+1. **Read before plan.** Before creating or sequencing non-trivial work, list active blockers for the addresses in scope (`blocking_graph.list_blockers` / list blocked items). Plan and capacity decisions consume the graph; they do not guess prerequisites from titles.
+2. **Create on discovery.** When a real prerequisite is discovered, add an edge through the canonical boundary (`blocking_graph.add_blocker`, or the additive `blockedBy[]` convenience on work/task/project/milestone create|update). Convenience writes project into the graph only — they do not persist a parallel dependency array on the domain row.
+3. **No self-edges or cycles.** Source and target must differ. The service rejects edges that would close a directed cycle.
+4. **Provenance when it helps.** Prefer an optional `provenanceAddress` (decision, page, session, or other supporting address) when the edge is non-obvious. Idempotency keys are required on explicit adds; work convenience keys are deterministic per `(source, target)`.
+5. **Conservative mutation.** Add or retire deliberate edges only. Do not bulk-rewrite the graph, infer edges from free text, or “fix” status by deleting prerequisites silently. Retire with `blocking_graph.remove_blocker` when the prerequisite no longer applies; do not hard-delete history (lifecycle is active → retired).
+6. **Completion review.** Before marking work complete, review active blockers for that address. Either finish or explicitly retire each edge with cause. Do not complete work that still has unresolved active blockers unless the human accepts the exception.
+7. **No duplicate dependency fields.** Never add `dependencies`, `blocked_by`, or equivalent arrays on task/plan/goal JSON as a second store. Never teach Streamline, Autonomy, Brief, or other skills a private dependency model. Reads go through the blocking graph (and, once shipped, the shared dependency-context resolver).
+
+### Goal Manager stays separate
+
+Goal Manager owns goal hierarchy, horizons, and goal↔person/meeting links. It must not mint, rewrite, or act as authority for work `blocked_by` edges. Goals may be referenced as addresses when a work item truly waits on a goal outcome, but goal tooling must not grow a parallel dependency graph or treat goal parent/child links as `blocked_by`.
+
+### Consumers (placement)
+
+- **Plan tool / decomposition** — primary producer/consumer for discovered work prerequisites; distinguishes durable external blockers from internal step order.
+- **Streamline / capacity** — excludes work with unresolved active blockers from executable capacity.
+- **Autonomy** — gates Agent execution on unresolved blockers and prefers executable prerequisites.
+- **Bootstrap / context** — may load bounded dependency state only for planning, selection, sequencing, scheduling, capacity, autonomy, or explicit work/dependency contexts.
+- All other skills — context-only if needed; no graph mutation and no private dependency fields.
+
 ## Agenda vs Plan
 
 Agendas and Plans are different containers. Do not substitute one for the other.

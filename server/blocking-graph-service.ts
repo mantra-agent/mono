@@ -12,6 +12,7 @@
  * target) tuple. Fresh idempotency keys allow retire-then-readd.
  */
 import { randomBytes } from "crypto";
+import { BLOCKED_BY_PREDICATE } from "@shared/blocked-by-protocol";
 import type { AddressLink, AddressReplayPage } from "@shared/life-addressing";
 import { normalizeProtocolAddress } from "@shared/life-addressing";
 import {
@@ -29,7 +30,7 @@ import { createLogger } from "./log";
 import type { Principal } from "./principal";
 import { requireCurrentUserPrincipal } from "./principal-context";
 
-export const BLOCKED_BY_PREDICATE = "blocked_by" as const;
+export { BLOCKED_BY_PREDICATE };
 
 const MAX_LINK_PAGES = 20;
 const MAX_CYCLE_NODES = 500;
