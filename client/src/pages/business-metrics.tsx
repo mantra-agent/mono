@@ -7,7 +7,6 @@ import {
   METRIC_SAMPLE_PERIODS,
   type Metric,
   type MetricAdapterKind,
-  type MetricCollection,
   type MetricDirection,
   type MetricSeries,
 } from "@shared/models/metrics";
@@ -55,8 +54,6 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { BusinessPageHeader } from "@/components/business/business-page-header";
-import { useSelectedBusiness } from "@/hooks/use-selected-business";
 
 interface MetricsResponse {
   metrics: Metric[];
@@ -269,7 +266,7 @@ function MetricTreeRow({
   );
 }
 
-function CreateMetricDialog({ businessId }: { businessId: string }) {
+function CreateMetricDialog() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -281,7 +278,6 @@ function CreateMetricDialog({ businessId }: { businessId: string }) {
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/metrics", {
-        businessId,
         name: name.trim(),
         unit: unit.trim(),
         direction,
@@ -359,7 +355,6 @@ function CreateMetricDialog({ businessId }: { businessId: string }) {
 
 export default function BusinessMetricsPage() {
   const { toast } = useToast();
-  const { businesses, selectedId, setSelectedId } = useSelectedBusiness();
   const [query, setQuery] = useState("");
   const [sampleSpan, setSampleSpan] = useState<SampleSpan>("today");
   const [deleteTarget, setDeleteTarget] = useState<Metric | null>(null);
@@ -368,14 +363,13 @@ export default function BusinessMetricsPage() {
     const end = new Date();
     return { start: rangeStart(sampleSpan, end), end };
   }, [sampleSpan]);
-  const { data, isLoading } = useQuery<MetricCollection>({
-    queryKey: ["/api/metrics/collection", selectedId, sampleSpan],
+  const { data, isLoading } = useQuery<MetricsResponse>({
+    queryKey: ["/api/metrics", sampleSpan],
     queryFn: async () => {
-      const url = `/api/metrics/collection?businessId=${encodeURIComponent(selectedId ?? "")}&start=${encodeURIComponent(samplingRange.start.toISOString())}&end=${encodeURIComponent(samplingRange.end.toISOString())}`;
+      const url = `/api/metrics?start=${encodeURIComponent(samplingRange.start.toISOString())}&end=${encodeURIComponent(samplingRange.end.toISOString())}`;
       const response = await apiRequest("GET", url);
       return response.json();
     },
-    enabled: Boolean(selectedId),
     refetchInterval: 60_000,
   });
 
@@ -401,7 +395,12 @@ export default function BusinessMetricsPage() {
   });
 
   const series = useMemo(() => {
-    const list = data?.series ?? [];
+    const list = (data?.metrics ?? []).map((metric) => ({
+      metric,
+      samples: metric.latestSample ? [metric.latestSample] : [],
+      valueStatus: "actual" as const,
+      coverage: { status: "finalized" as const },
+    }));
     const q = query.trim().toLowerCase();
     if (!q) return list;
     return list.filter(({ metric }) => metric.name.toLowerCase().includes(q) || metric.slug.toLowerCase().includes(q));
@@ -409,12 +408,6 @@ export default function BusinessMetricsPage() {
 
   return (
     <div className={HIERARCHY_TREE_STACK_CLASS}>
-      <BusinessPageHeader
-        page="Metrics"
-        businesses={businesses}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-      />
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1">
           <HierarchySearchInput
@@ -427,7 +420,7 @@ export default function BusinessMetricsPage() {
         </div>
         <SamplingMenu value={sampleSpan} onChange={setSampleSpan} />
       </div>
-      {selectedId ? <CreateMetricDialog businessId={selectedId} /> : null}
+      <CreateMetricDialog />
 
       {isLoading ? (
         <div className="flex items-center justify-center py-16 text-muted-foreground">
