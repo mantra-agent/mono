@@ -326,15 +326,54 @@ function firstString(...values: unknown[]): string | undefined {
   return undefined;
 }
 
+function decodeOuraSignature(value: string): Buffer | null {
+  const normalized = value.replace(/^sha256=/i, "").trim();
+  if (!normalized) return null;
+  if (/^[0-9a-f]+$/i.test(normalized) && normalized.length % 2 === 0) {
+    return Buffer.from(normalized, "hex");
+  }
+  try {
+    const decoded = Buffer.from(normalized, "base64");
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
 async function verifyOuraSignature(req: Request, payload: Buffer | string): Promise<boolean> {
   const clientSecret = await getSecret("OURA_CLIENT_SECRET");
   const received = req.get("x-oura-signature");
   if (!clientSecret || !received) return false;
-  const expected = crypto.createHmac("sha256", clientSecret).update(payload).digest("hex");
-  const normalized = received.replace(/^sha256=/i, "");
-  const receivedBuffer = Buffer.from(normalized, "hex");
-  const expectedBuffer = Buffer.from(expected, "hex");
+  const receivedBuffer = decodeOuraSignature(received);
+  if (!receivedBuffer) return false;
+  const expectedBuffer = crypto.createHmac("sha256", clientSecret).update(payload).digest();
   return receivedBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(receivedBuffer, expectedBuffer);
+}
+
+async function verifyOuraChallenge(req: Request): Promise<{ challenge: string } | { reason: string }> {
+  const challenge = firstString(
+    req.query.verification_token,
+    req.query.challenge,
+    req.query.verification_challenge,
+  );
+  if (!challenge) return { reason: "missing_challenge" };
+
+  const verifyToken = await getSecret("OURA_WEBHOOK_VERIFY_TOKEN");
+  if (!verifyToken) return { reason: "missing_verify_token" };
+
+  if (req.get("x-oura-signature")) {
+    return (await verifyOuraSignature(req, challenge))
+      ? { challenge }
+      : { reason: "signature_failed" };
+  }
+
+  const receivedToken = firstString(req.query.verification_token) ?? challenge;
+  const expectedBuffer = Buffer.from(verifyToken);
+  const receivedBuffer = Buffer.from(receivedToken);
+  if (expectedBuffer.length !== receivedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, receivedBuffer)) {
+    return { reason: "token_mismatch" };
+  }
+  return { challenge };
 }
 
 async function verifyOuraWebhook(req: Request, notification: OuraWebhookNotification): Promise<boolean> {
@@ -540,13 +579,13 @@ export async function registerOuraRoutes(app: Express): Promise<void> {
   });
 
   app.get("/api/oura/webhook", async (req, res) => {
-    const challenge = firstString(req.query.challenge, req.query["verification_challenge"]);
-    if (!challenge || !(await verifyOuraSignature(req, challenge))) {
-      log.warn("webhook challenge rejected errorClass=verification_failed");
+    const result = await verifyOuraChallenge(req);
+    if (!("challenge" in result) || !result.challenge) {
+      log.warn(`webhook challenge rejected errorClass=${"reason" in result ? result.reason : "verification_failed"}`);
       return res.status(401).send("Unauthorized");
     }
     log.log("webhook challenge accepted");
-    return res.type("text/plain").send(challenge);
+    return res.type("text/plain").send(result.challenge);
   });
 
   app.post("/api/oura/disconnect", async (_req, res) => {
