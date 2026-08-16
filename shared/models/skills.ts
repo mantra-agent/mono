@@ -2,6 +2,7 @@ import { pgTable, text, varchar, serial, integer, timestamp, boolean, jsonb, rea
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { personas } from "./cognition";
+import type { ModKey } from "./mods";
 import { sql } from "drizzle-orm";
 
 export const skillAuthorities = ["full", "notify", "approve", "blocked"] as const;
@@ -296,6 +297,12 @@ export type InsertSkillReference = z.infer<typeof insertSkillReferenceSchema>;
 export interface SkillWithReferences extends SkillResponse {
   references: SkillReference[];
   trustScore: number;
+  /**
+   * Management-read projection of the Mod that contributes this Skill.
+   * Undeclared names (Core seeds and user-authored Skills) are `"core"`.
+   * Owner identity lives in the Mod registry, not a Skill column.
+   */
+  sourceMod?: "core" | ModKey;
   /**
    * Skill Default Lattice read-enrichment (Persona parity). Present on
    * management reads; omitted on raw writes. `platformBaseline` is the current

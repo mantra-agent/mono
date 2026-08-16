@@ -12,6 +12,7 @@ import { requireCurrentPrincipal } from "./principal-context";
 import { requirePermission } from "./permissions";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { ownerOfExecutableContribution, hasActiveModAccess } from "./mods/mod-access";
+import type { ModKey } from "@shared/models/mods";
 
 const libraryPageScopeColumns = {
   scope: libraryPages.scope,
@@ -35,6 +36,14 @@ function stripSkillForExport(skill: Skill & { references?: SkillReference[]; tru
     stripped.references = rest.references.map((r) => ({ name: r.name, content: r.content }));
   }
   return stripped;
+}
+
+function skillSourceMod(name: string): "core" | ModKey {
+  return ownerOfExecutableContribution("skill", name) ?? "core";
+}
+
+function withSourceMod<T extends { name: string }>(skill: T): T & { sourceMod: "core" | ModKey } {
+  return { ...skill, sourceMod: skillSourceMod(skill.name) };
 }
 
 async function filterModOwnedSkills<T extends { name: string }>(skills: T[]): Promise<T[]> {
@@ -64,7 +73,7 @@ export function registerSkillRoutes(app: Express): void {
     try {
       const status = req.query.status as string | undefined;
       const skills = await storage.getSkills(status ? { status } : undefined);
-      res.json(await filterModOwnedSkills(skills));
+      res.json((await filterModOwnedSkills(skills)).map(withSourceMod));
     } catch (err: any) {
       log.error("GET /api/skills error:", err.message);
       res.status(500).json({ error: "Failed to fetch skills" });
@@ -275,7 +284,7 @@ export function registerSkillRoutes(app: Express): void {
     try {
       const skill = await storage.getSkill(req.params.id);
       if (!skill) return res.status(404).json({ error: "Skill not found" });
-      res.json(skill);
+      res.json(withSourceMod(skill));
     } catch (err: any) {
       log.error("GET /api/skills/:id error:", err.message);
       res.status(500).json({ error: "Failed to fetch skill" });
