@@ -252,6 +252,7 @@ const navSections: NavSection[] = [
       navItem("Files", "navigation.files.open", HardDrive),
       navItem("KPIs", "navigation.kpis.open", Gauge),
       navItem("Metrics", "navigation.metrics.open", Activity),
+      navItem("Health", "navigation.health.open", Heart, "muted"),
     ],
   },
   {

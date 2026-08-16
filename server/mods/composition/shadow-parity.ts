@@ -129,6 +129,7 @@ const FIXTURE_ROUTE_PATHS: string[] = [
   "/habits",
   "/reflections",
   "/gratitude",
+  "/health",
   "/people",
   "/people/:param",
   "/meetings",

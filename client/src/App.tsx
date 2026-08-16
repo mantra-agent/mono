@@ -101,6 +101,7 @@ const PlatformEnvironmentDetailPage = lazyWithRetry(() => import("@/pages/platfo
 const HabitsPage = lazyWithRetry(() => import("@/pages/habits"));
 const ReflectionsPage = lazyWithRetry(() => import("@/pages/reflections"));
 const GratitudePage = lazyWithRetry(() => import("@/pages/gratitude"));
+const HealthPage = lazyWithRetry(() => import("@/pages/health"));
 const LibraryPage = lazyWithRetry(() => import("@/pages/library/index"));
 const FilesPage = lazyWithRetry(() => import("@/pages/files"));
 const DocumentViewerPage = lazyWithRetry(() => import("@/pages/document-viewer"));
@@ -377,6 +378,7 @@ function Router() {
         <Route path="/habits">{() => <RequireComposedRoute routeId="wellness.route.habits"><HabitsPage /></RequireComposedRoute>}</Route>
         <Route path="/reflections">{() => <RequireComposedRoute routeId="wellness.route.reflections"><ReflectionsPage /></RequireComposedRoute>}</Route>
         <Route path="/gratitude">{() => <RequireComposedRoute routeId="wellness.route.gratitude"><GratitudePage /></RequireComposedRoute>}</Route>
+        <Route path="/health">{() => <RequireComposedRoute routeId="wellness.route.health"><HealthPage /></RequireComposedRoute>}</Route>
         <Route path="/profile" component={ProfilePage} />
         <Route path="/workflows/:id">{() => <Redirect to="/home" />}</Route>
         <Route path="/workflows">{() => <Redirect to="/home" />}</Route>

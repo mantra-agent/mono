@@ -31,6 +31,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.hiring.open": { href: "/business/hiring", permission: "system:read", description: "Plan who you'll hire next." },
   "navigation.kpis.open": { href: "/tools/kpis", permission: "system:read", description: "Track the KPIs that matter." },
   "navigation.metrics.open": { href: "/tools/metrics", permission: "system:read", description: "Watch your business metrics." },
+  "navigation.health.open": { href: "/health", description: "See your health metrics." },
   "navigation.agendas.open": { href: "/agendas", description: "Build reusable agendas for your sessions." },
   "navigation.skills.open": { href: "/skills", description: "Run and manage your reusable skills." },
   "navigation.plans.open": { href: "/brain?tab=plans", description: "Track your multi-step plans." },

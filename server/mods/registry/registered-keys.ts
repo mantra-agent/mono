@@ -63,6 +63,7 @@ export const REGISTERED_SURFACE_KEYS = [
   "habits",
   "reflections",
   "gratitude",
+  "health",
   "profile",
   "pipelines",
   "zero",
