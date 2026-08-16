@@ -154,12 +154,12 @@ const registry: Record<string, RegistryEntry> = {
   wellness_activity: {
     Icon: Heart,
     fallbackLabel: ref => metadataString(ref, "label") || ref.id,
-    href: ref => metadataString(ref, "href") || `/wellness?tab=calendar&activity=${encodeURIComponent(ref.id)}`,
+    href: ref => metadataString(ref, "href") || `/habits?activity=${encodeURIComponent(ref.id)}`,
   },
   health_activity: {
     Icon: Heart,
     fallbackLabel: ref => metadataString(ref, "label") || ref.id,
-    href: ref => metadataString(ref, "href") || `/wellness?tab=calendar&activity=${encodeURIComponent(ref.id)}`,
+    href: ref => metadataString(ref, "href") || `/habits?activity=${encodeURIComponent(ref.id)}`,
   },
   meeting: {
     Icon: CalendarDays,

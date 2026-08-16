@@ -98,7 +98,9 @@ const PlatformsPage = lazyWithRetry(() => import("@/pages/platforms"));
 const ProductsPage = lazyWithRetry(() => import("@/pages/products"));
 const FeaturesPage = lazyWithRetry(() => import("@/pages/features"));
 const PlatformEnvironmentDetailPage = lazyWithRetry(() => import("@/pages/platform-environment-detail"));
-const WellnessPage = lazyWithRetry(() => import("@/pages/wellness"));
+const HabitsPage = lazyWithRetry(() => import("@/pages/habits"));
+const ReflectionsPage = lazyWithRetry(() => import("@/pages/reflections"));
+const GratitudePage = lazyWithRetry(() => import("@/pages/gratitude"));
 const LibraryPage = lazyWithRetry(() => import("@/pages/library/index"));
 const FilesPage = lazyWithRetry(() => import("@/pages/files"));
 const DocumentViewerPage = lazyWithRetry(() => import("@/pages/document-viewer"));
@@ -371,7 +373,10 @@ function Router() {
         <Route path="/settings">{() => <Redirect to="/integrations" />}</Route>
         <Route path="/issues/:id">{() => <RequireBuild routeId="build.route.issue-detail"><IssueDetailPage /></RequireBuild>}</Route>
         <Route path="/chat">{() => <Redirect to={preserveCurrentQuery("/session")} />}</Route>
-        <Route path="/wellness">{() => <RequireComposedRoute routeId="wellness.route.wellness"><WellnessPage /></RequireComposedRoute>}</Route>
+        <Route path="/wellness">{() => <Redirect to={preserveCurrentLocation("/habits")} />}</Route>
+        <Route path="/habits">{() => <RequireComposedRoute routeId="wellness.route.habits"><HabitsPage /></RequireComposedRoute>}</Route>
+        <Route path="/reflections">{() => <RequireComposedRoute routeId="wellness.route.reflections"><ReflectionsPage /></RequireComposedRoute>}</Route>
+        <Route path="/gratitude">{() => <RequireComposedRoute routeId="wellness.route.gratitude"><GratitudePage /></RequireComposedRoute>}</Route>
         <Route path="/profile" component={ProfilePage} />
         <Route path="/workflows/:id">{() => <Redirect to="/home" />}</Route>
         <Route path="/workflows">{() => <Redirect to="/home" />}</Route>

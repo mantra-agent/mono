@@ -248,9 +248,17 @@ const navSections: NavSection[] = [
       navItem("Email", "navigation.email.open", Mail, "muted"),
       navItem("Library", "navigation.library.open", FolderOpen),
       navItem("Files", "navigation.files.open", HardDrive),
-      navItem("Wellness", "navigation.wellness.open", Activity, "muted"),
       navItem("KPIs", "navigation.kpis.open", Gauge),
       navItem("Metrics", "navigation.metrics.open", Activity),
+    ],
+  },
+  {
+    label: "Wellness",
+    defaultOpen: true,
+    items: [
+      navItem("Habits", "navigation.habits.open", Activity, "muted"),
+      navItem("Reflections", "navigation.reflections.open", BookOpen, "muted"),
+      navItem("Gratitude", "navigation.gratitude.open", Heart, "muted"),
     ],
   },
   {

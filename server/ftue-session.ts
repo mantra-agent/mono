@@ -63,7 +63,7 @@ export const RECAP_FTUE_AGENDA_ITEMS = [
   {
     id: "highlight-relevant-other-features",
     title: "Highlight relevant other features",
-    description: "Choose only features relevant to the user's goal and recap, then reveal their existing sidebar controls with ui guide targets such as navigation.people.open, navigation.schedule.open, navigation.library.open, or navigation.wellness.open. Keep the tour anchored to the user's life, not a generic feature list.",
+    description: "Choose only features relevant to the user's goal and recap, then reveal their existing sidebar controls with ui guide targets such as navigation.people.open, navigation.schedule.open, navigation.library.open, or navigation.habits.open. Keep the tour anchored to the user's life, not a generic feature list.",
   },
   {
     id: "identify-next-integration-steps",

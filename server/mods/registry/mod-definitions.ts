@@ -200,9 +200,9 @@ const wellness: ModDefinition = {
   outcome: {
     label: "Improve health and grow",
     promise: "Build sustainable routines, reflect, and grow with coaching grounded in the health signals that matter.",
-    activationSignals: ["wellness.route.wellness"],
+    activationSignals: ["wellness.route.habits"],
   },
-  experience: { primaryObjectKind: "wellness_activity", primaryActionId: "wellness.action.wellness", rootSurfaceKey: "wellness" },
+  experience: { primaryObjectKind: "wellness_activity", primaryActionId: "wellness.action.habits", rootSurfaceKey: "habits" },
   compatibility: { minimumCoreVersion: MIN_CORE },
   requiresCore: ["agent", "automation", "integration-custody", "ui-composition"],
   recommendsMods: ["planning"],
@@ -218,8 +218,16 @@ const wellness: ModDefinition = {
       skillRef("wellness.skill.coach", "coach"),
       skillRef("wellness.skill.brief-daily", "brief-daily"),
     ],
-    clientRoutes: [clientRoute("wellness.route.wellness", "/wellness", "wellness")],
-    navigation: [nav("wellness.nav.wellness", "Tools", "Wellness", "Activity", "navigation.wellness.open", "wellness.route.wellness", 8)],
+    clientRoutes: [
+      clientRoute("wellness.route.habits", "/habits", "habits"),
+      clientRoute("wellness.route.reflections", "/reflections", "reflections"),
+      clientRoute("wellness.route.gratitude", "/gratitude", "gratitude"),
+    ],
+    navigation: [
+      nav("wellness.nav.habits", "Wellness", "Habits", "Activity", "navigation.habits.open", "wellness.route.habits", 1),
+      nav("wellness.nav.reflections", "Wellness", "Reflections", "BookOpen", "navigation.reflections.open", "wellness.route.reflections", 2),
+      nav("wellness.nav.gratitude", "Wellness", "Gratitude", "Heart", "navigation.gratitude.open", "wellness.route.gratitude", 3),
+    ],
     widgets: [widget("wellness.widget.wellness", "home.primary", "wellness", "wellness", 4)],
     dashboardHeatmaps: [
       dashboardHeatmap(
