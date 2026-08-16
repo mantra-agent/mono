@@ -41,13 +41,11 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Slider } from "@/components/ui/slider";
-import { useExecutorStatus } from "@/hooks/use-executor-status";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
-  RotateCcw,
   Shield,
   HardDrive,
   AlertTriangle,
@@ -56,9 +54,7 @@ import {
   Settings,
   ChevronRight,
   MoreHorizontal,
-  Hash,
   Play,
-  Pause,
   Volume2,
   Loader2,
   Trash2,
@@ -665,128 +661,97 @@ function PronunciationSection() {
   };
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base font-semibold" data-testid="text-pronunciation-title">Pronunciation</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="text-xs text-muted-foreground" data-testid="text-pronunciation-note">
-          Teach Agent how to pronounce names, brands, and terms. Entries are case-sensitive — add separate entries for different capitalizations if needed (e.g. "nginx" and "Nginx").
-        </p>
-
+    <div className="min-w-0" data-testid="text-pronunciation-title">
+      <IntegrationTreeSection label="Pronunciation" initialOpen icon={<Volume2 className="h-3.5 w-3.5" />} testIdPrefix="pronunciation">
         {isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </div>
+          <ProfileTreeRow label="Entries" icon={<Volume2 className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+          </ProfileTreeRow>
         ) : entries.length === 0 ? (
-          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-pronunciation-empty">
-            No pronunciation entries yet.
-          </div>
-        ) : (
-          <div className="space-y-1" data-testid="pronunciation-entries-list">
-            {entries.map(entry => (
-              <div
-                key={entry.word}
-                className="flex items-center gap-2 p-2 rounded-md hover:bg-muted/50 transition-colors"
-                data-testid={`pronunciation-entry-${entry.word}`}
-              >
-                {editingWord === entry.word ? (
-                  <>
-                    <span className="text-sm font-medium min-w-[80px]">{entry.word}</span>
-                    <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
-                    <Input
-                      value={editAlias}
-                      onChange={e => setEditAlias(e.target.value)}
-                      className="flex-1 h-8 text-sm"
-                      placeholder="Pronounce as..."
-                      onKeyDown={e => e.key === "Enter" && handleUpdate(entry.word)}
-                      data-testid={`input-edit-alias-${entry.word}`}
-                    />
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() => handleUpdate(entry.word)}
-                      disabled={updateMutation.isPending}
-                      data-testid={`button-save-edit-${entry.word}`}
-                    >
-                      <Check className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() => { setEditingWord(null); setEditAlias(""); }}
-                      data-testid={`button-cancel-edit-${entry.word}`}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-sm font-medium min-w-[80px]" data-testid={`text-word-${entry.word}`}>{entry.word}</span>
-                    <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
-                    <span className="text-sm text-muted-foreground flex-1" data-testid={`text-alias-${entry.word}`}>{entry.alias}</span>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() => { setEditingWord(entry.word); setEditAlias(entry.alias); }}
-                      data-testid={`button-edit-${entry.word}`}
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7 text-destructive"
-                      onClick={() => removeMutation.mutate(entry.word)}
-                      disabled={removeMutation.isPending}
-                      data-testid={`button-remove-${entry.word}`}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </>
-                )}
+          <ProfileTreeRow label="Entries" icon={<Volume2 className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span className="text-muted-foreground" data-testid="text-pronunciation-empty">None yet</span>
+          </ProfileTreeRow>
+        ) : entries.map(entry => (
+          <ProfileTreeRow
+            key={entry.word}
+            label={entry.word}
+            icon={<Volume2 className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            testId={`pronunciation-entry-${entry.word}`}
+            defaultOpen={editingWord === entry.word}
+            expandedContent={editingWord === entry.word ? (
+              <div className="flex items-center gap-2">
+                <Input
+                  value={editAlias}
+                  onChange={e => setEditAlias(e.target.value)}
+                  className="flex-1 h-8 text-sm"
+                  placeholder="Pronounce as..."
+                  onKeyDown={e => e.key === "Enter" && handleUpdate(entry.word)}
+                  data-testid={`input-edit-alias-${entry.word}`}
+                />
+                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleUpdate(entry.word)} disabled={updateMutation.isPending} data-testid={`button-save-edit-${entry.word}`}>
+                  <Check className="h-3.5 w-3.5" />
+                </Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setEditingWord(null); setEditAlias(""); }} data-testid={`button-cancel-edit-${entry.word}`}>
+                  <X className="h-3.5 w-3.5" />
+                </Button>
               </div>
-            ))}
-          </div>
-        )}
-
-        <div className="flex items-center gap-2 pt-1">
-          <Input
-            placeholder="Word (e.g. Siobhan)"
-            value={newWord}
-            onChange={e => setNewWord(e.target.value)}
-            className="flex-1 h-8 text-sm"
-            data-testid="input-new-pronunciation-word"
-          />
-          <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
-          <Input
-            placeholder="Say as (e.g. Shivawn)"
-            value={newAlias}
-            onChange={e => setNewAlias(e.target.value)}
-            className="flex-1 h-8 text-sm"
-            onKeyDown={e => e.key === "Enter" && handleAdd()}
-            data-testid="input-new-pronunciation-alias"
-          />
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleAdd}
-            disabled={!newWord.trim() || !newAlias.trim() || addMutation.isPending}
-            data-testid="button-add-pronunciation"
-          >
-            {addMutation.isPending ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Plus className="h-3 w-3" />
+            ) : undefined}
+            menuContent={(
+              <>
+                <DropdownMenuItem onClick={() => { setEditingWord(entry.word); setEditAlias(entry.alias); }} data-testid={`button-edit-${entry.word}`}>
+                  Edit
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => removeMutation.mutate(entry.word)} disabled={removeMutation.isPending} data-testid={`button-remove-${entry.word}`}>
+                  Remove
+                </DropdownMenuItem>
+              </>
             )}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+          >
+            <span className="truncate text-muted-foreground" data-testid={`text-alias-${entry.word}`}>{entry.alias}</span>
+          </ProfileTreeRow>
+        ))}
+        <ProfileTreeRow
+          label="Add"
+          icon={<Plus className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          defaultOpen
+          expandedContent={(
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="Word (e.g. Siobhan)"
+                value={newWord}
+                onChange={e => setNewWord(e.target.value)}
+                className="flex-1 h-8 text-sm"
+                data-testid="input-new-pronunciation-word"
+              />
+              <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
+              <Input
+                placeholder="Say as (e.g. Shivawn)"
+                value={newAlias}
+                onChange={e => setNewAlias(e.target.value)}
+                className="flex-1 h-8 text-sm"
+                onKeyDown={e => e.key === "Enter" && handleAdd()}
+                data-testid="input-new-pronunciation-alias"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleAdd}
+                disabled={!newWord.trim() || !newAlias.trim() || addMutation.isPending}
+                data-testid="button-add-pronunciation"
+              >
+                {addMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+              </Button>
+            </div>
+          )}
+        >
+          <span className="text-muted-foreground">New entry</span>
+        </ProfileTreeRow>
+      </IntegrationTreeSection>
+    </div>
   );
 }
 
@@ -936,41 +901,35 @@ function InstantVoiceCloneWizard() {
   const canCreate = consent && voiceName.trim().length > 0 && allPromptsRecorded && createVoiceMutation.isPending === false;
 
   return (
-    <Card data-testid="card-elevenlabs-ivc">
-      <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-        <div className="space-y-1">
-          <CardTitle className="text-base font-semibold">Instant Voice Clone</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Isolated FTUE voice mirror prototype. Record short samples, create an ElevenLabs voice, then use the returned voice ID later.
-          </p>
-        </div>
-        <Button onClick={() => setOpen(true)} data-testid="button-open-ivc-wizard">
-          <Sparkles className="h-4 w-4 mr-2" />
-          Create clone
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {latestVoice ? (
-          <div className="flex items-center justify-between gap-3 rounded-md border border-primary/30 bg-primary/5 p-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium">Latest clone: {latestVoice.name}</p>
-              <p className="text-xs text-muted-foreground font-mono truncate">{latestVoice.voiceId}</p>
-              <p className="text-xs text-muted-foreground">
-                {latestVoice.sampleCount} samples · {latestVoice.requiresVerification ? "requires verification" : "ready in ElevenLabs"}
-              </p>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => copyVoiceId(latestVoice.voiceId)}>
-              <Copy className="h-3.5 w-3.5 mr-2" />
-              Copy ID
-            </Button>
-          </div>
-        ) : (
-          <div className="py-12 text-center rounded-md border border-dashed">
-            <Mic className="h-6 w-6 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">No Instant Voice Clone has been created from this wizard yet.</p>
-          </div>
+    <div className="min-w-0" data-testid="card-elevenlabs-ivc">
+      <IntegrationTreeSection
+        label="Instant Voice Clone"
+        initialOpen
+        icon={<Mic className="h-3.5 w-3.5" />}
+        testIdPrefix="elevenlabs-ivc"
+        actions={(
+          <Button size="sm" variant="outline" className="mr-2" onClick={() => setOpen(true)} data-testid="button-open-ivc-wizard">
+            <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+            Create clone
+          </Button>
         )}
-      </CardContent>
+      >
+        {latestVoice ? (
+          <ProfileTreeRow
+            label={latestVoice.name}
+            icon={<Mic className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            menuContent={<DropdownMenuItem onClick={() => copyVoiceId(latestVoice.voiceId)}>Copy ID</DropdownMenuItem>}
+          >
+            <span className="truncate font-mono text-muted-foreground">{latestVoice.voiceId}</span>
+          </ProfileTreeRow>
+        ) : (
+          <ProfileTreeRow label="Latest clone" icon={<Mic className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span className="text-muted-foreground">None yet</span>
+          </ProfileTreeRow>
+        )}
+      </IntegrationTreeSection>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -1058,7 +1017,7 @@ function InstantVoiceCloneWizard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </div>
   );
 }
 
@@ -1141,280 +1100,100 @@ function VoiceBrowserSection() {
   );
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base font-semibold" data-testid="text-voice-title">
-          Voice Selection
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {isConfigured && currentVoice && (
-          <div className="flex items-center gap-3 p-3 rounded-md border border-primary/30 bg-primary/5">
-            <Volume2 className="h-4 w-4 text-primary shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium" data-testid="text-current-voice-name">
-                {currentVoice.name}
-              </p>
-              <div className="flex flex-wrap gap-1 mt-1">
-                {Object.entries(currentVoice.labels).map(([k, v]) => (
-                  <Badge key={k} variant="secondary" className="bg-cat-system/15 text-cat-system-foreground border border-cat-system/30 rounded-sm text-xs font-medium px-2 py-0.5">
-                    {v}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-            {currentVoice.preview_url && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0"
-                onClick={() => handlePreview(currentVoice)}
-                data-testid="button-preview-current-voice"
-              >
-                {playingId === currentVoice.voice_id ? (
-                  <X className="h-4 w-4" />
-                ) : (
-                  <Play className="h-4 w-4" />
-                )}
+    <div className="min-w-0" data-testid="text-voice-title">
+      <IntegrationTreeSection
+        label="Voice"
+        initialOpen
+        icon={<Volume2 className="h-3.5 w-3.5" />}
+        testIdPrefix="voice"
+        actions={(
+          <Button size="sm" variant="outline" className="mr-2" onClick={() => setShowBrowser(!showBrowser)} data-testid="button-toggle-voice-browser">
+            {showBrowser ? "Close browser" : "Browse voices"}
+          </Button>
+        )}
+      >
+        {isConfigured && currentVoice ? (
+          <ProfileTreeRow
+            label="Current"
+            icon={<Volume2 className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            actionContent={currentVoice.preview_url ? (
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handlePreview(currentVoice)} data-testid="button-preview-current-voice">
+                {playingId === currentVoice.voice_id ? <X className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
               </Button>
-            )}
-          </div>
+            ) : undefined}
+          >
+            <span className="truncate" data-testid="text-current-voice-name">{currentVoice.name}</span>
+          </ProfileTreeRow>
+        ) : (
+          <ProfileTreeRow label="Current" icon={<Volume2 className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span className="text-muted-foreground" data-testid="text-no-voice-configured">Not configured</span>
+          </ProfileTreeRow>
         )}
-        {!isConfigured && (
-          <p className="text-sm text-muted-foreground" data-testid="text-no-voice-configured">
-            No voice configured. Set up ElevenLabs API key and select a voice below.
-          </p>
-        )}
-
-        <Button
-          variant="outline"
-          onClick={() => setShowBrowser(!showBrowser)}
-          data-testid="button-toggle-voice-browser"
-        >
-          {showBrowser ? "Close Browser" : "Browse Voices"}
-        </Button>
-
         {showBrowser && (
-          <div className="space-y-3 border rounded-md p-3">
-            <div className="flex gap-2">
-              <Input
-                placeholder="Search voices..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="flex-1"
-                data-testid="input-voice-search"
-              />
-              {categories.length > 0 && (
-                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                  <SelectTrigger className="w-36" data-testid="select-voice-category">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    {categories.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-            {voicesLoading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-16 w-full" />
-                <Skeleton className="h-16 w-full" />
+          <>
+            <ProfileTreeRow label="Search" icon={<Volume2 className="h-3.5 w-3.5" />} hasValue showEmpty defaultOpen expandedContent={(
+              <div className="flex gap-2">
+                <Input placeholder="Search voices..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="flex-1" data-testid="input-voice-search" />
+                {categories.length > 0 && (
+                  <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                    <SelectTrigger className="w-36" data-testid="select-voice-category">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      {categories.map((c) => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
+            )}>
+              <span className="text-muted-foreground">{filtered.length} voices</span>
+            </ProfileTreeRow>
+            {voicesLoading ? (
+              <ProfileTreeRow label="Voices" icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />} hasValue showEmpty>
+                <span className="text-muted-foreground">Loading</span>
+              </ProfileTreeRow>
             ) : (
-              <div className="max-h-96 overflow-y-auto space-y-2" data-testid="list-voice-browser">
+              <div data-testid="list-voice-browser">
                 {filtered.map((voice) => {
                   const isSelected = voice.voice_id === currentVoiceId;
                   return (
-                    <div
+                    <ProfileTreeRow
                       key={voice.voice_id}
-                      className={cn(
-                        "flex items-center gap-3 p-3 rounded-md border transition-colors",
-                        isSelected ? "border-primary bg-primary/5" : "border-border hover:bg-accent/50",
-                      )}
-                      data-testid={`voice-option-${voice.voice_id}`}
+                      label={voice.name}
+                      icon={<Volume2 className="h-3.5 w-3.5" />}
+                      hasValue
+                      showEmpty
+                      testId={`voice-option-${voice.voice_id}`}
+                      actionContent={voice.preview_url ? (
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handlePreview(voice)}>
+                          {playingId === voice.voice_id ? <X className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                        </Button>
+                      ) : undefined}
+                      menuContent={!isSelected ? (
+                        <DropdownMenuItem onClick={() => selectVoiceMutation.mutate(voice.voice_id)} disabled={selectVoiceMutation.isPending}>
+                          Select
+                        </DropdownMenuItem>
+                      ) : undefined}
                     >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium">{voice.name}</span>
-                          {isSelected && (
-                            <Badge className="text-xs">current</Badge>
-                          )}
-                        </div>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {Object.entries(voice.labels).map(([k, v]) => (
-                            <Badge key={k} variant="secondary" className="bg-cat-system/15 text-cat-system-foreground border border-cat-system/30 rounded-sm text-xs font-medium px-2 py-0.5">
-                              {v}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        {voice.preview_url && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => handlePreview(voice)}
-                          >
-                            {playingId === voice.voice_id ? (
-                              <X className="h-3.5 w-3.5" />
-                            ) : (
-                              <Play className="h-3.5 w-3.5" />
-                            )}
-                          </Button>
-                        )}
-                        {!isSelected && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => selectVoiceMutation.mutate(voice.voice_id)}
-                            disabled={selectVoiceMutation.isPending}
-                          >
-                            {selectVoiceMutation.isPending ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              "Select"
-                            )}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
+                      <span className="truncate text-muted-foreground">{isSelected ? "Current" : Object.values(voice.labels).slice(0, 2).join(" · ")}</span>
+                    </ProfileTreeRow>
                   );
                 })}
               </div>
             )}
-          </div>
+          </>
         )}
-      </CardContent>
-    </Card>
+      </IntegrationTreeSection>
+    </div>
   );
 }
 
-function AgentStatusCard() {
-  const { toast } = useToast();
-  const { data: status, isLoading: statusLoading } = useExecutorStatus();
 
-  const actionMutation = useMutation({
-    mutationFn: async (action: string) => {
-      const res = await apiRequest("POST", `/api/gateway/${action}`);
-      return res.json();
-    },
-    onSuccess: (data, action) => {
-      toast({
-        title: `Agent ${action}`,
-        description: data.message || `Successfully ${action}ed the agent.`,
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/gateway/status"] });
-    },
-    onError: (error: Error) => {
-      log.error("gateway action failed:", error);
-      toast({
-        title: "Action Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const isRunning = status?.status === "running";
-  const isStopped = status?.status === "stopped";
-
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle className="text-base font-semibold">Agent</CardTitle>
-        <div className="flex items-center gap-2">
-          {statusLoading ? (
-            <Skeleton className="h-5 w-20" />
-          ) : (
-            <Badge
-              variant={isRunning ? "default" : isStopped ? "secondary" : "outline"}
-              data-testid="badge-agent-status-settings"
-            >
-              {status?.status || "Unknown"}
-            </Badge>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            {isRunning && status?.uptime != null && (
-              <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
-                <Clock className="h-3 w-3" />
-                {formatSettingsUptime(status.uptime)}
-              </span>
-            )}
-            {isRunning && status?.pid != null && (
-              <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
-                <Hash className="h-3 w-3" />
-                PID {status.pid}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {isRunning ? (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => actionMutation.mutate("restart")}
-                  disabled={actionMutation.isPending}
-                  data-testid="button-restart-agent-settings"
-                >
-                  <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-                  Restart
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => actionMutation.mutate("stop")}
-                  disabled={actionMutation.isPending}
-                  data-testid="button-stop-agent-settings"
-                >
-                  <Pause className="h-3.5 w-3.5 mr-1.5" />
-                  Pause
-                </Button>
-              </>
-            ) : (
-              <Button
-                onClick={() => actionMutation.mutate("start")}
-                disabled={actionMutation.isPending}
-                data-testid="button-start-agent-settings"
-              >
-                <Play className="h-4 w-4 mr-2" />
-                {actionMutation.isPending ? "Starting..." : "Resume"}
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {status?.error && (
-          <div className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
-            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-            <span className="font-mono text-xs">{status.error}</span>
-          </div>
-        )}
-
-      </CardContent>
-    </Card>
-  );
-}
-
-function formatSettingsUptime(seconds?: number): string {
-  if (!seconds) return "N/A";
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (d > 0) return `${d}d ${h}h ${m}m`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
 
 
 
@@ -1855,196 +1634,111 @@ function TwitterAccountsSection() {
   };
 
   return (
-    <Card data-testid="card-twitter-accounts">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle className="text-base font-semibold flex items-center gap-2">
-          <SiX className="h-4 w-4" />
-          X (Twitter)
-        </CardTitle>
-        <Badge variant="secondary" className="font-mono px-1 py-0" data-testid="badge-twitter-account-count">
-          {accounts.length} connected
-        </Badge>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <div className="min-w-0" data-testid="card-twitter-accounts">
+      <IntegrationTreeSection
+        label="X (Twitter)"
+        initialOpen
+        icon={<SiX className="h-3.5 w-3.5" />}
+        testIdPrefix="twitter"
+        actions={<span className="pr-2 text-xs text-muted-foreground" data-testid="badge-twitter-account-count">{accounts.length} connected</span>}
+      >
         {isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-12" />
-          </div>
-        ) : accounts.length === 0 && !showAddForm ? (
-          <p className="text-sm text-muted-foreground py-4 text-center" data-testid="text-no-twitter-accounts">
-            No X (Twitter) accounts connected yet. Add your API credentials to enable tweeting.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {accounts.map((account) => (
-              <div key={account.id} className="space-y-2">
-                <div
-                  className={`flex items-center gap-3 p-3 rounded-md border ${!account.valid ? "border-destructive/40" : ""}`}
-                  data-testid={`twitter-account-${account.id}`}
-                >
-                  <SiX className={`h-4 w-4 shrink-0 ${!account.valid ? "text-destructive" : "text-muted-foreground"}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium truncate" data-testid={`text-twitter-username-${account.id}`}>
-                        {account.username ? `@${account.username}` : account.label}
-                      </span>
-                      {account.valid ? (
-                        <Badge variant="default" data-testid={`badge-twitter-valid-${account.id}`}>Connected</Badge>
-                      ) : (
-                        <Badge variant="destructive" data-testid={`badge-twitter-invalid-${account.id}`}>
-                          {account.error || "Invalid credentials"}
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-0.5" data-testid={`text-twitter-date-${account.id}`}>
-                      Added {new Date(account.addedAt).toLocaleDateString()}
-                    </p>
+          <ProfileTreeRow label="Accounts" icon={<SiX className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+          </ProfileTreeRow>
+        ) : accounts.length === 0 ? (
+          <ProfileTreeRow label="Accounts" icon={<SiX className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span className="text-muted-foreground" data-testid="text-no-twitter-accounts">None connected</span>
+          </ProfileTreeRow>
+        ) : accounts.map((account) => (
+          <ProfileTreeRow
+            key={account.id}
+            label={<span data-testid={`text-twitter-username-${account.id}`}>{account.username ? `@${account.username}` : account.label}</span>}
+            icon={<SiX className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            testId={`twitter-account-${account.id}`}
+            defaultOpen={account.valid}
+            expandedContent={account.valid ? (
+              <div className="space-y-2">
+                {(["post", "reply", "delete"] as const).map((perm) => (
+                  <div key={perm} className="flex items-center justify-between">
+                    <span className="text-xs capitalize">{perm === "post" ? "Post tweets" : perm === "reply" ? "Reply to tweets" : "Delete tweets"}</span>
+                    <Switch
+                      checked={account.permissions[perm]}
+                      onCheckedChange={(checked) => permMutation.mutate({ accountId: account.id, perms: { [perm]: checked } })}
+                      data-testid={`switch-twitter-perm-${perm}-${account.id}`}
+                    />
                   </div>
+                ))}
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="password"
+                    placeholder="Enter Bearer Token for X Search"
+                    value={editBearerToken[account.id] ?? ""}
+                    onChange={(e) => setEditBearerToken((prev) => ({ ...prev, [account.id]: e.target.value }))}
+                    className="h-7 text-xs"
+                    data-testid={`input-bearer-token-${account.id}`}
+                  />
                   <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => removeMutation.mutate(account.id)}
-                    disabled={removeMutation.isPending}
-                    data-testid={`button-remove-twitter-${account.id}`}
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    disabled={!editBearerToken[account.id]?.trim() || savingBearer === account.id}
+                    onClick={() => bearerMutation.mutate({ accountId: account.id, token: editBearerToken[account.id] })}
+                    data-testid={`button-save-bearer-${account.id}`}
                   >
-                    <Trash2 className="h-4 w-4" />
+                    {savingBearer === account.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Save"}
                   </Button>
                 </div>
-                {account.valid && (
-                  <div className="ml-7 space-y-1.5 text-sm">
-                    <p className="text-xs font-medium text-muted-foreground">Permissions</p>
-                    {(["post", "reply", "delete"] as const).map((perm) => (
-                      <div key={perm} className="flex items-center justify-between">
-                        <span className="text-xs capitalize">{perm === "post" ? "Post tweets" : perm === "reply" ? "Reply to tweets" : "Delete tweets"}</span>
-                        <Switch
-                          checked={account.permissions[perm]}
-                          onCheckedChange={(checked) =>
-                            permMutation.mutate({ accountId: account.id, perms: { [perm]: checked } })
-                          }
-                          data-testid={`switch-twitter-perm-${perm}-${account.id}`}
-                        />
-                      </div>
-                    ))}
-                    <div className="pt-2 border-t mt-2">
-                      <p className="text-xs font-medium text-muted-foreground mb-1.5">Bearer Token</p>
-                      <div className="flex items-center gap-2">
-                        <Input
-                          type="password"
-                          placeholder="Enter Bearer Token for X Search"
-                          value={editBearerToken[account.id] ?? ""}
-                          onChange={(e) => setEditBearerToken((prev) => ({ ...prev, [account.id]: e.target.value }))}
-                          className="h-7 text-xs"
-                          data-testid={`input-bearer-token-${account.id}`}
-                        />
-                        <Button
-                          size="sm"
-                          className="h-7 px-2 text-xs"
-                          disabled={!editBearerToken[account.id]?.trim() || savingBearer === account.id}
-                          onClick={() => bearerMutation.mutate({ accountId: account.id, token: editBearerToken[account.id] })}
-                          data-testid={`button-save-bearer-${account.id}`}
-                        >
-                          {savingBearer === account.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Save"}
-                        </Button>
-                      </div>
-                      <p className="text-[10px] text-muted-foreground mt-1">Required for landscape X Search scanning</p>
-                    </div>
-                  </div>
-                )}
               </div>
-            ))}
-          </div>
-        )}
-
-        {showAddForm && (
-          <div className="border rounded-md p-3 space-y-3">
-            <div className="space-y-2">
-              <label className="text-xs font-medium">API Key</label>
-              <Input
-                type={showSecrets ? "text" : "password"}
-                placeholder="Enter API Key"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                data-testid="input-twitter-api-key"
-              />
+            ) : undefined}
+            menuContent={(
+              <DropdownMenuItem onClick={() => removeMutation.mutate(account.id)} disabled={removeMutation.isPending} data-testid={`button-remove-twitter-${account.id}`}>
+                Remove
+              </DropdownMenuItem>
+            )}
+          >
+            <span className="truncate text-muted-foreground" data-testid={account.valid ? `badge-twitter-valid-${account.id}` : `badge-twitter-invalid-${account.id}`}>
+              {account.valid ? "Connected" : (account.error || "Invalid credentials")}
+              {" · "}
+              <span data-testid={`text-twitter-date-${account.id}`}>Added {new Date(account.addedAt).toLocaleDateString()}</span>
+            </span>
+          </ProfileTreeRow>
+        ))}
+        <ProfileTreeRow
+          label="Add account"
+          icon={<Plus className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          defaultOpen={showAddForm}
+          expandedContent={showAddForm ? (
+            <div className="space-y-3">
+              <Input type={showSecrets ? "text" : "password"} placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} data-testid="input-twitter-api-key" />
+              <Input type={showSecrets ? "text" : "password"} placeholder="API Secret" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} data-testid="input-twitter-api-secret" />
+              <Input type={showSecrets ? "text" : "password"} placeholder="Access Token" value={accessToken} onChange={(e) => setAccessToken(e.target.value)} data-testid="input-twitter-access-token" />
+              <Input type={showSecrets ? "text" : "password"} placeholder="Access Token Secret" value={accessTokenSecret} onChange={(e) => setAccessTokenSecret(e.target.value)} data-testid="input-twitter-access-token-secret" />
+              <Input type={showSecrets ? "text" : "password"} placeholder="Bearer Token (optional)" value={bearerToken} onChange={(e) => setBearerToken(e.target.value)} data-testid="input-twitter-bearer-token" />
+              <div className="flex items-center justify-between">
+                <Button variant="ghost" size="sm" onClick={() => setShowSecrets(!showSecrets)} data-testid="button-toggle-twitter-secrets">
+                  {showSecrets ? <EyeOff className="h-3.5 w-3.5 mr-1" /> : <Eye className="h-3.5 w-3.5 mr-1" />}
+                  {showSecrets ? "Hide" : "Show"} values
+                </Button>
+                <Button onClick={handleAddAccount} disabled={!apiKey.trim() || !apiSecret.trim() || !accessToken.trim() || !accessTokenSecret.trim() || isAdding} data-testid="button-connect-twitter">
+                  {isAdding ? <Loader2 className="h-4 w-4 animate-spin" /> : "Connect"}
+                </Button>
+              </div>
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium">API Secret</label>
-              <Input
-                type={showSecrets ? "text" : "password"}
-                placeholder="Enter API Secret"
-                value={apiSecret}
-                onChange={(e) => setApiSecret(e.target.value)}
-                data-testid="input-twitter-api-secret"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium">Access Token</label>
-              <Input
-                type={showSecrets ? "text" : "password"}
-                placeholder="Enter Access Token"
-                value={accessToken}
-                onChange={(e) => setAccessToken(e.target.value)}
-                data-testid="input-twitter-access-token"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium">Access Token Secret</label>
-              <Input
-                type={showSecrets ? "text" : "password"}
-                placeholder="Enter Access Token Secret"
-                value={accessTokenSecret}
-                onChange={(e) => setAccessTokenSecret(e.target.value)}
-                data-testid="input-twitter-access-token-secret"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium">Bearer Token <span className="text-muted-foreground">(optional)</span></label>
-              <Input
-                type={showSecrets ? "text" : "password"}
-                placeholder="Enter Bearer Token (for news/article endpoints)"
-                value={bearerToken}
-                onChange={(e) => setBearerToken(e.target.value)}
-                data-testid="input-twitter-bearer-token"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowSecrets(!showSecrets)}
-                data-testid="button-toggle-twitter-secrets"
-              >
-                {showSecrets ? <EyeOff className="h-3.5 w-3.5 mr-1" /> : <Eye className="h-3.5 w-3.5 mr-1" />}
-                {showSecrets ? "Hide" : "Show"} values
-              </Button>
-              <Button
-                onClick={handleAddAccount}
-                disabled={!apiKey.trim() || !apiSecret.trim() || !accessToken.trim() || !accessTokenSecret.trim() || isAdding}
-                data-testid="button-connect-twitter"
-              >
-                {isAdding ? <Loader2 className="h-4 w-4 animate-spin" /> : "Connect"}
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Get your credentials from{" "}
-              <a href="https://developer.x.com" target="_blank" rel="noopener noreferrer" className="underline">
-                developer.x.com
-              </a>
-              . Create a Project &amp; App, then generate API Key, API Secret, Access Token, and Access Token Secret with Read and Write permissions. Optionally add a Bearer Token to enable reading X Articles and news content.
-            </p>
-          </div>
-        )}
-
-        <Button
-          variant="outline"
-          onClick={() => setShowAddForm(!showAddForm)}
-          data-testid="button-add-twitter-account"
+          ) : undefined}
+          actionContent={(
+            <Button size="sm" variant="outline" onClick={() => setShowAddForm(!showAddForm)} data-testid="button-add-twitter-account">
+              {showAddForm ? "Cancel" : "Add"}
+            </Button>
+          )}
         >
-          <Plus className="h-4 w-4 mr-1.5" />
-          {showAddForm ? "Cancel" : "Add X (Twitter) Account"}
-        </Button>
-      </CardContent>
-    </Card>
+          <span className="text-muted-foreground">{showAddForm ? "Enter credentials" : "Connect another"}</span>
+        </ProfileTreeRow>
+      </IntegrationTreeSection>
+    </div>
   );
 }
 
@@ -3000,13 +2694,6 @@ interface ExpoAppleCredentialsConfig {
   error?: string;
 }
 
-function isAppleCredentialsBlock(run: ExpoBuildLogRun | null | undefined): boolean {
-  const text = `${run?.result?.guidance || ""}
-${run?.result?.stderr || ""}
-${run?.result?.error || ""}`.toLowerCase();
-  return text.includes("credentials suitable for internal distribution") || text.includes("interactive credential setup");
-}
-
 function expoCredentialsUrl(config: ExpoProjectConfig | undefined): string {
   if (config?.owner && config?.slug) {
     return `https://expo.dev/accounts/${encodeURIComponent(config.owner)}/projects/${encodeURIComponent(config.slug)}/credentials`;
@@ -3574,7 +3261,6 @@ function ExpoDetail() {
   });
 
   const elevenlabsReady = !!secretsStatus?.elevenlabs;
-  const credentialsBlocked = isAppleCredentialsBlock(buildLogData?.run);
   const credentialsHref = expoCredentialsUrl(projectConfig);
   const appleSettingsReady = Boolean(appleIdEmail.trim() && teamId.trim() && bundleIdentifier.trim());
   const activeInteractiveEasRun = buildLogData?.run?.interactive && buildLogData.run.status === "running";
@@ -3596,142 +3282,94 @@ function ExpoDetail() {
         : appleCredentialsConfigured
           ? "Ready to set up"
           : "Needs setup";
-  const appleCredentialBadgeVariant = easRunStatus === "success" ? "default" : easRunStatus === "failed" || credentialsBlocked ? "destructive" : "secondary";
 
   return (
-    <div className="space-y-4">
-      <Card data-testid="card-expo-token">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">Expo Access Token</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">Manage the Expo access token on the Secrets page.</p>
-          <p className="text-xs text-muted-foreground">
-            Create a token at{" "}
-            <a href="https://expo.dev/settings/access-tokens" target="_blank" rel="noopener noreferrer" className="underline text-primary">
-              expo.dev → Account Settings → Access Tokens
-            </a>
-            . Use a "Personal" token with no scope restrictions.
-          </p>
-        </CardContent>
-      </Card>
+    <div className="min-w-0 space-y-0">
+      <div data-testid="card-expo-token">
+        <IntegrationTreeSection label="Expo Access Token" initialOpen icon={<Smartphone className="h-3.5 w-3.5" />} testIdPrefix="expo-token">
+          <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span className="text-muted-foreground">Manage on Secrets</span>
+          </ProfileTreeRow>
+        </IntegrationTreeSection>
+      </div>
 
-      <Card data-testid="card-expo-account">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">Account Status</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
+      <div data-testid="card-expo-account">
+        <IntegrationTreeSection label="Account" initialOpen icon={<CheckCircle2 className="h-3.5 w-3.5" />} testIdPrefix="expo-account">
           {statusLoading ? (
-            <Skeleton className="h-8 w-full" />
+            <ProfileTreeRow label="Status" icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />} hasValue showEmpty>
+              <span className="text-muted-foreground">Loading</span>
+            </ProfileTreeRow>
           ) : expoStatus?.connected ? (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-green-500" />
-                <span className="text-sm font-medium">Connected as @{expoStatus.username}</span>
-              </div>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <span className="text-muted-foreground">Account</span>
-                  <p>{expoStatus.accountName}</p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Organizations</span>
-                  <p>{expoStatus.accounts?.length || 1}</p>
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Build and deploy from the{" "}
-                <a href="/platforms/environments/13" className="underline text-primary">Platforms → Mantra / Mobile / dev</a> page.
-              </p>
-            </div>
+            <>
+              <ProfileTreeRow label="Status" icon={<CheckCircle2 className="h-3.5 w-3.5 text-success" />} hasValue showEmpty>
+                <span>Connected as @{expoStatus.username}</span>
+              </ProfileTreeRow>
+              <ProfileTreeRow label="Account" icon={<Smartphone className="h-3.5 w-3.5" />} hasValue showEmpty>
+                <span className="truncate">{expoStatus.accountName}</span>
+              </ProfileTreeRow>
+              <ProfileTreeRow label="Organizations" icon={<Smartphone className="h-3.5 w-3.5" />} hasValue showEmpty>
+                <span>{expoStatus.accounts?.length || 1}</span>
+              </ProfileTreeRow>
+            </>
           ) : (
-            <div className="flex items-center gap-2">
-              <XCircle className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">
-                {expoStatus?.error || "Not connected. Add your access token above."}
-              </span>
-            </div>
+            <ProfileTreeRow label="Status" icon={<XCircle className="h-3.5 w-3.5" />} hasValue showEmpty>
+              <span className="text-muted-foreground">{expoStatus?.error || "Not connected"}</span>
+            </ProfileTreeRow>
           )}
-        </CardContent>
-      </Card>
+        </IntegrationTreeSection>
+      </div>
 
-      <Card data-testid="card-expo-app-configuration">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">App Configuration</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <span className="text-muted-foreground">Bundle ID</span>
-              <p className="font-mono text-xs">com.oniops.firstglasses</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Deep Link</span>
-              <p className="font-mono text-xs">agentglasses://</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Framework</span>
-              <p>Expo ~52 + Router</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Voice SDK</span>
-              <p>ElevenLabs RN</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <div data-testid="card-expo-app-configuration">
+        <IntegrationTreeSection label="App Configuration" initialOpen icon={<Smartphone className="h-3.5 w-3.5" />} testIdPrefix="expo-app">
+          <ProfileTreeRow label="Bundle ID" icon={<Smartphone className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span className="font-mono">com.oniops.firstglasses</span>
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Deep Link" icon={<Smartphone className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span className="font-mono">agentglasses://</span>
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Framework" icon={<Smartphone className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span>Expo ~52 + Router</span>
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Voice SDK" icon={<Volume2 className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span>ElevenLabs RN</span>
+          </ProfileTreeRow>
+        </IntegrationTreeSection>
+      </div>
 
-      <Card data-testid="card-expo-apple-credentials">
-        <CardHeader>
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <CardTitle className="text-base font-semibold">Apple Signing Credentials</CardTitle>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <HelpCircle className="h-4 w-4 text-muted-foreground" />
-                  </TooltipTrigger>
-                  <TooltipContent>Required once for iOS device builds through EAS.</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-            <Badge variant={appleCredentialBadgeVariant} data-testid="badge-expo-apple-credentials">
-              {appleCredentialStatus}
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 @md:grid-cols-3 text-sm">
-            <div>
-              <span className="text-muted-foreground">Bundle</span>
-              <p className="font-medium">{appleCredentials?.bundleIdentifier || "Not set"}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Apple Team</span>
-              <p className="font-medium">{appleCredentials?.teamId || "Not set"}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Last EAS run</span>
-              <p className="font-medium capitalize">{easRunStatus}</p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
+      <div data-testid="card-expo-apple-credentials">
+        <IntegrationTreeSection
+          label="Apple Signing"
+          initialOpen
+          icon={<Smartphone className="h-3.5 w-3.5" />}
+          testIdPrefix="expo-apple"
+          actions={(
             <Button
               size="sm"
+              variant="outline"
+              className="mr-2"
               onClick={() => setCredentialsWizardOpen(true)}
               disabled={!expoStatus?.connected || !projectConfig?.configured}
               data-testid="button-expo-open-credentials-wizard"
             >
               <Play className="h-3.5 w-3.5 mr-1.5" />
-              {activeInteractiveEasRun ? "Continue setup" : appleCredentialsConfigured ? "Set up credentials" : "Start setup"}
+              {activeInteractiveEasRun ? "Continue" : appleCredentialsConfigured ? "Set up" : "Start"}
             </Button>
-            {!projectConfig?.configured && (
-              <p className="text-sm text-muted-foreground">Link the Expo project before configuring Apple signing.</p>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+          )}
+        >
+          <ProfileTreeRow label="Status" icon={<Smartphone className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span data-testid="badge-expo-apple-credentials">{appleCredentialStatus}</span>
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Bundle" icon={<Smartphone className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span>{appleCredentials?.bundleIdentifier || "Not set"}</span>
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Apple Team" icon={<Smartphone className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span>{appleCredentials?.teamId || "Not set"}</span>
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Last EAS run" icon={<Smartphone className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span className="capitalize">{easRunStatus}</span>
+          </ProfileTreeRow>
+        </IntegrationTreeSection>
+      </div>
 
       <Dialog open={credentialsWizardOpen} onOpenChange={setCredentialsWizardOpen}>
         <DialogContent className="max-h-[88vh] max-w-3xl overflow-y-auto" data-testid="dialog-expo-eas-credentials">
@@ -4004,26 +3642,13 @@ function ExpoDetail() {
         </DialogContent>
       </Dialog>
 
-      <Card data-testid="card-expo-dependencies">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">Dependencies</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <div className="flex items-center justify-between text-sm">
-            <span>ElevenLabs Agent</span>
-            <Badge
-              variant={elevenlabsReady ? "default" : "secondary"}
-              data-testid="badge-expo-elevenlabs"
-            >
-              {elevenlabsReady ? "Ready" : "Not configured"}
-            </Badge>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            The mobile app uses the same ElevenLabs Conversational AI agent as the web voice client.
-            Configure it on the ElevenLabs integration page.
-          </p>
-        </CardContent>
-      </Card>
+      <div data-testid="card-expo-dependencies">
+        <IntegrationTreeSection label="Dependencies" initialOpen icon={<Volume2 className="h-3.5 w-3.5" />} testIdPrefix="expo-deps">
+          <ProfileTreeRow label="ElevenLabs Agent" icon={<Volume2 className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span data-testid="badge-expo-elevenlabs">{elevenlabsReady ? "Ready" : "Not configured"}</span>
+          </ProfileTreeRow>
+        </IntegrationTreeSection>
+      </div>
     </div>
   );
 }
