@@ -1623,7 +1623,7 @@ function BuildLifecycleCard({ environmentId, details }: { environmentId: number;
                 </div>
                 <div className="space-y-2">
                   {runs.slice(0, 4).map((run) => <WorkflowRunRow key={run.id} run={run} compact />)}
-                  {!runs.length ? <div className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">No build workflow runs yet.</div> : null}
+                  {!runs.length ? <div className="px-2 py-1.5 text-sm text-muted-foreground">No build workflow runs yet.</div> : null}
                 </div>
               </div>
             </div>

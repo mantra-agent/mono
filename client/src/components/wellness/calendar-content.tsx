@@ -1,6 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1226,29 +1225,25 @@ export function CalendarContent() {
 
   if (!activities || activities.length === 0) {
     return (
-      <div className="p-6">
-        <Card className="border-dashed">
-          <CardContent className="pt-6 pb-6">
-            <div className="flex flex-col items-center text-center gap-3">
-              <Check className="h-8 w-8 text-muted-foreground" />
-              <div>
-                <p className="font-medium">No wellness activities yet</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Add your first wellness activity or load the defaults to get started.
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => loadDefaultsMutation.mutate()} disabled={loadDefaultsMutation.isPending} data-testid="button-load-defaults">
-                  {loadDefaultsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-                  Load Defaults
-                </Button>
-                <Button onClick={() => setShowCreate(true)} data-testid="button-add-first-activity">
-                  <Plus className="h-4 w-4 mr-1" /> Add Activity
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="flex flex-col h-full overflow-hidden">
+        <div className="flex-1 overflow-y-auto px-3 @sm:px-4 py-3">
+          <div className="flex flex-wrap gap-2 px-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => loadDefaultsMutation.mutate()}
+              disabled={loadDefaultsMutation.isPending}
+              data-testid="button-load-defaults"
+            >
+              {loadDefaultsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+              Load Defaults
+            </Button>
+            <Button size="sm" onClick={() => setShowCreate(true)} data-testid="button-add-first-activity">
+              <Plus className="h-4 w-4 mr-1" /> New Activity
+            </Button>
+          </div>
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">No habits yet.</div>
+        </div>
         <Dialog open={!!detailActivity} onOpenChange={(open) => { if (!open) setDetailActivity(null); }}>
           <DialogContent className="h-[min(82vh,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-3xl overflow-hidden p-0">
             {detailActivity && (
@@ -1260,7 +1255,6 @@ export function CalendarContent() {
             )}
           </DialogContent>
         </Dialog>
-
         <AddActivityDialog open={showCreate} onOpenChange={setShowCreate} />
       </div>
     );

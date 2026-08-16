@@ -48,22 +48,19 @@ type PassionTier = ExecPassion["tier"];
 
 const TIERS: PassionTier[] = ["mission", "value", "exploration"];
 
-const TIER_META: Record<PassionTier, { label: string; description: string; icon: React.ReactNode; badgeClass: string }> = {
+const TIER_META: Record<PassionTier, { label: string; icon: React.ReactNode; badgeClass: string }> = {
   mission: {
     label: "Mission",
-    description: "Your core purpose and reason for building",
     icon: <Compass className="h-4 w-4" />,
     badgeClass: "bg-cat-ai/15 text-cat-ai-foreground border-cat-ai/30",
   },
   value: {
     label: "Values",
-    description: "Philosophical pillars that guide your decisions",
     icon: <Heart className="h-4 w-4" />,
     badgeClass: "bg-cat-growth/15 text-cat-growth-foreground border-cat-growth/30",
   },
   exploration: {
     label: "Explorations",
-    description: "Themes and ideas you're actively pursuing",
     icon: <Sparkles className="h-4 w-4" />,
     badgeClass: "bg-cat-event/15 text-cat-event-foreground border-cat-event/30",
   },
@@ -259,11 +256,8 @@ function TierSection({
       </div>
 
       {passions.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border p-8 text-center">
-          <p className="text-muted-foreground text-sm">{meta.description}</p>
-          <Button variant="ghost" size="sm" className="mt-2 text-xs" onClick={() => onAdd(tier)}>
-            Add your first {tier === "mission" ? "mission statement" : tier === "value" ? "value" : "exploration"}
-          </Button>
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">
+          {tier === "mission" ? "No missions yet." : tier === "value" ? "No values yet." : "No explorations yet."}
         </div>
       ) : (
         <div className={isMission ? "space-y-3" : "grid gap-3 @sm:grid-cols-2"}>
