@@ -437,7 +437,7 @@ TreeView is one interaction language with two compositions. Cards are not a thir
 
 **Object index** — Session Menu, Features, Scenarios, Issues. Search first. Blue `+ New Thing` next. Collapsible section labels. Compact nested rows. Hover or keyboard `…` menu. Inline expand. No split-view.
 
-**Field / detail** — Person profile, Secrets, Environment SOURCE, Slack, Claude CLI, OpenAI Subscription. `ProfileDetailSection` or `IntegrationTreeSection` as the group. One `ProfileTreeRow` per field: label and optional icon on the left, value or inline input on the right. Fields and dates edit in place; rotate, clear, and destructive actions live in `menuContent`. Children nest with `HierarchyTreeRow`. Person profile is the archetype: it is the origin of `ProfileDetailSection`/`ProfileTreeRow` and the reference implementation for in-place editable rows.
+**Field / detail** — Person profile, Secrets, Environment SOURCE, Slack, Claude CLI, OpenAI Subscription, OpenAI API, Anthropic API. `ProfileDetailSection` or `IntegrationTreeSection` as the group. One `ProfileTreeRow` per field: label and optional icon on the left, value or inline input on the right. Fields and dates edit in place; rotate, clear, and destructive actions live in `menuContent`. Children nest with `HierarchyTreeRow`. Person profile is the archetype: it is the origin of `ProfileDetailSection`/`ProfileTreeRow` and the reference implementation for in-place editable rows.
 
 Required primitives:
 
