@@ -164,21 +164,54 @@ export const coreDefinition: CoreDefinition = {
     ],
     actions: actionsForOwner("core"),
     integrations: [
-      integration("core.integration.google", "google", "available", ["gmail", "calendar", "drive"]),
+      integration("core.integration.google", "google", "available", ["gmail", "calendar", "drive"], {
+        readinessKind: "oauth-account",
+        oauthProvider: "google",
+      }),
       integration("core.integration.box", "box", "available", ["files"]),
-      integration("core.integration.elevenlabs", "elevenlabs", "available", ["voice"]),
-      integration("core.integration.cartesia", "cartesia", "available", ["voice"]),
-      integration("core.integration.twilio", "twilio", "available", ["phone"]),
-      integration("core.integration.deepgram", "deepgram", "available", ["speech-recognition"]),
-      integration("core.integration.anthropic", "anthropic", "available", ["model"]),
-      integration("core.integration.openai", "openai", "available", ["model", "embeddings"]),
-      integration("core.integration.claude-cli", "claude-cli", "available", ["model"]),
+      integration("core.integration.elevenlabs", "elevenlabs", "available", ["voice"], {
+        readinessKind: "secret",
+        requiredSecrets: ["ELEVENLABS_API_KEY"],
+      }),
+      integration("core.integration.cartesia", "cartesia", "available", ["voice"], {
+        readinessKind: "secret",
+        requiredSecrets: ["CARTESIA_API_KEY", "CARTESIA_VOICE_ID"],
+      }),
+      integration("core.integration.twilio", "twilio", "available", ["phone"], {
+        readinessKind: "secret",
+        requiredSecrets: ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_PHONE_NUMBER"],
+      }),
+      integration("core.integration.deepgram", "deepgram", "available", ["speech-recognition"], {
+        readinessKind: "secret",
+        requiredSecrets: ["DEEPGRAM_API_KEY"],
+      }),
+      integration("core.integration.anthropic", "anthropic", "available", ["model"], {
+        readinessKind: "secret",
+        requiredSecrets: ["ANTHROPIC_API_KEY"],
+      }),
+      integration("core.integration.openai", "openai", "available", ["model", "embeddings"], {
+        readinessKind: "secret",
+        requiredSecrets: ["OPENAI_API_KEY"],
+      }),
+      integration("core.integration.claude-cli", "claude-cli", "available", ["model"], {
+        readinessKind: "secret",
+        requiredSecrets: ["CLAUDE_CODE_OAUTH_TOKEN"],
+      }),
       integration("core.integration.twitter", "twitter", "available", ["social"]),
-      integration("core.integration.brave", "brave", "available", ["web-search"]),
+      integration("core.integration.brave", "brave", "available", ["web-search"], {
+        readinessKind: "secret",
+        requiredAnySecrets: ["BRAVE_API_KEY", "BRAVE_SEARCH_API_KEY"],
+      }),
       integration("core.integration.automation-auth", "automation-auth", "available", ["automation"]),
-      integration("core.integration.sendgrid", "sendgrid", "available", ["email-send"]),
+      integration("core.integration.sendgrid", "sendgrid", "available", ["email-send"], {
+        readinessKind: "secret",
+        requiredSecrets: ["SENDGRID_API_KEY", "SENDGRID_FROM_EMAIL"],
+      }),
       integration("core.integration.meta", "meta", "available", ["wearables"]),
-      integration("core.integration.recall", "recall", "available", ["meeting-transcription"]),
+      integration("core.integration.recall", "recall", "available", ["meeting-transcription"], {
+        readinessKind: "secret",
+        requiredSecrets: ["RECALL_API_KEY", "RECALL_REGION"],
+      }),
     ],
   },
 };

@@ -174,12 +174,24 @@ export interface ToolContribution extends ContributionBase {
 
 // ── Integration contracts (spec §4.4) ───────────────────────────────────────
 
+export type ConnectorReadinessKind = "secret" | "oauth-account" | "provider-connection";
+
 export interface IntegrationContribution extends ContributionBase {
   kind: "integration";
   connectorKey: string;
   relationship: "required" | "recommended" | "available";
   capabilities: string[];
   onboardingStepId?: string;
+  /** How cheap synchronous readiness is derived. Absent = no cheap signal. */
+  readinessKind?: ConnectorReadinessKind;
+  /** All of these secrets must be present when readinessKind is `secret`. */
+  requiredSecrets?: string[];
+  /** At least one of these secrets must be present when readinessKind is `secret`. */
+  requiredAnySecrets?: string[];
+  /** connected_accounts.provider when readinessKind is `oauth-account`. */
+  oauthProvider?: string;
+  /** provider_connections.provider when readinessKind is `provider-connection`. */
+  connectionProvider?: string;
 }
 
 // ── Remaining contribution kinds (declared for completeness; spec §4) ────────

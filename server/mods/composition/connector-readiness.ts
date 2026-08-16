@@ -12,6 +12,8 @@
 // heavy /api/setup/secrets-status endpoint) and never reads token bytes.
 
 import { getSecretSync } from "../../secrets-store";
+import type { IntegrationContribution } from "@shared/models/mod-registry";
+import { getModRegistry } from "../registry";
 import { REGISTERED_CONNECTOR_KEYS } from "../registry/registered-keys";
 
 export type ConnectorReadiness = "ready" | "setup-required";
@@ -42,6 +44,37 @@ function anySecret(...names: string[]): boolean {
   });
 }
 
+let contributionIndex: Map<string, IntegrationContribution> | null = null;
+
+function integrationContributionsByConnector(): Map<string, IntegrationContribution> {
+  if (contributionIndex) return contributionIndex;
+  const registry = getModRegistry();
+  const byKey = new Map<string, IntegrationContribution>();
+  const all = [
+    ...(registry.core.contributions.integrations ?? []),
+    ...registry.mods.flatMap((mod) => mod.contributions.integrations ?? []),
+  ];
+  for (const contribution of all) {
+    if (!byKey.has(contribution.connectorKey)) byKey.set(contribution.connectorKey, contribution);
+  }
+  contributionIndex = byKey;
+  return byKey;
+}
+
+function readinessFromContribution(
+  contribution: IntegrationContribution | undefined,
+): ConnectorReadiness | undefined {
+  if (!contribution?.readinessKind) return undefined;
+  if (contribution.readinessKind === "secret") {
+    const required = contribution.requiredSecrets ?? [];
+    const any = contribution.requiredAnySecrets ?? [];
+    const requiredOk = required.length === 0 || allSecrets(...required);
+    const anyOk = any.length === 0 || anySecret(...any);
+    return requiredOk && anyOk ? "ready" : "setup-required";
+  }
+  return undefined;
+}
+
 /**
  * Secret-backed connectors: ready iff their required app secrets are present.
  *
@@ -51,6 +84,10 @@ function anySecret(...names: string[]): boolean {
  * distinguish "definitively not configured" from "no cheap signal available".
  */
 export function secretConnectorReadiness(connectorKey: string): ConnectorReadiness | undefined {
+  const fromContribution = readinessFromContribution(
+    integrationContributionsByConnector().get(connectorKey),
+  );
+  if (fromContribution !== undefined) return fromContribution;
   switch (connectorKey) {
     case "anthropic":
       return allSecrets("ANTHROPIC_API_KEY") ? "ready" : "setup-required";
@@ -121,7 +158,23 @@ export function resolveConnectorReadiness(
     if (conn.status === "active") activeConnectionProviders.add(conn.provider);
   }
 
+  const contributions = integrationContributionsByConnector();
   for (const connectorKey of REGISTERED_CONNECTOR_KEYS) {
+    const contribution = contributions.get(connectorKey);
+    if (contribution?.readinessKind === "oauth-account" && contribution.oauthProvider) {
+      readiness.set(
+        connectorKey,
+        healthyProviders.has(contribution.oauthProvider) ? "ready" : "setup-required",
+      );
+      continue;
+    }
+    if (contribution?.readinessKind === "provider-connection" && contribution.connectionProvider) {
+      readiness.set(
+        connectorKey,
+        activeConnectionProviders.has(contribution.connectionProvider) ? "ready" : "setup-required",
+      );
+      continue;
+    }
     const oauthProvider = OAUTH_ACCOUNT_PROVIDERS[connectorKey];
     if (oauthProvider) {
       readiness.set(connectorKey, healthyProviders.has(oauthProvider) ? "ready" : "setup-required");

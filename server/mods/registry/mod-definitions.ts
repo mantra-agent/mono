@@ -96,9 +96,19 @@ const build: ModDefinition = {
       nav("build.nav.database", "Build", "Database", "DatabaseZap", "navigation.database.open", "build.route.database", 6, { requiredPermissions: ["build:read"] }),
     ],
     integrations: [
-      integration("build.integration.github", "github", "available", ["source"]),
-      integration("build.integration.expo", "expo", "available", ["mobile-build"]),
-      integration("build.integration.sentry", "sentry", "available", ["error-tracking"]),
+      integration("build.integration.github", "github", "available", ["source"], {
+        readinessKind: "provider-connection",
+        connectionProvider: "github",
+      }),
+      integration("build.integration.expo", "expo", "available", ["mobile-build"], {
+        readinessKind: "secret",
+        requiredSecrets: ["EXPO_ACCESS_TOKEN"],
+      }),
+      integration("build.integration.sentry", "sentry", "available", ["error-tracking"], {
+        readinessKind: "secret",
+        requiredAnySecrets: ["SENTRY_DSN", "EXPO_PUBLIC_SENTRY_DSN"],
+        requiredSecrets: ["SENTRY_AUTH_TOKEN", "SENTRY_ORG", "SENTRY_PROJECT"],
+      }),
     ],
     serverRouteGroups: [
       serverRouteGroupRef("build.routes.platforms", "build.platforms"),
@@ -290,8 +300,14 @@ const finance: ModDefinition = {
   contributions: {
     clientRoutes: [clientRoute("finance.route.finance", "/finance", "finance")],
     integrations: [
-      integration("finance.integration.plaid", "plaid", "available", ["transactions", "balances", "liabilities", "investments"]),
-      integration("finance.integration.quickbooks", "quickbooks", "available", ["accounting"]),
+      integration("finance.integration.plaid", "plaid", "available", ["transactions", "balances", "liabilities", "investments"], {
+        readinessKind: "secret",
+        requiredSecrets: ["PLAID_CLIENT_ID"],
+      }),
+      integration("finance.integration.quickbooks", "quickbooks", "available", ["accounting"], {
+        readinessKind: "oauth-account",
+        oauthProvider: "quickbooks",
+      }),
     ],
   },
 };

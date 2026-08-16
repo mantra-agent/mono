@@ -455,6 +455,7 @@ const TIMER_NAME_RENAMES: Record<string, string> = {
 
 const RETIRED_SYSTEM_TIMERS: Array<{
   systemKey: string;
+  /** Leftover adoption only — never match a timer that already has a systemKey. */
   legacyMatch: (timer: Timer) => boolean;
   description: string;
 }> = [
@@ -510,14 +511,20 @@ export class SystemTimerRegistry {
     await runWithPrincipal(principal, async () => {
       const all = await timerStorage.getAll();
       for (const retired of RETIRED_SYSTEM_TIMERS) {
-        const stale = all.filter((timer) => timer.systemKey === retired.systemKey || retired.legacyMatch(timer));
+        const stale = all.filter((timer) =>
+          timer.systemKey === retired.systemKey ||
+          (!timer.systemKey && retired.legacyMatch(timer)),
+        );
         for (const timer of stale) {
           await timerStorage.deleteForScheduler(timer);
           log.info(`Deleted retired timer "${timer.name}" (${retired.systemKey}) owner=${principal.userId}: ${retired.description}`);
         }
       }
       const remaining = all.filter((timer) =>
-        !RETIRED_SYSTEM_TIMERS.some((retired) => timer.systemKey === retired.systemKey || retired.legacyMatch(timer)),
+        !RETIRED_SYSTEM_TIMERS.some((retired) =>
+          timer.systemKey === retired.systemKey ||
+          (!timer.systemKey && retired.legacyMatch(timer)),
+        ),
       );
       const timezone = profile.timezone || getTimezone();
       const claimed = new Set<string>();

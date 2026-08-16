@@ -124,8 +124,20 @@ export function integration(
   connectorKey: RegisteredConnectorKey,
   relationship: IntegrationContribution["relationship"],
   capabilities: string[],
+  readiness: Pick<
+    IntegrationContribution,
+    "readinessKind" | "requiredSecrets" | "requiredAnySecrets" | "oauthProvider" | "connectionProvider"
+  > = {},
 ): IntegrationContribution {
-  return { kind: "integration", id, connectorKey, relationship, capabilities, audience: "settings" };
+  return {
+    kind: "integration",
+    id,
+    connectorKey,
+    relationship,
+    capabilities,
+    audience: "settings",
+    ...readiness,
+  };
 }
 
 export function workflowRef(
