@@ -194,7 +194,7 @@ const business: ModDefinition = {
 
 const wellness: ModDefinition = {
   key: "wellness",
-  version: "1.3.1",
+  version: "1.3.2",
   name: "Wellness",
   description: "Wellness activities, routines, health signals, reflection, coaching, and health integrations.",
   outcome: {
@@ -225,10 +225,10 @@ const wellness: ModDefinition = {
       clientRoute("wellness.route.health", "/health", "health"),
     ],
     navigation: [
-      nav("wellness.nav.habits", "Wellness", "Habits", "Activity", "navigation.habits.open", "wellness.route.habits", 1),
+      nav("wellness.nav.habits", "Wellness", "Habits", "CalendarCheck", "navigation.habits.open", "wellness.route.habits", 1),
       nav("wellness.nav.reflections", "Wellness", "Reflections", "BookOpen", "navigation.reflections.open", "wellness.route.reflections", 2),
       nav("wellness.nav.gratitude", "Wellness", "Gratitude", "Heart", "navigation.gratitude.open", "wellness.route.gratitude", 3),
-      nav("wellness.nav.health", "Wellness", "Health", "Heart", "navigation.health.open", "wellness.route.health", 4),
+      nav("wellness.nav.health", "Wellness", "Health", "HeartPulse", "navigation.health.open", "wellness.route.health", 4),
     ],
     widgets: [widget("wellness.widget.wellness", "home.primary", "wellness", "wellness", 4)],
     dashboardHeatmaps: [
