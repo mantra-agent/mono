@@ -1,11 +1,12 @@
 // Shared morphogenic-lattice UI grammar for editable platform defaults.
 //
-// One motif, reused by both the Personas page and the Skills page: a green
-// inbound "default advanced" mark, an amber "edited locally" mark, a
-// current-vs-default diff view, an Apply/Revert-to-default confirmation, and the
-// inbound acknowledgement actions. Persona- and Skill-specific payload
-// builders live in their own pages; everything that is payload-agnostic lives
-// here so the two catalogs cannot drift into a second motif.
+// One motif, reused by both the Personas page and the Skills page: one row
+// discriminant (green inbound if a default is waiting, otherwise amber local
+// drift), a current-vs-default diff view, an Apply/Revert-to-default
+// confirmation, and inbound acknowledgement actions in the overflow menu.
+// Persona- and Skill-specific payload builders live in their own pages;
+// everything that is payload-agnostic lives here so the two catalogs cannot
+// drift into a second motif.
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Circle } from "lucide-react";

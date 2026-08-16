@@ -344,8 +344,11 @@ function SkillTreeRow({
         </span>
         <span className="flex-1 min-w-0 truncate">{skill.name}</span>
         {/* Lattice marks: green inbound (default advanced), amber local-ahead. */}
-        {skill.updateAvailable && <StatusDot kind="inbound" className="shrink-0" />}
-        {(skill.changedFields?.length ?? 0) > 0 && <StatusDot kind="local" className="shrink-0" />}
+        {skill.updateAvailable ? (
+          <StatusDot kind="inbound" className="shrink-0" />
+        ) : (skill.changedFields?.length ?? 0) > 0 ? (
+          <StatusDot kind="local" className="shrink-0" />
+        ) : null}
         {/* Expand/collapse twisty — absolute right-8 per hierarchy tree standard */}
         <button
           type="button"

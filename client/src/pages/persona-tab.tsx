@@ -260,12 +260,14 @@ function PersonaActionsMenu({
   onApplyAll,
   onRevertAll,
   onKeepMine,
+  onUseUpdatedDefault,
   showAdvancedFields,
   onToggleAdvancedFields,
 }: {
   onApplyAll?: () => void;
   onRevertAll?: () => void;
   onKeepMine?: () => void;
+  onUseUpdatedDefault?: () => void;
   showAdvancedFields: boolean;
   onToggleAdvancedFields: () => void;
 }) {
@@ -286,6 +288,7 @@ function PersonaActionsMenu({
         {onApplyAll && <DropdownMenuItem onSelect={onApplyAll}>Apply to Default</DropdownMenuItem>}
         {onRevertAll && <DropdownMenuItem onSelect={onRevertAll}>Revert to Default</DropdownMenuItem>}
         {onKeepMine && <DropdownMenuItem onSelect={onKeepMine}>Keep Mine</DropdownMenuItem>}
+        {onUseUpdatedDefault && <DropdownMenuItem onSelect={onUseUpdatedDefault}>Use Updated Default</DropdownMenuItem>}
         <DropdownMenuItem
           onSelect={(event) => {
             event.preventDefault();
@@ -741,8 +744,11 @@ function PersonaTreeItem({
           changed={persona.changedFields?.includes("name")}
           onCommit={(name) => onUpdate({ name })}
         />
-        {persona.updateAvailable && <StatusDot kind="inbound" className="shrink-0" />}
-        {(persona.changedFields?.length ?? 0) > 0 && <StatusDot kind="local" className="shrink-0" />}
+        {persona.updateAvailable ? (
+          <StatusDot kind="inbound" className="shrink-0" />
+        ) : (persona.changedFields?.length ?? 0) > 0 ? (
+          <StatusDot kind="local" className="shrink-0" />
+        ) : null}
         {persona.isDefault && <span className="shrink-0 text-xs text-muted-foreground/70">Default</span>}
         <CollapsibleTrigger asChild>
           <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground" aria-label={open ? "Collapse persona" : "Expand persona"}>
@@ -753,6 +759,7 @@ function PersonaTreeItem({
           onApplyAll={showApply ? () => sync.request(() => buildApplyAll(persona, draft)) : undefined}
           onRevertAll={showRevert ? () => sync.request(() => buildRevertAll(persona)) : undefined}
           onKeepMine={showKeepMine ? () => personaAction.mutate({ action: "keep-mine" }) : undefined}
+          onUseUpdatedDefault={showKeepMine ? () => personaAction.mutate({ action: "use-updated-default" }) : undefined}
           showAdvancedFields={showAdvancedFields}
           onToggleAdvancedFields={() => setShowAdvancedFields((current) => !current)}
         />
