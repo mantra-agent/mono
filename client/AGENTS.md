@@ -192,6 +192,10 @@ When adding admin or system UI:
 - Library Drive branch (`pages/library/drive-branch.tsx`): bound folders expand via `GET /api/drive/resources/:id/children` (Files API). Share uses `ShareSheet` with `objectType: "drive_resource"`. Do not call Google APIs from the client except the Picker bind flow.
 - Files page (`pages/files.tsx` + `pages/library/drive-tree.tsx`): browse vault-bound resources and own semantic index policy UI (row toggles, inherited/status labels, durable run progress via `/api/files/index/*`). Connector connect/bind/unbind stays on Integrations — never add connector management here.
 
+## Session Launch
+
+`useSessionLaunch` is the interactive create-session + optional first-message + Focus-open primitive. Discuss call sites compose context only. Deliverable-producing buttons compose Feature/object context plus a Skill or shared contract body — never a bespoke prompt string invented at the row. `useAgendaDiscussion` is a compatibility alias.
+
 ## Badge System
 
 Tiered badge system for status indicators across the app:

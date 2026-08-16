@@ -14,7 +14,7 @@ import { ReferenceText } from "@/components/references/reference-text";
 import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
-import { useFocusSession } from "@/hooks/use-focus-session";
+import { useSessionLaunch } from "@/hooks/use-session-launch";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -23,12 +23,18 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import {
+  FEATURE_PIPELINE,
+  FEATURE_STAGES,
+  FEATURE_STATUSES,
+  composeFeatureLaunchMessage,
+  formatFeatureStage,
+  type FeatureStage,
+  type FeatureStatus,
+} from "@shared/feature-pipeline";
 
-const stages = ["idea", "spec", "develop", "test", "calibrate", "maintain", "deprecate"] as const;
-const statuses = ["ready", "in_progress", "needs_review"] as const;
-
-type FeatureStage = (typeof stages)[number];
-type FeatureStatus = (typeof statuses)[number];
+const stages = FEATURE_STAGES;
+const statuses = FEATURE_STATUSES;
 type Feature = {
   id: string;
   summary: string;
@@ -50,29 +56,7 @@ const STATUS_LABELS: Record<FeatureStatus, string> = {
 };
 
 function formatStage(stage: FeatureStage) {
-  return stage.charAt(0).toUpperCase() + stage.slice(1);
-}
-
-type CreatedSession = { id: string };
-
-/**
- * Opening message for the idea-phase "Spec" action. Carries the Feature as
- * canonical context so the Architect-seated session can resolve it and write
- * the spec. Analogous to the home view Discuss launcher.
- */
-function buildFeatureSpecMessage(feature: Feature): string {
-  const parts = [
-    `Let's write the spec for this Feature: **${feature.summary}**`,
-    `Feature: @feature:${feature.id}`,
-    `Product: ${feature.product_name ?? feature.product_id}`,
-  ];
-  if (feature.owner_person_id) parts.push(`Owner: @person:${feature.owner_person_id}`);
-  if (feature.description?.trim()) parts.push("", "Description:", feature.description.trim());
-  parts.push(
-    "",
-    "Help me write a clear specification for this Feature. Ask any clarifying questions you need before drafting, then produce the spec.",
-  );
-  return parts.join("\n");
+  return formatFeatureStage(stage);
 }
 
 function CreateFeatureDialog({
@@ -179,7 +163,7 @@ function CreateFeatureDialog({
 
 function FeatureRow({ feature, products }: { feature: Feature; products: Product[] }) {
   const { toast } = useToast();
-  const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
+  const launch = useSessionLaunch();
   const [editingOwner, setEditingOwner] = useState(false);
   const [editingSpec, setEditingSpec] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
@@ -195,31 +179,6 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
     onError: (error: unknown) =>
       toast({
         title: "Failed to update Feature",
-        description: error instanceof Error ? error.message : "Unknown error",
-        variant: "destructive",
-      }),
-  });
-
-  const spec = useMutation({
-    mutationFn: async () => {
-      const response = await apiRequest("POST", "/api/sessions", {
-        title: `Spec: ${feature.summary}`.slice(0, 80),
-        personaName: "Architect",
-      });
-      const session: CreatedSession = await response.json();
-      await apiRequest("POST", `/api/sessions/${session.id}/messages`, {
-        content: buildFeatureSpecMessage(feature),
-      });
-      return session;
-    },
-    onSuccess: (session) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
-      setSessionForRoute(route, session.id);
-      setWidgetOpen(true);
-    },
-    onError: (error: unknown) =>
-      toast({
-        title: "Could not start spec session",
         description: error instanceof Error ? error.message : "Unknown error",
         variant: "destructive",
       }),
@@ -448,19 +407,40 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
       )}
       menuContent={(
         <>
-          {feature.stage === "idea" ? (
-            <DropdownMenuItem
-              disabled={spec.isPending}
-              onSelect={(event) => {
-                event.preventDefault();
-                spec.mutate();
-              }}
-              data-testid={`button-feature-spec-${feature.id}`}
-            >
-              {spec.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <PenLine className="mr-2 h-3.5 w-3.5" />}
-              Spec
-            </DropdownMenuItem>
-          ) : null}
+          {FEATURE_STAGES.map((stage) => {
+            const contract = FEATURE_PIPELINE[stage];
+            const pending = launch.isPending && launch.variables?.pendingKey === `feature-${feature.id}-${stage}`;
+            return (
+              <DropdownMenuItem
+                key={stage}
+                disabled={launch.isPending}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  launch.mutate({
+                    pendingKey: `feature-${feature.id}-${stage}`,
+                    title: `${contract.actionLabel}: ${feature.summary}`.slice(0, 80),
+                    personaName: contract.persona,
+                    message: composeFeatureLaunchMessage({
+                      id: feature.id,
+                      summary: feature.summary,
+                      stage: feature.stage,
+                      productName: feature.product_name,
+                      productId: feature.product_id,
+                      ownerPersonId: feature.owner_person_id,
+                      specPageId: feature.spec_page_id,
+                      description: feature.description,
+                    }, stage),
+                    clientTurnSuffix: `feature-${feature.id}-${stage}`,
+                    errorTitle: `Could not start ${contract.actionLabel.toLowerCase()} session`,
+                  });
+                }}
+                data-testid={`button-feature-launch-${stage}-${feature.id}`}
+              >
+                {pending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <PenLine className="mr-2 h-3.5 w-3.5" />}
+                {contract.actionLabel}
+              </DropdownMenuItem>
+            );
+          })}
           <DropdownMenuItem
             onSelect={() =>
               apiRequest("POST", `/api/features/${feature.id}/archive`, { confirm: true }).then(() => {
