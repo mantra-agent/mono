@@ -2,7 +2,6 @@ import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +9,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Plus, Trash2, Pencil, X, Check, Loader2, Users, DollarSign, MapPin, Building2, Trophy, ChevronDown, ChevronRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { getInstanceName } from "@/lib/instance-config";
 
 function formatDateRange(startDate: string | null, endDate: string | null): string {
   if (!startDate) return "";
@@ -826,12 +824,9 @@ export default function ExecExperienceTab() {
         )}
 
         {experiences.length === 0 && !showAdd && (
-          <EmptyState
-            icon={Trophy}
-            title="No experience entries yet"
-            message={`Add your first domain experience, or talk to ${getInstanceName()}.`}
-            testId="profile-experience-empty"
-          />
+          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="profile-experience-empty">
+            No experience yet.
+          </div>
         )}
       </div>
     </div>

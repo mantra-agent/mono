@@ -773,24 +773,14 @@ export default function CalendarPage() {
 
     if (hasGmailAccounts) {
       return (
-        <div className="flex flex-col items-center justify-center py-12 gap-6" data-testid="calendar-authorize-state">
-          <div className="rounded-full bg-muted p-4">
-            <CalendarIcon className="h-8 w-8 text-muted-foreground" />
-          </div>
-          <div className="text-center space-y-1">
-            <h2 className="text-lg font-semibold" data-testid="text-authorize-calendar-title">
-              Authorize Calendar Access
-            </h2>
-            <p className="text-sm text-muted-foreground max-w-sm" data-testid="text-authorize-calendar-desc">
-              Your Google accounts are connected — just grant calendar access to see your schedule here.
-            </p>
-          </div>
-          <div className="flex flex-col gap-3 w-full max-w-xs">
+        <div className="flex h-full flex-col overflow-hidden" data-testid="calendar-authorize-state">
+          <div className="flex flex-wrap gap-2 border-b border-border p-2">
             {accounts.map(account => (
               <Button
                 key={account.id}
                 variant="outline"
-                className="w-full justify-start gap-2"
+                size="sm"
+                className="justify-start gap-2"
                 data-testid={`button-authorize-calendar-${account.id}`}
                 onClick={async () => {
                   try {
@@ -810,26 +800,23 @@ export default function CalendarPage() {
               </Button>
             ))}
           </div>
+          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-authorize-calendar-desc">
+            No calendar access yet.
+          </div>
         </div>
       );
     }
 
     return (
-      <div className="flex flex-col items-center justify-center py-12 gap-4" data-testid="calendar-empty-state">
-        <div className="rounded-full bg-muted p-4">
-          <CalendarIcon className="h-8 w-8 text-muted-foreground" />
+      <div className="flex h-full flex-col overflow-hidden" data-testid="calendar-empty-state">
+        <div className="border-b border-border p-2">
+          <Button asChild size="sm" data-testid="button-connect-calendar">
+            <a href="/integrations/google">Connect Calendar</a>
+          </Button>
         </div>
-        <div className="text-center space-y-1">
-          <h2 className="text-lg font-semibold" data-testid="text-empty-calendar-title">
-            Connect your Google Calendar
-          </h2>
-          <p className="text-sm text-muted-foreground max-w-sm" data-testid="text-empty-calendar-desc">
-            Connect your Google Calendar to see your schedule here
-          </p>
+        <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-empty-calendar-desc">
+          No calendar connected yet.
         </div>
-        <Button asChild data-testid="button-connect-calendar">
-          <a href="/integrations/google">Connect Calendar</a>
-        </Button>
       </div>
     );
   }

@@ -1437,8 +1437,8 @@ function DatesTab({ person, onUpdate }: { person: Person; onUpdate: () => void }
       )}
 
       {sortedDates.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-4 text-center" data-testid="text-no-dates">
-          No important dates. Click "Add" to track birthdays, anniversaries, and more.
+        <p className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-no-dates">
+          No dates yet.
         </p>
       ) : (
         <div className="space-y-1.5">
@@ -1638,23 +1638,13 @@ function AnalysisTab({ person }: { person: Person }) {
   return (
     <div className="space-y-4" data-testid="analysis-tab">
       {person.private ? (
-        <Card>
-          <CardContent className="py-8 text-center">
-            <Shield className="h-8 w-8 text-muted-foreground/30 mx-auto mb-3" />
-            <p className="text-sm text-muted-foreground" data-testid="text-analysis-private">
-              AI analysis is disabled for this person. Toggle privacy in profile settings to enable.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-analysis-private">
+          Analysis is disabled.
+        </div>
       ) : !hasData ? (
-        <Card>
-          <CardContent className="py-8 text-center">
-            <TrendingUp className="h-8 w-8 text-muted-foreground/30 mx-auto mb-3" />
-            <p className="text-sm text-muted-foreground" data-testid="text-analysis-no-data">
-              Add interactions and notes to unlock behavioral analysis and predictions.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-analysis-no-data">
+          No analysis yet.
+        </div>
       ) : (
         <>
           <Card>

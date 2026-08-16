@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Lightbulb, Loader2, Trash2, Check } from "lucide-react";
+import { Loader2, Trash2, Check } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 
 interface LearningEntry {
@@ -152,14 +152,8 @@ export function LearningContent() {
         </h2>
 
         {isEmpty && (
-          <div data-testid="text-learning-empty" className="flex flex-col items-center text-center gap-3 py-6 mb-4">
-            <Lightbulb className="h-8 w-8 text-muted-foreground" />
-            <div>
-              <p className="font-medium">Start your learning practice</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                No entries yet. Start capturing what you learn each day.
-              </p>
-            </div>
+          <div data-testid="text-learning-empty" className="px-2 py-1.5 text-sm text-muted-foreground">
+            No entries yet.
           </div>
         )}
 
