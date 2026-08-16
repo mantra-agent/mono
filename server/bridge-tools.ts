@@ -8966,15 +8966,17 @@ ${refs}` : ""),
             return { result: "Missing image source. Provide one of: path (workspace file), url (image URL), or base64 (raw data)", error: true };
           }
 
-          // Prefer openai-subscription vision (native image_url → input_image). Fall back
-          // to Grok subscription multimodal chat when OpenAI sub is exhausted/unavailable.
+          // Prefer Grok subscription multimodal chat (current default provider pool).
+          // Fall back to openai-subscription vision only if Grok fails.
           // Avoid claude-cli: buildPrompt JSON.stringifies multimodal content into flat text.
           const dataUrl = `data:${mediaType};base64,${imageBase64}`;
           const { chatCompletion } = await import("./model-client");
+          const grokVisionModel = a.depth === "deep"
+            ? "grok-subscription/grok-4.6"
+            : "grok-subscription/grok-4.3";
           const openAiVisionModel = a.depth === "deep"
             ? "openai-subscription/gpt-5.5-sub"
             : "openai-subscription/gpt-5.4-mini-sub";
-          const grokVisionModel = "grok-subscription/grok-4.5";
           const visionMessages = [
             { role: "user" as const, content: [
               { type: "image_url" as const, image_url: { url: dataUrl } },
@@ -8982,13 +8984,13 @@ ${refs}` : ""),
             ] },
           ];
           const activity = (await import("./job-profiles")).ACTIVITY_MEDIA;
-          log.debug(`[Images] analyze: routing to ${openAiVisionModel}`);
+          log.debug(`[Images] analyze: routing to ${grokVisionModel}`);
           let description: string;
           try {
             const result = await chatCompletion({
               activity,
-              model: openAiVisionModel,
-              overrideReason: "image analysis prefers multimodal OpenAI subscription model",
+              model: grokVisionModel,
+              overrideReason: "image analysis prefers multimodal Grok subscription model",
               metadata: { source: "bridge-tool", toolName: "images.analyze", activity },
               maxTokens: 4000,
               messages: visionMessages,
@@ -8996,18 +8998,18 @@ ${refs}` : ""),
             description = result.content.trim() || "Unable to describe image";
           } catch (primaryErr: any) {
             const primaryMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
-            log.warn(`[Images] OpenAI analyze failed; falling back to Grok: ${primaryMsg}`);
-            log.debug(`[Images] analyze: routing fallback to ${grokVisionModel}`);
+            log.warn(`[Images] Grok analyze failed; falling back to OpenAI: ${primaryMsg}`);
+            log.debug(`[Images] analyze: routing fallback to ${openAiVisionModel}`);
             try {
               const fallback = await chatCompletion({
                 activity,
-                model: grokVisionModel,
-                overrideReason: "image analysis fallback to multimodal Grok subscription model",
+                model: openAiVisionModel,
+                overrideReason: "image analysis fallback to multimodal OpenAI subscription model",
                 metadata: {
                   source: "bridge-tool",
                   toolName: "images.analyze",
                   activity,
-                  fallbackFrom: openAiVisionModel,
+                  fallbackFrom: grokVisionModel,
                 },
                 maxTokens: 4000,
                 messages: visionMessages,
@@ -9016,7 +9018,7 @@ ${refs}` : ""),
             } catch (fallbackErr: any) {
               const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
               throw new Error(
-                `Image analysis failed on OpenAI (${primaryMsg}); Grok fallback also failed (${fallbackMsg})`,
+                `Image analysis failed on Grok (${primaryMsg}); OpenAI fallback also failed (${fallbackMsg})`,
               );
             }
           }
