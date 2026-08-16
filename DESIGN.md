@@ -431,6 +431,23 @@ hierarchy-tree:
 - Selected objects expand inline beneath their row, accordion-style, reusing the object's detail styling inside the expanded body (as in Projects and Simple). Never open a horizontal split-view master-detail panel for a hierarchy tree page.
 - The hierarchy tree panel is always one vertical screen. Mobile and web use the same full-display tree. Do not keep a desktop-only left-third list that morphs into a second pane.
 
+#### TreeView grammar
+
+TreeView is one interaction language with two compositions. Cards are not a third.
+
+**Object index** — Session Menu, Features, Scenarios, Issues. Search first. Blue `+ New Thing` next. Collapsible section labels. Compact nested rows. Hover or keyboard `…` menu. Inline expand. No split-view.
+
+**Field / detail** — Secrets, Environment SOURCE, Slack, Claude CLI, OpenAI Subscription. `ProfileDetailSection` or `IntegrationTreeSection` as the group. One `ProfileTreeRow` per field: label and optional icon on the left, value or inline input on the right. Rotate, clear, and destructive actions live in `menuContent`. Children nest with `HierarchyTreeRow`.
+
+Required primitives:
+
+- Stack / CTA / section: `HIERARCHY_TREE_STACK_CLASS`, `HIERARCHY_PRIMARY_ACTION_CLASS`, `HIERARCHY_SECTION_HEADER_CLASS`
+- Rows: `ProfileTreeRow`, `HierarchyTreeRow`, `ProfileDetailSection`
+
+Do not invent a page-local list, card grid, dashboard panel, or Input+Button settings form. A leftover `Card` on a route is migration debt. Cards belong only on modal decision surfaces (`MODAL_GLASS_SURFACE_CLASS`).
+
+Canonical live references: Session Menu for object indexes; Environment SOURCE and Secrets for field rows; Claude CLI credentials for wrapping `SecretsForSection` inside a tree. The Design page Hierarchy Tree playground and Components → Edit fields demonstrate both compositions.
+
 ### Zero states
 
 A zero state is the normal empty form of a surface, not a hero, onboarding panel, or marketing moment. Keep the surface's useful scaffolding visible and replace missing objects with one quiet row.
