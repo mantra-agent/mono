@@ -64,8 +64,15 @@ export const featureStorage = {
     const summary = input.summary === undefined ? current.summary : text(input.summary, "Summary", 500);
     const owner = input.ownerPersonId === undefined ? current.owner_person_id : text(input.ownerPersonId, "Owner", 200);
     const spec = input.specPageId === undefined ? current.spec_page_id : (typeof input.specPageId === "string" && input.specPageId.trim() ? input.specPageId.trim() : null);
+    let productId = current.product_id as number;
+    if (input.productId !== undefined) {
+      const nextProductId = Number(input.productId);
+      if (!Number.isInteger(nextProductId) || nextProductId <= 0) throw Object.assign(new Error("Product is required"), { status: 400 });
+      await assertProduct(nextProductId, true);
+      productId = nextProductId;
+    }
     const reset = stage !== current.stage;
-    const result = await db.execute(sql`UPDATE features SET summary=${summary}, owner_person_id=${owner}, spec_page_id=${spec}, stage=${stage}, status=${reset ? "ready" : status}, updated_at=CURRENT_TIMESTAMP WHERE id=${id} AND owner_user_id=${p.userId} AND account_id=${p.accountId} AND archived_at IS NULL RETURNING *`);
+    const result = await db.execute(sql`UPDATE features SET product_id=${productId}, summary=${summary}, owner_person_id=${owner}, spec_page_id=${spec}, stage=${stage}, status=${reset ? "ready" : status}, updated_at=CURRENT_TIMESTAMP WHERE id=${id} AND owner_user_id=${p.userId} AND account_id=${p.accountId} AND archived_at IS NULL RETURNING *`);
     return result.rows[0];
   },
   async archive(id: string) { const p = principal(); const result = await db.execute(sql`UPDATE features SET archived_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=${id} AND owner_user_id=${p.userId} AND account_id=${p.accountId} AND archived_at IS NULL RETURNING *`); return result.rows[0]; },
