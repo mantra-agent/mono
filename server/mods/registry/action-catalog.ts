@@ -62,6 +62,7 @@ const ACTION_ROWS: ActionRow[] = [
   { slug: "habits", owner: "wellness", routeId: "wellness.route.habits" },
   { slug: "reflections", owner: "wellness", routeId: "wellness.route.reflections" },
   { slug: "gratitude", owner: "wellness", routeId: "wellness.route.gratitude" },
+  { slug: "health", owner: "wellness", routeId: "wellness.route.health" },
   { slug: "wellness", owner: "wellness", routeId: "wellness.route.habits" },
   { slug: "people", owner: "network", routeId: "network.route.people" },
   { slug: "meetings", owner: "network", routeId: "network.route.meetings" },

@@ -147,7 +147,7 @@ Memory UI should distinguish memory entries from session mirrors and archive/raw
 | People | List, detail, interactions | `/people`, `/people/:id` |
 | Work | Projects, tasks, milestones | `/work`, `/work/:id` |
 | Goals | Goal tree, detail | `/goals`, `/goals/:id` |
-| Health | Dashboard, activities, metrics | `/health` |
+| Health | Metric-type TreeView catalog | `/health` |
 | Finance | Summary, transactions, budget | `/finance` |
 | Memory | Search, entry detail, graph | `/memory`, `/memory/:id` |
 | Library | Vault-scoped page tree, editor, notes | `/library` (`/library2` redirects here; Library2 organization is retired) |
