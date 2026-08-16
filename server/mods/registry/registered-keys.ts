@@ -110,6 +110,7 @@ export const REGISTERED_ICON_KEYS = [
   "Share2",
   "ScrollText",
   "Boxes",
+  "Server",
   "Palette",
   "Hammer",
   "HardDrive",
