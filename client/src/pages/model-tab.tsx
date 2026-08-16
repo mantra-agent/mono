@@ -1,11 +1,12 @@
 import { useMemo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, CheckCircle2, Circle, Route, TriangleAlert } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { CheckCircle2, Circle, Route, TriangleAlert } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { IntegrationTreeSection } from "@/components/integrations/integration-tree-section";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { HIERARCHY_TREE_STACK_CLASS } from "@/components/hierarchy-section-header";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -26,10 +27,6 @@ interface ModelConnector {
 interface ConnectorsResponse { connectors: ModelConnector[] }
 interface InferenceCall { id: number; timestamp: string; model: string; status?: string; tier?: string; metadata?: { routing?: { connectorId?: number; connectorLabel?: string; connectorProvider?: string; requestedTier?: string; resolvedModel?: string; attempts?: unknown[] } } }
 interface CallsResponse { calls: InferenceCall[]; total: number }
-
-function tierModelLabel(value: TierModelConfig): string {
-  return typeof value === "string" ? value : value.model;
-}
 
 function timeAgo(value: string | null): string {
   if (!value) return "Never verified";
@@ -75,61 +72,95 @@ export default function ModelsPage() {
 
   if (isLoading) return <div className="space-y-4 p-4 @sm:p-6">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-20 w-full" />)}</div>;
 
-  return <div className="space-y-6 p-4 @sm:p-6 w-full min-w-0">
-    <Card className="overflow-hidden min-w-0">
-      <CardHeader>
-        <CardTitle className="text-lg">Connector priority</CardTitle>
-        <p className="text-sm text-muted-foreground">Pin forces a connector ahead of unpinned peers. Arrows only reorder inside the same pin cohort.</p>
-      </CardHeader>
-      <CardContent className="p-0">
-        {connectors.length === 0 ? <div className="px-4 py-3 text-sm text-muted-foreground">No model connectors configured.</div> : connectors.map((connector, index) => {
-          const ready = connector.status === "active" && !!connector.credentialRef;
-          const pinned = connector.priorityPinned === true;
-          const canRaise = index > 0 && !!connectors[index - 1]?.priorityPinned === pinned;
-          const canLower = index < connectors.length - 1 && !!connectors[index + 1]?.priorityPinned === pinned;
-          return <div key={connector.id} className="flex min-h-14 items-center gap-3 border-t border-border/20 px-4 py-2" data-testid={`connector-priority-${connector.id}`}>
-            <span className="w-5 shrink-0 text-sm font-medium text-muted-foreground">{index + 1}</span>
-            {ready ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success" /> : connector.status === "active" ? <TriangleAlert className="h-4 w-4 shrink-0 text-warning" /> : <Circle className="h-4 w-4 shrink-0 text-muted-foreground" />}
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 items-center gap-2">
-                <div className="truncate text-sm font-medium">{connector.label}</div>
-                {pinned ? <Badge variant="secondary" className="shrink-0">Pinned</Badge> : null}
-              </div>
-              <div className="truncate text-xs text-muted-foreground">{connector.provider} · {connector.credentialRef ? `verified ${timeAgo(connector.lastVerifiedAt)}` : "credential missing"}</div>
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              <Button variant="ghost" size="icon" className="h-8 w-8" disabled={!canRaise || reorderMutation.isPending} onClick={() => move(index, -1)} aria-label={`Raise ${connector.label}`}><ArrowUp className="h-4 w-4" /></Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8" disabled={!canLower || reorderMutation.isPending} onClick={() => move(index, 1)} aria-label={`Lower ${connector.label}`}><ArrowDown className="h-4 w-4" /></Button>
-              <Button
-                variant={pinned ? "secondary" : "ghost"}
-                size="sm"
-                className="h-8 px-2 text-xs"
-                disabled={updateMutation.isPending}
-                onClick={() => updateMutation.mutate({ id: connector.id, priorityPinned: !pinned })}
-                aria-label={pinned ? `Unpin ${connector.label}` : `Pin ${connector.label}`}
-                data-testid={`connector-pin-${connector.id}`}
+  return (
+    <div className="w-full min-w-0 p-4 @sm:p-6">
+      <div className={HIERARCHY_TREE_STACK_CLASS}>
+        <IntegrationTreeSection label="Connector priority" initialOpen icon={<Route className="h-3.5 w-3.5" />} testIdPrefix="connector-priority">
+          {connectors.length === 0 ? (
+            <ProfileTreeRow label="Connectors" icon={<Circle className="h-3.5 w-3.5" />} hasValue showEmpty>
+              <span className="text-muted-foreground">None configured</span>
+            </ProfileTreeRow>
+          ) : connectors.map((connector, index) => {
+            const ready = connector.status === "active" && !!connector.credentialRef;
+            const pinned = connector.priorityPinned === true;
+            const canRaise = index > 0 && !!connectors[index - 1]?.priorityPinned === pinned;
+            const canLower = index < connectors.length - 1 && !!connectors[index + 1]?.priorityPinned === pinned;
+            return (
+              <ProfileTreeRow
+                key={connector.id}
+                label={connector.label}
+                icon={ready ? <CheckCircle2 className="h-3.5 w-3.5 text-success" /> : connector.status === "active" ? <TriangleAlert className="h-3.5 w-3.5 text-warning" /> : <Circle className="h-3.5 w-3.5 text-muted-foreground" />}
+                hasValue
+                showEmpty
+                testId={`connector-priority-${connector.id}`}
+                actionContent={(
+                  <Switch
+                    checked={connector.status === "active"}
+                    disabled={updateMutation.isPending}
+                    onCheckedChange={(checked) => updateMutation.mutate({ id: connector.id, status: checked ? "active" : "inactive" })}
+                    aria-label={`Enable ${connector.label}`}
+                  />
+                )}
+                menuContent={(
+                  <>
+                    <DropdownMenuItem
+                      disabled={updateMutation.isPending}
+                      onClick={() => updateMutation.mutate({ id: connector.id, priorityPinned: !pinned })}
+                      data-testid={`connector-pin-${connector.id}`}
+                    >
+                      {pinned ? "Unpin" : "Pin"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={!canRaise || reorderMutation.isPending} onClick={() => move(index, -1)}>
+                      Raise
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={!canLower || reorderMutation.isPending} onClick={() => move(index, 1)}>
+                      Lower
+                    </DropdownMenuItem>
+                  </>
+                )}
               >
-                {pinned ? "Unpin" : "Pin"}
-              </Button>
-              <Switch checked={connector.status === "active"} disabled={updateMutation.isPending} onCheckedChange={(checked) => updateMutation.mutate({ id: connector.id, status: checked ? "active" : "inactive" })} aria-label={`Enable ${connector.label}`} />
-            </div>
-          </div>;
-        })}
-      </CardContent>
-    </Card>
+                <span className="truncate text-muted-foreground">
+                  {index + 1}. {connector.provider}
+                  {pinned ? " · Pinned" : ""}
+                  {" · "}
+                  {connector.credentialRef ? `verified ${timeAgo(connector.lastVerifiedAt)}` : "credential missing"}
+                </span>
+              </ProfileTreeRow>
+            );
+          })}
+        </IntegrationTreeSection>
 
-    <Card className="overflow-hidden min-w-0">
-      <CardHeader className="flex-row items-center justify-between gap-3"><CardTitle className="text-lg">Recent routing</CardTitle><Badge variant="outline">{evidence?.total ?? 0} calls</Badge></CardHeader>
-      <CardContent className="p-0">
-        {routedCalls.length === 0 ? <div className="px-4 py-3 text-sm text-muted-foreground">No connector routing evidence yet.</div> : routedCalls.map((call) => {
-          const routing = call.metadata!.routing!;
-          return <div key={call.id} className="flex items-center gap-3 border-t border-border/20 px-4 py-2.5">
-            <Route className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium">{routing.connectorLabel || routing.connectorProvider}</div><div className="truncate text-xs text-muted-foreground">{routing.requestedTier || call.tier || "balanced"} → {routing.resolvedModel || call.model}</div></div>
-            <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(call.timestamp)}</span>
-          </div>;
-        })}
-      </CardContent>
-    </Card>
-  </div>;
+        <IntegrationTreeSection
+          label="Recent routing"
+          initialOpen
+          icon={<Route className="h-3.5 w-3.5" />}
+          testIdPrefix="recent-routing"
+          actions={<span className="pr-2 text-xs text-muted-foreground">{evidence?.total ?? 0} calls</span>}
+        >
+          {routedCalls.length === 0 ? (
+            <ProfileTreeRow label="Calls" icon={<Route className="h-3.5 w-3.5" />} hasValue showEmpty>
+              <span className="text-muted-foreground">No routing evidence yet</span>
+            </ProfileTreeRow>
+          ) : routedCalls.map((call) => {
+            const routing = call.metadata!.routing!;
+            return (
+              <ProfileTreeRow
+                key={call.id}
+                label={routing.connectorLabel || routing.connectorProvider || "Connector"}
+                icon={<Route className="h-3.5 w-3.5" />}
+                hasValue
+                showEmpty
+              >
+                <span className="truncate text-muted-foreground">
+                  {routing.requestedTier || call.tier || "balanced"} → {routing.resolvedModel || call.model}
+                  {" · "}
+                  {timeAgo(call.timestamp)}
+                </span>
+              </ProfileTreeRow>
+            );
+          })}
+        </IntegrationTreeSection>
+      </div>
+    </div>
+  );
 }
