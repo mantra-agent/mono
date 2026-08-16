@@ -9,10 +9,10 @@ const MINIMUM_COVERAGE = 0.9;
 const METRIC_SLUG = "service-availability";
 
 export type SentryAvailabilityStatus =
-  | { status: "not_configured"; configured: false; missing: string[] }
-  | { status: "monitor_pending"; configured: true; periodStart: string; periodEnd: string; checkCount: number; expectedChecks: number; coverage: number }
-  | { status: "ready"; configured: true; periodStart: string; periodEnd: string; checkCount: number; expectedChecks: number; coverage: number; availability: number; failureRate: number }
-  | { status: "unavailable"; configured: true; error: string };
+  | { status: "not_configured"; configured: false; crashReportingConfigured: false; missing: string[] }
+  | { status: "monitor_pending"; configured: true; crashReportingConfigured: true; periodStart: string; periodEnd: string; checkCount: number; expectedChecks: number; coverage: number }
+  | { status: "ready"; configured: true; crashReportingConfigured: true; periodStart: string; periodEnd: string; checkCount: number; expectedChecks: number; coverage: number; availability: number; failureRate: number }
+  | { status: "unavailable"; configured: true; crashReportingConfigured: true; error: string };
 
 function completedUtcDay(now = new Date()): { start: Date; end: Date } {
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -31,7 +31,7 @@ async function configuredStatus(): Promise<{ cfg: Awaited<ReturnType<typeof getS
 
 export async function getSentryAvailabilityStatus(now = new Date()): Promise<SentryAvailabilityStatus> {
   const { cfg, missing } = await configuredStatus();
-  if (!isSentryConfigured(cfg)) return { status: "not_configured", configured: false, missing };
+  if (!isSentryConfigured(cfg)) return { status: "not_configured", configured: false, crashReportingConfigured: false, missing };
   const { start, end } = completedUtcDay(now);
   try {
     const query = (await getSecret("SENTRY_UPTIME_QUERY"))?.trim().slice(0, 500) || undefined;
@@ -39,6 +39,7 @@ export async function getSentryAvailabilityStatus(now = new Date()): Promise<Sen
     const coverage = result.checkCount / EXPECTED_DAILY_CHECKS;
     const common = {
       configured: true as const,
+      crashReportingConfigured: true as const,
       periodStart: start.toISOString(),
       periodEnd: end.toISOString(),
       checkCount: result.checkCount,
@@ -58,7 +59,7 @@ export async function getSentryAvailabilityStatus(now = new Date()): Promise<Sen
     const message = error instanceof SentryApiError && (error.status === 400 || error.status === 404)
       ? "Uptime results are not available for this Sentry project yet."
       : "Sentry uptime results are temporarily unavailable.";
-    return { status: "unavailable", configured: true, error: message };
+    return { status: "unavailable", configured: true, crashReportingConfigured: true, error: message };
   }
 }
 
