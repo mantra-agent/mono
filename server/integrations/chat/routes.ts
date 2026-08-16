@@ -2488,7 +2488,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       // Orientation bootstrap: unoriented sessions get a fixed-template
       // fast-tier routing call BEFORE model selection, so persona (and
       // therefore tier) is correct for the main turn. No-op when the
-      // session already has a real title.
+      // session already has a conversation name and a selectable persona.
       // NOTE: Do not publishChatStreamEvent here. Steps are accumulated in
       // preSteps and emitted atomically after context assembly.
       try {

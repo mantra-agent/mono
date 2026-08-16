@@ -1030,9 +1030,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
 
     const { chatFileStorage } = await import("./chat-file-storage");
-    const { hasRealSessionTitle } = await import("./session-orientation");
+    const { hasSessionTitle } = await import("./session-orientation");
     const existingSession = await chatFileStorage.getSession(sessionId);
-    const alreadyTitled = hasRealSessionTitle(existingSession?.title);
+    const alreadyTitled = hasSessionTitle(existingSession?.title);
     if (!alreadyTitled && (!hasTitle || !hasPersona)) {
       return {
         result: "First-turn orientation requires a title and a selectable persona. Use Companion when the opening has no job. Root is never a session seat.",

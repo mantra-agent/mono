@@ -8,10 +8,18 @@ export interface SessionOrientationSnapshot {
   contextFlags?: Record<string, boolean> | null;
 }
 
-/** A topic title is required for initial persona selection and routing. Transport locators are not topics. */
+export function isLocatorSessionTitle(title: string | null | undefined): boolean {
+  return !!title && LOCATOR_TITLE_PREFIXES.some((prefix) => title.startsWith(prefix));
+}
+
+/** Any conversation name except the untitled placeholders. Locators count. */
+export function hasSessionTitle(title: string | null | undefined): boolean {
+  return !!title && !PLACEHOLDER_TITLES.has(title);
+}
+
+/** A topic title orientation may rewrite. Transport locators are names, not jobs. */
 export function hasRealSessionTitle(title: string | null | undefined): boolean {
-  if (!title || PLACEHOLDER_TITLES.has(title)) return false;
-  return !LOCATOR_TITLE_PREFIXES.some((prefix) => title.startsWith(prefix));
+  return hasSessionTitle(title) && !isLocatorSessionTitle(title);
 }
 
 function hasSelectablePersona(personaId: number | null | undefined): boolean {
@@ -21,9 +29,10 @@ function hasSelectablePersona(personaId: number | null | undefined): boolean {
 /**
  * Canonical persisted orientation invariant.
  *
- * A session is established only when it has both a topic title and a
+ * A session is established when it has a conversation name and a
  * selectable persona. Transport locators (`Slack DM:`, `Slack Channel:`)
- * name the conversation, not the job, so they do not seal orientation.
+ * name the conversation and satisfy the title requirement; they must
+ * not be rewritten. Placeholder titles (`New Session`) do not seal.
  * Title-only never seals: the next turn must still bind a seat.
  * Root is composition, never a session seat. Unoriented is transient —
  * bootstrap retries until a selectable persona lands.
@@ -31,5 +40,5 @@ function hasSelectablePersona(personaId: number | null | undefined): boolean {
 export function isSessionOrientationEstablished(
   session: SessionOrientationSnapshot | null | undefined,
 ): boolean {
-  return hasRealSessionTitle(session?.title) && hasSelectablePersona(session?.personaId);
+  return hasSessionTitle(session?.title) && hasSelectablePersona(session?.personaId);
 }
