@@ -157,7 +157,7 @@ export const REFERENCE_REGISTRY: Readonly<Record<KnownReferenceType, ReferenceTy
   build: definition("build", "uuid", UUID_PATTERN, { route: () => "/build" }),
   skill: definition("skill", "uuid", UUID_PATTERN, { route: id => `/skills/${encodeURIComponent(id)}` }),
   claim: definition("claim", "integer", INTEGER_PATTERN, { route: id => `/memory?claim=${encodeURIComponent(id)}` }),
-  wellness_activity: definition("wellness_activity", "integer", INTEGER_PATTERN, { aliases: ["health_activity", "wellness"], route: id => `/wellness?tab=calendar&activity=${encodeURIComponent(id)}` }),
+  wellness_activity: definition("wellness_activity", "integer", INTEGER_PATTERN, { aliases: ["health_activity", "wellness"], route: id => `/habits?activity=${encodeURIComponent(id)}` }),
   priority: definition("priority", "opaque", OPAQUE_PATTERN, { route: () => "/goals" }),
   metric: definition("metric", "opaque", OPAQUE_PATTERN, { route: id => `/tools/metrics?metric=${encodeURIComponent(id)}` }),
   kpi: definition("kpi", "opaque", OPAQUE_PATTERN, { route: id => `/tools/kpis?kpi=${encodeURIComponent(id)}` }),

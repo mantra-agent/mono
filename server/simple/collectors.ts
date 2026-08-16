@@ -269,7 +269,7 @@ function itemFromWellnessActivity(activity: WellnessActivityStatus, section: Sim
     type: "wellness",
     id: String(activity.id),
     label: activity.name,
-    href: `/wellness?tab=calendar&activity=${activity.id}`,
+    href: `/habits?activity=${activity.id}`,
     observedAt: activity.updatedAt instanceof Date ? activity.updatedAt.toISOString() : undefined,
   };
   const hasWindow = activity.windowStart != null && activity.windowEnd != null;

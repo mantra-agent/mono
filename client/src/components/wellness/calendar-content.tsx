@@ -759,7 +759,8 @@ function JournalExpansion({ type }: { type: JournalType }) {
   );
 }
 
-const EXPANDABLE_ACTIVITIES = new Set(["gratitude", "learning", "reflection"]);
+// Reflections and Gratitude now own dedicated screens; only Learning stays embedded.
+const EXPANDABLE_ACTIVITIES = new Set(["learning"]);
 
 function ActivityRow({
   activity,
