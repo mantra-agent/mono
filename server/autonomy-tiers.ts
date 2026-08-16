@@ -12,11 +12,31 @@
  */
 export type SideEffectTier = 0 | 1 | 2;
 
+export type ToolSideEffectEntry = {
+  default: SideEffectTier;
+  actions?: Record<string, SideEffectTier>;
+};
+
+type ToolSideEffectLookup = (toolName: string) => ToolSideEffectEntry | undefined;
+
+let toolSideEffectLookup: ToolSideEffectLookup | undefined;
+
 /**
- * Complete classification of every tool+action by side-effect tier.
- * Tool-level default is the fallback; action-level overrides take precedence.
+ * Bind the live TOOLS catalog after it initializes.
+ * tool-registry already imports agent-authority; a top-level TOOLS import here
+ * would cycle. The leftover name map stays until every alias is gone.
  */
-const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Record<string, SideEffectTier> }> = {
+export function bindToolSideEffectCatalog(lookup: ToolSideEffectLookup): void {
+  toolSideEffectLookup = lookup;
+}
+
+/**
+ * Leftover name map for unstamped aliases (twitter, meeting_bot,
+ * create_calendar_block, observe, workflows, priorities, …).
+ * Public TOOLS rows carry sideEffectDefault. Do not delete this map until
+ * every leftover name is gone or stamped.
+ */
+const SIDE_EFFECT_TIERS: Record<string, ToolSideEffectEntry> = {
   ui: { default: 2 },
   scratch: { default: 1, actions: { read: 0, list: 0, search: 0 } },
   files: { default: 1, actions: { read: 0, list: 0 } },
@@ -149,13 +169,19 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
  */
 export const TOOL_ACTION_TIERS = SIDE_EFFECT_TIERS;
 
+function resolveSideEffectEntry(toolName: string): ToolSideEffectEntry | undefined {
+  const stamped = toolSideEffectLookup?.(toolName);
+  if (stamped) return stamped;
+  return SIDE_EFFECT_TIERS[toolName];
+}
+
 /**
  * Get the numeric side-effect tier for a tool+action combination.
- * Returns 0 (read-only), 1 (internal-write), or 2 (external-effect).
+ * Reads the TOOLS instance field first; leftover name map is fallback.
  * Unknown tools default to 2 (safest).
  */
 export function getSideEffectTier(toolName: string, action?: string): SideEffectTier {
-  const entry = SIDE_EFFECT_TIERS[toolName];
+  const entry = resolveSideEffectEntry(toolName);
   if (!entry) return 2; // unknown tools are hard-gated
 
   if (action && entry.actions?.[action] !== undefined) {

@@ -9,6 +9,7 @@ import {
   RULES_TOOL_DESCRIPTION,
 } from "./personal-rule-policy";
 import { getShellToolContractDescription } from "./agent-authority";
+import { bindToolSideEffectCatalog, type SideEffectTier } from "./autonomy-tiers";
 import { secretConnectorReadiness } from "./mods/composition/connector-readiness";
 import type { RegisteredConnectorKey } from "./mods/registry/registered-keys";
 import { workflowAttemptResults } from "@shared/schema";
@@ -59,12 +60,20 @@ export interface ToolMeta {
    * remain independently fail closed in the handler.
    */
   advertiseWhenUnready?: boolean;
+  /**
+   * Gift-mode side-effect default. Per-action overrides live in sideEffectActions.
+   * getSideEffectTier consults this field first; SIDE_EFFECT_TIERS is leftover
+   * fallback for unstamped aliases. Unknown stays 2.
+   */
+  sideEffectDefault?: SideEffectTier;
+  sideEffectActions?: Record<string, SideEffectTier>;
 }
 
 export const TOOLS: Record<string, ToolMeta> = {
   ui: {
     description: "Interact with the authenticated application UI in the browser tab containing the originating session. Provide exactly one subject: `target` for a stable semantic control, or `resource` plus `surface=home` for an in-place Simple/Home feed object. `execute` performs a registered control action. `guide` requires a non-empty `introduction`, narrates first, reveals and spotlights the real target, locks interaction outside it, and completes when the user activates it or cancels. Resource guides expand and highlight the matching canonical object without navigating away. In voice, every spotlight waits until narration finishes.",
     category: "browser",
+    sideEffectDefault: 2,
     parameters: {
       type: "object",
       properties: {
@@ -80,6 +89,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   scratch: {
     description: "Read and author workspace files, including code inside the current session-owned repos/ clone. Use write/edit for code changes; shell is intentionally read-only. Repository writes require trusted engineering provenance and build:write. Use `files` for persistent user-facing storage.",
     category: "file",
+    sideEffectDefault: 1,
+    sideEffectActions: { read: 0, list: 0, search: 0 },
     parameters: {
       type: "object",
       properties: {
@@ -102,6 +113,8 @@ export const TOOLS: Record<string, ToolMeta> = {
     description:
       "Manage PERSISTENT files in object storage (survives deployment) and read vault-bound external drive resources through filesApi. Object-storage actions: write/read/list. Bound-drive actions: listBound/listChildren/getMetadata/read/authorize. Never call Google/Box directly — bound reads go through filesApi only.",
     category: "file",
+    sideEffectDefault: 1,
+    sideEffectActions: { read: 0, list: 0 },
 
     parameters: {
       type: "object",
@@ -149,6 +162,8 @@ export const TOOLS: Record<string, ToolMeta> = {
     description:
       "Core PDF document service for Agent. open authorizes a source and returns a short-lived content handle plus metadata/viewer hint; extract runs server-side text extraction per page after the same authorize path; generate builds a structured PDF into private object storage with a document_artifacts row (source_kind=generated) and returns open metadata for /documents/:id; list returns principal-visible document_artifacts. Prefer pdf.* over files.read for document semantics. No path-on-disk escape — bound sources go through filesApi; ownership is re-checked on every call. Extract is a derivative, never ACL authority.",
     category: "file",
+    sideEffectDefault: 2,
+    sideEffectActions: { open: 0, extract: 0, list: 0 },
     parameters: {
       type: "object",
       properties: {
@@ -227,6 +242,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     // Description is derived from validateShellCommand policy — never hand-author a parallel contract.
     description: getShellToolContractDescription(),
     category: "system",
+    sideEffectDefault: 1,
 
     parameters: {
       type: "object",
@@ -244,6 +260,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   python: {
     description: "Run bounded Python diagnostics inside the current session-owned repository clone. This is a separate constrained execution boundary: build:write plus trusted engineering provenance are required; server secrets are absent; Landlock limits filesystem reads to the repository and Python standard library while seccomp denies network creation; subprocess, native-extension loading, and filesystem mutation are denied; wall time, CPU, memory, file size, descriptors, source size, and output are capped. Raw python remains blocked in shell.",
     category: "system",
+    sideEffectDefault: 2,
     parameters: {
       type: "object",
       properties: {
@@ -257,6 +274,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   npm_dependencies: {
     description: "Safely set one exact npm package version in a repository-root or nested package.json and regenerate that package's existing package-lock.json without mutating node_modules or running lifecycle scripts. Root packages must use the session clone's immutable workspace toolchain symlink. Restricted to the current session-owned repos/ clone and trusted engineering sessions with build:write. This is the only approved dependency-mutation path; general npm install remains blocked.",
     category: "system",
+    sideEffectDefault: 2,
     parameters: {
       type: "object",
       properties: {
@@ -273,6 +291,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   web: {
     description: "Search the web, fetch content from URLs, or run authenticated page verification tests with screenshots and structured evidence.",
     category: "web",
+    sideEffectDefault: 0,
 
     parameters: {
       type: "object",
@@ -293,6 +312,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   memory: {
     description: "Unified memory system — read/write workspace knowledge files, search and inspect vNext claims, run vNext maintenance ops.",
     category: "memory",
+    sideEffectDefault: 1,
+    sideEffectActions: { read: 0, read_entry: 0, search: 0, get: 0, get_many: 0 },
 
     parameters: {
       type: "object",
@@ -357,6 +378,10 @@ export const TOOLS: Record<string, ToolMeta> = {
   railway: {
     description: "Inspect and manage a Railway-hosted Platform Environment. Cross-environment operations require `platformEnvironmentId`, which resolves the hosting binding and authenticated connector through the canonical Platform Environment resolver. Omit it only for current-runtime self-inspection with status, logs, or build_logs. When Git auto-deploy is functioning, inspect that deployment and do not trigger a manual redeploy unless the user explicitly asks or a confirmed provider failure requires recovery. Destructive actions and secret values are intentionally not exposed.",
     category: "system",
+    sideEffectDefault: 2,
+    sideEffectActions: {
+      status: 0, deployments: 0, logs: 0, build_logs: 0, list_variables: 0,
+    },
     parameters: {
       type: "object",
       properties: {
@@ -374,6 +399,11 @@ export const TOOLS: Record<string, ToolMeta> = {
     category: "system",
     connectorKey: "sentry",
     advertiseWhenUnready: true,
+    sideEffectDefault: 2,
+    sideEffectActions: {
+      status: 0, issues: 0, issue: 0, events: 0, latest_event: 0, uptime: 0,
+      sync_availability: 2,
+    },
     parameters: {
       type: "object",
       properties: {
@@ -390,6 +420,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   meta: {
     description: "Queue and execute Meta/Ray-Ban DAT SDK calls through the mobile iOS bridge. Requires the mobile app debug overlay to be open so the phone can poll, execute native DAT calls locally, and post results back. When the user asks what they are looking at during a glasses session, capture first, analyze the image with the images tool, then answer from evidence; diagnose bridge failure before asking for manual debugging.",
     category: "system",
+    sideEffectDefault: 2,
     parameters: {
       type: "object",
       properties: {
@@ -408,6 +439,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     description: "Inspect Expo/EAS projects and builds or launch one exact-source iOS preview build using the stored EXPO_ACCESS_TOKEN integration secret. start_build requires the full expected main commit SHA, never cancels another build, and fails closed if main moved. Use build_logs to fetch Xcode/build log artifacts and extract actual failure lines instead of relying on Expo summary text.",
     category: "system",
     connectorKey: "expo",
+    sideEffectDefault: 2,
     parameters: {
       type: "object",
       properties: {
@@ -425,6 +457,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   settings: {
     description: "Persist and retrieve key-value settings. Keys must start with an allowed prefix (memory.*, system.*, skill.*, hygiene.*).",
     category: "system",
+    sideEffectDefault: 1,
+    sideEffectActions: { get: 0 },
     parameters: {
       type: "object",
       properties: {
@@ -438,6 +472,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   code: {
     description: "Query and navigate the selected Platform codebase knowledge graph — search, inspect symbols, analyze impact, trace flows, rename, and run Cypher.",
     category: "code",
+    sideEffectDefault: 0,
 
     parameters: {
       type: "object",
@@ -469,6 +504,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   docx: {
     description: "Read uploaded or workspace Word documents (.docx), and write, edit, or clone documents in the scratch workspace. For uploaded attachments, pass the exact /objects/uploads/<id>.docx path from attachment metadata.",
     category: "file",
+    sideEffectDefault: 1,
+    sideEffectActions: { read: 0 },
 
     parameters: {
       type: "object",
@@ -486,6 +523,14 @@ export const TOOLS: Record<string, ToolMeta> = {
   },
   business: {
     description: "Manage the business layer through the canonical principal- and Vault-scoped storage boundary. Object groups: Businesses, Financial Model, monthly operating Budgets (Department → Category → Line item), Business Plans, KPIs, and Metrics. get_model returns assumptions plus the full projection matrix (months, period rollups, gates, financing) for a Business. set_assumption writes one Financial Model assumption value, and link_assumption_kpi/clear_assumption_kpi assign or remove a KPI on an assumption row; each write returns the recomputed headline aggregates and gate statuses. Budget actions require businessId; hierarchy mutations use the stable IDs returned by get_budget, and monthly amounts are integer USD cents. A KPI requires an existing metricId — create the metric first. Plan add_kpi/remove_kpi only attach or detach an existing KPI to a plan; create_kpi/delete_kpi create or destroy the KPI object. Business-entity actions manage the Business and its Vault memberships. Outputs include canonical @business_plan:id, @kpi:id, and @metric:id references.",
+    sideEffectDefault: 1,
+    sideEffectActions: {
+      list_hiring_slots: 0, get_hiring_plan: 0, create_hiring_slot: 2, update_hiring_slot: 2, cancel_hiring_slot: 2,
+      list: 0, get: 0, list_kpis: 0, get_kpi: 0, list_metrics: 0, get_metric: 0, sample_range: 0, sample_usage: 0,
+      list_samples: 0, list_businesses: 0, get_business: 0, list_business_vaults: 0, get_model: 0, get_budget: 0,
+      delete_budget_department: 2, delete_budget_category: 2, delete_budget_line_item: 2, create_business: 2,
+      update_business: 2, archive_business: 2, add_business_vault: 2, remove_business_vault: 2, set_business_vaults: 2,
+    },
     category: "strategy",
     parameters: {
       type: "object",
@@ -565,6 +610,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   goals: {
     description: "Manage life goals — unified system covering all horizons from daily goals (today) to lifetime aspirations. Horizons: today, this_week, this_month, this_quarter, this_year, three_year, ten_year, lifetime. Short horizons support periodDate for date-scoped queries. This is the canonical tool for all goal and priority operations. add_relationship/remove_relationship/list_relationships manage first-class Goal↔Person and Goal↔Meeting links. Use canonical @goal:id syntax in messages to link to goals. Legacy [goal:id] syntax is accepted during migration.",
     category: "work",
+    sideEffectDefault: 1,
+    sideEffectActions: { list: 0, get: 0, search: 0 },
 
     parameters: {
       type: "object",
@@ -599,6 +646,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   blocking_graph: {
     description: "Universal Core blocked_by graph over typed canonical addresses (PLANNING.md § Universal blocked_by protocol; shared/blocked-by-protocol.ts). One predicate only; source waits on target; no self-edges/cycles; no second dependency store.",
     category: "work",
+    sideEffectDefault: 1,
+    sideEffectActions: { list_blockers: 0, list_blocked_items: 0 },
     parameters: {
       type: "object",
       properties: {
@@ -618,6 +667,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   question: {
     description: QUESTION_TOOL_DESCRIPTION,
     category: "communication",
+    sideEffectDefault: 2,
     parameters: {
       type: "object",
       properties: {
@@ -707,6 +757,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   phone_call: {
     description: "Prepare or confirm a user-initiated outbound phone call. Always prepare first to resolve the person and show a confirmation chip. Confirm only after the user presses Call.",
     category: "communication",
+    sideEffectDefault: 2,
     parameters: {
       type: "object",
       properties: {
@@ -721,6 +772,12 @@ export const TOOLS: Record<string, ToolMeta> = {
   people: {
     description: "Personal contacts and import queue. Prefer quickSummary for current profile, notes for untimed evidence, interactions for time-bound events. set_vault_memberships is full-set replace (confirmReplace=true). Canonical @person:id.",
     category: "communication",
+    sideEffectDefault: 1,
+    sideEffectActions: {
+      list: 0, get: 0, get_vault_memberships: 0, search: 0, agenda: 0, get_interactions: 0,
+      scan_imports: 0, scan_ignored: 0, list_import_candidates: 0, get_import_candidate: 0,
+      find_import_matches: 0, get_import_batch: 0,
+    },
 
     parameters: {
       type: "object",
@@ -783,6 +840,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   jobs: {
     description: "Manage admin-only job role definitions used by future hiring plans and P&L headcount costs. Every field is available to query and edit: title, description, team, annual salary minimum/maximum, target annual performance or bonus compensation as a percentage of base salary, and equity share count.",
     category: "work",
+    sideEffectDefault: 1,
+    sideEffectActions: { list: 0, get: 0 },
     parameters: {
       type: "object",
       properties: {
@@ -805,6 +864,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   companies: {
     description: "Manage companies and company membership. Use canonical @company:id references.",
     category: "communication",
+    sideEffectDefault: 1,
+    sideEffectActions: { list: 0, get: 0 },
     parameters: {
       type: "object",
       properties: {
@@ -828,6 +889,11 @@ export const TOOLS: Record<string, ToolMeta> = {
   library: {
     description: "Vault-scoped Library pages and Notes. Shareable work belongs here, not scratch. Prefer edit_library_page for targeted edits; browse_tree/list_vaults for hierarchy. Canonical @page:slug.",
     category: "knowledge",
+    sideEffectDefault: 1,
+    sideEffectActions: {
+      list_library_pages: 0, get_library_page: 0, search_library_pages: 0, search: 0,
+      browse_tree: 0, tree: 0, list_vaults: 0, list_notes: 0, get_note: 0,
+    },
 
     parameters: {
       type: "object",
@@ -870,6 +936,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   work: {
     description: "Manage projects and work status — create projects, list/get with tasks, manage files, milestones, goal links. Use `tasks` for individual task operations.",
     category: "work",
+    sideEffectDefault: 1,
+    sideEffectActions: { status: 0, list_projects: 0, get_project: 0, list_tasks: 0, read_file: 0 },
 
     parameters: {
       type: "object",
@@ -910,6 +978,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   tasks: {
     description: "Create, complete, delete, and update tasks.",
     category: "work",
+    sideEffectDefault: 1,
 
     parameters: {
       type: "object",
@@ -941,6 +1010,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   system: {
     description: "System operations — get system state snapshot, retrieve runtime logs, check budget, inspect principal-scoped reliability outcomes, rank principal-scoped tool-output pressure, list recent tool failures for pattern diagnosis, view current-process events, active runs, clear terminal zombie runs, connected accounts, and cumulative tool stats. A full log archive is available in the logs/ directory. Use log_files to list all available log files (with size and date). Use logs with the file parameter to read any historical log file by filename. For reliability, omit detail for the aggregate health summary; set detail='turn_failures' to list failed conversational turns or detail='tool_failures' to list individual failed tool calls in the window (tool failures are filterable by failureKind/tool/code).",
     category: "system",
+    sideEffectDefault: 0,
+    sideEffectActions: { save_history_rollup: 1 },
 
     parameters: {
       type: "object",
@@ -974,6 +1045,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   issues: {
     description: "Track product Issues — create, page unresolved tracked Issues, page the admin Reported queue with list_reported, fetch one by ID, resolve one with affirmative evidence, append a dated log entry with add_note, or permanently delete with confirm=true. Each add_note pushes an immutable, timestamped entry onto the Issue's append-only notes log (use get to read the full notes array back — e.g. to record what happened at each regression run). Create requires explicit reproSteps; platformEnvironmentId and buildId attach automatically from runtime identity when omitted. list never includes kind=reported; list_reported requires system:read and returns only reported Issues. delete requires confirm=true and is for intentional removal (e.g. Issue → Feature conversion), not ordinary resolution.",
     category: "system",
+    sideEffectDefault: 1,
+    sideEffectActions: { list: 0, list_reported: 0, get: 0, delete: 2 },
 
     parameters: {
       type: "object",
@@ -1000,6 +1073,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   hooks: {
     description: "Manage event hooks — create, list, get, update, delete, and test reactive hooks that fire actions when system events match patterns.",
     category: "system",
+    sideEffectDefault: 1,
+    sideEffectActions: { list: 0, get: 0 },
 
     parameters: {
       type: "object",
@@ -1025,6 +1100,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   notion: {
     description: "Search, read, and browse Notion pages and databases.",
     category: "knowledge",
+    sideEffectDefault: 0,
 
     parameters: {
       type: "object",
@@ -1041,6 +1117,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   gmail: {
     description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Before composing a draft or reply body, follow the current user's active canonical writing-style instruction and load its referenced Library page when configured; complete the standard's required style checks before invoking Gmail. Gmail persists the supplied body verbatim and does not rewrite prose. When the user asks to draft a reply, use reply with the canonical @email_thread or @email_message ref; reply resolves the recipient and subject and persists native Gmail thread metadata. Use draft only for new standalone emails. Use draft, reply, or update_draft so persisted drafts render as inline widgets; plain chat email text is only for brainstorming or explicit copy-only requests. For update_draft, provide exactly one populated body operation and omit the other two. Empty placeholder objects are ignored. The human sends via the widget's Send button. There is no tool-level send action.",
     category: "communication",
+    sideEffectDefault: 0,
+    sideEffectActions: { draft: 1 },
     parameters: {
       type: "object",
       properties: {
@@ -1086,6 +1164,11 @@ export const TOOLS: Record<string, ToolMeta> = {
   content: {
     description: "Social content queue and live X/Twitter actions: queue drafts, list queue, suggest times, and post/reply/lookup/delete/news when connected.",
     category: "communication",
+    sideEffectDefault: 1,
+    sideEffectActions: {
+      list: 0, suggest_times: 0, x_status: 0, x_lookup: 0, x_news_search: 0, x_news_lookup: 0,
+      x_post: 2, x_reply: 2, x_delete: 2,
+    },
     parameters: {
       type: "object",
       properties: {
@@ -1111,6 +1194,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   meetings: {
     description: "Manage calendar events, create bounded focus blocks, dispatch the live meeting bot, and query completed meeting records. Action add creates an editable Meeting Draft inline widget; only the authenticated human can approve and schedule it. Direct calendar update/delete, create_calendar_block, and meeting-bot join/leave remain independently authorization-gated.",
     category: "calendar",
+    sideEffectDefault: 0,
+    sideEffectActions: { add: 1, update: 2, delete: 2, create_calendar_block: 2, join: 2, leave: 2 },
 
     parameters: {
       type: "object",
@@ -1157,6 +1242,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   git: {
     description: "Interact with Git repositories. Normal clone takes no routing inputs and resolves the canonical Mantra / Web / stage source binding; clone + platformEnvironmentId or clone_from_environment targets one Platform Environment through the same resolver. Write actions only work on session-owned clones in repos/.",
     category: "work",
+    sideEffectDefault: 0,
+    sideEffectActions: { clone: 1, add: 1, commit: 1, push: 2, create_pr: 2 },
 
     parameters: {
       type: "object",
@@ -1191,6 +1278,13 @@ export const TOOLS: Record<string, ToolMeta> = {
   scenarios: {
     description: "Scenario modeling — create scenarios, manage actors, build move trees, run simulations, manage assumptions, track artifacts. Always call list_scenarios first.",
     category: "strategy",
+    sideEffectDefault: 1,
+    sideEffectActions: {
+      list_scenarios: 0, get_scenario: 0, get_move_tree: 0, get_move: 0, get_move_path: 0,
+      list_actors: 0, get_actor: 0, list_child_moves: 0, list_assumptions: 0,
+      list_end_conditions: 0, list_notes: 0, list_context: 0, list_artifacts: 0,
+      get_artifact: 0, list_move_definitions: 0, get_move_definition: 0, list_states: 0, get_state: 0,
+    },
 
     parameters: {
       type: "object",
@@ -1257,6 +1351,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   decisions: {
     description: "Personal decision log — track strategic decisions with three sections (data, scenarios, plan), open/closed lifecycle, traffic-light status (closed only), append-only updates on closed decisions, and explicit links to any permitted canonical address. Always call list first. Use record_judgment for principle-first autonomous judgments (ownerPersonRole self) and any closed provenance-linked Decision that should emit decided_by / governed_by / triggered_by edges.",
     category: "strategy",
+    sideEffectDefault: 1,
+    sideEffectActions: { list: 0, get: 0 },
     parameters: {
       type: "object",
       properties: {
@@ -1294,6 +1390,13 @@ export const TOOLS: Record<string, ToolMeta> = {
   exec: {
     description: "Manage the Exec page — skills inventory, experience log, opportunities pipeline, verified metrics/education, and opportunity artifacts.",
     category: "knowledge",
+    sideEffectDefault: 1,
+    sideEffectActions: {
+      list_skills: 0, get_skill: 0, list_experience: 0, get_experience: 0,
+      list_opportunities: 0, get_opportunity: 0, list_opportunity_activities: 0,
+      list_passions: 0, get_passion: 0, list_metrics: 0, list_education: 0,
+      get_opportunity_artifacts: 0,
+    },
     parameters: {
       type: "object",
       properties: {
@@ -1379,6 +1482,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   theses: {
     description: "Manage theses — hard-to-vary explanations backed by evidence and tested by predictions.",
     category: "knowledge",
+    sideEffectDefault: 2,
     parameters: {
       type: "object",
       properties: {
@@ -1406,6 +1510,10 @@ export const TOOLS: Record<string, ToolMeta> = {
   news: {
     description: "Manage the News system — signal discovery, surfaced items, sources, topics, diagnostics, and scan runs. Actions: summary (health + counts + latest surfaced), scan, list_signals, get_signal, dismiss_signal, save_signal, surface_signal, add_source, list_sources, update_source, delete_source, list_scan_runs, interest_graph, batch_curate.",
     category: "knowledge",
+    sideEffectDefault: 1,
+    sideEffectActions: {
+      summary: 0, list_signals: 0, get_signal: 0, list_sources: 0, list_scan_runs: 0, interest_graph: 0,
+    },
     parameters: {
       type: "object",
       properties: {
@@ -1432,6 +1540,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   pronunciation: {
     description: "Manage pronunciation dictionary entries — teach Agent how to correctly pronounce names, brands, and technical terms. Entries are case-sensitive.",
     category: "voice",
+    sideEffectDefault: 1,
+    sideEffectActions: { list: 0 },
 
     parameters: {
       type: "object",
@@ -1446,6 +1556,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   rules: {
     description: RULES_TOOL_DESCRIPTION,
     category: "knowledge",
+    sideEffectDefault: 1,
+    sideEffectActions: { list: 0, get: 0 },
 
     parameters: {
       type: "object",
@@ -1461,6 +1573,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   orient: {
     description: "Unified session orientation — set title, topics, and persona in a single call. On first-turn orientation (no title set yet), `title` and a selectable `persona` are required. Never omit persona; use Companion when the opening has no job. Root is never a session seat. For mid-session re-orientation, all parameters are optional for partial updates.",
     category: "communication",
+    sideEffectDefault: 1,
 
     parameters: {
       type: "object",
@@ -1477,6 +1590,20 @@ export const TOOLS: Record<string, ToolMeta> = {
   session: {
     description: "Session metadata, agenda, lifecycle, attention, and tree messaging. Prefer list_agenda + complete/skip/defer; never guess item IDs. Children do not inherit agendas. Coding missions: delegation=engineering (parent needs trusted engineering + build:write; child uses its own clone).",
     category: "communication",
+    sideEffectDefault: 0,
+    sideEffectActions: {
+      send_message: 1,
+      set_agenda: 1,
+      update_agenda_item: 1,
+      complete_agenda_item: 1,
+      skip_agenda_item: 1,
+      defer_agenda_item: 1,
+      initiate: 2,
+      set_attention: 2,
+      message_parent: 1,
+      message_child: 1,
+      message_sibling: 1,
+    },
 
     parameters: {
       type: "object",
@@ -1511,6 +1638,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   router: {
     description: "Call and inspect the model routing layer.",
     category: "knowledge",
+    sideEffectDefault: 0,
 
     parameters: {
       type: "object",
@@ -1538,6 +1666,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   plan: {
     description: "Multi-step plans as child-session missions. Decompose by shippable deliverable, not pipeline phase; children already run full domain SOP. needs_review is a human gate — only a later interactive turn may approve; resume never does.",
     category: "execution",
+    sideEffectDefault: 1,
+    sideEffectActions: { get: 0, list: 0 },
     parameters: {
       type: "object",
       properties: {
@@ -1571,6 +1701,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   agendas: {
     description: "Manage reusable conversational agenda definitions. Definitions are editable templates; Session agendas are independent execution snapshots and are never rewritten by definition edits. These templates are the canonical source for recurring conversation flows (e.g. pitch, qualification, onboarding); search here and apply one with the session tool's apply_agenda_template action before hand-authoring a session agenda. The reserved FTUE definition is editable but cannot be deleted.",
     category: "automation",
+    sideEffectDefault: 1,
+    sideEffectActions: { list: 0, get: 0, search: 0 },
     parameters: {
       type: "object",
       properties: {
@@ -1601,6 +1733,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   skills: {
     description: "Manage Agent's skill library — reusable instruction sets. The 'get' action returns full skill details including the structured weighted checklist used by the scorer. The 'run' action spawns an autonomous skill execution. The 'runs' action returns recent execution history (status, duration, score, timestamps, and failureReason/endReason for failed runs) from skill_runs — same data shown in the dashboard's Run History panel. The 'scores' action returns scored runs from skill_runs (the source of truth).",
     category: "knowledge",
+    sideEffectDefault: 1,
+    sideEffectActions: { list: 0, get: 0, search: 0, scores: 0, run: 1 },
 
     parameters: {
       type: "object",
@@ -1634,6 +1768,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   cognition: {
     description: "Cognitive state, observations, personas, and agent profile. Use orient to switch personas; resolve_toolset previews resident vs on-demand tools; update_global_persona_template mutates seed bundles (system:write).",
     category: "cognition",
+    sideEffectDefault: 1,
+    sideEffectActions: { get_emotion: 0, emotion_history: 0, get_persona: 0, list_personas: 0 },
     parameters: {
       type: "object",
       properties: {
@@ -1665,6 +1801,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   finance: {
     description: "Query financial data from connected bank accounts.",
     category: "finance",
+    sideEffectDefault: 0,
 
     parameters: {
       type: "object",
@@ -1698,6 +1835,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   images: {
     description: "Generate, edit, or analyze images. For uploads, use the exact /objects/uploads/<id>.<ext> object path from attachment metadata without rewriting it. Render generated or uploaded images inline as ![descriptive alt](/objects/uploads/<id>.<ext>), not signed/download URLs. Analyze may rename a UUID or camera-dump Files display name to a short useful title; the object path stays unchanged. Actions: generate (text-to-image), edit (combine/modify images), analyze (describe/extract from an image).",
     category: "media",
+    sideEffectDefault: 1,
+    sideEffectActions: { analyze: 0 },
 
     parameters: {
       type: "object",
@@ -1721,6 +1860,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   timers: {
     description: "Manage scheduled timers and one-time reminders — list all or filter by name, get details by ID or name, view runs, create, update, delete, or manually trigger. Use frequency=once with fireAt for one-time timers; unmanaged user timers composed only of Once schedules auto-delete after firing.",
     category: "system",
+    sideEffectDefault: 1,
+    sideEffectActions: { list: 0, get: 0, runs: 0 },
 
     parameters: {
       type: "object",
@@ -1744,6 +1885,11 @@ export const TOOLS: Record<string, ToolMeta> = {
   health: {
     description: "Query health metrics and fully manage the wellness calendar. Autonomous skills must not call save_learning or save_gratitude; those are user-authored personal logs. Actions: summary (7-day summary by metric type), metrics (raw metric rows with optional type/date filters), list_activities (all active wellness activities), log_activity (record a completion by activityId or name with fuzzy match, optional date param YYYY-MM-DD for past-date logging), activity_status (all activities grouped by status: overdue/due_soon/on_track/never_done with urgency scores — includes tier and metricValue for metric-backed activities), create_activity (add a new wellness activity with name, intervalDays, category, and optional fields including linkedMetricType, greatThreshold, goodThreshold for metric-backed auto-completion), update_activity (modify an existing activity by activityId or name — set newName, benefit, risk, intervalDays, category, linkedMetricType, greatThreshold, goodThreshold, windowStart, windowEnd), delete_activity (archive an activity by activityId or name), activity_logs (view completion history with tier and metricValue, optionally filtered by activityId and days), delete_log (delete a specific log entry by logId), save_gratitude (upsert a gratitude entry — content required, date optional defaults to today, auto-logs Gratitude wellness activity), get_gratitude (get a single gratitude entry by date, defaults to today), list_gratitudes (list gratitude entries in reverse-chronological order, optional limit default 30), save_learning (upsert a learning entry — content required, date optional defaults to today, auto-logs Learning wellness activity), get_learning (get a single learning entry by date, defaults to today), list_learnings (list learning entries in reverse-chronological order, optional limit default 30).",
     category: "health",
+    sideEffectDefault: 1,
+    sideEffectActions: {
+      summary: 0, metrics: 0, activity_status: 0, list_activities: 0, activity_logs: 0,
+      get_gratitude: 0, list_gratitudes: 0,
+    },
 
     parameters: {
       type: "object",
@@ -1776,6 +1922,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   weather: {
     description: "Get weather data — current conditions, daily/hourly forecasts, historical weather, and NWS severe weather alerts. Default location: Chicago.",
     category: "weather",
+    sideEffectDefault: 0,
     parameters: {
       type: "object",
       properties: {
@@ -1795,6 +1942,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   tools: {
     description: "Discover authority-allowed tools and load callable schemas on demand. `list` summarizes allowed tools; interactive `get` returns full docs and hydrates that tool into the current run.",
     category: "system",
+    sideEffectDefault: 0,
 
     parameters: {
       type: "object",
@@ -1809,6 +1957,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   backup: {
     description: "Manage database backups — create snapshots, list history, inspect metadata, and delete old backups. Restore is intentionally not exposed to agents; humans must use the Dev page for restore operations.",
     category: "system",
+    sideEffectDefault: 2,
     parameters: {
       type: "object",
       properties: {
@@ -1823,6 +1972,8 @@ export const TOOLS: Record<string, ToolMeta> = {
   routers: {
     description: "Manage named LLM Routers (exclusive model-connector pools) and Account assignment. Distinct from the diagnostic `router` tool. list/get/list_legacy require system:read; create/move/set_account_router require system:write (Account assignment also needs users:write).",
     category: "system",
+    sideEffectDefault: 2,
+    sideEffectActions: { list: 0, get: 0, list_legacy: 0 },
     parameters: {
       type: "object",
       properties: {
@@ -1844,6 +1995,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   indexed_content: {
     description: "Retrieve archived content and structured indexes. Full originals are stored in object storage when content exceeds display limits — use this tool to list, inspect, or read specific sections of archived content by reference ID.",
     category: "system",
+    sideEffectDefault: 0,
     parameters: {
       type: "object",
       properties: {
@@ -1861,6 +2013,15 @@ export const TOOLS: Record<string, ToolMeta> = {
   platforms: {
     description: "Manage platform infrastructure, Product intent, and Features — provider connections, environments, bindings, build lifecycle, canonical Products, and Feature CRUD/KPI/session history. create_product writes products. create_product_legacy is frozen; do not invent a second Product table. Feature create requires summary + productId + ownerPersonId; status always starts ready and stage changes reset status to ready.",
     category: "system",
+    sideEffectDefault: 2,
+    sideEffectActions: {
+      list_connections: 0, get_connection: 0, test_connection: 0,
+      list_environments: 0, get_environment: 0, get_environment_status: 0,
+      list_products: 0,
+      get_build_lifecycle: 0, get_build_status: 0, list_environment_workflows: 0,
+      get_cloudflare_pages_project: 0,
+      poll_cloudflare_pages_deployment: 0,
+    },
     parameters: {
       type: "object",
       properties: {
@@ -1922,6 +2083,12 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
 };
+
+bindToolSideEffectCatalog((toolName) => {
+  const meta = TOOLS[toolName];
+  if (meta?.sideEffectDefault === undefined) return undefined;
+  return { default: meta.sideEffectDefault, actions: meta.sideEffectActions };
+});
 
 /**
  * Tool name aliases — canonical new names pointing to legacy tool definitions.
