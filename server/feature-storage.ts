@@ -22,6 +22,13 @@ function enumValue<T extends readonly string[]>(value: unknown, values: T, label
   if (typeof value !== "string" || !values.includes(value as T[number])) throw Object.assign(new Error(`Invalid ${label}`), { status: 400 });
   return value as T[number];
 }
+/** Optional free text (e.g. description): empty string is a legitimate cleared value. */
+function optionalText(value: unknown, label: string, max: number): string {
+  if (typeof value !== "string") throw Object.assign(new Error(`${label} must be text`), { status: 400 });
+  const trimmed = value.trim();
+  if (trimmed.length > max) throw Object.assign(new Error(`${label} is too long`), { status: 400 });
+  return trimmed;
+}
 async function assertProduct(id: number, writable: boolean) {
   const result = writable ? await getWritableProduct(id) : await getVisibleProduct(id);
   if (!result) throw Object.assign(new Error("Product not found or not visible"), { status: 404 });
@@ -54,8 +61,9 @@ export const featureStorage = {
     const summary = text(input.summary, "Summary", 500);
     const stage = enumValue(input.stage ?? "idea", FEATURE_STAGES, "stage");
     const specPageId = typeof input.specPageId === "string" && input.specPageId.trim() ? input.specPageId.trim() : null;
+    const description = input.description === undefined ? "" : optionalText(input.description, "Description", 10000);
     const ownership = ownedInsertValues(p, { scope: sql`scope`, ownerUserId: sql`owner_user_id`, accountId: sql`account_id` } as any);
-    const [row] = await db.execute(sql`INSERT INTO features (product_id, owner_person_id, spec_page_id, summary, stage, status, scope, owner_user_id, account_id) VALUES (${productId}, ${ownerPersonId}, ${specPageId}, ${summary}, ${stage}, 'ready', ${ownership.scope}, ${ownership.ownerUserId}, ${ownership.accountId}) RETURNING *`).then(r => r.rows);
+    const [row] = await db.execute(sql`INSERT INTO features (product_id, owner_person_id, spec_page_id, summary, description, stage, status, scope, owner_user_id, account_id) VALUES (${productId}, ${ownerPersonId}, ${specPageId}, ${summary}, ${description}, ${stage}, 'ready', ${ownership.scope}, ${ownership.ownerUserId}, ${ownership.accountId}) RETURNING *`).then(r => r.rows);
     return row;
   },
   async update(id: string, input: any) {
@@ -66,6 +74,7 @@ export const featureStorage = {
     const summary = input.summary === undefined ? current.summary : text(input.summary, "Summary", 500);
     const owner = input.ownerPersonId === undefined ? current.owner_person_id : text(input.ownerPersonId, "Owner", 200);
     const spec = input.specPageId === undefined ? current.spec_page_id : (typeof input.specPageId === "string" && input.specPageId.trim() ? input.specPageId.trim() : null);
+    const description = input.description === undefined ? current.description : optionalText(input.description, "Description", 10000);
     let productId = current.product_id as number;
     if (input.productId !== undefined) {
       const nextProductId = Number(input.productId);
@@ -74,7 +83,7 @@ export const featureStorage = {
       productId = nextProductId;
     }
     const reset = stage !== current.stage;
-    const result = await db.execute(sql`UPDATE features SET product_id=${productId}, summary=${summary}, owner_person_id=${owner}, spec_page_id=${spec}, stage=${stage}, status=${reset ? "ready" : status}, updated_at=CURRENT_TIMESTAMP WHERE id=${id} AND owner_user_id=${p.userId} AND account_id=${p.accountId} AND archived_at IS NULL RETURNING *`);
+    const result = await db.execute(sql`UPDATE features SET product_id=${productId}, summary=${summary}, description=${description}, owner_person_id=${owner}, spec_page_id=${spec}, stage=${stage}, status=${reset ? "ready" : status}, updated_at=CURRENT_TIMESTAMP WHERE id=${id} AND owner_user_id=${p.userId} AND account_id=${p.accountId} AND archived_at IS NULL RETURNING *`);
     return result.rows[0];
   },
   async archive(id: string) { const p = principal(); const result = await db.execute(sql`UPDATE features SET archived_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=${id} AND owner_user_id=${p.userId} AND account_id=${p.accountId} AND archived_at IS NULL RETURNING *`); return result.rows[0]; },

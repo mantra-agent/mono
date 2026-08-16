@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Activity, ChevronRight, FileText, Loader2, Package, Plus, User } from "lucide-react";
+import { Activity, ChevronRight, FileText, Loader2, Package, PenLine, Plus, User } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,11 @@ import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
+import { ReferenceText } from "@/components/references/reference-text";
 import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { Textarea } from "@/components/ui/textarea";
+import { useFocusSession } from "@/hooks/use-focus-session";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -29,6 +32,7 @@ type FeatureStatus = (typeof statuses)[number];
 type Feature = {
   id: string;
   summary: string;
+  description?: string;
   stage: FeatureStage;
   status: FeatureStatus;
   product_id: number;
@@ -47,6 +51,28 @@ const STATUS_LABELS: Record<FeatureStatus, string> = {
 
 function formatStage(stage: FeatureStage) {
   return stage.charAt(0).toUpperCase() + stage.slice(1);
+}
+
+type CreatedSession = { id: string };
+
+/**
+ * Opening message for the idea-phase "Spec" action. Carries the Feature as
+ * canonical context so the Architect-seated session can resolve it and write
+ * the spec. Analogous to the home view Discuss launcher.
+ */
+function buildFeatureSpecMessage(feature: Feature): string {
+  const parts = [
+    `Let's write the spec for this Feature: **${feature.summary}**`,
+    `Feature: @feature:${feature.id}`,
+    `Product: ${feature.product_name ?? feature.product_id}`,
+  ];
+  if (feature.owner_person_id) parts.push(`Owner: @person:${feature.owner_person_id}`);
+  if (feature.description?.trim()) parts.push("", "Description:", feature.description.trim());
+  parts.push(
+    "",
+    "Help me write a clear specification for this Feature. Ask any clarifying questions you need before drafting, then produce the spec.",
+  );
+  return parts.join("\n");
 }
 
 function CreateFeatureDialog({
@@ -153,8 +179,10 @@ function CreateFeatureDialog({
 
 function FeatureRow({ feature, products }: { feature: Feature; products: Product[] }) {
   const { toast } = useToast();
+  const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
   const [editingOwner, setEditingOwner] = useState(false);
   const [editingSpec, setEditingSpec] = useState(false);
+  const [editingDescription, setEditingDescription] = useState(false);
 
   const update = useMutation({
     mutationFn: async (patch: Record<string, unknown>) => {
@@ -167,6 +195,31 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
     onError: (error: unknown) =>
       toast({
         title: "Failed to update Feature",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      }),
+  });
+
+  const spec = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/sessions", {
+        title: `Spec: ${feature.summary}`.slice(0, 80),
+        personaName: "Architect",
+      });
+      const session: CreatedSession = await response.json();
+      await apiRequest("POST", `/api/sessions/${session.id}/messages`, {
+        content: buildFeatureSpecMessage(feature),
+      });
+      return session;
+    },
+    onSuccess: (session) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      setSessionForRoute(route, session.id);
+      setWidgetOpen(true);
+    },
+    onError: (error: unknown) =>
+      toast({
+        title: "Could not start spec session",
         description: error instanceof Error ? error.message : "Unknown error",
         variant: "destructive",
       }),
@@ -190,6 +243,44 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
       expandedContentClassName="px-2 pb-2 pl-2"
       expandedContent={(
         <div className="space-y-0.5">
+          <div className="px-1 pb-1.5 pt-0.5" data-testid={`feature-description-${feature.id}`}>
+            {editingDescription ? (
+              <Textarea
+                autoFocus
+                defaultValue={feature.description ?? ""}
+                placeholder="Add a description…"
+                className="min-h-20 text-xs"
+                onBlur={(event) => {
+                  const next = event.target.value.trim();
+                  if (next === (feature.description ?? "").trim()) {
+                    setEditingDescription(false);
+                    return;
+                  }
+                  update.mutate({ description: next }, { onSettled: () => setEditingDescription(false) });
+                }}
+                data-testid={`textarea-feature-description-${feature.id}`}
+              />
+            ) : feature.description?.trim() ? (
+              <button
+                type="button"
+                className="block w-full text-left prose prose-sm dark:prose-invert max-w-none text-xs leading-relaxed [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0"
+                onClick={() => setEditingDescription(true)}
+                data-testid={`button-edit-feature-description-${feature.id}`}
+              >
+                <ReferenceText content={feature.description} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setEditingDescription(true)}
+                data-testid={`button-add-feature-description-${feature.id}`}
+              >
+                Add a description…
+              </button>
+            )}
+          </div>
+
           <ProfileTreeRow
             label="Product"
             icon={<Package className="h-3.5 w-3.5" />}
@@ -357,6 +448,19 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
       )}
       menuContent={(
         <>
+          {feature.stage === "idea" ? (
+            <DropdownMenuItem
+              disabled={spec.isPending}
+              onSelect={(event) => {
+                event.preventDefault();
+                spec.mutate();
+              }}
+              data-testid={`button-feature-spec-${feature.id}`}
+            >
+              {spec.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <PenLine className="mr-2 h-3.5 w-3.5" />}
+              Spec
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem
             onSelect={() =>
               apiRequest("POST", `/api/features/${feature.id}/archive`, { confirm: true }).then(() => {
