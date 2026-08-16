@@ -50,10 +50,6 @@ const nativePlanningHandlers: ToolHandlerSource = {
     const { handlePlan } = await import("./plan");
     return handlePlan(args);
   },
-  async workflows(args) {
-    const { handleWorkflows } = await import("./workflows");
-    return handleWorkflows(args);
-  },
 };
 
 export const TOOL_DOMAIN_ADAPTERS: readonly ToolDomainAdapter[] = [
@@ -96,7 +92,7 @@ export const TOOL_DOMAIN_ADAPTERS: readonly ToolDomainAdapter[] = [
   {
     id: "planning-work",
     owner: "core-planning",
-    tools: ["business", "goals", "work", "tasks", "decisions", "plan", "workflows", "agendas", "skills", "rules", "jobs"],
+    tools: ["business", "goals", "work", "tasks", "decisions", "plan", "agendas", "skills", "rules", "jobs"],
     authorizationDependencies: ["principal-context", "work Vault access", "Runtime", "named permissions"],
     normalizationExtensions: ["safe partial updates", "work placement", "plan step contracts", "checklist references"],
     artifactKinds: ["project", "task", "decision", "library_page", "workflow_artifact"],
