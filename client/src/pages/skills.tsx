@@ -83,6 +83,7 @@ import {
   DefaultSyncDialog,
   useDefaultSync,
   buildDiffRows,
+  computeLatticeCell,
   type PendingSync,
 } from "@/components/lattice-controls";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -253,11 +254,20 @@ function SkillLatticeSection({ skill }: { skill: SkillWithReferences }) {
   const hasBaseline = skill.platformBaseline != null;
   // Publishing to the default is admin-gated; reverting a user's own copy is
   // owner-authed (the /reset + PATCH routes are user-writable, not system:write).
-  const showApply = canApply && templateId != null;
-  const showRevert = hasBaseline && isUserCopy;
+  const canPublish = canApply && templateId != null;
+  const canRevert = hasBaseline && isUserCopy;
   const drift = skill.changedFields ?? [];
+  // One cell decides the whole-skill moves; per-field apply/revert below stay
+  // as editing affordances on individual drift rows.
+  const cell = computeLatticeCell({
+    localChanged: drift.length > 0,
+    defaultAdvanced: Boolean(skill.updateAvailable),
+    isAdmin: canPublish,
+  });
+  const showRevertAll = cell.showRevert && canRevert;
+  const showPublishAll = cell.showPublish;
 
-  if (!skill.updateAvailable && drift.length === 0 && !showApply && !showRevert) return null;
+  if (drift.length === 0 && !showRevertAll && !showPublishAll) return null;
 
   return (
     <div className="space-y-2 rounded-md border border-border/40 bg-muted/10 p-2" data-testid={`skill-lattice-${skill.id}`}>
@@ -267,7 +277,7 @@ function SkillLatticeSection({ skill }: { skill: SkillWithReferences }) {
             <div key={field} className="flex items-center gap-2 text-xs" data-testid={`skill-drift-${skill.id}-${field}`}>
               <StatusDot kind="local" className="shrink-0" />
               <span className="min-w-0 flex-1 truncate text-foreground">{skillLabelFor(field)}</span>
-              {(showApply || showRevert) && (
+              {(canPublish || canRevert) && (
                 <DropdownMenu modal={false}>
                   <DropdownMenuTrigger asChild>
                     <button
@@ -279,8 +289,8 @@ function SkillLatticeSection({ skill }: { skill: SkillWithReferences }) {
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    {showApply && <DropdownMenuItem onClick={() => sync.request(() => buildSkillApplyField(skill, templateId!, field))}>Apply to Default</DropdownMenuItem>}
-                    {showRevert && <DropdownMenuItem onClick={() => sync.request(() => buildSkillRevertField(skill, field))}>Revert to Default</DropdownMenuItem>}
+                    {canPublish && <DropdownMenuItem onClick={() => sync.request(() => buildSkillApplyField(skill, templateId!, field))}>Apply to Default</DropdownMenuItem>}
+                    {canRevert && <DropdownMenuItem onClick={() => sync.request(() => buildSkillRevertField(skill, field))}>Revert to Default</DropdownMenuItem>}
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
@@ -288,16 +298,16 @@ function SkillLatticeSection({ skill }: { skill: SkillWithReferences }) {
           ))}
         </div>
       )}
-      {(showApply || showRevert) && (
+      {(showPublishAll || showRevertAll) && (
         <div className="flex flex-wrap gap-2 pt-0.5">
-          {showApply && (
-            <Button size="sm" variant="outline" onClick={() => sync.request(() => buildSkillApplyAll(skill, templateId!))}>
-              Apply to Default
+          {showRevertAll && (
+            <Button size="sm" variant="outline" onClick={() => sync.request(() => buildSkillRevertAll(skill))}>
+              Revert
             </Button>
           )}
-          {showRevert && (
-            <Button size="sm" variant="outline" onClick={() => sync.request(() => buildSkillRevertAll(skill))}>
-              Revert to Default
+          {showPublishAll && (
+            <Button size="sm" variant="outline" onClick={() => sync.request(() => buildSkillApplyAll(skill, templateId!))}>
+              Publish
             </Button>
           )}
         </div>
@@ -339,6 +349,13 @@ function SkillTreeRow({
   });
   const onKeepMine = () => latticeAction.mutate({ action: "keep-mine" });
   const onUseUpdatedDefault = () => latticeAction.mutate({ action: "use-updated-default" });
+  // Inbound consume moves resolve through the single cell: Update when only the
+  // default advanced, the Keep Mine / Take Theirs fork when local also changed.
+  const cell = computeLatticeCell({
+    localChanged: (skill.changedFields?.length ?? 0) > 0,
+    defaultAdvanced: Boolean(skill.updateAvailable),
+    isAdmin: false,
+  });
 
   return (
     <div data-testid={`skill-row-${skill.id}`}>
@@ -398,14 +415,22 @@ function SkillTreeRow({
             <DropdownMenuItem onClick={() => { setMenuOpen(false); onEdit(); }} data-testid="menu-edit-skill">
               <Pencil className="h-3.5 w-3.5 mr-2" /> Edit
             </DropdownMenuItem>
-            {skill.updateAvailable && (
+            {cell.showUpdate && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => { setMenuOpen(false); onUseUpdatedDefault(); }} data-testid="menu-update-skill">
+                  Update
+                </DropdownMenuItem>
+              </>
+            )}
+            {cell.showMerge && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => { setMenuOpen(false); onKeepMine(); }} data-testid="menu-keep-mine-skill">
-                  Keep Mine
+                  Merge · Keep Mine
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => { setMenuOpen(false); onUseUpdatedDefault(); }} data-testid="menu-use-updated-default-skill">
-                  Use Updated Default
+                  Merge · Take Theirs
                 </DropdownMenuItem>
               </>
             )}
