@@ -1,12 +1,16 @@
 /**
  * Feature pipeline contract.
  *
- * Feature stages are the product lifecycle. Build workflow stages are the
- * software-delivery analog. This module is the single source for both the
- * Feature row launcher and the `feature-pipeline` Skill: stage identity,
- * seat, purpose, evidence, and pass standard. The row exposes only the
- * action for the Feature's current stage. Call sites compose Feature
- * *context*; they do not invent procedure.
+ * Feature stages are rooms (identity). Feature statuses are work in the room.
+ * Every room has two jobs: Produce then Review. Produce never advances stage;
+ * it writes the room artifact and sets needs_review. Only Review-pass advances
+ * stage. Review is the opposite seat of Produce.
+ *
+ * The Feature row launches the job that matches current status. Procedure lives
+ * here and in the `feature-pipeline` Skill. Call sites compose Feature context;
+ * they do not invent procedure.
+ *
+ * Authority: @page:1ae60565-9dca-409a-89e5-3c8c047f0a2b
  */
 
 export const FEATURE_STAGES = [
@@ -21,17 +25,17 @@ export const FEATURE_STAGES = [
 
 export const FEATURE_STATUSES = ["ready", "in_progress", "needs_review"] as const;
 
+export const FEATURE_PIPELINE_JOBS = ["produce", "review"] as const;
+
 export type FeatureStage = (typeof FEATURE_STAGES)[number];
 export type FeatureStatus = (typeof FEATURE_STATUSES)[number];
-export type FeaturePipelinePersona = "Architect" | "Engineer";
+export type FeaturePipelineJob = (typeof FEATURE_PIPELINE_JOBS)[number];
+export type FeaturePipelinePersona = "Visionary" | "Architect" | "Engineer";
 
-export interface FeaturePipelineStage {
-  stage: FeatureStage;
-  /** Short row-menu label, same grammar as the idea-phase Spec button. */
+export interface FeaturePipelineJobContract {
+  /** Short row-menu label. */
   actionLabel: string;
   persona: FeaturePipelinePersona;
-  /** Build-v1 analog this stage is modeled on. */
-  buildAnalog: string;
   purpose: string;
   entryCriteria: string[];
   evidenceRequirements: string[];
@@ -39,171 +43,298 @@ export interface FeaturePipelineStage {
   outcomes: string[];
 }
 
+export interface FeaturePipelineStage {
+  stage: FeatureStage;
+  /** Build-v1 analog this room is modeled on. */
+  buildAnalog: string;
+  /** Next stage on Review pass. Null means stay (maintain keep-alive or deprecate terminal). */
+  nextStageOnPass: FeatureStage | null;
+  produce: FeaturePipelineJobContract;
+  review: FeaturePipelineJobContract;
+}
+
+const OPPOSITE_PERSONA: Record<FeaturePipelinePersona, FeaturePipelinePersona> = {
+  Visionary: "Engineer",
+  Architect: "Engineer",
+  Engineer: "Architect",
+};
+
+function reviewJob(args: {
+  producePersona: FeaturePipelinePersona;
+  artifactName: string;
+  passOutcome: string;
+}): FeaturePipelineJobContract {
+  const persona = OPPOSITE_PERSONA[args.producePersona];
+  return {
+    actionLabel: "Review",
+    persona,
+    purpose: `Judge the room's ${args.artifactName} against the named governing standards only. Do not redo Produce. Do not add architecture, requirements, or fresh discovery.`,
+    entryCriteria: [
+      `Load the Feature and the room's ${args.artifactName}.`,
+      "Load only the named governing standards the artifact cites or that SECURITY.md independently requires.",
+      "Do not perform fresh architecture, repository, runtime, implementation, or dependency discovery.",
+    ],
+    evidenceRequirements: [
+      "For each rejection, cite the exact artifact statement and the exact named governing-standard provision it violates.",
+      "Unsupported preferences, newly discovered concerns, and uncited best practices are not rejection grounds.",
+    ],
+    exitCriteria: [
+      "Pass unless the artifact contains a concrete cited violation of a named governing standard.",
+      `On pass: advance the Feature stage only as this room's pass outcome requires (${args.passOutcome}). Stage change resets status to ready.`,
+      "On fail: leave the Feature on the same stage, set status to ready, and name the required revision on the artifact. Do not advance stage.",
+    ],
+    outcomes: [
+      `passed → ${args.passOutcome}`,
+      "changes_requested → same stage / ready: revise the artifact",
+    ],
+  };
+}
+
 export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
   idea: {
     stage: "idea",
-    actionLabel: "Spec",
-    persona: "Architect",
     buildAnalog: "Design",
-    purpose:
-      "Write the smallest coherent specification for this Feature. Start from the originating Feature, inspect the repository and runtime only as needed to identify the failed or missing invariant, and name every governing standard the spec must satisfy.",
-    entryCriteria: [
-      "Start from the Feature context in this session. Do not widen the request.",
-      "Inspect the repository and runtime only as needed to identify the failed invariant, the smallest coherent repair, and the named governing standards the specification must satisfy.",
-      "Ask clarifying questions only when a consequential choice remains. Do not interview for preference.",
-    ],
-    evidenceRequirements: [
-      "A durable Library specification (`kind: spec`) that names the smallest coherent implementation, success conditions, target truth, verification path, terminal state, and every governing standard relied upon.",
-      "Link that page onto the Feature via specPageId. Any expansion beyond the Feature must cite the repository evidence and invariant that require it.",
-    ],
-    exitCriteria: [
-      "The specification satisfies the Feature without speculative systems, migrations, abstractions, or adjacent improvements.",
-      "It is complete enough for implementation without Review adding architecture or requirements.",
-      "Advance the Feature to stage `spec` only after the spec page is linked.",
-    ],
-    outcomes: [
-      "passed → spec: specification is implementation-ready and linked",
-      "blocked: a consequential question remains; do not invent the answer",
-    ],
+    nextStageOnPass: "spec",
+    produce: {
+      actionLabel: "Frame",
+      persona: "Visionary",
+      purpose:
+        "Frame why this Feature exists. Name the failed or missing invariant, who it is for, and what is out of scope. Do not write the full specification — that is Spec's produce job.",
+      entryCriteria: [
+        "Start from the Feature context in this session. Do not widen the request.",
+        "Inspect only enough product/runtime signal to name the invariant and the boundary of the Feature.",
+        "Ask clarifying questions only when a consequential choice remains.",
+      ],
+      evidenceRequirements: [
+        "Write Feature `description` with: failed/missing invariant, why this Feature exists, who it is for, and explicit out of scope.",
+        "Do not create or link a Library spec page in this job.",
+      ],
+      exitCriteria: [
+        "Description is coherent enough that Spec can specify without re-framing the request.",
+        "Set Feature status to `needs_review`. Do not change stage.",
+      ],
+      outcomes: [
+        "done → needs_review on idea: frame ready for opposite-seat Review",
+        "blocked: consequential question remains; leave ready/in_progress with residual named",
+      ],
+    },
+    review: reviewJob({
+      producePersona: "Visionary",
+      artifactName: "description frame",
+      passOutcome: "stage spec / ready",
+    }),
   },
   spec: {
     stage: "spec",
-    actionLabel: "Review",
-    persona: "Architect",
-    buildAnalog: "Design Review",
-    purpose:
-      "Review the Design-produced specification against the named governing standards only. Pass unless the specification contains a concrete cited violation.",
-    entryCriteria: [
-      "Load the Feature's linked specification and the named governing standards it cites.",
-      "Do not perform fresh architecture, repository, runtime, or dependency discovery.",
-    ],
-    evidenceRequirements: [
-      "For each rejection, cite the exact specification statement and the exact named governing-standard provision it violates.",
-      "Do not introduce a requirement that is absent from those standards. Concrete SECURITY.md violations may reject the specification.",
-    ],
-    exitCriteria: [
-      "Pass unless the specification contains a concrete cited violation of a named governing standard.",
-      "Unsupported preferences, newly discovered architecture concerns, and uncited best practices are not rejection grounds.",
-      "On pass, advance the Feature to stage `develop`. On changes requested, leave it on `spec` and record the required revision on the spec page.",
-    ],
-    outcomes: [
-      "passed → develop: no cited standards violation remains",
-      "changes_requested → stay on spec: revise the specification",
-    ],
+    buildAnalog: "Design",
+    nextStageOnPass: "develop",
+    produce: {
+      actionLabel: "Spec",
+      persona: "Architect",
+      purpose:
+        "Write the smallest coherent specification for this Feature from the approved frame. Name every governing standard the spec must satisfy.",
+      entryCriteria: [
+        "Load the Feature description frame and stay inside it.",
+        "Inspect the repository and runtime only as needed to identify the failed invariant, the smallest coherent repair, and the named governing standards.",
+        "Ask clarifying questions only when a consequential choice remains.",
+      ],
+      evidenceRequirements: [
+        "A durable Library specification (`kind: spec`) that names the smallest coherent implementation, success conditions, target truth, verification path, terminal state, and every governing standard relied upon.",
+        "Link that page onto the Feature via `specPageId`. Any expansion beyond the Feature must cite the repository evidence and invariant that require it.",
+      ],
+      exitCriteria: [
+        "The specification satisfies the Feature without speculative systems, migrations, abstractions, or adjacent improvements.",
+        "It is complete enough for implementation without Review adding architecture or requirements.",
+        "Set Feature status to `needs_review` only after the spec page is linked. Do not change stage.",
+      ],
+      outcomes: [
+        "done → needs_review on spec: specification linked and waiting for Review",
+        "blocked: consequential question remains; leave ready/in_progress with residual named",
+      ],
+    },
+    review: reviewJob({
+      producePersona: "Architect",
+      artifactName: "linked specification",
+      passOutcome: "stage develop / ready",
+    }),
   },
   develop: {
     stage: "develop",
-    actionLabel: "Build",
-    persona: "Engineer",
     buildAnalog: "Implement",
-    purpose:
-      "Implement the approved specification. Do not redesign. Do not expand scope.",
-    entryCriteria: [
-      "Load and implement the approved specification linked on this Feature.",
-      "Follow root AGENTS.md, CODING.md, and any subdirectory AGENTS.md for touched trees. Load DESIGN.md for UI work.",
-    ],
-    evidenceRequirements: [
-      "Implementation evidence, production-build result, impact/change-scope evidence, and branch/commit/PR references proving the approved specification was executed.",
-      "Do not report coding work done until the PR is merged to main, unless merge is blocked or review-first was requested.",
-    ],
-    exitCriteria: [
-      "The approved specification is implemented under the loaded governing context.",
-      "Advance the Feature to stage `test` after merge, or leave it on `develop` with the residual named if merge is blocked.",
-    ],
-    outcomes: [
-      "passed → test: merged implementation matches the approved spec",
-      "blocked: merge or authority gate; name the residual",
-    ],
+    nextStageOnPass: "test",
+    produce: {
+      actionLabel: "Build",
+      persona: "Engineer",
+      purpose: "Implement the approved specification. Do not redesign. Do not expand scope.",
+      entryCriteria: [
+        "Load and implement the approved specification linked on this Feature.",
+        "Follow root AGENTS.md, CODING.md, and any subdirectory AGENTS.md for touched trees. Load DESIGN.md for UI work.",
+      ],
+      evidenceRequirements: [
+        "Implementation evidence, production-build result, impact/change-scope evidence, and branch/commit/PR references proving the approved specification was executed.",
+        "Do not report coding work done until the PR is merged to main, unless merge is blocked or review-first was requested.",
+      ],
+      exitCriteria: [
+        "The approved specification is implemented under the loaded governing context.",
+        "After merge evidence is in place, set Feature status to `needs_review`. Do not change stage.",
+        "If merge is blocked, leave status ready/in_progress and name the residual. Do not set needs_review without the artifact.",
+      ],
+      outcomes: [
+        "done → needs_review on develop: merged implementation waiting for Review",
+        "blocked: merge or authority gate; residual named; stage unchanged",
+      ],
+    },
+    review: reviewJob({
+      producePersona: "Engineer",
+      artifactName: "merged implementation evidence",
+      passOutcome: "stage test / ready",
+    }),
   },
   test: {
     stage: "test",
-    actionLabel: "Audit",
-    persona: "Engineer",
     buildAnalog: "Implementation Review",
-    purpose:
-      "Inspect the complete implementation against the approved specification and every loaded governing artifact before judging readiness.",
-    entryCriteria: [
-      "Inspect the complete implementation, affected systems, approved design, and every loaded governing artifact before judging readiness.",
-    ],
-    evidenceRequirements: [
-      "Find and report material defects, inconsistencies, technical debt, and governing-context violations in the resulting implementation.",
-      "State required cures, residual risk, and acceptance readiness.",
-    ],
-    exitCriteria: [
-      "Pass only when no material implementation or governing-context violation remains.",
-      "On pass, advance the Feature to stage `calibrate`. On changes requested, return it to `develop` with the required cures.",
-    ],
-    outcomes: [
-      "passed → calibrate: no material implementation or governing-context violation remains",
-      "changes_requested → develop: revise the implementation",
-    ],
+    nextStageOnPass: "calibrate",
+    produce: {
+      actionLabel: "Smoke",
+      persona: "Engineer",
+      purpose:
+        "Binary works-proof on stage. Confirm the stage environment built, carries the change, and that an authenticated click-path proves the Feature works. Not quality, taste, or “does it work well” — that is Calibrate.",
+      entryCriteria: [
+        "Identify the target stage environment and the change under test from the Feature and its develop evidence.",
+        "Use automated authenticated session tooling against stage. Do not substitute a passing build or lifecycle progress for a click-path.",
+      ],
+      evidenceRequirements: [
+        "Stage build/deploy evidence that the change is present.",
+        "Authenticated login + click-path evidence that the Feature path completes.",
+        "Record pass/fail only. Do not write qualitative product judgment here.",
+      ],
+      exitCriteria: [
+        "Pass the smoke only when stage is up, the change is present, and the Feature path completes.",
+        "On smoke complete, set Feature status to `needs_review`. Do not change stage.",
+        "On smoke fail, leave stage on test, status ready/in_progress, and name the broken path.",
+      ],
+      outcomes: [
+        "done → needs_review on test: smoke evidence waiting for Review",
+        "failed/blocked: path or environment residual named; stage unchanged",
+      ],
+    },
+    review: reviewJob({
+      producePersona: "Engineer",
+      artifactName: "smoke evidence",
+      passOutcome: "stage calibrate / ready",
+    }),
   },
   calibrate: {
     stage: "calibrate",
-    actionLabel: "Accept",
-    persona: "Engineer",
     buildAnalog: "Acceptance Test",
-    purpose:
-      "Confirm the merged implementation is deployed and healthy, and that the deployed result does what the approved specification requires.",
-    entryCriteria: [
-      "Load the approved specification, then confirm the merged implementation is deployed and healthy in the target environment.",
-      "Do not treat a passing build or lifecycle progress as acceptance.",
-    ],
-    evidenceRequirements: [
-      "Deployment, boot/health, target-route, screenshot, runtime-log, and safe feature-path evidence sufficient to determine whether the deployed result satisfies the approved specification.",
-    ],
-    exitCriteria: [
-      "Pass only when the deployed system boots successfully and satisfies the approved specification.",
-      "On pass, advance the Feature to stage `maintain`. Product failure returns it to `develop`. Specification failure returns it to `idea` with the spec defect named.",
-    ],
-    outcomes: [
-      "passed → maintain: deployed result satisfies the approved spec",
-      "product_failure → develop: correct the product",
-      "specification_failure → idea: correct the specification",
-    ],
+    nextStageOnPass: "maintain",
+    produce: {
+      actionLabel: "Accept",
+      persona: "Engineer",
+      purpose:
+        "Qualitative judgment: does the deployed result work *well* against the approved specification? Confirm deploy health and product fit. This is not Smoke.",
+      entryCriteria: [
+        "Load the approved specification and prior smoke evidence.",
+        "Confirm the merged implementation is deployed and healthy in the target environment.",
+        "Do not treat a passing build, smoke, or lifecycle progress as acceptance.",
+      ],
+      evidenceRequirements: [
+        "Deployment, boot/health, target-route, screenshot, runtime-log, and safe feature-path evidence sufficient to judge whether the deployed result satisfies the approved specification well.",
+      ],
+      exitCriteria: [
+        "Acceptance evidence is filed against the approved specification.",
+        "Set Feature status to `needs_review`. Do not change stage.",
+      ],
+      outcomes: [
+        "done → needs_review on calibrate: acceptance evidence waiting for Review",
+        "blocked: environment or evidence residual named; stage unchanged",
+      ],
+    },
+    review: reviewJob({
+      producePersona: "Engineer",
+      artifactName: "acceptance evidence",
+      passOutcome: "stage maintain / ready (product failure may return develop; specification failure may return idea — cite the defect)",
+    }),
   },
   maintain: {
     stage: "maintain",
-    actionLabel: "Calibrate",
-    persona: "Architect",
     buildAnalog: "Calibration",
-    purpose:
-      "Compare the approved specification, implementation outcome, and acceptance evidence to identify what the Feature taught us about the product and what should change next.",
-    entryCriteria: [
-      "Load the approved specification and acceptance evidence for this Feature.",
-    ],
-    evidenceRequirements: [
-      "A calibration note that records what the run taught us, what should change in the spec or product next, and whether documentation must be updated.",
-    ],
-    exitCriteria: [
-      "Emit exactly one decision: continue, update_docs, gate, or fail_back.",
-      "continue or update_docs → advance to `deprecate` only when the Feature is being retired; otherwise remain on `maintain` and record the calibration.",
-      "fail_back → return the Feature to `idea` to recalibrate the design.",
-    ],
-    outcomes: [
-      "continue: Feature stays in maintain; record the calibration",
-      "update_docs: record required documentation updates",
-      "gate: hold for a human calibration decision",
-      "fail_back → idea: recalibrate the design",
-    ],
+    nextStageOnPass: null,
+    produce: {
+      actionLabel: "Calibrate",
+      persona: "Architect",
+      purpose:
+        "Compare the approved specification, implementation outcome, and acceptance evidence to identify what the Feature taught us about the product and what should change next.",
+      entryCriteria: [
+        "Load the approved specification and acceptance evidence for this Feature.",
+      ],
+      evidenceRequirements: [
+        "A calibration note that records what the run taught us, what should change in the spec or product next, and whether documentation must be updated.",
+      ],
+      exitCriteria: [
+        "Emit exactly one decision in the note: continue, update_docs, gate, fail_back, or retire.",
+        "Set Feature status to `needs_review`. Do not change stage in Produce.",
+      ],
+      outcomes: [
+        "done → needs_review on maintain: calibration note waiting for Review",
+        "blocked: missing evidence; residual named",
+      ],
+    },
+    review: {
+      actionLabel: "Review",
+      persona: "Engineer",
+      purpose:
+        "Judge the calibration note against governing standards and the Feature's evidence. Do not rewrite the calibration.",
+      entryCriteria: [
+        "Load the calibration note and the Feature's linked specification and acceptance evidence.",
+        "Do not perform fresh product discovery beyond what the note claims.",
+      ],
+      evidenceRequirements: [
+        "For each rejection, cite the exact note statement and the governing standard or evidence gap it violates.",
+      ],
+      exitCriteria: [
+        "On pass with continue/update_docs: leave stage on `maintain`, set status to ready, and record the calibration.",
+        "On pass with retire: advance stage to `deprecate` (status resets to ready).",
+        "On pass with fail_back: return stage to `idea` with the design defect named.",
+        "On fail: same stage `maintain`, status ready, required revision named on the note.",
+      ],
+      outcomes: [
+        "passed + continue|update_docs → maintain / ready",
+        "passed + retire → deprecate / ready",
+        "passed + fail_back → idea / ready",
+        "changes_requested → maintain / ready",
+      ],
+    },
   },
   deprecate: {
     stage: "deprecate",
-    actionLabel: "Document",
-    persona: "Engineer",
     buildAnalog: "Documentation",
-    purpose:
-      "Record the implemented truth, linked evidence, decisions, handoff, and any remaining gates so the Feature can be retired without losing what it taught.",
-    entryCriteria: [
-      "Load the Feature, its specification, and the calibration note.",
-    ],
-    evidenceRequirements: [
-      "Durable final documentation that records the implemented truth, linked evidence, decisions, handoff, and any remaining gates under the loaded governing context.",
-    ],
-    exitCriteria: [
-      "The Feature's terminal documentation is filed and linked. Do not delete evidence.",
-    ],
-    outcomes: ["passed: Feature documentation is complete and linked"],
+    nextStageOnPass: null,
+    produce: {
+      actionLabel: "Document",
+      persona: "Engineer",
+      purpose:
+        "Record the implemented truth, linked evidence, decisions, handoff, and any remaining gates so the Feature can be retired without losing what it taught.",
+      entryCriteria: [
+        "Load the Feature, its specification, and the calibration note.",
+      ],
+      evidenceRequirements: [
+        "Durable final documentation that records the implemented truth, linked evidence, decisions, handoff, and any remaining gates under the loaded governing context.",
+      ],
+      exitCriteria: [
+        "Terminal documentation is filed and linked. Do not delete evidence.",
+        "Set Feature status to `needs_review`. Do not change stage.",
+      ],
+      outcomes: [
+        "done → needs_review on deprecate: terminal docs waiting for Review",
+        "blocked: missing evidence; residual named",
+      ],
+    },
+    review: reviewJob({
+      producePersona: "Engineer",
+      artifactName: "terminal documentation",
+      passOutcome: "stay on deprecate / ready (retired)",
+    }),
   },
 };
 
@@ -211,10 +342,23 @@ export function formatFeatureStage(stage: FeatureStage): string {
   return stage.charAt(0).toUpperCase() + stage.slice(1);
 }
 
+/** Status chooses the job. needs_review → Review; otherwise Produce. */
+export function resolveFeaturePipelineJob(status: FeatureStatus): FeaturePipelineJob {
+  return status === "needs_review" ? "review" : "produce";
+}
+
+export function getFeatureJobContract(
+  stage: FeatureStage,
+  job: FeaturePipelineJob,
+): FeaturePipelineJobContract {
+  return FEATURE_PIPELINE[stage][job];
+}
+
 export interface FeatureLaunchContext {
   id: string;
   summary: string;
   stage: FeatureStage;
+  status?: FeatureStatus;
   productName?: string;
   productId: number;
   ownerPersonId?: string;
@@ -224,10 +368,12 @@ export interface FeatureLaunchContext {
 
 /** Data only. The Feature as the session can resolve it. */
 export function composeFeatureContext(feature: FeatureLaunchContext): string {
+  const status = feature.status ?? "ready";
   const parts = [
     `Feature: **${feature.summary}**`,
     `Reference: @feature:${feature.id}`,
     `Current stage: ${feature.stage}`,
+    `Current status: ${status}`,
     `Product: ${feature.productName ?? feature.productId}`,
   ];
   if (feature.ownerPersonId) parts.push(`Owner: @person:${feature.ownerPersonId}`);
@@ -238,18 +384,25 @@ export function composeFeatureContext(feature: FeatureLaunchContext): string {
   return parts.join("\n");
 }
 
-/** Procedure for one assigned stage. Shared by the Skill body and the launcher. */
-export function composeFeatureStageProcess(stage: FeatureStage): string {
-  const contract = FEATURE_PIPELINE[stage];
+/** Procedure for one assigned (stage, job). Shared by the Skill body and the launcher. */
+export function composeFeatureJobProcess(stage: FeatureStage, job: FeaturePipelineJob): string {
+  const room = FEATURE_PIPELINE[stage];
+  const contract = room[job];
+  const hardRule =
+    job === "produce"
+      ? "Produce never writes `stage`. After the artifact is in place, set status to `needs_review` only. Blocked work stays ready/in_progress with the residual named."
+      : "Review never redoes Produce. On pass, write the stage transition this room requires (status resets to ready). On fail, same stage and status ready with the defect named on the artifact.";
+
   return [
-    `# ${contract.actionLabel} — ${formatFeatureStage(stage)}`,
+    `# ${contract.actionLabel} — ${formatFeatureStage(stage)} ${job === "produce" ? "Produce" : "Review"}`,
     "",
-    `Build analog: ${contract.buildAnalog}.`,
+    `Room: ${formatFeatureStage(stage)}. Job: ${job}. Seat: ${contract.persona}.`,
+    `Build analog: ${room.buildAnalog}.`,
     "",
     "## Purpose",
     contract.purpose,
     "",
-    "Work adversarially against this purpose. Do not let completed prior work, a passing build, or lifecycle progress substitute for the judgment this stage exists to make.",
+    "Work adversarially against this purpose. Do not let completed prior work, a passing build, or lifecycle progress substitute for the judgment this job exists to make.",
     "",
     "## Before Starting",
     ...contract.entryCriteria.map((line) => `- ${line}`),
@@ -263,39 +416,68 @@ export function composeFeatureStageProcess(stage: FeatureStage): string {
     "## Outcomes",
     ...contract.outcomes.map((line) => `- ${line}`),
     "",
-    "Execute only this assigned stage. Update the Feature through the platforms Feature actions when the stage's exit criteria require a stage or spec change. Ask a clarifying question only when a consequential choice remains.",
+    hardRule,
+    "",
+    "Execute only this assigned job. Update the Feature through the platforms Feature actions when this job's exit criteria require a status, stage, description, or specPageId change. Ask a clarifying question only when a consequential choice remains.",
   ].join("\n");
 }
 
-/** Interactive first message: Feature context + the assigned stage contract. */
+/** @deprecated Use composeFeatureJobProcess(stage, job). */
+export function composeFeatureStageProcess(stage: FeatureStage): string {
+  return composeFeatureJobProcess(stage, "produce");
+}
+
+/** Interactive first message: Feature context + the assigned job contract. */
 export function composeFeatureLaunchMessage(
   feature: FeatureLaunchContext,
-  stage: FeatureStage = feature.stage,
+  job: FeaturePipelineJob = resolveFeaturePipelineJob(feature.status ?? "ready"),
 ): string {
+  const stage = feature.stage;
+  const contract = getFeatureJobContract(stage, job);
   return [
-    `Run the ${FEATURE_PIPELINE[stage].actionLabel} stage of the feature-pipeline Skill for this Feature.`,
+    `Run the ${contract.actionLabel} ${job} job of the feature-pipeline Skill for this Feature.`,
     "",
-    composeFeatureContext(feature),
+    composeFeatureContext({ ...feature, status: feature.status ?? "ready" }),
     "",
-    composeFeatureStageProcess(stage),
+    `Assigned job: ${job}`,
+    `Assigned stage: ${stage}`,
+    "",
+    composeFeatureJobProcess(stage, job),
   ].join("\n");
 }
 
-/** Full Skill process: every stage contract, assigned at launch by stage key. */
+/** Full Skill process: every stage's produce and review jobs. */
 export function composeFeaturePipelineSkillProcess(): string {
-  const stages = FEATURE_STAGES.map((stage) => composeFeatureStageProcess(stage)).join("\n\n---\n\n");
-  return `You are running one assigned stage of the Feature pipeline.
+  const body = FEATURE_STAGES.map((stage) => {
+    return [
+      composeFeatureJobProcess(stage, "produce"),
+      "",
+      "---",
+      "",
+      composeFeatureJobProcess(stage, "review"),
+    ].join("\n");
+  }).join("\n\n====\n\n");
 
-The first message names the Feature (\`@feature:\`) and the assigned stage. Execute only that stage. Do not start a Build workflow; the Feature row owns this launch. Do not invent adjacent Features or widen the request.
+  return `You are running one assigned job of the Feature pipeline.
 
-The pipeline is modeled on Build workflow v1 (Design → Design Review → Implement → Implementation Review → Acceptance Test → Calibration → Documentation), mapped onto Feature stages idea → spec → develop → test → calibrate → maintain → deprecate.
+The first message names the Feature (\`@feature:\`), the stage (room), and the job (produce | review). Execute only that job. Do not start a Build workflow; the Feature row owns this launch. Do not invent adjacent Features or widen the request.
 
-${stages}
+## Model
+- **Stage is the room** — idea, spec, develop, test, calibrate, maintain, deprecate.
+- **Status is the work in the room** — ready, in_progress, needs_review.
+- **Produce** makes the room's artifact and sets \`needs_review\`. Produce never advances stage.
+- **Review** is the door check. Opposite seat of Produce. Only Review-pass advances stage (status resets to ready). Review-fail stays in the room with status ready.
+
+## Status machine
+create → idea/ready · launch Produce → in_progress · Produce done + artifact → needs_review · Review pass → next stage/ready · Review fail → same stage/ready · any stage change → ready
+
+${body}
 
 ## Hard rules
 - Procedure lives in this Skill / shared contract. Do not take task recipes from the Feature row.
-- Context is the Feature. Load @feature, its spec page, Product context artifacts, and repository evidence as the stage requires.
-- Personas: Architect for idea, spec, and maintain. Engineer for develop, test, calibrate, and deprecate.
+- Context is the Feature. Load @feature, its status, its spec page, Product context artifacts, and repository evidence as the job requires.
+- Personas: Visionary produces idea. Architect produces spec and maintain. Engineer produces develop, test (Smoke), calibrate, and deprecate. Review is always the opposite seat (Visionary/Architect → Engineer; Engineer → Architect).
+- Test Produce is Smoke: binary works-proof on stage (build present, change present, authenticated click-path). Qualitative judgment is Calibrate/Accept only.
 - Never merge to live or publish production. Promotion remains independently authorized.
 `;
 }

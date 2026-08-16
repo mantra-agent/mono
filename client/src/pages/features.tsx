@@ -22,11 +22,12 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
-  FEATURE_PIPELINE,
   FEATURE_STAGES,
   FEATURE_STATUSES,
   composeFeatureLaunchMessage,
   formatFeatureStage,
+  getFeatureJobContract,
+  resolveFeaturePipelineJob,
   type FeatureStage,
   type FeatureStatus,
 } from "@shared/feature-pipeline";
@@ -419,34 +420,36 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
       menuContent={(
         <>
           {(() => {
-            // One next-stage action only — Idea→Spec, Spec→Review, Develop→Build, etc.
-            const contract = FEATURE_PIPELINE[feature.stage];
-            const pending =
-              launch.isPending && launch.variables?.pendingKey === `feature-${feature.id}-${feature.stage}`;
+            // Status chooses the job: needs_review → Review; otherwise Produce for this stage.
+            const job = resolveFeaturePipelineJob(feature.status);
+            const contract = getFeatureJobContract(feature.stage, job);
+            const pendingKey = `feature-${feature.id}-${feature.stage}-${job}`;
+            const pending = launch.isPending && launch.variables?.pendingKey === pendingKey;
             return (
               <DropdownMenuItem
                 disabled={launch.isPending}
                 onSelect={(event) => {
                   event.preventDefault();
                   launch.mutate({
-                    pendingKey: `feature-${feature.id}-${feature.stage}`,
+                    pendingKey,
                     title: `${contract.actionLabel}: ${feature.summary}`.slice(0, 80),
                     personaName: contract.persona,
                     message: composeFeatureLaunchMessage({
                       id: feature.id,
                       summary: feature.summary,
                       stage: feature.stage,
+                      status: feature.status,
                       productName: feature.product_name,
                       productId: feature.product_id,
                       ownerPersonId: feature.owner_person_id,
                       specPageId: feature.spec_page_id,
                       description: feature.description,
-                    }),
-                    clientTurnSuffix: `feature-${feature.id}-${feature.stage}`,
+                    }, job),
+                    clientTurnSuffix: pendingKey,
                     errorTitle: `Could not start ${contract.actionLabel.toLowerCase()} session`,
                   });
                 }}
-                data-testid={`button-feature-launch-${feature.stage}-${feature.id}`}
+                data-testid={`button-feature-launch-${feature.stage}-${job}-${feature.id}`}
               >
                 {pending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <PenLine className="mr-2 h-3.5 w-3.5" />}
                 {contract.actionLabel}
