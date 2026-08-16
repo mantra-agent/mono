@@ -86,7 +86,7 @@ export function ReferenceText({
   referenceSurface = "chat-inline",
 }: {
   content: string;
-  markdownComponents: Record<string, any>;
+  markdownComponents?: Record<string, any>;
   referenceSurface?: ReferenceSurface;
 }) {
   const normalizedContent = unwrapCodeWrappedReferenceTokens(normalizeLibraryPageLinks(content));
@@ -96,9 +96,11 @@ export function ReferenceText({
   // Stable component overrides — the img function reference must not change
   // between renders so React keeps ReferenceChip instances mounted, allowing
   // the async useReferenceLabel hook to resolve names from the server.
+  // markdownComponents is optional: Features expand and other prose surfaces
+  // render references without a host override map.
   const refComponents = useMemo(() => ({
-    ...markdownComponents,
-    img: createRefImg(markdownComponents.img, referenceSurface),
+    ...(markdownComponents ?? {}),
+    img: createRefImg(markdownComponents?.img, referenceSurface),
   }), [markdownComponents, referenceSurface]);
 
   if (!hasReferences) {
