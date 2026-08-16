@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { StatusDot, DefaultSyncDialog, useDefaultSync, buildDiffRows, type PendingSync, type ApplyDiffRow } from "@/components/lattice-controls";
+import { StatusDot, DefaultSyncDialog, useDefaultSync, buildDiffRows, computeLatticeCell, type PendingSync, type ApplyDiffRow } from "@/components/lattice-controls";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { resolvePersonaIcon, AVAILABLE_ICONS } from "@/lib/persona-icons";
@@ -257,17 +257,19 @@ function buildRevertField(persona: Persona, field: LocalField): PendingSync {
 }
 
 function PersonaActionsMenu({
-  onApplyAll,
-  onRevertAll,
-  onKeepMine,
-  onUseUpdatedDefault,
+  onRevert,
+  onUpdate,
+  onMergeKeepMine,
+  onMergeTakeTheirs,
+  onPublish,
   showAdvancedFields,
   onToggleAdvancedFields,
 }: {
-  onApplyAll?: () => void;
-  onRevertAll?: () => void;
-  onKeepMine?: () => void;
-  onUseUpdatedDefault?: () => void;
+  onRevert?: () => void;
+  onUpdate?: () => void;
+  onMergeKeepMine?: () => void;
+  onMergeTakeTheirs?: () => void;
+  onPublish?: () => void;
   showAdvancedFields: boolean;
   onToggleAdvancedFields: () => void;
 }) {
@@ -285,10 +287,11 @@ function PersonaActionsMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
-        {onApplyAll && <DropdownMenuItem onSelect={onApplyAll}>Apply to Default</DropdownMenuItem>}
-        {onRevertAll && <DropdownMenuItem onSelect={onRevertAll}>Revert to Default</DropdownMenuItem>}
-        {onKeepMine && <DropdownMenuItem onSelect={onKeepMine}>Keep Mine</DropdownMenuItem>}
-        {onUseUpdatedDefault && <DropdownMenuItem onSelect={onUseUpdatedDefault}>Use Updated Default</DropdownMenuItem>}
+        {onRevert && <DropdownMenuItem onSelect={onRevert}>Revert</DropdownMenuItem>}
+        {onUpdate && <DropdownMenuItem onSelect={onUpdate}>Update</DropdownMenuItem>}
+        {onMergeKeepMine && <DropdownMenuItem onSelect={onMergeKeepMine}>Merge · Keep Mine</DropdownMenuItem>}
+        {onMergeTakeTheirs && <DropdownMenuItem onSelect={onMergeTakeTheirs}>Merge · Take Theirs</DropdownMenuItem>}
+        {onPublish && <DropdownMenuItem onSelect={onPublish}>Publish</DropdownMenuItem>}
         <DropdownMenuItem
           onSelect={(event) => {
             event.preventDefault();
@@ -715,9 +718,14 @@ function PersonaTreeItem({
     setDraft(draftFromPersona(persona));
   }, [persona]);
   const sync = useDefaultSync(onRefresh);
-  const showApply = canApply && resolveApplyTargetId(persona) != null;
-  const showRevert = !persona.isSystem && personaBaseline(persona) != null;
-  const showKeepMine = Boolean(persona.updateAvailable);
+  // One cell, computed once: two booleans → state → its move(s) + admin Publish.
+  const canPublish = canApply && resolveApplyTargetId(persona) != null;
+  const canRevert = !persona.isSystem && personaBaseline(persona) != null;
+  const cell = computeLatticeCell({
+    localChanged: (persona.changedFields?.length ?? 0) > 0,
+    defaultAdvanced: Boolean(persona.updateAvailable),
+    isAdmin: canPublish,
+  });
   const collapsedDescription = draft.description.trim();
   const personaAction = useMutation({
     mutationFn: async ({ action }: { action: "keep-mine" | "use-updated-default" }) => {
@@ -756,10 +764,11 @@ function PersonaTreeItem({
           </button>
         </CollapsibleTrigger>
         <PersonaActionsMenu
-          onApplyAll={showApply ? () => sync.request(() => buildApplyAll(persona, draft)) : undefined}
-          onRevertAll={showRevert ? () => sync.request(() => buildRevertAll(persona)) : undefined}
-          onKeepMine={showKeepMine ? () => personaAction.mutate({ action: "keep-mine" }) : undefined}
-          onUseUpdatedDefault={showKeepMine ? () => personaAction.mutate({ action: "use-updated-default" }) : undefined}
+          onRevert={cell.showRevert && canRevert ? () => sync.request(() => buildRevertAll(persona)) : undefined}
+          onUpdate={cell.showUpdate ? () => personaAction.mutate({ action: "use-updated-default" }) : undefined}
+          onMergeKeepMine={cell.showMerge ? () => personaAction.mutate({ action: "keep-mine" }) : undefined}
+          onMergeTakeTheirs={cell.showMerge ? () => personaAction.mutate({ action: "use-updated-default" }) : undefined}
+          onPublish={cell.showPublish ? () => sync.request(() => buildApplyAll(persona, draft)) : undefined}
           showAdvancedFields={showAdvancedFields}
           onToggleAdvancedFields={() => setShowAdvancedFields((current) => !current)}
         />
@@ -778,8 +787,8 @@ function PersonaTreeItem({
             draft={draft}
             onChange={setDraft}
             onCommit={(next) => onUpdate(payloadFromDraft(next))}
-            onApplyField={showApply ? (field) => sync.request(() => buildApplyField(persona, draft, field)) : undefined}
-            onRevertField={showRevert ? (field) => sync.request(() => buildRevertField(persona, field)) : undefined}
+            onApplyField={canPublish ? (field) => sync.request(() => buildApplyField(persona, draft, field)) : undefined}
+            onRevertField={canRevert ? (field) => sync.request(() => buildRevertField(persona, field)) : undefined}
             showAdvancedFields={showAdvancedFields}
           />
         </div>
@@ -890,7 +899,7 @@ function PlatformPersonaItem({ persona, canApply, onPublished }: { persona: Pers
           </button>
         </CollapsibleTrigger>
         <PersonaActionsMenu
-          onApplyAll={showApply ? () => sync.request(() => buildApplyAll(persona, draft)) : undefined}
+          onPublish={showApply ? () => sync.request(() => buildApplyAll(persona, draft)) : undefined}
           showAdvancedFields={showAdvancedFields}
           onToggleAdvancedFields={() => setShowAdvancedFields((current) => !current)}
         />

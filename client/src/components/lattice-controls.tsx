@@ -31,6 +31,63 @@ export interface ApplyDiffRow {
 
 export type DefaultSyncMode = "apply" | "revert";
 
+/**
+ * The single sync cell. Two booleans measured against the last-synced baseline
+ * decide one state, and the state decides the move(s). Everything a catalog row
+ * may offer is derived here so neither page renders the union of all actions.
+ *
+ * - `localChanged`   = local ≠ base
+ * - `defaultAdvanced` = currentDefault ≠ base
+ *
+ * | localChanged | defaultAdvanced | state         | moves                          |
+ * | ------------ | --------------- | ------------- | ------------------------------ |
+ * | —            | —               | following     | —                              |
+ * | ✓            | —               | customized    | Revert                         |
+ * | —            | ✓               | update-waiting| Update                         |
+ * | ✓            | ✓               | diverged      | Merge → Keep Mine · Take Theirs |
+ *
+ * Revert and Update are the same operation (`local := currentDefault`), two
+ * labels for legibility. Merge is the only fork; both directions write local.
+ * Publish (`currentDefault := local`) is the lone upstream write, so it is
+ * appended only when an admin has local work to push (`isAdmin && localChanged`),
+ * i.e. Customized and Diverged only.
+ */
+export type LatticeSyncState = "following" | "customized" | "update-waiting" | "diverged";
+
+export interface LatticeCell {
+  state: LatticeSyncState;
+  /** Customized: adopt the default (`local := currentDefault`). */
+  showRevert: boolean;
+  /** Update waiting: adopt the advanced default (`local := currentDefault`). */
+  showUpdate: boolean;
+  /** Diverged: the Keep Mine / Take Theirs fork, both writing local. */
+  showMerge: boolean;
+  /** Admin upstream write (`currentDefault := local`), when local has work to push. */
+  showPublish: boolean;
+}
+
+export function computeLatticeCell(input: {
+  localChanged: boolean;
+  defaultAdvanced: boolean;
+  isAdmin: boolean;
+}): LatticeCell {
+  const { localChanged, defaultAdvanced, isAdmin } = input;
+  const state: LatticeSyncState = localChanged
+    ? defaultAdvanced
+      ? "diverged"
+      : "customized"
+    : defaultAdvanced
+      ? "update-waiting"
+      : "following";
+  return {
+    state,
+    showRevert: state === "customized",
+    showUpdate: state === "update-waiting",
+    showMerge: state === "diverged",
+    showPublish: isAdmin && localChanged,
+  };
+}
+
 export interface PendingSync {
   mode: DefaultSyncMode;
   title: string;
