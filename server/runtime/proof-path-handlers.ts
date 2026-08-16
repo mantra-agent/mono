@@ -230,11 +230,32 @@ async function authorizeTimerSkill(principal: Principal, input: TimerSkillInput)
   requireUserPrincipal(principal);
   const { timerStorage } = await import("../file-storage");
   const timer = await timerStorage.getByIdOrName(input.timerId);
+  // SkillTimerHandler may resolve a UUID skillId to the Skill name before
+  // enqueue. Accept either the stored skillId or its resolved Skill name so
+  // authorize cannot thrash on the UUID→name rewrite.
+  let skillMatches = Boolean(timer && timer.skillId === input.skillId);
+  if (!skillMatches && timer?.skillId) {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (UUID_RE.test(timer.skillId) || UUID_RE.test(input.skillId)) {
+      try {
+        const { storage } = await import("../storage");
+        const stored = await storage.getSkill(timer.skillId);
+        const requested = await storage.getSkill(input.skillId);
+        skillMatches = Boolean(
+          (stored && (stored.id === input.skillId || stored.name === input.skillId))
+          || (requested && (requested.id === timer.skillId || requested.name === timer.skillId))
+          || (stored && requested && stored.id === requested.id),
+        );
+      } catch {
+        skillMatches = false;
+      }
+    }
+  }
   const allowed = Boolean(
     timer
     && timer.enabled
     && timer.type === "skill"
-    && timer.skillId === input.skillId
+    && skillMatches
     && timer.ownerUserId === principal.userId
     && timer.accountId === principal.accountId,
   );

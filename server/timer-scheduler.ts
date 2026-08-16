@@ -1011,7 +1011,26 @@ class TimerScheduler {
           : { requestedAt: now },
     };
 
-    const executionPrincipal = await this.resolveExecutionPrincipal(timer);
+    let executionPrincipal: Principal;
+    try {
+      executionPrincipal = await this.resolveExecutionPrincipal(timer);
+    } catch (error: unknown) {
+      const errorCode =
+        error && typeof error === "object" && "code" in error && typeof (error as { code?: unknown }).code === "string"
+          ? String((error as { code: string }).code)
+          : undefined;
+      // Producer skip: inactive/archived owners never claim a run row and never
+      // project TIMER_HANDLER_FAILED. The schedule filter should already drop
+      // them; this is the race-safe second fence.
+      if (errorCode === "TIMER_OWNER_INACTIVE") {
+        log.debug(
+          `skipping timer "${timer.name}" — owner account inactive ` +
+            `timerId=${timerId} scheduleId=${scheduleId}`,
+        );
+        return null;
+      }
+      throw error;
+    }
     // Claim is the insert. Lost races return false and must not run the handler.
     const claimed = await runWithPrincipal(executionPrincipal, async () =>
       withQueryAttributionAsync("timer-scheduler", () =>
@@ -1055,6 +1074,10 @@ class TimerScheduler {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorStack = error instanceof Error ? error.stack : undefined;
         const fullError = errorStack || errorMessage;
+        const errorCode =
+          error && typeof error === "object" && "code" in error && typeof (error as { code?: unknown }).code === "string"
+            ? String((error as { code: string }).code)
+            : undefined;
         const handlerResult: TimerHandlerResult =
           errorMessage === "admission_timeout"
             ? {
@@ -1062,7 +1085,13 @@ class TimerScheduler {
                 reason: "admission_timeout",
                 output: { error: "admission_timeout: another autonomous run is active" },
               }
-            : { outcome: "failed", error: fullError };
+            : errorCode === "TIMER_OWNER_INACTIVE"
+              ? {
+                  outcome: "skipped",
+                  reason: "owner_account_inactive",
+                  output: { error: errorMessage },
+                }
+              : { outcome: "failed", error: fullError };
         await this.finalizeTimerRun(timer, run, now, handlerResult);
       }
     });
@@ -1109,11 +1138,20 @@ class TimerScheduler {
     }
     const user = await storage.getUser(timer.ownerUserId);
     if (!user) throw new Error(`Timer owner user missing: ${timer.ownerUserId}`);
+    // Active foundation only. Suspended/archived/orphan owners are a producer
+    // skip — never mint a principal that will fail Skill Runtime authorize and
+    // flood TIMER_HANDLER_FAILED.
     const foundation = await tryResolveUserIdentityFoundation(user.id);
+    if (!foundation || foundation.accountId !== timer.accountId) {
+      throw Object.assign(
+        new Error(`Timer owner account is not active: ${timer.ownerUserId}`),
+        { code: "TIMER_OWNER_INACTIVE" },
+      );
+    }
     const principal = createUserPrincipalFromUser(
       user,
       timer.accountId,
-      foundation?.accountId === timer.accountId ? foundation.instanceId : null,
+      foundation.instanceId,
     );
     principal.permissions = await getUserEffectivePermissions(user.id);
     return principal;
