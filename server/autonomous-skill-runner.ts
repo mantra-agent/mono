@@ -382,6 +382,32 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
     // Nightly graph maintenance is non-urgent and must yield to foreground work.
     admissionTier: "background",
   },
+  // Work-dependency consumers. `world_model.active_work.dependencies` is a
+  // world-only spine section, so these full-context skills must inject it
+  // explicitly to receive the shared blocked_by resolver projection
+  // (resolveWorkDependencyContext) rather than reconstruct dependency state.
+  "autonomy": {
+    skillId: "autonomy",
+    label: "Autonomy",
+    callType: "full",
+    includeSections: ["world_model.active_work.dependencies"],
+    activity: ACTIVITY_WORK,
+    temperature: 0.3,
+    timeoutMs: 20 * 60 * 1000,
+    sessionType: "autonomous",
+    admissionTier: "background",
+  },
+  "streamline": {
+    skillId: "streamline",
+    label: "Streamline",
+    callType: "full",
+    includeSections: ["world_model.active_work.dependencies"],
+    activity: ACTIVITY_THINKING,
+    temperature: 0.4,
+    timeoutMs: 15 * 60 * 1000,
+    sessionType: "autonomous",
+    admissionTier: "background",
+  },
 };
 
 export interface AutonomousRunResult {
