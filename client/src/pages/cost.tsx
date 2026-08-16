@@ -53,6 +53,7 @@ import { useTimezone } from "@/hooks/use-timezone";
 import { getApiCallErrorText, shouldShowApiCallResponse } from "@/lib/api-call-diagnostics";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useAuth } from "@/hooks/use-auth";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
 
@@ -713,57 +714,58 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
         </div>
       </div>
 
-      <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Cost</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-total-cost">
-              {summaryLoading ? "..." : formatCost(summary?.totalCost || 0)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
+      <div className="space-y-1">
+        <ProfileTreeRow
+          label="Total Cost"
+          icon={<DollarSign className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-total-cost"
+        >
+          <span data-testid="text-total-cost">
+            {summaryLoading ? "…" : formatCost(summary?.totalCost || 0)}
+            <span className="ml-2 text-xs text-muted-foreground">
               {reportsAllAccounts ? "All accounts" : "This account"}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">API Calls</CardTitle>
-            <Hash className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-total-calls">
-              {summaryLoading ? "..." : (summary?.totalCalls || 0)}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Input Tokens</CardTitle>
-            <Zap className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-input-tokens">
-              {summaryLoading ? "..." : formatTokens(summary?.totalInputTokens || 0)}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Output Tokens</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-output-tokens">
-              {summaryLoading ? "..." : formatTokens(summary?.totalOutputTokens || 0)}
-            </div>
-          </CardContent>
-        </Card>
+            </span>
+          </span>
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="API Calls"
+          icon={<Hash className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-total-calls"
+        >
+          <span data-testid="text-total-calls">
+            {summaryLoading ? "…" : (summary?.totalCalls || 0)}
+          </span>
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Input Tokens"
+          icon={<Zap className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-input-tokens"
+        >
+          <span data-testid="text-input-tokens">
+            {summaryLoading ? "…" : formatTokens(summary?.totalInputTokens || 0)}
+          </span>
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Output Tokens"
+          icon={<TrendingUp className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-output-tokens"
+        >
+          <span data-testid="text-output-tokens">
+            {summaryLoading ? "…" : formatTokens(summary?.totalOutputTokens || 0)}
+          </span>
+        </ProfileTreeRow>
       </div>
 
       <Card data-testid="card-cost-chart">
