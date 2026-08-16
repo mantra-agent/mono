@@ -81,7 +81,6 @@ import { useToast } from "@/hooks/use-toast";
 import {
   StatusDot,
   DefaultSyncDialog,
-  UpdateAvailableActions,
   useDefaultSync,
   buildDiffRows,
   type PendingSync,
@@ -234,16 +233,8 @@ function buildSkillRevertField(skill: SkillWithReferences, field: string): Pendi
 function SkillLatticeSection({ skill }: { skill: SkillWithReferences }) {
   const { hasPermission } = useAuth();
   const canApply = hasPermission("system:write");
-  const { toast } = useToast();
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
   const sync = useDefaultSync(refresh);
-  const latticeAction = useMutation({
-    mutationFn: async ({ action }: { action: "keep-mine" | "use-updated-default" }) => {
-      await apiRequest("POST", `/api/skills/${skill.id}/${action}`, {});
-    },
-    onSuccess: refresh,
-    onError: (err: Error) => toast({ title: "Couldn't update skill", description: err.message, variant: "destructive" }),
-  });
 
   const templateId = skillTemplateId(skill);
   const isUserCopy = skill.scope !== "global";
@@ -253,19 +244,11 @@ function SkillLatticeSection({ skill }: { skill: SkillWithReferences }) {
   const showApply = canApply && templateId != null;
   const showRevert = hasBaseline && isUserCopy;
   const drift = skill.changedFields ?? [];
-  const current = skillCurrentPayload(skill);
 
   if (!skill.updateAvailable && drift.length === 0 && !showApply && !showRevert) return null;
 
   return (
     <div className="space-y-2 rounded-md border border-border/40 bg-muted/10 p-2" data-testid={`skill-lattice-${skill.id}`}>
-      {skill.updateAvailable && (
-        <UpdateAvailableActions
-          working={latticeAction.isPending}
-          onKeepMine={() => latticeAction.mutate({ action: "keep-mine" })}
-          onUseUpdatedDefault={() => latticeAction.mutate({ action: "use-updated-default" })}
-        />
-      )}
       {drift.length > 0 && (
         <div className="space-y-0.5">
           {drift.map((field) => (
@@ -334,6 +317,16 @@ function SkillTreeRow({
   onPin: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { toast } = useToast();
+  const latticeAction = useMutation({
+    mutationFn: async ({ action }: { action: "keep-mine" | "use-updated-default" }) => {
+      await apiRequest("POST", `/api/skills/${skill.id}/${action}`, {});
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/skills"] }),
+    onError: (err: Error) => toast({ title: "Couldn't update skill", description: err.message, variant: "destructive" }),
+  });
+  const onKeepMine = () => latticeAction.mutate({ action: "keep-mine" });
+  const onUseUpdatedDefault = () => latticeAction.mutate({ action: "use-updated-default" });
 
   return (
     <div data-testid={`skill-row-${skill.id}`}>
@@ -390,6 +383,17 @@ function SkillTreeRow({
             <DropdownMenuItem onClick={() => { setMenuOpen(false); onEdit(); }} data-testid="menu-edit-skill">
               <Pencil className="h-3.5 w-3.5 mr-2" /> Edit
             </DropdownMenuItem>
+            {skill.updateAvailable && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => { setMenuOpen(false); onKeepMine(); }} data-testid="menu-keep-mine-skill">
+                  Keep Mine
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => { setMenuOpen(false); onUseUpdatedDefault(); }} data-testid="menu-use-updated-default-skill">
+                  Use Updated Default
+                </DropdownMenuItem>
+              </>
+            )}
             <DropdownMenuItem onClick={() => { setMenuOpen(false); onExport(); }} data-testid="menu-export-skill">
               <Download className="h-3.5 w-3.5 mr-2" /> Export
             </DropdownMenuItem>

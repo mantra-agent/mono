@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { StatusDot, DefaultSyncDialog, UpdateAvailableActions, useDefaultSync, buildDiffRows, type PendingSync, type ApplyDiffRow } from "@/components/lattice-controls";
+import { StatusDot, DefaultSyncDialog, useDefaultSync, buildDiffRows, type PendingSync, type ApplyDiffRow } from "@/components/lattice-controls";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { resolvePersonaIcon, AVAILABLE_ICONS } from "@/lib/persona-icons";
@@ -259,11 +259,13 @@ function buildRevertField(persona: Persona, field: LocalField): PendingSync {
 function PersonaActionsMenu({
   onApplyAll,
   onRevertAll,
+  onKeepMine,
   showAdvancedFields,
   onToggleAdvancedFields,
 }: {
   onApplyAll?: () => void;
   onRevertAll?: () => void;
+  onKeepMine?: () => void;
   showAdvancedFields: boolean;
   onToggleAdvancedFields: () => void;
 }) {
@@ -283,6 +285,7 @@ function PersonaActionsMenu({
       <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
         {onApplyAll && <DropdownMenuItem onSelect={onApplyAll}>Apply to Default</DropdownMenuItem>}
         {onRevertAll && <DropdownMenuItem onSelect={onRevertAll}>Revert to Default</DropdownMenuItem>}
+        {onKeepMine && <DropdownMenuItem onSelect={onKeepMine}>Keep Mine</DropdownMenuItem>}
         <DropdownMenuItem
           onSelect={(event) => {
             event.preventDefault();
@@ -710,7 +713,8 @@ function PersonaTreeItem({
   }, [persona]);
   const sync = useDefaultSync(onRefresh);
   const showApply = canApply && resolveApplyTargetId(persona) != null;
-  const showRevert = showApply && personaBaseline(persona) != null;
+  const showRevert = !persona.isSystem && personaBaseline(persona) != null;
+  const showKeepMine = Boolean(persona.updateAvailable);
   const collapsedDescription = draft.description.trim();
   const personaAction = useMutation({
     mutationFn: async ({ action }: { action: "keep-mine" | "use-updated-default" }) => {
@@ -738,6 +742,7 @@ function PersonaTreeItem({
           onCommit={(name) => onUpdate({ name })}
         />
         {persona.updateAvailable && <StatusDot kind="inbound" className="shrink-0" />}
+        {(persona.changedFields?.length ?? 0) > 0 && <StatusDot kind="local" className="shrink-0" />}
         {persona.isDefault && <span className="shrink-0 text-xs text-muted-foreground/70">Default</span>}
         <CollapsibleTrigger asChild>
           <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground" aria-label={open ? "Collapse persona" : "Expand persona"}>
@@ -747,6 +752,7 @@ function PersonaTreeItem({
         <PersonaActionsMenu
           onApplyAll={showApply ? () => sync.request(() => buildApplyAll(persona, draft)) : undefined}
           onRevertAll={showRevert ? () => sync.request(() => buildRevertAll(persona)) : undefined}
+          onKeepMine={showKeepMine ? () => personaAction.mutate({ action: "keep-mine" }) : undefined}
           showAdvancedFields={showAdvancedFields}
           onToggleAdvancedFields={() => setShowAdvancedFields((current) => !current)}
         />
@@ -769,13 +775,6 @@ function PersonaTreeItem({
             onRevertField={showRevert ? (field) => sync.request(() => buildRevertField(persona, field)) : undefined}
             showAdvancedFields={showAdvancedFields}
           />
-          {persona.updateAvailable && (
-            <UpdateAvailableActions
-              working={personaAction.isPending}
-              onKeepMine={() => personaAction.mutate({ action: "keep-mine" })}
-              onUseUpdatedDefault={() => personaAction.mutate({ action: "use-updated-default" })}
-            />
-          )}
         </div>
       </CollapsibleContent>
       <DefaultSyncDialog sync={sync} />
