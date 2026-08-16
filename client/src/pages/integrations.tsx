@@ -1562,41 +1562,15 @@ function OpenAISubscriptionSection() {
   const connected = statusData?.connected ?? false;
 
   return (
-    <Card data-testid="card-openai-subscription">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle className="text-base font-semibold flex items-center gap-2">
-          <Bot className="h-4 w-4" />
-          OpenAI Subscription
-        </CardTitle>
-        <Badge
-          variant={connected ? "default" : "secondary"}
-          data-testid="badge-openai-subscription-status"
-        >
-          {connected ? "Connected" : "Not Connected"}
-        </Badge>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="text-xs text-muted-foreground">
-          Connect your ChatGPT Plus, Pro, or Codex subscription to use subscription models (GPT-5.4, GPT-5.3 Codex, Codex Mini) at no per-token cost. When your subscription limit is hit, calls fail explicitly with a clear error.
-        </p>
-
-        {!canManageSystemIntegrations && (
-          <p className="text-xs text-muted-foreground italic">System integration. Visible to all users; admin-only to connect or disconnect.</p>
-        )}
-
-        {isLoading ? (
-          <Skeleton className="h-10 w-full" />
-        ) : connected ? (
-          <div className="flex items-center justify-between gap-3 p-3 rounded-md border border-primary/30 bg-primary/5">
-            <div className="flex items-center gap-2 min-w-0">
-              <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
-              <div className="min-w-0">
-                <p className="text-sm font-medium truncate" data-testid="text-openai-subscription-email">
-                  {statusData?.email || statusData?.label || "ChatGPT Account"}
-                </p>
-                <p className="text-xs text-muted-foreground">Subscription models available in tier selectors</p>
-              </div>
-            </div>
+    <div className="min-w-0" data-testid="card-openai-subscription">
+      <IntegrationTreeSection label="OpenAI Subscription" initialOpen={!connected} icon={<Bot className="h-3.5 w-3.5" />}>
+        <ProfileTreeRow label="Status" icon={connected ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground" />} hasValue showEmpty><span className={connected ? "text-active" : "text-muted-foreground"}>{isLoading ? "Loading" : connected ? "Connected" : "Not connected"}</span></ProfileTreeRow>
+        <ProfileTreeRow label="Account" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">{statusData?.email || statusData?.label || "Not connected"}</span></ProfileTreeRow>
+        {!canManageSystemIntegrations && <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">Admin only</span></ProfileTreeRow>}
+        <ProfileTreeRow label="Connection" icon={<Plug className="h-3.5 w-3.5" />} hasValue showEmpty>
+          {isLoading ? (
+            <Skeleton className="h-8 w-28" />
+          ) : connected ? (
             <Button
               variant="outline"
               size="sm"
@@ -1608,51 +1582,38 @@ function OpenAISubscriptionSection() {
               {disconnectMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
               Disconnect
             </Button>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <Button
-              variant="outline"
-              onClick={handleConnect}
-              disabled={isExchanging || !canManageSystemIntegrations}
-              title={canManageSystemIntegrations ? undefined : "Admin only"}
-              data-testid="button-connect-openai-subscription"
-            >
-              {isExchanging ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
-              {isExchanging ? "Connecting..." : "Connect ChatGPT Account"}
-            </Button>
-            {showUrlPaste && (
-              <div className="space-y-2 p-3 rounded-md border bg-muted/30">
-                <p className="text-xs text-muted-foreground">
-                  The popup will show a "can't be reached" error — that's expected. Copy the full URL from the popup's address bar and paste it below:
-                </p>
-                <div className="flex gap-2">
+          ) : (
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleConnect}
+                disabled={isExchanging || !canManageSystemIntegrations}
+                title={canManageSystemIntegrations ? undefined : "Admin only"}
+                data-testid="button-connect-openai-subscription"
+              >
+                {isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3" />}
+                {isExchanging ? "Connecting..." : "Connect ChatGPT Account"}
+              </Button>
+              {showUrlPaste && (
+                <>
                   <Input
                     value={pasteUrl}
                     onChange={(e) => setPasteUrl(e.target.value)}
                     placeholder="Paste the callback URL here..."
-                    className="text-xs"
+                    className="min-w-[14rem] flex-1 text-xs"
                     data-testid="input-oauth-callback-url"
                   />
-                  <Button
-                    size="sm"
-                    onClick={handlePasteSubmit}
-                    disabled={!pasteUrl.trim() || isExchanging}
-                    data-testid="button-submit-oauth-url"
-                  >
+                  <Button size="sm" onClick={handlePasteSubmit} disabled={!pasteUrl.trim() || isExchanging} data-testid="button-submit-oauth-url">
                     {isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit"}
                   </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        <p className="text-xs text-muted-foreground border-t pt-2">
-          Uses OAuth PKCE flow with the official Codex CLI client ID. Your credentials are encrypted and stored locally.
-        </p>
-      </CardContent>
-    </Card>
+                </>
+              )}
+            </div>
+          )}
+        </ProfileTreeRow>
+      </IntegrationTreeSection>
+    </div>
   );
 }
 
@@ -1763,27 +1724,12 @@ function GrokSubscriptionSection() {
   const connected = statusData?.connected ?? false;
 
   return (
-    <Card data-testid="card-grok-subscription">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle className="text-base font-semibold flex items-center gap-2">
-          <Bot className="h-4 w-4" />
-          Grok Subscription
-        </CardTitle>
-        <Badge
-          variant={connected ? "default" : "secondary"}
-          data-testid="badge-grok-subscription-status"
-        >
-          {connected ? "Connected" : "Not Connected"}
-        </Badge>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="text-xs text-muted-foreground">
-          Connect your SuperGrok or X Premium+ subscription to use Grok models (Grok 4.5, Grok 4.3) at no per-token cost. When the subscription is unavailable, routing falls back to your other providers.
-        </p>
-
-        {!canManageSystemIntegrations && (
-          <p className="text-xs text-muted-foreground italic">System integration. Visible to all users; admin-only to connect or disconnect.</p>
-        )}
+    <div className="min-w-0" data-testid="card-grok-subscription">
+      <IntegrationTreeSection label="Grok Subscription" initialOpen={!connected} icon={<Bot className="h-3.5 w-3.5" />}>
+        <ProfileTreeRow label="Status" icon={connected ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground" />} hasValue showEmpty><span className={connected ? "text-active" : "text-muted-foreground"}>{isLoading ? "Loading" : connected ? "Connected" : "Not connected"}</span></ProfileTreeRow>
+        <ProfileTreeRow label="Account" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">{statusData?.email || statusData?.label || "Not connected"}</span></ProfileTreeRow>
+        {!canManageSystemIntegrations && <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">Admin only</span></ProfileTreeRow>}
+        <ProfileTreeRow label="Connection" icon={<Plug className="h-3.5 w-3.5" />} hasValue showEmpty>
 
         {isLoading ? (
           <Skeleton className="h-10 w-full" />
@@ -1864,11 +1810,9 @@ function GrokSubscriptionSection() {
           </div>
         )}
 
-        <p className="text-xs text-muted-foreground border-t pt-2">
-          Uses OAuth PKCE flow with xAI's official public client. Your credentials are encrypted and stored locally.
-        </p>
-      </CardContent>
-    </Card>
+        </ProfileTreeRow>
+      </IntegrationTreeSection>
+    </div>
   );
 }
 
