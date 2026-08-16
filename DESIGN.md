@@ -437,7 +437,7 @@ TreeView is one interaction language with two compositions. Cards are not a thir
 
 **Object index** — Session Menu, Features, Scenarios, Issues. Search first. Blue `+ New Thing` next. Collapsible section labels. Compact nested rows. Hover or keyboard `…` menu. Inline expand. No split-view.
 
-**Field / detail** — Secrets, Environment SOURCE, Slack, Claude CLI, OpenAI Subscription. `ProfileDetailSection` or `IntegrationTreeSection` as the group. One `ProfileTreeRow` per field: label and optional icon on the left, value or inline input on the right. Rotate, clear, and destructive actions live in `menuContent`. Children nest with `HierarchyTreeRow`.
+**Field / detail** — Person profile, Secrets, Environment SOURCE, Slack, Claude CLI, OpenAI Subscription. `ProfileDetailSection` or `IntegrationTreeSection` as the group. One `ProfileTreeRow` per field: label and optional icon on the left, value or inline input on the right. Fields and dates edit in place; rotate, clear, and destructive actions live in `menuContent`. Children nest with `HierarchyTreeRow`. Person profile is the archetype: it is the origin of `ProfileDetailSection`/`ProfileTreeRow` and the reference implementation for in-place editable rows.
 
 Required primitives:
 
@@ -446,7 +446,7 @@ Required primitives:
 
 Do not invent a page-local list, card grid, dashboard panel, or Input+Button settings form. A leftover `Card` on a route is migration debt. Cards belong only on modal decision surfaces (`MODAL_GLASS_SURFACE_CLASS`).
 
-Canonical live references: Session Menu for object indexes; Environment SOURCE and Secrets for field rows; Claude CLI credentials for wrapping `SecretsForSection` inside a tree. The Design page Hierarchy Tree playground and Components → Edit fields demonstrate both compositions.
+Canonical live references: Session Menu for object indexes; Person profile, Environment SOURCE, and Secrets for editable field rows; Claude CLI credentials for wrapping `SecretsForSection` inside a tree. The Design page Hierarchy Tree playground and Components → Edit fields demonstrate both compositions.
 
 ### Zero states
 
