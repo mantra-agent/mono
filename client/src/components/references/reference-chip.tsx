@@ -14,6 +14,7 @@ export function ReferenceChip({
   iconClassName,
   color,
   wrapLabel = false,
+  iconOnly = false,
 }: {
   resolved: ClientResolvedReference;
   className?: string;
@@ -22,6 +23,8 @@ export function ReferenceChip({
   color?: string | null;
   /** When true, allow multi-line labels (tree/row titles). Default keeps single-line chips. */
   wrapLabel?: boolean;
+  /** Icon-only chip for dense surfaces (e.g. Schedule timer rail). Label moves to title/aria-label. */
+  iconOnly?: boolean;
 }) {
   const [, navigate] = useLocation();
   const taskModal = useOptionalTaskModal();
@@ -30,6 +33,11 @@ export function ReferenceChip({
   const sidebar = useOptionalSidebar();
   const isDegraded = resolved.status !== "resolved";
   const label = useReferenceLabel(resolved.ref.type, resolved.ref.id, resolved.label);
+  const metadataDescription =
+    typeof resolved.ref.metadata?.description === "string"
+      ? resolved.ref.metadata.description.trim()
+      : "";
+  const tooltip = resolved.description || metadataDescription || (iconOnly ? label : "") || resolved.ref.canonical;
 
   const isExternal =
     resolved.href?.startsWith("http://") || resolved.href?.startsWith("https://");
@@ -58,7 +66,8 @@ export function ReferenceChip({
   const content = (
     <span
       className={cn(
-        "mx-1 inline-flex max-w-full align-baseline items-center gap-1 text-[1em] font-medium leading-[inherit] underline-offset-4 transition-colors",
+        "inline-flex max-w-full align-baseline items-center font-medium leading-[inherit] underline-offset-4 transition-colors",
+        iconOnly ? "mx-0 gap-0" : "mx-1 gap-1 text-[1em]",
         wrapLabel ? "whitespace-normal break-words" : "whitespace-nowrap break-normal",
         isDegraded
           ? "text-muted-foreground"
@@ -68,18 +77,21 @@ export function ReferenceChip({
         className,
       )}
       style={!isDegraded && color ? { color } : undefined}
-      title={resolved.description || resolved.ref.canonical}
+      title={tooltip}
+      aria-label={iconOnly ? label : undefined}
       data-testid={`reference-${resolved.ref.type}-${resolved.ref.id}`}
     >
       <Icon className={cn("h-3.5 w-3.5 shrink-0 no-underline", iconClassName)} aria-hidden="true" strokeWidth={2} />
-      <span
-        className={cn(
-          "min-w-0 border-b border-current leading-[inherit]",
-          wrapLabel ? "whitespace-normal break-words" : "truncate",
-        )}
-      >
-        {label}
-      </span>
+      {!iconOnly && (
+        <span
+          className={cn(
+            "min-w-0 border-b border-current leading-[inherit]",
+            wrapLabel ? "whitespace-normal break-words" : "truncate",
+          )}
+        >
+          {label}
+        </span>
+      )}
     </span>
   );
 
@@ -87,8 +99,12 @@ export function ReferenceChip({
     return (
       <a
         href={resolved.href}
-        className="inline-flex max-w-full align-baseline no-underline"
+        className={cn(
+          "inline-flex max-w-full align-baseline no-underline",
+          iconOnly && "h-7 w-7 items-center justify-center rounded-md hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        )}
         onClick={handleClick}
+        aria-label={iconOnly ? label : undefined}
         {...(isExternal ? { target: "_blank", rel: "noopener noreferrer" } : {})}
       >
         {content}

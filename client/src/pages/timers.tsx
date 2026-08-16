@@ -79,7 +79,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 
 const log = createLogger("Timers");
 
@@ -925,6 +925,8 @@ function TimerEditor({
 export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
   usePageHeader({ title: "Timers", skip: !!embedded });
   const { toast } = useToast();
+  const [location, navigate] = useLocation();
+  const search = useSearch();
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TimerItem | null>(null);
@@ -935,6 +937,20 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
     queryKey: ["/api/timers"],
     refetchInterval: 10000,
   });
+
+  // Honor `/timers?timer=<id>` from Schedule (and other reference chips) by expanding that row.
+  useEffect(() => {
+    const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+    const timerId = params.get("timer")?.trim();
+    if (!timerId) return;
+    setCreating(false);
+    setOpenId(timerId);
+    if (params.has("timer")) {
+      params.delete("timer");
+      const next = params.toString();
+      navigate(next ? `${location}?${next}` : location, { replace: true });
+    }
+  }, [location, navigate, search]);
 
   const { data: allSkills = [], isLoading: skillsLoading } = useQuery<{ id: string; name: string }[]>({
     queryKey: ["/api/skills"],
