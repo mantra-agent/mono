@@ -156,8 +156,16 @@ const INVALIDATION_EVENT_MAP: Record<string, string[]> = {
     "world_model.people.partner.identity",
   ],
   "data:principles_changed": ["world_model.people.self.principles"],
-  "data:tasks_changed": ["world_model.active_work", "world_model.active_work.tasks"],
-  "data:projects_changed": ["world_model.active_work", "world_model.active_work.projects"],
+  "data:tasks_changed": [
+    "world_model.active_work",
+    "world_model.active_work.tasks",
+    "world_model.active_work.dependencies",
+  ],
+  "data:projects_changed": [
+    "world_model.active_work",
+    "world_model.active_work.projects",
+    "world_model.active_work.dependencies",
+  ],
   "data:decisions_changed": ["world_model.decisions"],
   "data:calendar_changed": ["world_model.calendar"],
   "data:sessions_changed": ["session_context"],
@@ -294,6 +302,7 @@ const sectionResolvers: Record<string, SectionResolver> = {
   "world_model.active_work": async () => "",
   "world_model.active_work.tasks": resolveActiveTasks,
   "world_model.active_work.projects": resolveActiveProjects,
+  "world_model.active_work.dependencies": resolveActiveWorkDependencies,
   "world_model.decisions": resolveOpenDecisions,
   "world_model.calendar": resolveCalendar,
   "world_model.meeting": async (request) => request.meetingContext ?? "",
@@ -1244,6 +1253,52 @@ async function resolveActiveTasks(): Promise<string> {
     return `### Tasks (${activeTasks.length})\n${lines.join("\n")}`;
   } catch {
     return "No tasks available.";
+  }
+}
+
+/**
+ * Bounded blocked_by projection for planning/selection/capacity/autonomy.
+ * Loaded only when the active_work instruction group (or explicit include) selects it.
+ * Does not invent edges or copy dependency arrays onto tasks.
+ */
+async function resolveActiveWorkDependencies(): Promise<string> {
+  try {
+    const [allTodo, allProjects] = await Promise.all([
+      fileTaskStorage.getTodoTasks(),
+      fileProjectStorage.getProjects({}),
+    ]);
+    const addresses: string[] = [];
+    for (const task of allTodo) {
+      if (task.status === "active" || task.status === "ready") {
+        addresses.push(`@task:${task.id}`);
+      }
+      if (addresses.length >= 25) break;
+    }
+    if (addresses.length < 25) {
+      for (const project of allProjects) {
+        if (project.status === "active" || project.status === "planning") {
+          addresses.push(`@project:${project.id}`);
+        }
+        if (addresses.length >= 25) break;
+      }
+    }
+    if (addresses.length === 0) return "";
+
+    const {
+      resolveWorkDependencyContext,
+      formatWorkDependencyContextMarkdown,
+    } = await import("./work-dependency-context");
+    const result = await resolveWorkDependencyContext({
+      addresses,
+      purpose: "work",
+      maxDepth: 1,
+    });
+    return formatWorkDependencyContextMarkdown(result);
+  } catch (err) {
+    log.warn(
+      `resolveActiveWorkDependencies failed: ${safeStringify(err, { maxBytes: 4 * 1024, label: "ctx.resolveActiveWorkDependencies.err" })}`,
+    );
+    return "Work dependency context temporarily unavailable.";
   }
 }
 

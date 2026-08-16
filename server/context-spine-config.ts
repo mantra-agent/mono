@@ -300,6 +300,17 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     includedIn: ["full", "world"],
   },
   {
+    id: "world_model.active_work.dependencies",
+    title: "Work Dependencies",
+    parentId: "world_model.active_work",
+    sourceType: "dynamic",
+    freshnessPolicy: "per-session",
+    priority: 3,
+    // Loaded only when active_work / planning contexts include this section —
+    // not ambient full-chat noise. Callers may also pass includeSections.
+    includedIn: ["world"],
+  },
+  {
     id: "world_model.decisions",
     title: "Open Decisions",
     parentId: "world_model",

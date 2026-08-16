@@ -41,8 +41,12 @@ export const INSTRUCTION_GROUPS: ContextInstructionGroup[] = [
     id: "active_work_context",
     title: "Active Work Context",
     flag: "context.active_work",
-    sectionIds: ["world_model.active_work", "world_model.decisions"],
-    includeWhen: "Use for planning, review, execution, and work prioritization.",
+    sectionIds: [
+      "world_model.active_work",
+      "world_model.active_work.dependencies",
+      "world_model.decisions",
+    ],
+    includeWhen: "Use for planning, review, execution, sequencing, capacity, autonomy, and work prioritization.",
   },
   {
     id: "memory_context",
