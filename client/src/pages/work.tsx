@@ -10,8 +10,8 @@ import { useVaults, type Vault } from "@/hooks/use-vaults";
 import { vaultTitleColor, MUTED_TITLE_ALPHA } from "@/lib/vault-title-color";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getInstanceName } from "@/lib/instance-config";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { InlineDatePicker } from "@/components/inline-date-picker";
@@ -1312,18 +1312,16 @@ function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null
   return (
     <div className="min-h-full min-w-0 max-w-full overflow-x-hidden bg-background px-2 py-3 @sm:px-4 @sm:py-4">
       <div className="grid min-w-0 max-w-full grid-cols-[minmax(0,1fr)] gap-3 overflow-hidden">
-        <WorkNewRow onClick={() => setShowCreate(true)} testId="button-create-project">
-          New Project
-        </WorkNewRow>
-
-        {showCreate && <CreateProjectForm onClose={() => setShowCreate(false)} />}
+        {showCreate ? (
+          <CreateProjectForm onClose={() => setShowCreate(false)} />
+        ) : (
+          <WorkNewRow onClick={() => setShowCreate(true)} testId="button-create-project">
+            New Project
+          </WorkNewRow>
+        )}
 
         {(!projects || projects.length === 0) && !showCreate && (
-          <div className="flex flex-col items-center justify-center rounded-lg border border-border/30 bg-card py-12 px-4 text-center">
-            <FolderKanban className="h-6 w-6 text-muted-foreground" />
-            <p className="mt-3 text-sm font-medium">No projects yet</p>
-            <p className="mt-1 text-xs text-muted-foreground">Create one to organize your work.</p>
-          </div>
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">No projects yet.</div>
         )}
 
         {groupedProjects.length > 0 && (
@@ -2321,66 +2319,99 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
     });
   };
 
+  const submit = () => {
+    if (!title.trim() || createMutation.isPending) return;
+    createMutation.mutate({
+      title: title.trim(),
+      priority,
+      owner,
+      dueDate: dueDate || null,
+      tags,
+    });
+  };
+
   return (
-    <Card className="p-4 space-y-3" data-testid="form-create-project">
-      <form onSubmit={handleSubmit} className="space-y-3">
+    <form onSubmit={handleSubmit} className="space-y-0.5 px-2 pb-2" data-testid="form-create-project">
+      <ProfileTreeRow
+        label="Name"
+        icon={<FolderKanban className="h-3.5 w-3.5" />}
+        hasValue
+        showEmpty
+        mobileLayout="inline"
+        testId="row-new-project-name"
+        actionContent={(
+          <button
+            type="submit"
+            disabled={!title.trim() || createMutation.isPending}
+            className="text-xs text-cta disabled:text-muted-foreground"
+            data-testid="button-save-project"
+          >
+            {createMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Create"}
+          </button>
+        )}
+      >
         <Input
           ref={titleRef}
           placeholder="Project name"
           value={title}
           onChange={e => setTitle(e.target.value)}
+          onKeyDown={event => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              submit();
+            }
+            if (event.key === "Escape") onClose();
+          }}
+          className="h-7 text-right text-xs"
           data-testid="input-project-title"
         />
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <Select value={priority} onValueChange={(v) => setPriority(v as PriorityLevel)}>
-            <SelectTrigger className="w-24 h-8 text-xs" data-testid="select-project-priority">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="high">High</SelectItem>
-              <SelectItem value="mid">Mid</SelectItem>
-              <SelectItem value="low">Low</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={owner} onValueChange={(v) => setOwner(v as "me" | "agent")}>
-            <SelectTrigger className="w-24 h-8 text-xs" data-testid="select-project-owner">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="me">Me</SelectItem>
-              <SelectItem value="agent">{getInstanceName()}</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Input
-            type="date"
-            value={dueDate}
-            onChange={e => setDueDate(e.target.value)}
-            className="w-36 h-8 text-xs"
-            data-testid="input-project-due-date"
-          />
-        </div>
-
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Priority" icon={<Flag className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-new-project-priority">
+        <Select value={priority} onValueChange={(v) => setPriority(v as PriorityLevel)}>
+          <SelectTrigger className="h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0" data-testid="select-project-priority">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="high">High</SelectItem>
+            <SelectItem value="mid">Mid</SelectItem>
+            <SelectItem value="low">Low</SelectItem>
+          </SelectContent>
+        </Select>
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Owner" icon={<User className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-new-project-owner">
+        <Select value={owner} onValueChange={(v) => setOwner(v as "me" | "agent")}>
+          <SelectTrigger className="h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0" data-testid="select-project-owner">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="me">Me</SelectItem>
+            <SelectItem value="agent">{getInstanceName()}</SelectItem>
+          </SelectContent>
+        </Select>
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Due" icon={<Calendar className="h-3.5 w-3.5" />} hasValue={Boolean(dueDate)} showEmpty mobileLayout="inline" testId="row-new-project-due">
+        <Input
+          type="date"
+          value={dueDate}
+          onChange={e => setDueDate(e.target.value)}
+          className="h-7 text-right text-xs"
+          data-testid="input-project-due-date"
+        />
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Tags" icon={<Tag className="h-3.5 w-3.5" />} hasValue={tags.length > 0} showEmpty mobileLayout="inline" testId="row-new-project-tags">
         <UniversalTagPicker
           variant="compact"
           selected={tags}
           onChange={setTags}
           placeholder="Add tags…"
           testId="input-project-tags"
-          className="min-h-8 rounded-md border border-input px-2 py-1"
         />
-
-        <div className="flex items-center justify-end gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={onClose} data-testid="button-cancel-project">
-            Cancel
-          </Button>
-          <Button type="submit" size="sm" disabled={!title.trim() || createMutation.isPending} data-testid="button-save-project">
-            {createMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Create"}
-          </Button>
-        </div>
-      </form>
-    </Card>
+      </ProfileTreeRow>
+      <div className="flex justify-end px-2 py-1">
+        <button type="button" className="text-xs text-muted-foreground" onClick={onClose} data-testid="button-cancel-project">
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
