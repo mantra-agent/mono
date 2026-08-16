@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Check, ChevronRight, Loader2, MoreHorizontal, Plus, X } from "lucide-react";
+import { Check, ChevronRight, Loader2, MoreHorizontal, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { HIERARCHY_PRIMARY_ACTION_CLASS, HIERARCHY_SECTION_HEADER_CLASS, HIERARCHY_SESSION_ROW_CLASS, HIERARCHY_TREE_STACK_CLASS } from "@/components/hierarchy-section-header";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { MarkdownContent } from "@/components/chat-shared";
-import { Card } from "@/components/ui/card";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { PROFILE_DESCRIPTION_FRAME_CLASS, PROFILE_DESCRIPTION_TEXT_CLASS } from "@/components/profile-description-style";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -828,36 +826,44 @@ function CreatePersonaForm({ onSuccess, onClose }: { onSuccess: () => void; onCl
     },
   });
   return (
-    <Card className="overflow-hidden">
-      <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between border-b border-border/20")}>
-        <span className="text-sm">New Persona</span>
-        <Button size="sm" variant="ghost" onClick={onClose} className="h-5 w-5 p-0">
-          <X className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-      <div className="space-y-2 px-2 py-2">
-        <div className="flex items-center gap-2">
-          <IconPicker value={icon} onChange={setIcon} />
-          <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Name" className="h-8 text-sm" />
-        </div>
-        <div className={PROFILE_DESCRIPTION_FRAME_CLASS}>
-          <Textarea
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            placeholder="Add description"
-            className={cn("min-h-[2.75rem] w-full resize-none border-0 bg-transparent p-0 shadow-none md:text-[14px]", PROFILE_DESCRIPTION_TEXT_CLASS)}
-          />
-        </div>
-        <div className={PROFILE_DESCRIPTION_FRAME_CLASS}>
-          <Textarea
-            value={promptOverlay}
-            onChange={(event) => setPromptOverlay(event.target.value)}
-            placeholder="Add prompt"
-            className={cn("min-h-32 w-full resize-none border-0 bg-transparent p-0 shadow-none md:text-[14px]", PROFILE_DESCRIPTION_TEXT_CLASS)}
-          />
-        </div>
+    <div className="space-y-0.5 px-2 pb-2">
+      <ProfileTreeRow
+        label="Name"
+        icon={<IconPicker value={icon} compact onChange={setIcon} />}
+        hasValue
+        showEmpty
+        mobileLayout="inline"
+        testId="row-new-persona-name"
+        actionContent={(
+          <button
+            type="button"
+            onClick={() => mutation.mutate()}
+            disabled={mutation.isPending || !name.trim()}
+            className="text-xs text-cta disabled:text-muted-foreground"
+            data-testid="button-create-persona"
+          >
+            {mutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Create"}
+          </button>
+        )}
+      >
+        <Input
+          autoFocus
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && name.trim() && !mutation.isPending) mutation.mutate();
+            if (event.key === "Escape") onClose();
+          }}
+          placeholder="Name"
+          className="h-7 text-right text-xs"
+          data-testid="input-new-persona-name"
+        />
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Thinking" hasValue showEmpty mobileLayout="inline" testId="row-new-persona-thinking">
         <Select value={semanticTier} onValueChange={(value) => setSemanticTier(value as typeof semanticTier)}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectTrigger className="h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0">
+            <SelectValue />
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="max">Max</SelectItem>
             <SelectItem value="high">High</SelectItem>
@@ -865,16 +871,32 @@ function CreatePersonaForm({ onSuccess, onClose }: { onSuccess: () => void; onCl
             <SelectItem value="fast">Fast</SelectItem>
           </SelectContent>
         </Select>
-        <Input value={expressionTags} onChange={(event) => setExpressionTags(event.target.value)} placeholder="curious, gravitas" className="h-8 text-sm" />
-        <div className="flex gap-2">
-          <Button size="sm" onClick={() => mutation.mutate()} disabled={mutation.isPending || !name}>
-            {mutation.isPending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
-            Create
-          </Button>
-          <Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button>
-        </div>
+      </ProfileTreeRow>
+      <div className={PROFILE_DESCRIPTION_FRAME_CLASS}>
+        <Textarea
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+          placeholder="Add description"
+          className={cn("min-h-[2.75rem] w-full resize-none border-0 bg-transparent p-0 shadow-none md:text-[14px]", PROFILE_DESCRIPTION_TEXT_CLASS)}
+        />
       </div>
-    </Card>
+      <div className={PROFILE_DESCRIPTION_FRAME_CLASS}>
+        <Textarea
+          value={promptOverlay}
+          onChange={(event) => setPromptOverlay(event.target.value)}
+          placeholder="Add prompt"
+          className={cn("min-h-32 w-full resize-none border-0 bg-transparent p-0 shadow-none md:text-[14px]", PROFILE_DESCRIPTION_TEXT_CLASS)}
+        />
+      </div>
+      <ProfileTreeRow label="Expressions" hasValue showEmpty mobileLayout="inline" testId="row-new-persona-expressions">
+        <Input
+          value={expressionTags}
+          onChange={(event) => setExpressionTags(event.target.value)}
+          placeholder="curious, gravitas"
+          className="h-7 text-right text-xs"
+        />
+      </ProfileTreeRow>
+    </div>
   );
 }
 
@@ -984,11 +1006,14 @@ export default function PersonasPage() {
         clearTestId="button-clear-search-personas"
         ariaLabel="Search personas"
       />
-      <button type="button" onClick={() => setCreating(true)} className={HIERARCHY_PRIMARY_ACTION_CLASS} data-testid="button-new-persona">
-        <Plus className="h-3.5 w-3.5 shrink-0" />
-        <span>New Persona</span>
-      </button>
-      {creating && <CreatePersonaForm onSuccess={refresh} onClose={() => setCreating(false)} />}
+      {creating ? (
+        <CreatePersonaForm onSuccess={refresh} onClose={() => setCreating(false)} />
+      ) : (
+        <button type="button" onClick={() => setCreating(true)} className={HIERARCHY_PRIMARY_ACTION_CLASS} data-testid="button-new-persona">
+          <Plus className="h-3.5 w-3.5 shrink-0" />
+          <span>New Persona</span>
+        </button>
+      )}
       <section>
         <h2 className={HIERARCHY_SECTION_HEADER_CLASS}>Personas</h2>
         {isLoading ? (
