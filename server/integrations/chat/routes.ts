@@ -1113,6 +1113,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         sessionType,
         pageContext,
         personaName,
+        personaId,
       } = req.body;
       const sessionKey =
         customSessionKey || `dashboard:${randomUUID().slice(0, 8)}`;
@@ -1124,7 +1125,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           : undefined;
       const safePageContext = normalizePageContext(pageContext);
       let initialPersonaId: number | null = null;
-      if (typeof personaName === "string" && personaName.trim()) {
+      if (typeof personaId === "number" && Number.isInteger(personaId) && personaId > 0) {
+        initialPersonaId = personaId;
+      } else if (typeof personaName === "string" && personaName.trim()) {
         const { personaStorage } = await import("../../file-storage/persona-storage");
         const persona = await personaStorage.getByName(personaName.trim());
         if (!persona) {

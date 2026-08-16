@@ -8,6 +8,7 @@ import {
     ACTIVITY_STRATEGY,
   } from "./job-profiles";
   import { getInstanceName } from "@shared/instance-config";
+  import { composeFeaturePipelineSkillProcess } from "@shared/feature-pipeline";
 
   export interface SkillDefault {
     name: string;
@@ -1597,5 +1598,26 @@ Track commitments through the canonical task or goal system only when Ray explic
 
 ## Safety
 This is developmental coaching, not medical or mental-health treatment. If Ray indicates imminent danger, self-harm, abuse, or severe impairment, prioritize immediate human or professional support.`,
+  },
+  {
+    name: "feature-pipeline",
+    recommendedPersona: "Architect",
+    description: "Interactive Feature-stage launcher. Runs one assigned pipeline stage (idea/spec/develop/test/calibrate/maintain/deprecate) modeled on Build workflow v1. Context is the Feature; procedure is this Skill.",
+    category: "build",
+    activity: ACTIVITY_WORK,
+    author: "system",
+    version: "1.0",
+    addToMemory: false,
+    pinnedToContext: false,
+    sessionType: "agent",
+    whenToUse: "Used when a Feature row launches its current-stage session. Do not run as a scheduled autonomous Skill.",
+    outputSpec: "The assigned stage's required evidence and Feature update. Spec writes a Library page and links specPageId. Later stages produce implementation, review, acceptance, calibration, or documentation evidence and advance the Feature only when their exit criteria say so.",
+    checklist: [
+      { check: "Executed only the assigned Feature stage named in the first message", weight: 4 },
+      { check: "Loaded the Feature (@feature) and any linked spec page before judging or writing", weight: 3 },
+      { check: "Produced the stage's required evidence without widening the Feature request", weight: 4 },
+      { check: "Updated the Feature stage or specPageId only when the assigned stage's exit criteria require it", weight: 3 },
+    ],
+    process: composeFeaturePipelineSkillProcess(),
   },
 ];
