@@ -18,7 +18,6 @@ import {
 } from "@/components/hierarchy-section-header";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -71,12 +70,6 @@ function formatUpdatedAt(value: Date | string | null | undefined) {
   return formatDistanceToNow(date, { addSuffix: true });
 }
 
-function statusClass(status: string) {
-  if (status === "active") return "border-success/40 bg-success/10 text-success";
-  if (status === "draft") return "border-info/40 bg-info/10 text-info";
-  return "border-muted-foreground/30 bg-muted text-muted-foreground";
-}
-
 function invalidatePrompt(id?: string) {
   queryClient.invalidateQueries({ queryKey: ["/api/prompt-modules"] });
   if (id) queryClient.invalidateQueries({ queryKey: ["/api/prompt-modules", id, "versions"] });
@@ -127,9 +120,6 @@ export default function PromptsPage() {
           clearTestId="button-clear-prompt-search"
           ariaLabel="Search prompts"
         />
-        <div className="px-2 py-1.5 text-xs text-muted-foreground">
-          Internal templates used by code. Not runnable skills.
-        </div>
         {isLoading ? (
           <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading prompts…</div>
         ) : groupedModules.length === 0 ? (
@@ -267,7 +257,6 @@ function PromptRow({
         <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate font-mono text-xs">{module.key}</span>
         <span className="hidden min-w-0 max-w-[12rem] truncate text-xs text-muted-foreground sm:block">{module.name}</span>
-        <Badge variant="outline" className={cn("text-[10px] capitalize", statusClass(module.status))}>{module.status}</Badge>
         <span className="shrink-0 text-xs text-muted-foreground">v{module.version}</span>
         <span className="ml-1 flex w-5 shrink-0 items-center justify-center">
           <button
