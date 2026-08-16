@@ -5,7 +5,7 @@ import type { SimpleAction, SimpleFeed, SimpleFeedItem } from "@shared/models/si
 import { createReferenceRef, type ReferenceRef } from "@shared/references";
 import type { MeetingAttendeePromotion } from "@shared/meeting-feed-items";
 import { simpleItemContainsReference, simpleItemReferenceRefs, sourceRefToReferenceRef } from "@shared/simple-references";
-import { buildSimpleDiscussMessage, simpleDiscussTitle } from "@/lib/simple-discuss";
+import { buildSimpleDiscussMessage, simpleDiscussPersonaName, simpleDiscussTitle } from "@/lib/simple-discuss";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { Button } from "@/components/ui/button";
@@ -442,7 +442,11 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
 
   const discussMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/sessions", { title: simpleDiscussTitle(item) });
+      const personaName = simpleDiscussPersonaName(item);
+      const res = await apiRequest("POST", "/api/sessions", {
+        title: simpleDiscussTitle(item),
+        ...(personaName ? { personaName } : {}),
+      });
       const session: CreatedSession = await res.json();
       await apiRequest("POST", `/api/sessions/${session.id}/messages`, { content: buildSimpleDiscussMessage(item) });
       return session;

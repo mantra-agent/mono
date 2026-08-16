@@ -130,6 +130,7 @@ function PlanArtifactRow({
     <SurfacedLibraryRow
       page={planArtifactToLibraryPage(artifact)}
       icon={<FileText className="h-3 w-3 text-muted-foreground" />}
+      personaName="Producer"
     />
   );
 }
@@ -334,12 +335,15 @@ function SurfacedLibraryRow({
   dismissing = false,
   onDismiss,
   icon,
+  personaName,
 }: {
   page: LibraryPage;
   dateLabel?: string;
   dismissing?: boolean;
   onDismiss?: () => void;
   icon?: React.ReactNode;
+  /** Optional create-time seat; plan artifacts pin Producer. */
+  personaName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -361,7 +365,10 @@ function SurfacedLibraryRow({
 
   const discussMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/sessions", { title: page.title.slice(0, 80) || "Library Item" });
+      const res = await apiRequest("POST", "/api/sessions", {
+        title: page.title.slice(0, 80) || "Library Item",
+        ...(personaName ? { personaName } : {}),
+      });
       const session: CreatedSession = await res.json();
       await apiRequest("POST", `/api/sessions/${session.id}/messages`, {
         content: [`Let's discuss this Simple item: **${page.title}**`, `Type: library_page`, `Reference: @page:${page.slug || page.id}`].join("\n"),

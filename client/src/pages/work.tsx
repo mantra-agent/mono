@@ -1098,7 +1098,10 @@ function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null
 
   const discussMutation = useMutation({
     mutationFn: async (item: DiscussableWorkItem) => {
-      const res = await apiRequest("POST", "/api/sessions", { title: item.title.trim().slice(0, 80) || item.type });
+      const res = await apiRequest("POST", "/api/sessions", {
+        title: item.title.trim().slice(0, 80) || item.type,
+        personaName: "Producer",
+      });
       const session: CreatedSession = await res.json();
       await apiRequest("POST", `/api/sessions/${session.id}/messages`, { content: buildWorkItemDiscussMessage(item) });
       return session;

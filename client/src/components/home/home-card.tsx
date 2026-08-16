@@ -8,7 +8,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useFocusSession } from "@/hooks/use-focus-session";
-import { buildSimpleDiscussMessage, simpleDiscussTitle } from "@/lib/simple-discuss";
+import { buildSimpleDiscussMessage, simpleDiscussPersonaName, simpleDiscussTitle } from "@/lib/simple-discuss";
 import { cn } from "@/lib/utils";
 
 type CreatedSession = { id: string };
@@ -28,7 +28,11 @@ export function SimpleCard({ item, meta, children }: SimpleCardProps) {
   const hasDetail = Boolean(children) || hasFallbackSourceRefs || Boolean(item.actions?.length);
   const discussMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/sessions", { title: simpleDiscussTitle(item) });
+      const personaName = simpleDiscussPersonaName(item);
+      const res = await apiRequest("POST", "/api/sessions", {
+        title: simpleDiscussTitle(item),
+        ...(personaName ? { personaName } : {}),
+      });
       const session: CreatedSession = await res.json();
       await apiRequest("POST", `/api/sessions/${session.id}/messages`, {
         content: buildSimpleDiscussMessage(item),
