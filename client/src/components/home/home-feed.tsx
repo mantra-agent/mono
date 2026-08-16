@@ -26,6 +26,7 @@ import { SimpleCheckCircle } from "./home-check-circle";
 import { SimpleTextFrame } from "./simple-text-frame";
 import { useUiInteraction } from "@/hooks/use-ui-interaction";
 import { useHomeSectionDisclosure } from "@/hooks/use-home-section-disclosure";
+import { useFocusSession } from "@/hooks/use-focus-session";
 
 export function SimpleFeedView({ feed }: { feed: SimpleFeed }) {
   const now = useMemo(() => new Date(feed.generatedAt), [feed.generatedAt]);
