@@ -75,18 +75,25 @@ export async function updateSlackMessage(credentials: SlackCredentialBundle, inp
 
 export async function getSlackChannelName(credentials: SlackCredentialBundle, channelId: string): Promise<string | null> {
   // One-ID metadata only. Never conversations.list or any workspace catalog.
-  const result = await slackMethod(credentials.botToken, "conversations.info", { channel: channelId });
+  // Slack's conversations.info endpoint is more reliable with its documented
+  // form-encoded POST shape than the generic JSON path used by chat methods.
+  const result = await slackMethod(credentials.botToken, "conversations.info", { channel: channelId }, "form");
   const channel = result.channel;
   if (!channel || typeof channel !== "object") return null;
   const name = (channel as Record<string, unknown>).name;
   return typeof name === "string" && name.trim() ? name.trim() : null;
 }
 
-async function slackMethod(token: string, method: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function slackMethod(token: string, method: string, body: Record<string, unknown>, encoding: "json" | "form" = "json"): Promise<Record<string, unknown>> {
   const response = await providerFetch(`${SLACK_API_ORIGIN}/${method}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json; charset=utf-8" },
-    body: JSON.stringify(body),
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": encoding === "form" ? "application/x-www-form-urlencoded" : "application/json; charset=utf-8",
+    },
+    body: encoding === "form" ? new URLSearchParams(
+      Object.entries(body).map(([key, value]) => [key, String(value)]),
+    ).toString() : JSON.stringify(body),
     timeoutMs: PROVIDER_DEADLINE_MS,
   });
   const raw = await readBoundedProviderBody(response, 16_384);
