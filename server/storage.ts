@@ -959,6 +959,38 @@ export class HybridStorage implements IStorage {
   }
 
   /**
+   * When a copy's payload already equals the published default, it is
+   * following — flip only updateState + lineage. Never rewrite matching
+   * content. Real edits stay customized / update_available / conflict.
+   */
+  private async adoptMatchingSkillCopies(
+    tx: DbTransaction,
+    templateId: string,
+    publishedPayload: SkillRevisionPayload,
+    platformRevisionId: string,
+  ): Promise<number> {
+    const copies = await tx.select().from(skills).where(and(
+      eq(skills.templateSkillId, templateId),
+      sql`${skills.updateState} <> 'following'`,
+    ));
+    const publishedHash = skillPayloadHash(publishedPayload);
+    let adopted = 0;
+    for (const copy of copies) {
+      const copyHash = skillPayloadHash(await this.buildSkillPayloadTx(tx, copy));
+      if (copyHash !== publishedHash) continue;
+      await tx.update(skills).set({
+        updateState: "following",
+        customized: false,
+        baseRevisionId: platformRevisionId,
+        currentRevisionId: platformRevisionId,
+        updatedAt: new Date(),
+      }).where(eq(skills.id, copy.id));
+      adopted++;
+    }
+    return adopted;
+  }
+
+  /**
    * Whole-field replace a skill row's payload from a revision payload, then set
    * lineage/state. Whole-field only — never an AI merge of process text. Also
    * replaces the row's references so the shadow matches the payload exactly.
@@ -1221,6 +1253,7 @@ export class HybridStorage implements IStorage {
           eq(skills.templateSkillId, id),
           sql`${skills.updateState} <> 'following'`,
         ));
+      await this.adoptMatchingSkillCopies(tx, id, payload, revisionId);
       log.info("Platform Skill revision published", {
         skillId: id,
         revisionId,
@@ -1236,12 +1269,15 @@ export class HybridStorage implements IStorage {
   }
 
   /**
-   * Rebase exact-hash leftover followers onto the current platform revision.
-   * Exact-hash only: a copy is healed only when its current payload hash equals
-   * a KNOWN platform revision of its template (which is named in the log) and it
-   * carries no authored user revision beyond the lattice snapshot. Mixed or
-   * unprovable rows — including autonomy 1.5-class content whose hash matches no
-   * platform revision — are never overwritten; they abstain.
+   * Rebase exact-hash leftover followers onto the current platform revision,
+   * then flip leftover dirty updateState back to following when content
+   * already matches. Exact-hash rebase only: a copy is rewritten only when
+   * its current payload hash equals a KNOWN platform revision of its template
+   * (which is named in the log) and it carries no authored user revision
+   * beyond the lattice snapshot. Mixed or unprovable rows — including
+   * autonomy 1.5-class content whose hash matches no platform revision —
+   * are never overwritten; they abstain. Matching-state adoption never
+   * rewrites payload.
    */
   async healLeftoverSkillFollowers(): Promise<{ healed: number; abstained: number }> {
     let healed = 0;
@@ -1288,6 +1324,26 @@ export class HybridStorage implements IStorage {
           ontoRevisionId: platform.id,
         });
         healed++;
+      }
+      const templates = await tx.select().from(skills).where(and(
+        eq(skills.scope, "global"),
+        isNotNull(skills.currentRevisionId),
+      ));
+      let adopted = 0;
+      for (const template of templates) {
+        if (!template.currentRevisionId) continue;
+        const published = await this.readSkillRevisionPayloadTx(tx, template.currentRevisionId);
+        if (!published) continue;
+        adopted += await this.adoptMatchingSkillCopies(
+          tx,
+          template.id,
+          published,
+          template.currentRevisionId,
+        );
+      }
+      if (adopted > 0) {
+        log.info("healLeftoverSkillFollowers adopted matching copies", { adopted });
+        healed += adopted;
       }
     });
     if (healed > 0 || abstained > 0) {
@@ -1393,6 +1449,7 @@ export class HybridStorage implements IStorage {
               eq(skills.templateSkillId, global.id),
               sql`${skills.updateState} <> 'following'`,
             ));
+          await this.adoptMatchingSkillCopies(tx, global.id, codePayload, revisionId);
           published++;
           log.info("Skill catalog published platform revision", {
             name, skillId: global.id, codeVersion, revisionId, advancedFollowers: followers.length,
