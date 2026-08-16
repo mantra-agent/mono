@@ -64,6 +64,11 @@ interface RouterConnector {
   sortOrder: number;
   priorityPinned: boolean;
   routerId?: string | null;
+  /** Present on router detail; required for inline ModelConnectorSection. */
+  config?: {
+    kind?: "model" | "openai-models" | "claude-cli-models" | "grok-models";
+    tierMappings: Record<"max" | "high" | "balanced" | "fast", string | { model: string }>;
+  };
 }
 
 interface RouterDetail extends RouterSummary {
@@ -87,13 +92,27 @@ function matchesQuery(query: string, ...parts: Array<string | null | undefined>)
 
 function RouterConnectorRow({
   connector,
+  routerId,
   actions,
 }: {
   connector: RouterConnector;
+  routerId: string;
   actions: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const supportsModelMapping = MODEL_MAPPING_PROVIDERS.has(connector.provider);
+  // Router detail already carries config; do not resolve through legacy-only /api/models/connectors.
+  const mappingConnector = connector.config
+    ? {
+        id: connector.id,
+        provider: connector.provider as ModelConnectorProvider,
+        label: connector.label,
+        status: connector.status,
+        sortOrder: connector.sortOrder,
+        priorityPinned: connector.priorityPinned,
+        config: connector.config,
+      }
+    : undefined;
 
   return (
     <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
@@ -117,11 +136,16 @@ function RouterConnectorRow({
       </div>
       {supportsModelMapping && open ? (
         <div className="pb-1 pl-6 pr-1">
-          <ModelConnectorSection
-            connectorId={connector.id}
-            provider={connector.provider as ModelConnectorProvider}
-            nested
-          />
+          {mappingConnector ? (
+            <ModelConnectorSection
+              connector={mappingConnector}
+              provider={mappingConnector.provider}
+              nested
+              invalidateQueryKeys={[[...ROUTERS_QUERY_KEY, routerId]]}
+            />
+          ) : (
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">Model mapping unavailable.</div>
+          )}
         </div>
       ) : null}
     </HierarchyTreeRow>
@@ -366,6 +390,7 @@ function RouterRow({
               <RouterConnectorRow
                 key={connector.id}
                 connector={connector}
+                routerId={summary.id}
                 actions={canWrite ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
