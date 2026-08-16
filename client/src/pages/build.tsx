@@ -4567,7 +4567,8 @@ export function DesignTab() {
                 <span className="font-mono text-foreground">ProfileDetailSection</span>{" "}
                 or an integration section with one{" "}
                 <span className="font-mono text-foreground">ProfileTreeRow</span> per
-                field (Secrets, Environment SOURCE, Claude CLI). Share{" "}
+                field that edits in place (Person profile is the archetype;
+                Secrets, Environment SOURCE, Claude CLI follow it). Share{" "}
                 <span className="font-mono text-foreground">HIERARCHY_TREE_STACK_CLASS</span>
                 ,{" "}
                 <span className="font-mono text-foreground">HIERARCHY_PRIMARY_ACTION_CLASS</span>
