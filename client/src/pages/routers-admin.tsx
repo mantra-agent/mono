@@ -17,6 +17,7 @@ import {
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { ModelConnectorSection } from "@/components/integrations/model-connector-section";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
@@ -33,6 +34,16 @@ import { usePageLoadActivity } from "@/hooks/use-page-activity";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import type { ModelConnectorProvider } from "@shared/model-connectors";
+
+// Providers whose per-connector semantic-tier → model mapping widget can render inline.
+const MODEL_MAPPING_PROVIDERS = new Set<string>([
+  "anthropic",
+  "openai",
+  "openai-subscription",
+  "claude-cli",
+  "grok-subscription",
+]);
 
 const ROUTERS_QUERY_KEY = ["/api/routers"] as const;
 const LEGACY_CONNECTORS_QUERY_KEY = ["/api/routers/legacy-connectors"] as const;
@@ -72,6 +83,49 @@ function matchesQuery(query: string, ...parts: Array<string | null | undefined>)
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
   return parts.some((part) => (part ?? "").toLowerCase().includes(needle));
+}
+
+function RouterConnectorRow({
+  connector,
+  actions,
+}: {
+  connector: RouterConnector;
+  actions: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const supportsModelMapping = MODEL_MAPPING_PROVIDERS.has(connector.provider);
+
+  return (
+    <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+      <div className="group/conn flex min-h-8 w-full items-center gap-2 px-1 py-0.5 text-sm">
+        <span className={cn("min-w-0 flex-1 truncate", connector.status !== "active" && "text-muted-foreground")}>
+          {connector.priorityPinned ? "📌 " : ""}
+          {connector.label}
+          <span className="ml-1 text-muted-foreground">{connector.provider}</span>
+        </span>
+        {supportsModelMapping ? (
+          <button
+            type="button"
+            className="rounded p-0.5 hover:bg-accent/60"
+            onClick={() => setOpen((value) => !value)}
+            aria-label={open ? "Collapse model mapping" : "Expand model mapping"}
+          >
+            <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-90")} />
+          </button>
+        ) : null}
+        {actions}
+      </div>
+      {supportsModelMapping && open ? (
+        <div className="pb-1 pl-6 pr-1">
+          <ModelConnectorSection
+            connectorId={connector.id}
+            provider={connector.provider as ModelConnectorProvider}
+            nested
+          />
+        </div>
+      ) : null}
+    </HierarchyTreeRow>
+  );
 }
 
 function RouterRow({
@@ -309,65 +363,55 @@ function RouterRow({
             </HierarchyTreeRow>
           ) : (
             connectors.map((connector) => (
-              <HierarchyTreeRow
+              <RouterConnectorRow
                 key={connector.id}
-                continues
-                indent="icon"
-                connectorAnchor="first-row-center"
-              >
-                <div className="group/conn flex min-h-8 w-full items-center gap-2 px-1 py-0.5 text-sm">
-                  <span className={cn("min-w-0 flex-1 truncate", connector.status !== "active" && "text-muted-foreground")}>
-                    {connector.priorityPinned ? "📌 " : ""}
-                    {connector.label}
-                    <span className="ml-1 text-muted-foreground">{connector.provider}</span>
-                  </span>
-                  {canWrite ? (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button
-                          type="button"
-                          className="rounded p-0.5 opacity-0 transition-opacity hover:bg-accent/60 group-hover/conn:opacity-100 data-[state=open]:opacity-100"
-                          aria-label="Connector actions"
-                        >
-                          <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-40">
-                        <DropdownMenuItem
-                          onClick={() => patchConnector.mutate({
-                            connectorId: connector.id,
-                            body: { priorityPinned: !connector.priorityPinned },
-                          })}
-                        >
-                          {connector.priorityPinned ? "Unpin" : "Pin"}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => raiseConnector(connector)}>Raise</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => lowerConnector(connector)}>Lower</DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => patchConnector.mutate({
-                            connectorId: connector.id,
-                            body: { status: connector.status === "active" ? "inactive" : "active" },
-                          })}
-                        >
-                          {connector.status === "active" ? "Disable" : "Enable"}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          disabled={leaveLegacy.isPending}
-                          onClick={() => leaveLegacy.mutate(connector.id)}
-                        >
-                          Return to Legacy
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-destructive focus:text-destructive"
-                          onClick={() => removeConnector.mutate(connector.id)}
-                        >
-                          Remove
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  ) : null}
-                </div>
-              </HierarchyTreeRow>
+                connector={connector}
+                actions={canWrite ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="rounded p-0.5 opacity-0 transition-opacity hover:bg-accent/60 group-hover/conn:opacity-100 data-[state=open]:opacity-100"
+                        aria-label="Connector actions"
+                      >
+                        <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-40">
+                      <DropdownMenuItem
+                        onClick={() => patchConnector.mutate({
+                          connectorId: connector.id,
+                          body: { priorityPinned: !connector.priorityPinned },
+                        })}
+                      >
+                        {connector.priorityPinned ? "Unpin" : "Pin"}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => raiseConnector(connector)}>Raise</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => lowerConnector(connector)}>Lower</DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => patchConnector.mutate({
+                          connectorId: connector.id,
+                          body: { status: connector.status === "active" ? "inactive" : "active" },
+                        })}
+                      >
+                        {connector.status === "active" ? "Disable" : "Enable"}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={leaveLegacy.isPending}
+                        onClick={() => leaveLegacy.mutate(connector.id)}
+                      >
+                        Return to Legacy
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onClick={() => removeConnector.mutate(connector.id)}
+                      >
+                        Remove
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
+              />
             ))
           )}
           <HierarchyTreeRow continues={false} indent="icon" connectorAnchor="first-row-center">
