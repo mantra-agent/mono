@@ -141,15 +141,17 @@ function ConnectorTierTree({ connector, models, title, nested = false }: { conne
   const { toast } = useToast();
   const isOpenAI = isOpenAIProvider(connector.provider);
   const isClaude = connector.provider === "claude-cli";
+  const isAnthropic = connector.provider === "anthropic";
   const isGrok = isGrokProvider(connector.provider);
   const mutation = useMutation({
-    mutationFn: async (tierMappings: Record<SemanticTier, Exclude<TierModelConfig, string>>) => (await apiRequest("PATCH", `/api/models/connectors/${connector.id}`, { tierMappings })).json(),
+    mutationFn: async (tierMappings: Record<SemanticTier, Exclude<TierModelConfig, string> | string>) => (await apiRequest("PATCH", `/api/models/connectors/${connector.id}`, { tierMappings })).json(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
     onError: (error: Error) => toast({ title: "Model mapping failed", description: error.message, variant: "destructive" }),
   });
   const mappings = Object.fromEntries(MODEL_TIERS.map((tier) => {
     const config = normalizeTierConfig(connector.provider, connector.config.tierMappings[tier]);
     if (isGrok) return [tier, sanitizeGrokTierConfig(config)];
+    if (isAnthropic || isClaude) return [tier, config];
     if (!isOpenAI) return [tier, config];
     const model = models.find((item) => item.id === config.model || `${connector.provider}/${item.id}` === config.model);
     return [tier, sanitizeOpenAITierConfig(connector.provider, config, model)];
@@ -161,12 +163,19 @@ function ConnectorTierTree({ connector, models, title, nested = false }: { conne
       mutation.mutate({ ...mappings, [tier]: sanitizeOpenAITierConfig(connector.provider, nextConfig, nextModel) });
     } else if (isGrok) {
       mutation.mutate({ ...mappings, [tier]: sanitizeGrokTierConfig(nextConfig) });
+    } else if (isAnthropic) {
+      // Anthropic API still persists legacy string mappings. Write only the model id.
+      const persist = (value: string) => value.includes("/") ? value : `${connector.provider}/${value}`;
+      mutation.mutate({
+        ...Object.fromEntries(MODEL_TIERS.map((item) => [item, persist(mappings[item].model)])),
+        [tier]: persist(nextConfig.model),
+      } as Record<SemanticTier, string>);
     } else {
       // Claude: model plus Claude-owned knobs. Do not round-trip OpenAI Responses settings.
       mutation.mutate({ ...mappings, [tier]: nextConfig });
     }
   };
-  const testIdPrefix = isClaude ? "claude-cli" : isGrok ? "grok-subscription" : `openai-${connector.provider}`;
+  const testIdPrefix = isClaude ? "claude-cli" : isAnthropic ? "anthropic" : isGrok ? "grok-subscription" : `openai-${connector.provider}`;
 
   return (
     <div className="min-w-0">
@@ -196,7 +205,9 @@ function ConnectorTierTree({ connector, models, title, nested = false }: { conne
                     options={models.map((item) => item.id)}
                     disabled={mutation.isPending || models.length === 0}
                     onChange={(modelId) => {
-                      if (isClaude) {
+                      if (isAnthropic) {
+                        updateTier(tier, { model: modelId });
+                      } else if (isClaude) {
                         const nextModel = models.find((item) => item.id === modelId);
                         const nextSupportsThinking = nextModel?.thinkingLevel !== "none";
                         updateTier(tier, { model: modelId, effort: nextSupportsThinking ? config.effort : undefined, thinkingMode: nextSupportsThinking ? config.thinkingMode : "disabled" });
@@ -320,7 +331,6 @@ function ConnectorTierTree({ connector, models, title, nested = false }: { conne
  * then renders its semantic-tier → model mapping tree.
  */
 export function ModelConnectorSection({ provider, connectorId, title = "Model mapping", nested = false }: { provider?: ModelConnectorProvider; connectorId?: number; title?: string; nested?: boolean }) {
-  const { toast } = useToast();
   const { data } = useQuery<{ connectors: ModelConnectorDetail[] }>({ queryKey: ["/api/models/connectors"] });
   const { data: modelsData } = useQuery<{ providers: ModelProviderDetail[] }>({ queryKey: ["/api/models/available"] });
   const connector = connectorId != null
@@ -328,11 +338,6 @@ export function ModelConnectorSection({ provider, connectorId, title = "Model ma
     : data?.connectors?.find((item) => item.provider === provider);
   const resolvedProvider = connector?.provider ?? provider;
   const models = modelsData?.providers?.find((item) => item.id === resolvedProvider)?.models ?? [];
-  const mutation = useMutation({
-    mutationFn: async (tierMappings: Record<SemanticTier, string>) => (await apiRequest("PATCH", `/api/models/connectors/${connector!.id}`, { tierMappings })).json(),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
-    onError: (error: Error) => toast({ title: "Model mapping failed", description: error.message, variant: "destructive" }),
-  });
   if (!connector) {
     return (
       <div className="min-w-0">
@@ -344,46 +349,20 @@ export function ModelConnectorSection({ provider, connectorId, title = "Model ma
       </div>
     );
   }
-  if (isOpenAIProvider(connector.provider) || connector.provider === "claude-cli" || isGrokProvider(connector.provider)) {
+  if (
+    isOpenAIProvider(connector.provider)
+    || connector.provider === "claude-cli"
+    || connector.provider === "anthropic"
+    || isGrokProvider(connector.provider)
+  ) {
     return <ConnectorTierTree connector={connector} models={models} title={title} nested={nested} />;
   }
   return (
     <div className="min-w-0">
       <IntegrationTreeSection label={title} initialOpen icon={<Bot className="h-3.5 w-3.5" />} variant={nested ? "item" : "section"}>
-        {MODEL_TIERS.map((tier) => {
-          const selected = tierConfigModel(connector.config.tierMappings[tier]);
-          const selectedModel = models.find((model) => `${connector.provider}/${model.id}` === selected || model.id === selected);
-          return (
-            <ProfileTreeRow
-              key={tier}
-              label={<span className="capitalize">{tier}</span>}
-              icon={tier === "fast" ? <Zap className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
-              hasValue
-              showEmpty
-              defaultOpen={tier === "balanced"}
-              expandedContentClassName="space-y-3"
-              expandedContent={(
-                <TierSettingSelect
-                  label="Model"
-                  value={selected}
-                  options={models.map((model) => `${connector.provider}/${model.id}`)}
-                  disabled={mutation.isPending || models.length === 0}
-                  onChange={(model) => mutation.mutate({
-                    ...Object.fromEntries(MODEL_TIERS.map((item) => [item, tierConfigModel(connector.config.tierMappings[item])])),
-                    [tier]: model,
-                  } as Record<SemanticTier, string>)}
-                />
-              )}
-            >
-              <span className="truncate font-mono">{selectedModel?.name ?? selected}</span>
-            </ProfileTreeRow>
-          );
-        })}
-        {models.length === 0 && (
-          <ProfileTreeRow label="Models" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty>
-            <span className="text-muted-foreground">None available</span>
-          </ProfileTreeRow>
-        )}
+        <ProfileTreeRow label="Status" icon={<XCircle className="h-3.5 w-3.5 text-muted-foreground" />} hasValue showEmpty>
+          <span className="text-muted-foreground">Unsupported connector</span>
+        </ProfileTreeRow>
       </IntegrationTreeSection>
     </div>
   );

@@ -113,7 +113,7 @@ import { vaultTitleColor } from "@/lib/vault-title-color";
 import { IntegrationTreeSection } from "@/components/integrations/integration-tree-section";
 import { ModelConnectorSection } from "@/components/integrations/model-connector-section";
 import { usePlaidLink } from "react-plaid-link";
-import { useLocation } from "wouter";
+import { Redirect, useLocation } from "wouter";
 
 
 
@@ -142,7 +142,6 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "google", name: "Google", icon: Mail, statusFields: ["google"], healthField: "gmailHealthy", route: "google" },
   { id: "box", name: "Box", icon: Box, statusFields: ["box"], route: "box" },
   { id: "elevenlabs", name: "ElevenLabs", icon: Volume2, statusFields: ["elevenlabs"], route: "elevenlabs" },
-  { id: "cartesia", name: "Cartesia", icon: Volume2, statusFields: ["cartesia"], route: "cartesia" },
   { id: "twilio", name: "Twilio Phone", icon: Phone, statusFields: ["twilio"], route: "twilio" },
   { id: "deepgram", name: "Deepgram", icon: Mic, statusFields: ["deepgram"], route: "deepgram" },
   { id: "anthropic", name: "Anthropic", icon: Bot, statusFields: ["anthropic"], route: "anthropic" },
@@ -5564,17 +5563,8 @@ function IntegrationDetail({ provider }: { provider: string }) {
         </div>
       )}
 
-      {provider === "cartesia" && (
-        <Card className="overflow-hidden min-w-0" data-testid="card-secret-cartesia">
-          <CardHeader><CardTitle className="text-base font-semibold">Cartesia meeting speech</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">Primary low-latency voice for answers spoken into live meetings. ElevenLabs is used automatically when Cartesia fails or is not configured. Manage the API key and voice ID on the Secrets page.</p>
-          </CardContent>
-        </Card>
-      )}
-
       {provider === "anthropic" && (
-        <div className="min-w-0">
+        <div className="min-w-0" data-testid="card-secret-anthropic">
           <IntegrationTreeSection label="Anthropic API" initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
             <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
               <div className="min-w-0 w-full"><SecretsForSection section="anthropic" /></div>
@@ -5589,7 +5579,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
           <OpenAISubscriptionSection>
             <ModelConnectorSection provider="openai-subscription" title="Model mapping" nested />
           </OpenAISubscriptionSection>
-          <div className="min-w-0">
+          <div className="min-w-0" data-testid="card-secret-openai">
             <IntegrationTreeSection label="OpenAI API" initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
               <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
                 <div className="min-w-0 w-full"><SecretsForSection section="openai" /></div>
@@ -5601,17 +5591,15 @@ function IntegrationDetail({ provider }: { provider: string }) {
       )}
 
       {provider === "claude-cli" && (
-        <div className="space-y-4">
-          <div className="min-w-0" data-testid="card-secret-claude-cli">
-            <IntegrationTreeSection label="Claude Code CLI" initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
-              <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
-                <div className="min-w-0 w-full">
-                  <SecretsForSection section="claude-cli" />
-                </div>
-              </ProfileTreeRow>
-              <ModelConnectorSection provider="claude-cli" title="Model mapping" nested />
-            </IntegrationTreeSection>
-          </div>
+        <div className="min-w-0" data-testid="card-secret-claude-cli">
+          <IntegrationTreeSection label="Claude Code CLI" initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
+            <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
+              <div className="min-w-0 w-full">
+                <SecretsForSection section="claude-cli" />
+              </div>
+            </ProfileTreeRow>
+            <ModelConnectorSection provider="claude-cli" title="Model mapping" nested />
+          </IntegrationTreeSection>
         </div>
       )}
 
@@ -5697,11 +5685,12 @@ export default function IntegrationsPage() {
   const [location] = useLocation();
   const providerMatch = /^\/integrations\/([^/]+)\/?$/.exec(location);
   const provider = providerMatch ? decodeURIComponent(providerMatch[1]) : null;
-  const integration = provider
+  const integration = provider && provider !== "cartesia"
     ? INTEGRATIONS.find((item) => item.route === provider)
     : null;
 
   usePageHeader({ title: integration?.name || "Integrations", titleHref: "/integrations" });
+  if (provider === "cartesia") return <Redirect to="/system?tab=secrets" />;
 
   return provider ? (
     <div className="flex flex-col gap-6 p-6">
