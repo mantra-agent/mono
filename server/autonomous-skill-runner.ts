@@ -275,6 +275,11 @@ function parseEstimatedDurationMs(duration: string | null | undefined): number |
   return null;
 }
 
+/**
+ * Leftover name map. Stamped SkillDefault rows win first.
+ * sentry/guard stay here until those seeds carry the same fields.
+ * Do not delete this map until every named skill is populated.
+ */
 const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
   "sleep": {
     skillId: "sleep",
@@ -499,6 +504,33 @@ export function getRegisteredSkillIds(): string[] {
   return Object.keys(SKILL_RUN_CONFIGS);
 }
 
+function skillDefaultRunConfig(skillName: string): SkillRunConfig | undefined {
+  const canonical = resolveSkillRunName(skillName);
+  const def = BUILTIN_SKILL_DEFAULTS.find(
+    (row) =>
+      row.name === skillName
+      || row.name === canonical
+      || resolveSkillRunName(row.name) === canonical,
+  );
+  if (!def?.callType || def.timeoutMs === undefined) return undefined;
+  const resolvedActivity = resolveActivityId(def.activity || "");
+  const activity: ActivityId = BUILTIN_ACTIVITY_IDS.includes(resolvedActivity)
+    ? resolvedActivity
+    : ACTIVITY_WORK;
+  return {
+    skillId: def.name,
+    label: def.name,
+    callType: def.callType,
+    includeSections: def.includeSections,
+    activity,
+    temperature: def.temperature ?? 0.5,
+    timeoutMs: def.timeoutMs,
+    sessionType: def.sessionType,
+    admissionTier: def.admissionTier,
+    mayInitiateConversation: def.mayInitiateConversation,
+  };
+}
+
 function skillMayInitiateConversation(skillName?: string): boolean {
   if (!skillName) return false;
   const canonical = resolveSkillRunName(skillName);
@@ -645,14 +677,15 @@ export async function executeAutonomousSkillRun(
     };
     logger.log(`[skillless] Using inline config — label="${label}" timeoutMs=${config.timeoutMs}`);
   } else {
-    // Single authoritative resolve: alias → SKILL_RUN_CONFIGS, then DB only
-    // for non-hardcoded skills. Build-owned names never enter the DB path.
+    // Instance first: stamped SkillDefault, leftover SKILL_RUN_CONFIGS
+    // (sentry/guard), then DB dynamic fallback. Do not delete the leftover
+    // map until every named skill is populated.
     const requestedId = skillId;
     const canonicalName = resolveSkillRunName(requestedId);
-    config = SKILL_RUN_CONFIGS[canonicalName]!;
-    if (!config && canonicalName !== requestedId) {
-      config = SKILL_RUN_CONFIGS[requestedId]!;
-    }
+    config = skillDefaultRunConfig(canonicalName)
+      ?? skillDefaultRunConfig(requestedId)
+      ?? SKILL_RUN_CONFIGS[canonicalName]
+      ?? (canonicalName !== requestedId ? SKILL_RUN_CONFIGS[requestedId] : undefined)!;
     if (!config) {
       try {
         let dbSkill = await storage.getSkillByName(requestedId);
@@ -668,10 +701,14 @@ export async function executeAutonomousSkillRun(
         }
 
         const resolvedName = resolveSkillRunName(dbSkill.name);
-        const hardcodedByName = SKILL_RUN_CONFIGS[resolvedName] ?? SKILL_RUN_CONFIGS[dbSkill.name];
-        if (hardcodedByName) {
-          config = hardcodedByName;
-          logger.log(`[skill:${requestedId}] Resolved UUID to hardcoded config via db name="${dbSkill.name}" — timeout=${config.timeoutMs}ms`);
+        const instanceByName = skillDefaultRunConfig(resolvedName) ?? skillDefaultRunConfig(dbSkill.name);
+        const leftoverByName = SKILL_RUN_CONFIGS[resolvedName] ?? SKILL_RUN_CONFIGS[dbSkill.name];
+        if (instanceByName) {
+          config = instanceByName;
+          logger.log(`[skill:${requestedId}] Resolved UUID to SkillDefault config via db name="${dbSkill.name}" — timeout=${config.timeoutMs}ms`);
+        } else if (leftoverByName) {
+          config = leftoverByName;
+          logger.log(`[skill:${requestedId}] Resolved UUID to leftover SKILL_RUN_CONFIGS via db name="${dbSkill.name}" — timeout=${config.timeoutMs}ms`);
         } else {
           const resolvedActivity = resolveActivityId(dbSkill.activity || "");
           const activity: ActivityId = BUILTIN_ACTIVITY_IDS.includes(resolvedActivity) ? resolvedActivity : ACTIVITY_WORK;

@@ -35,6 +35,15 @@ import {
 
     pinnedToContext?: boolean;
     sessionType?: "autonomous" | "agent";
+    /**
+     * Runner runtime. Consulted before leftover SKILL_RUN_CONFIGS.
+     * Stamp these before deleting that name map. sentry/guard stay leftover.
+     */
+    callType?: "full" | "world" | "internal";
+    includeSections?: string[];
+    timeoutMs?: number;
+    admissionTier?: "communication" | "realtime" | "request" | "background";
+    temperature?: number;
     /** When true, autonomous runs may mint a visible conversation. Inspect skills stay silent. */
     mayInitiateConversation?: boolean;
   }
@@ -81,6 +90,10 @@ import {
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "autonomous",
+    callType: "full",
+    timeoutMs: 3 * 60 * 60 * 1000,
+    admissionTier: "background",
+    temperature: 0.2,
     scoreThreshold: 0.9,
     whenToUse: "Runs nightly at 02:00 America/Chicago while Build is installed and enabled. May be invoked manually for the same bounded production-error repair contract: every active application-error fingerprint is either addressed and dismissed or remains explicitly blocked with evidence.",
     outputSpec: "A concise orchestration report naming the persisted non-blocking Plan, the active application-error fingerprint count from issues.list_errors, per-fingerprint delegated outcomes, final issues.list_errors verification, security outcome, and residual deployment gap. A zero-error run must still persist and execute a verification Plan with a truthful no-repair outcome.",
@@ -127,6 +140,10 @@ import {
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "autonomous",
+    callType: "full",
+    timeoutMs: 10 * 60 * 1000,
+    admissionTier: "realtime",
+    temperature: 0.3,
     whenToUse: "Used only as the curation child of an active Landscape Scan that supplies candidate payloads and owns persistence of the resulting decisions.",
     outputSpec: "One successful news.batch_curate handoff covering every supplied candidate fingerprint, followed by a concise count of relevant and dismissed decisions.",
     checklist: [
@@ -262,6 +279,10 @@ No preamble. No source list. No explanation of your process. No extra headings.
     addToMemory: true,
     scoreThreshold: 0.8,
     pinnedToContext: false,
+    sessionType: "agent",
+    callType: "internal",
+    timeoutMs: 3 * 60 * 1000,
+    temperature: 0.4,
     whenToUse: "Used for communication operations",
     outputSpec: "See process instructions",
     checklist: [
@@ -442,6 +463,12 @@ Do NOT create \`daily-brief-YYYY-MM-DD\` pages. Do NOT use the \`priorities\` to
     version: "1.8",
     addToMemory: true,
     pinnedToContext: false,
+    sessionType: "autonomous",
+    callType: "full",
+    includeSections: ["world_model.active_work.dependencies"],
+    timeoutMs: 20 * 60 * 1000,
+    admissionTier: "background",
+    temperature: 0.3,
     whenToUse: "Used for recurring autonomous scan-and-execute work. Replaces the retired advance and prioritize skills.",
     outputSpec: "Return a concise operational report with mode selected, systems scanned, substantive work completed, tasks created or identified with project/milestone placement and final status, canonical artifacts or records created/updated, items gated for Ray, skipped items with reasons, and next recommended action.",
     checklist: [
@@ -707,6 +734,11 @@ Use the \`converse\` tool to initiate a conversation:
     version: "1.0",
     addToMemory: false,
     pinnedToContext: false,
+    sessionType: "autonomous",
+    callType: "full",
+    timeoutMs: 8 * 60 * 1000,
+    admissionTier: "realtime",
+    temperature: 0.3,
     whenToUse: "Runs automatically after triage to enrich review emails with context",
     outputSpec: "Enrichment data stored per-thread via email_cache store_enrichment",
     checklist: [
@@ -862,6 +894,9 @@ For each selected idea:
     version: "5.0",
     addToMemory: false,
     pinnedToContext: false,
+    callType: "internal",
+    timeoutMs: 10 * 60 * 1000,
+    temperature: 0.5,
     whenToUse: "Used for memory operations",
     outputSpec: "See process instructions",
     checklist: [
@@ -907,6 +942,10 @@ Be concise and factual.`,
     version: "1.0",
     addToMemory: true,
     pinnedToContext: false,
+    callType: "internal",
+    includeSections: ["world_model.people.self.principles", "world_model.calendar", "world_model.active_work.tasks", "world_model.active_work.projects"],
+    timeoutMs: 10 * 60 * 1000,
+    temperature: 0.6,
     whenToUse: "Use for scheduled or manual reflection at any cadence. Provide preContext with cadence, periodStart, periodEnd, periodLabel, and any triggering reason. Replaces one-off cadence review briefs when a concise artifact is enough and Ray does not need a live interview.",
     outputSpec: "A concise markdown reflection brief saved to the correct Library collection, optionally surfaced to Home/Simple Inbox, and echoed in the session output.",
     checklist: [
@@ -1088,6 +1127,11 @@ If the page has already been created but you later decide it should be surfaced,
     version: "2.3",
     addToMemory: false,
     pinnedToContext: false,
+    sessionType: "autonomous",
+    callType: "full",
+    timeoutMs: 3 * 60 * 60 * 1000,
+    admissionTier: "background",
+    temperature: 0.2,
     whenToUse:
       "Runs automatically after a genuinely new deployed build through the Timer scheduler, or manually from Skills when an operator wants to recheck and dispose open Issues.",
     outputSpec:
@@ -1363,6 +1407,11 @@ Read your preContext or user message for:
     version: "1.1",
     addToMemory: false,
     pinnedToContext: false,
+    sessionType: "autonomous",
+    callType: "full",
+    timeoutMs: 15 * 60 * 1000,
+    admissionTier: "background",
+    temperature: 0.3,
     whenToUse: "Runs automatically each night to keep the goal graph clean, connected, and honestly defined. Can be invoked manually to reconcile goals after a burst of goal or relationship changes.",
     outputSpec: "One dated entry prepended to the pinned Goal Manager Log Library page (@page:af8471de-41e1-4211-bcc3-808d56c11ca8) summarizing goals reviewed, mutations by type, links pruned, and goals flagged for Ray's attention. No goal is deleted; ambiguous cases are flagged, not changed. Never create a second log page.",
     checklist: [
@@ -1428,6 +1477,11 @@ Return a 3-5 line summary: goals reviewed, mutations by type, count flagged, and
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "autonomous",
+    callType: "full",
+    includeSections: ["world_model.active_work.dependencies"],
+    timeoutMs: 15 * 60 * 1000,
+    admissionTier: "background",
+    temperature: 0.4,
     scoreThreshold: 0.8,
     whenToUse: "Runs weekly on Thursday night before Friday planning to reconcile commitments, dates, priorities, dependencies, and task-effort estimates; starts a conversation only when a genuine tradeoff requires Ray's judgment.",
     outputSpec: "One short reverse-chronological entry in @page:streamline-log. No weekly brief or surfaced artifact. Apply safe corrections directly. Any unresolved conflict has exactly one authoritative conversation ID stored in the current-week log; while that session exists and remains active, duplicate converse.initiate calls are prohibited.",
