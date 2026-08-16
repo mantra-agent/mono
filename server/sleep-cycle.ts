@@ -65,8 +65,9 @@ function emptyRem(): DreamResult {
  *   3. Optional GSI computation (weekly)
  *
  * The cycle no longer touches legacy memory_entries state. The report is
- * emitted to the journal and event bus; durable filing (Library dream page,
- * sleep report page) is owned by the sleep skill using the returned result.
+ * emitted to the journal and event bus; durable filing (one rolling Dreams
+ * Library page with Dream + Memory for the night) is owned by the sleep skill
+ * using the returned result.
  */
 export async function runFullSleepCycle(options?: { includeGSI?: boolean }): Promise<FullSleepCycleResult> {
   return withQueryAttributionAsync("memory-write", async () => {
