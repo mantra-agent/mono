@@ -64,7 +64,7 @@ const planning: ModDefinition = {
 
 const build: ModDefinition = {
   key: "build",
-  version: "1.1.0",
+  version: "1.2.0",
   name: "Build",
   description: "The Build product area: Platforms, Design, Database, Issues, and build workflows.",
   outcome: {
@@ -126,6 +126,7 @@ const build: ModDefinition = {
       skillRef("build.skill.guard", "guard"),
       skillRef("build.skill.regression", "regression"),
       skillRef("build.skill.feature-pipeline", "feature-pipeline"),
+      skillRef("build.skill.issue-feature", "issue-feature"),
     ],
     timers: [
       timerTemplateRef("build.timer.reliability-sentinel-30m", "build-reliability-sentinel-30m"),

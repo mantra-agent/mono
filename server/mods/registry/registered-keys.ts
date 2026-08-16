@@ -190,6 +190,7 @@ export const REGISTERED_SKILL_KEYS = [
   "guard",
   "regression",
   "feature-pipeline",
+  "issue-feature",
   "reflect",
   "affirmations",
   "coach",

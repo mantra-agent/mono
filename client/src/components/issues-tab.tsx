@@ -20,7 +20,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useAgendaDiscussion } from "@/hooks/use-agenda-discussion";
+import { useSessionLaunch } from "@/hooks/use-session-launch";
 import { useToast } from "@/hooks/use-toast";
 import { useTimezone } from "@/hooks/use-timezone";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -37,9 +37,11 @@ import {
   MessageSquare,
   MoreHorizontal,
   Plus,
+  Rocket,
   X,
 } from "lucide-react";
 import type { Issue, IssueStatus } from "@shared/schema";
+import { composeIssueFeatureLaunchMessage } from "@shared/issue-feature";
 
 const STATUS_CYCLE: IssueStatus[] = ["open", "in_progress", "in_review", "resolved"];
 
@@ -204,6 +206,8 @@ function IssueTreeRow({
   onCycleStatus,
   isUpdating,
   onDiscuss,
+  onLaunch,
+  isLaunching,
   onOpen,
   isOpening,
 }: {
@@ -211,6 +215,8 @@ function IssueTreeRow({
   onCycleStatus: (id: number, nextStatus: IssueStatus) => void;
   isUpdating: boolean;
   onDiscuss: () => void;
+  onLaunch: () => void;
+  isLaunching?: boolean;
   onOpen?: () => void;
   isOpening?: boolean;
 }) {
@@ -266,6 +272,21 @@ function IssueTreeRow({
               Open
             </DropdownMenuItem>
           ) : null}
+          <DropdownMenuItem
+            disabled={isLaunching}
+            onSelect={(event) => {
+              event.preventDefault();
+              onLaunch();
+            }}
+            data-testid={`menu-launch-issue-${issue.id}`}
+          >
+            {isLaunching ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Rocket className="mr-2 h-4 w-4" />
+            )}
+            Launch
+          </DropdownMenuItem>
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault();
@@ -501,7 +522,7 @@ function matchesQuery(haystack: string, query: string): boolean {
 
 export function IssuesTab() {
   const { toast } = useToast();
-  const discussion = useAgendaDiscussion();
+  const launch = useSessionLaunch();
   const [search, setSearch] = useState("");
   const [errorsOpen, setErrorsOpen] = useState(true);
   const [reportedOpen, setReportedOpen] = useState(true);
@@ -516,6 +537,10 @@ export function IssuesTab() {
   });
   const engineerId = useMemo(
     () => personasData?.find((persona) => persona.name.toLowerCase() === "engineer")?.id,
+    [personasData],
+  );
+  const visionaryId = useMemo(
+    () => personasData?.find((persona) => persona.name.toLowerCase() === "visionary")?.id,
     [personasData],
   );
 
@@ -630,8 +655,8 @@ export function IssuesTab() {
   );
 
   const discussIssue = (issue: Issue) => {
-    discussion.mutate({
-      pendingKey: `issue-${issue.id}`,
+    launch.mutate({
+      pendingKey: `issue-discuss-${issue.id}`,
       title: `Issue: ${issue.title}`,
       message: [
         `Diagnose the issue @issue:${issue.id} and determine if a fix is obvious, if so then do it and resolve the issue.`,
@@ -641,8 +666,32 @@ export function IssuesTab() {
         issue.description,
         ...(issue.reproSteps ? ["", "Reproduction steps:", issue.reproSteps] : []),
       ].join("\n"),
-      clientTurnSuffix: `issue-${issue.id}`,
+      clientTurnSuffix: `issue-discuss-${issue.id}`,
       personaId: engineerId,
+      personaName: engineerId ? undefined : "Engineer",
+      errorTitle: "Could not start issue discussion",
+    });
+  };
+
+  const launchIssueFeature = (issue: Issue) => {
+    launch.mutate({
+      pendingKey: `issue-launch-${issue.id}`,
+      title: `Launch: ${issue.title}`.slice(0, 80),
+      message: composeIssueFeatureLaunchMessage({
+        id: issue.id,
+        title: issue.title,
+        description: issue.description,
+        reproSteps: issue.reproSteps,
+        status: issue.status,
+        kind: issue.kind,
+        productId: issue.productId,
+        platformEnvironmentId: issue.platformEnvironmentId,
+        buildId: issue.buildId,
+      }),
+      clientTurnSuffix: `issue-launch-${issue.id}`,
+      personaId: visionaryId,
+      personaName: visionaryId ? undefined : "Visionary",
+      errorTitle: "Could not start Feature launch",
     });
   };
 
@@ -650,7 +699,7 @@ export function IssuesTab() {
     const source = error.sourceFile
       ? `${error.sourceFile}${error.sourceLine ? `:${error.sourceLine}` : ""}`
       : error.sourceSite || "Unavailable";
-    discussion.mutate({
+    launch.mutate({
       pendingKey: `error-${error.fingerprint}`,
       title: `Error: ${error.errorIdentity}`,
       message: [
@@ -666,6 +715,8 @@ export function IssuesTab() {
       ].join("\n"),
       clientTurnSuffix: `error-${error.fingerprint}`,
       personaId: engineerId,
+      personaName: engineerId ? undefined : "Engineer",
+      errorTitle: "Could not start error discussion",
     });
   };
 
@@ -683,6 +734,8 @@ export function IssuesTab() {
       onCycleStatus={(id, nextStatus) => updateMutation.mutate({ id, updates: { status: nextStatus } })}
       isUpdating={updatingId === issue.id}
       onDiscuss={() => discussIssue(issue)}
+      onLaunch={() => launchIssueFeature(issue)}
+      isLaunching={launch.isPending && launch.variables?.pendingKey === `issue-launch-${issue.id}`}
       onOpen={options?.canOpen ? () => openReportedIssue(issue) : undefined}
       isOpening={options?.canOpen ? updatingId === issue.id && updateMutation.isPending : false}
     />
