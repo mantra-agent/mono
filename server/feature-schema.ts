@@ -21,6 +21,7 @@ export async function ensureFeatureSchema(pool: Pool): Promise<void> {
       CONSTRAINT features_status_check CHECK (status IN ('ready','in_progress','needs_review'))
     )
   `);
+  await pool.query(`ALTER TABLE features ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_features_product_stage ON features(product_id, stage, status)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_features_scope_owner ON features(scope, owner_user_id, account_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_features_archived ON features(archived_at)`);

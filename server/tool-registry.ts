@@ -1872,7 +1872,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         label: { type: "string", description: "Human-readable label (create_connection)" },
         credential: { type: "string", description: "API token or credential value (create_connection only — stored encrypted, never returned)" },
         name: { type: "string", description: "Platform/product/environment name (create/update actions)" },
-        description: { type: "string", description: "Description for platform/product create/update actions" },
+        description: { type: "string", description: "Description for platform/product create/update actions, or the Feature description body on create_feature/update_feature (empty string clears it)" },
         status: { type: "string", description: "Platform/product status (active, paused, archived) or Feature status on update_feature only (ready, in_progress, needs_review). Feature create always starts ready; a stage change also resets Feature status to ready." },
         vaultId: { type: "string", description: "Live same-account Vault ID for Product placement on create_product/update_product; omit to use the active Vault on create, pass null to clear" },
         connectionId: { type: "number", description: "Provider connection ID to bind (save_source_binding, save_hosting_binding)" },
