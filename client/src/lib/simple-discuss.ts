@@ -1,9 +1,27 @@
-import type { SimpleFeedItem } from "@shared/models/simple";
+import type { SimpleFeedItem, SimpleSourceType, SimpleWidgetType } from "@shared/models/simple";
 import { sourceRefsToReferenceRefs } from "@shared/simple-references";
+
+/** Work/planning Simple sources that must seat Producer, not router classification. */
+const PRODUCER_SOURCE_TYPES = new Set<SimpleSourceType>(["task", "project", "milestone"]);
+const PRODUCER_WIDGET_TYPES = new Set<SimpleWidgetType>(["priority_task", "project"]);
 
 /** Title for a new session opened from a Simple Discuss action. */
 export function simpleDiscussTitle(item: SimpleFeedItem): string {
   return item.title.trim().slice(0, 80) || "Simple Item";
+}
+
+/**
+ * Explicit session seat for Simple Discuss.
+ * Tasks, projects, and milestones are planning work — pin Producer at create
+ * so orientation bootstrap cannot reseat them. Other Simple types leave persona
+ * unset and let bootstrap classify (email/person use their own launchers).
+ */
+export function simpleDiscussPersonaName(item: SimpleFeedItem): "Producer" | undefined {
+  if (PRODUCER_WIDGET_TYPES.has(item.widgetType)) return "Producer";
+  if ((item.sourceRefs ?? []).some((ref) => PRODUCER_SOURCE_TYPES.has(ref.type))) {
+    return "Producer";
+  }
+  return undefined;
 }
 
 /**
