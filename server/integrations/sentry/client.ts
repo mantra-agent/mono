@@ -44,26 +44,42 @@ export function isSentryConfigured(
 
 export { resolveSentryDsn };
 
+type SentryFetchOptions = RequestInit & {
+  /**
+   * HTTP statuses that are expected for this call site. Returned as a normal
+   * Response without error-logging or throw so callers can map them to a typed
+   * domain state (e.g. no uptime monitor yet).
+   */
+  acceptStatuses?: number[];
+};
+
 async function sentryFetch(
   path: string,
-  options: RequestInit = {}
+  options: SentryFetchOptions = {}
 ): Promise<Response> {
+  const { acceptStatuses, ...init } = options;
   const token = await getSecret("SENTRY_AUTH_TOKEN");
   if (!token) throw new SentryApiError("SENTRY_AUTH_TOKEN not configured", 401);
 
   const url = `${SENTRY_API_BASE}${path}`;
-  log.debug(`${options.method ?? "GET"} ${path}`);
+  log.debug(`${init.method ?? "GET"} ${path}`);
 
   const res = await providerFetch(url, {
-    ...options,
+    ...init,
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      ...options.headers,
+      ...init.headers,
     },
   });
 
   if (!res.ok) {
+    if (acceptStatuses?.includes(res.status)) {
+      log.debug(`Sentry API expected status: ${res.status} ${res.statusText}`, {
+        path,
+      });
+      return res;
+    }
     const detail = await readBoundedProviderBody(res).catch(() => null);
     log.error(`Sentry API error: ${res.status} ${res.statusText}`, {
       detailPreview: detail?.slice(0, 500) || undefined,
@@ -195,7 +211,21 @@ export async function fetchUptimeAggregate(
   const query = input.query?.trim();
   if (query) params.set("query", query.slice(0, 500));
 
-  const res = await sentryFetch(`/organizations/${org}/events/?${params}`);
+  // 400/404 on uptime_results means the project has no usable uptime monitor
+  // (or the dataset is not available yet). That is a coverage gap, not a
+  // SentryClient failure — return incomplete so availability maps to
+  // monitor_pending instead of error-logging SENTRY_API_ERROR_400.
+  const res = await sentryFetch(`/organizations/${org}/events/?${params}`, {
+    acceptStatuses: [400, 404],
+  });
+  if (!res.ok) {
+    log.debug("Sentry uptime_results unavailable; treating as incomplete", {
+      status: res.status,
+      org,
+      project,
+    });
+    return { checkCount: 0, failureRatePercent: 0, incomplete: true };
+  }
   const payload = await res.json() as {
     data?: Array<Record<string, unknown>>;
     meta?: { fields?: Record<string, string> };
