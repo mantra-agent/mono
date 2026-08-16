@@ -104,8 +104,24 @@ export async function registerIntegrationsRoutes(app: Express) {
     requireAuth,
     requirePermission("system:read"),
     async (_req, res) => {
-      const { getSentryAvailabilityStatus } = await import("../sentry-availability");
-      res.json(await getSentryAvailabilityStatus());
+      try {
+        const { getSentryAvailabilityStatus } = await import("../sentry-availability");
+        res.json(await getSentryAvailabilityStatus());
+      } catch (error) {
+        log.warn("sentry status failed closed to unavailable", {
+          errorName: error instanceof Error ? error.name : "unknown",
+        });
+        const { getSentryFullConfigSync, isSentryFullyConfigured } = await import("../integrations/sentry/config");
+        const configured = isSentryFullyConfigured(getSentryFullConfigSync());
+        res.json(configured
+          ? {
+              status: "unavailable",
+              configured: true,
+              crashReportingConfigured: true,
+              error: "Sentry uptime results are temporarily unavailable.",
+            }
+          : { status: "not_configured", configured: false, crashReportingConfigured: false, missing: [] });
+      }
     },
   );
 
