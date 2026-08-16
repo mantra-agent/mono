@@ -5,7 +5,7 @@ export const SCREEN_REGISTRY = {
   identity: { label: "Identity", path: "/business/identity", aliases: ["/business/definition"] },
   plan: { label: "Plan", path: "/business/plan", aliases: ["/business/advantage"] },
   library: { label: "Library", path: "/library", aliases: ["/info", "/library2"] },
-  performance: { label: "Performance", path: "/tools/performance", aliases: ["/performance", "/system?tab=resources"] },
+  performance: { label: "Performance", path: "/system?tab=resources", aliases: ["/performance", "/tools/performance"] },
   metrics: { label: "Metrics", path: "/tools/metrics", aliases: ["/business/metrics"] },
   kpis: { label: "KPIs", path: "/tools/kpis", aliases: ["/business/kpis"] },
   build: { label: "Build", path: "/build", aliases: ["/dev"] },
