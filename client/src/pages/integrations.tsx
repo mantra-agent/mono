@@ -5709,12 +5709,6 @@ interface ModelProviderDetail {
 }
 
 const MODEL_TIERS = SEMANTIC_TIERS;
-const TIER_COPY: Record<SemanticTier, string> = {
-  max: "Best available model for frontier reasoning and judgment.",
-  high: "Strong reasoning with lower latency and cost than Max.",
-  balanced: "Default production path: quality, speed, and cost in balance.",
-  fast: "Lowest-latency path for lightweight or interactive work.",
-};
 const REASONING_EFFORTS: readonly OpenAIReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh"];
 const REASONING_SUMMARIES: readonly OpenAIReasoningSummary[] = ["auto", "concise", "detailed", "none"];
 const VERBOSITIES: readonly OpenAIVerbosity[] = ["low", "medium", "high"];
@@ -5789,15 +5783,12 @@ function sanitizeGrokTierConfig(config: Exclude<TierModelConfig, string>): Exclu
 }
 
 function TierSettingSelect<T extends string>({
-  label, value, options, description, disabled, onChange,
+  label, value, options, disabled, onChange,
 }: {
-  label: string; value: T | undefined; options: readonly T[]; description: string; disabled?: boolean; onChange: (value: T) => void;
+  label: string; value: T | undefined; options: readonly T[]; disabled?: boolean; onChange: (value: T) => void;
 }) {
   return <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
-    <div className="min-w-0">
-      <Label className="text-xs text-muted-foreground">{label}</Label>
-      <p className="text-xs text-muted-foreground/80">{description}</p>
-    </div>
+    <Label className="text-xs text-muted-foreground">{label}</Label>
     <Select value={value} disabled={disabled} onValueChange={(next) => onChange(next as T)}>
       <SelectTrigger className="h-8 font-mono text-xs"><SelectValue /></SelectTrigger>
       <SelectContent>{options.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent>
@@ -5834,202 +5825,159 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
       mutation.mutate({ ...mappings, [tier]: nextConfig });
     }
   };
-  const isSubscription = connector.provider === "openai-subscription" || isClaude || isGrok;
-  const sectionLabel = isSubscription ? "Subscription connector" : "API connector";
   const testIdPrefix = isClaude ? "claude-cli" : isGrok ? "grok-subscription" : `openai-${connector.provider}`;
-  const settingsDescription = isClaude
-    ? "Claude subscription tiers. Configure the model, adaptive reasoning effort, thinking mode, maximum agent turns, and max output tokens. Mantra continues to own prompts, tools, permissions, and sessions."
-    : isGrok
-      ? "Grok subscription tiers. Map each semantic tier to a Grok model and choose reasoning effort on supported models. Output limits follow the selected model; xAI does not expose OpenAI Responses verbosity/service-tier controls here."
-      : isSubscription
-      ? "Subscription connector tiers. Effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, and max output tokens is capped by the selected model."
-      : "API connector tiers. Settings follow OpenAI Responses API docs: effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, service tier controls latency class, and max output tokens is capped by the selected model.";
 
-  return <Card className="overflow-hidden min-w-0">
-    <CardHeader className="pb-2">
-      <CardTitle className="text-base font-semibold">{title}</CardTitle>
-      <p className="text-sm text-muted-foreground">{settingsDescription}</p>
-    </CardHeader>
-    <CardContent className="p-0">
-      <IntegrationTreeSection label={sectionLabel} initialOpen testIdPrefix={testIdPrefix}>
+  return (
+    <div className="min-w-0">
+      <IntegrationTreeSection label={title} initialOpen icon={<Bot className="h-3.5 w-3.5" />} testIdPrefix={testIdPrefix}>
         {MODEL_TIERS.map((tier) => {
           const config = mappings[tier];
           const model = models.find((item) => item.id === config.model || `${connector.provider}/${item.id}` === config.model);
           const selectedLabel = model?.name ?? config.model;
-          // OpenAI-specific capability detection
           const supported = isOpenAI ? supportedOpenAISettings(model, connector.provider) : null;
-          // Claude-specific capability detection
           const supportsThinking = isClaude && model?.thinkingLevel !== "none" && model !== undefined;
+          const contextMeta = isClaude
+            ? `${formatTokenCount(model?.contextWindow)} · ${model?.thinkingDescription ?? "provider default"}`
+            : isGrok
+              ? `${formatTokenCount(model?.contextWindow)} · max ${formatTokenCount(model?.maxTokens)}`
+              : `in ${formatModelPrice(model?.cost?.input)} · out ${formatModelPrice(model?.cost?.output)} · ${formatTokenCount(model?.contextWindow)}`;
 
-          return <ProfileTreeRow
-            key={tier}
-            label={<span className="capitalize">{tier}</span>}
-            icon={tier === "fast" ? <Zap className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
-            hasValue
-            showEmpty
-            defaultOpen={tier === "balanced"}
-            testId={`${testIdPrefix}-${tier}-tier`}
-            expandedContentClassName="space-y-3"
-            expandedContent={<div className="space-y-3">
-              <p className="text-xs text-muted-foreground">{TIER_COPY[tier]}</p>
-              <TierSettingSelect
-                label="Model"
-                value={config.model}
-                options={models.map((item) => item.id)}
-                description={isClaude
-                  ? "Required. Moving aliases follow Claude Code updates; versioned choices stay pinned."
-                  : isGrok
-                    ? "Required. Map this semantic tier to a Grok model on the connected subscription."
-                    : "Required. The model used when routing selects this semantic tier."}
-                disabled={mutation.isPending || models.length === 0}
-                onChange={(modelId) => {
-                  if (isClaude) {
-                    const nextModel = models.find((item) => item.id === modelId);
-                    const nextSupportsThinking = nextModel?.thinkingLevel !== "none";
-                    updateTier(tier, { model: modelId, effort: nextSupportsThinking ? config.effort : undefined, thinkingMode: nextSupportsThinking ? config.thinkingMode : "disabled" });
-                  } else if (isGrok) {
-                    updateTier(tier, {
-                      model: modelId,
-                      reasoningEffort: modelId === "grok-4.5" || modelId === "grok-4.6" ? config.reasoningEffort : undefined,
-                    });
-                  } else {
-                    const nextModel = models.find((item) => item.id === modelId);
-                    const nextSupported = supportedOpenAISettings(nextModel, connector.provider);
-                    updateTier(tier, {
-                      model: modelId,
-                      reasoningEffort: nextSupported.reasoningEffort ? (config.reasoningEffort ?? (tier === "max" ? "high" : tier === "fast" ? "minimal" : "medium")) : undefined,
-                      reasoningMode: nextSupported.reasoningMode ? (config.reasoningMode ?? "standard") : undefined,
-                      reasoningSummary: nextSupported.reasoningSummary ? (config.reasoningSummary ?? "auto") : undefined,
-                      verbosity: nextSupported.verbosity ? (config.verbosity ?? "medium") : undefined,
-                      serviceTier: nextSupported.serviceTier ? (config.serviceTier ?? "auto") : undefined,
-                      maxOutputTokens: Math.min(config.maxOutputTokens ?? nextModel?.maxTokens ?? 4096, nextModel?.maxTokens ?? Number.MAX_SAFE_INTEGER),
-                    });
-                  }
-                }}
-              />
-              {/* Info cards: provider-specific */}
-              {isClaude ? <div className="grid gap-2 @sm:grid-cols-2">
-                <div className="rounded-md border border-border/60 px-3 py-2">
-                  <div className="text-xs font-medium">Subscription</div>
-                  <div className="mt-1 text-xs text-muted-foreground">Usage is governed by the connected Claude plan.</div>
-                </div>
-                <div className="rounded-md border border-border/60 px-3 py-2">
-                  <div className="text-xs font-medium">Context</div>
-                  <div className="mt-1 text-xs text-muted-foreground">{formatTokenCount(model?.contextWindow)} · {model?.thinkingDescription ?? "provider default"}</div>
-                </div>
-              </div> : isGrok ? <div className="grid gap-2 @sm:grid-cols-2">
-                <div className="rounded-md border border-border/60 px-3 py-2">
-                  <div className="text-xs font-medium">Subscription</div>
-                  <div className="mt-1 text-xs text-muted-foreground">$0 via connected Grok / xAI plan. Usage is not billed through Mantra API keys.</div>
-                </div>
-                <div className="rounded-md border border-border/60 px-3 py-2">
-                  <div className="text-xs font-medium">Context</div>
-                  <div className="mt-1 text-xs text-muted-foreground">Context {formatTokenCount(model?.contextWindow)} · max output {formatTokenCount(model?.maxTokens)}</div>
-                </div>
-              </div> : <div className="grid gap-2 @sm:grid-cols-2">
-                <div className="rounded-md border border-border/60 px-3 py-2">
-                  <div className="text-xs font-medium">Cost</div>
-                  <div className="mt-1 text-xs text-muted-foreground">Input {formatModelPrice(model?.cost?.input)} · output {formatModelPrice(model?.cost?.output)}</div>
-                </div>
-                <div className="rounded-md border border-border/60 px-3 py-2">
-                  <div className="text-xs font-medium">Speed / size</div>
-                  <div className="mt-1 text-xs text-muted-foreground">Context {formatTokenCount(model?.contextWindow)} · max output {formatTokenCount(model?.maxTokens)}</div>
-                </div>
-              </div>}
-              {/* Provider-specific settings */}
-              {isClaude && <>
-                <TierSettingSelect
-                  label="Effort"
-                  value={(config.effort ?? "activity-default") as typeof CLAUDE_EFFORT_OPTIONS[number]}
-                  options={CLAUDE_EFFORT_OPTIONS}
-                  description="Activity default inherits Mantra's resolved thinking. Higher effort increases reasoning depth and latency."
-                  disabled={mutation.isPending || !supportsThinking || config.thinkingMode === "disabled"}
-                  onChange={(value) => updateTier(tier, { effort: value === "activity-default" ? undefined : value })}
-                />
-                <TierSettingSelect
-                  label="Thinking"
-                  value={(config.thinkingMode ?? "activity-default") as typeof CLAUDE_THINKING_OPTIONS[number]}
-                  options={CLAUDE_THINKING_OPTIONS}
-                  description="Activity default inherits Mantra. Adaptive lets Claude choose its reasoning depth."
-                  disabled={mutation.isPending || !supportsThinking}
-                  onChange={(value) => updateTier(tier, { thinkingMode: value === "activity-default" ? undefined : value, effort: value === "disabled" ? undefined : config.effort })}
-                />
-                <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
-                  <div className="min-w-0">
-                    <Label className="text-xs text-muted-foreground">Max turns</Label>
-                    <p className="text-xs text-muted-foreground/80">Optional. Limits total Claude agent turns for one request.</p>
-                  </div>
-                  <Input
-                    key={`${tier}-${config.maxTurns ?? "default"}`}
-                    type="number"
-                    min={1}
-                    max={1000}
-                    defaultValue={config.maxTurns ?? ""}
-                    placeholder="Activity default"
-                    disabled={mutation.isPending}
-                    onBlur={(event) => {
-                      const raw = event.target.value.trim();
-                      if (!raw) { if (config.maxTurns !== undefined) updateTier(tier, { maxTurns: undefined }); return; }
-                      const value = Number.parseInt(raw, 10);
-                      if (Number.isFinite(value) && value >= 1 && value <= 1000 && value !== config.maxTurns) updateTier(tier, { maxTurns: value });
+          return (
+            <ProfileTreeRow
+              key={tier}
+              label={<span className="capitalize">{tier}</span>}
+              icon={tier === "fast" ? <Zap className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              defaultOpen={tier === "balanced"}
+              testId={`${testIdPrefix}-${tier}-tier`}
+              expandedContentClassName="space-y-3"
+              expandedContent={(
+                <div className="space-y-3">
+                  <TierSettingSelect
+                    label="Model"
+                    value={config.model}
+                    options={models.map((item) => item.id)}
+                    disabled={mutation.isPending || models.length === 0}
+                    onChange={(modelId) => {
+                      if (isClaude) {
+                        const nextModel = models.find((item) => item.id === modelId);
+                        const nextSupportsThinking = nextModel?.thinkingLevel !== "none";
+                        updateTier(tier, { model: modelId, effort: nextSupportsThinking ? config.effort : undefined, thinkingMode: nextSupportsThinking ? config.thinkingMode : "disabled" });
+                      } else if (isGrok) {
+                        updateTier(tier, {
+                          model: modelId,
+                          reasoningEffort: modelId === "grok-4.5" || modelId === "grok-4.6" ? config.reasoningEffort : undefined,
+                        });
+                      } else {
+                        const nextModel = models.find((item) => item.id === modelId);
+                        const nextSupported = supportedOpenAISettings(nextModel, connector.provider);
+                        updateTier(tier, {
+                          model: modelId,
+                          reasoningEffort: nextSupported.reasoningEffort ? (config.reasoningEffort ?? (tier === "max" ? "high" : tier === "fast" ? "minimal" : "medium")) : undefined,
+                          reasoningMode: nextSupported.reasoningMode ? (config.reasoningMode ?? "standard") : undefined,
+                          reasoningSummary: nextSupported.reasoningSummary ? (config.reasoningSummary ?? "auto") : undefined,
+                          verbosity: nextSupported.verbosity ? (config.verbosity ?? "medium") : undefined,
+                          serviceTier: nextSupported.serviceTier ? (config.serviceTier ?? "auto") : undefined,
+                          maxOutputTokens: Math.min(config.maxOutputTokens ?? nextModel?.maxTokens ?? 4096, nextModel?.maxTokens ?? Number.MAX_SAFE_INTEGER),
+                        });
+                      }
                     }}
-                    className="h-8 font-mono text-xs"
                   />
+                  <ProfileTreeRow label="Context" icon={<Activity className="h-3.5 w-3.5" />} hasValue showEmpty>
+                    <span className="truncate text-muted-foreground">{contextMeta}</span>
+                  </ProfileTreeRow>
+                  {isClaude && (
+                    <>
+                      <TierSettingSelect
+                        label="Effort"
+                        value={(config.effort ?? "activity-default") as typeof CLAUDE_EFFORT_OPTIONS[number]}
+                        options={CLAUDE_EFFORT_OPTIONS}
+                        disabled={mutation.isPending || !supportsThinking || config.thinkingMode === "disabled"}
+                        onChange={(value) => updateTier(tier, { effort: value === "activity-default" ? undefined : value })}
+                      />
+                      <TierSettingSelect
+                        label="Thinking"
+                        value={(config.thinkingMode ?? "activity-default") as typeof CLAUDE_THINKING_OPTIONS[number]}
+                        options={CLAUDE_THINKING_OPTIONS}
+                        disabled={mutation.isPending || !supportsThinking}
+                        onChange={(value) => updateTier(tier, { thinkingMode: value === "activity-default" ? undefined : value, effort: value === "disabled" ? undefined : config.effort })}
+                      />
+                      <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+                        <Label className="text-xs text-muted-foreground">Max turns</Label>
+                        <Input
+                          key={`${tier}-${config.maxTurns ?? "default"}`}
+                          type="number"
+                          min={1}
+                          max={1000}
+                          defaultValue={config.maxTurns ?? ""}
+                          placeholder="Activity default"
+                          disabled={mutation.isPending}
+                          onBlur={(event) => {
+                            const raw = event.target.value.trim();
+                            if (!raw) { if (config.maxTurns !== undefined) updateTier(tier, { maxTurns: undefined }); return; }
+                            const value = Number.parseInt(raw, 10);
+                            if (Number.isFinite(value) && value >= 1 && value <= 1000 && value !== config.maxTurns) updateTier(tier, { maxTurns: value });
+                          }}
+                          className="h-8 font-mono text-xs"
+                        />
+                      </div>
+                      <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+                        <Label className="text-xs text-muted-foreground">Max output</Label>
+                        <Input
+                          key={`${tier}-${config.maxOutputTokens ?? "default"}`}
+                          type="number"
+                          min={1}
+                          max={32000}
+                          defaultValue={config.maxOutputTokens ?? ""}
+                          placeholder="Default (32000)"
+                          disabled={mutation.isPending}
+                          onBlur={(event) => {
+                            const raw = event.target.value.trim();
+                            if (!raw) { if (config.maxOutputTokens !== undefined) updateTier(tier, { maxOutputTokens: undefined }); return; }
+                            const value = Number.parseInt(raw, 10);
+                            if (Number.isFinite(value) && value >= 1 && value <= 32000 && value !== config.maxOutputTokens) updateTier(tier, { maxOutputTokens: Math.min(value, 32000) });
+                          }}
+                          className="h-8 font-mono text-xs"
+                        />
+                      </div>
+                    </>
+                  )}
+                  {isGrok && (config.model === "grok-4.5" || config.model === "grok-4.6") && (
+                    <TierSettingSelect
+                      label="Reasoning effort"
+                      value={(config.reasoningEffort ?? "activity-default") as typeof GROK_46_EFFORT_OPTIONS[number]}
+                      options={config.model === "grok-4.6" ? GROK_46_EFFORT_OPTIONS : GROK_EFFORT_OPTIONS}
+                      disabled={mutation.isPending}
+                      onChange={(value) => updateTier(tier, { reasoningEffort: value === "activity-default" ? undefined : value })}
+                    />
+                  )}
+                  {supported?.reasoningEffort && <TierSettingSelect label="Reasoning effort" value={config.reasoningEffort ?? "medium"} options={REASONING_EFFORTS} disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningEffort: value })} />}
+                  {supported?.reasoningMode && <TierSettingSelect label="Reasoning mode" value={config.reasoningMode ?? "standard"} options={["standard", "pro"] as const} disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningMode: value })} />}
+                  {supported?.reasoningSummary && <TierSettingSelect label="Reasoning summary" value={config.reasoningSummary ?? "auto"} options={REASONING_SUMMARIES} disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningSummary: value })} />}
+                  {supported?.verbosity && <TierSettingSelect label="Verbosity" value={config.verbosity ?? "medium"} options={VERBOSITIES} disabled={mutation.isPending} onChange={(value) => updateTier(tier, { verbosity: value })} />}
+                  {supported?.serviceTier && <TierSettingSelect label="Service tier" value={config.serviceTier ?? "auto"} options={supported.serviceTierOptions} disabled={mutation.isPending} onChange={(value) => updateTier(tier, { serviceTier: value })} />}
+                  {supported?.maxOutputTokens && (
+                    <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+                      <Label className="text-xs text-muted-foreground">Max output</Label>
+                      <Input type="number" min={1} max={model?.maxTokens} value={config.maxOutputTokens ?? ""} disabled={mutation.isPending} onChange={(event) => { const value = Number.parseInt(event.target.value, 10); if (Number.isFinite(value) && value > 0) updateTier(tier, { maxOutputTokens: model?.maxTokens ? Math.min(value, model.maxTokens) : value }); }} className="h-8 font-mono text-xs" />
+                    </div>
+                  )}
                 </div>
-                <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
-                  <div className="min-w-0">
-                    <Label className="text-xs text-muted-foreground">Max output</Label>
-                    <p className="text-xs text-muted-foreground/80">Optional (1–32000). Lower caps shrink the output reserve and raise the usable input limit. Blank uses Claude Code's default.</p>
-                  </div>
-                  <Input
-                    key={`${tier}-${config.maxOutputTokens ?? "default"}`}
-                    type="number"
-                    min={1}
-                    max={32000}
-                    defaultValue={config.maxOutputTokens ?? ""}
-                    placeholder="Default (32000)"
-                    disabled={mutation.isPending}
-                    onBlur={(event) => {
-                      const raw = event.target.value.trim();
-                      if (!raw) { if (config.maxOutputTokens !== undefined) updateTier(tier, { maxOutputTokens: undefined }); return; }
-                      const value = Number.parseInt(raw, 10);
-                      if (Number.isFinite(value) && value >= 1 && value <= 32000 && value !== config.maxOutputTokens) updateTier(tier, { maxOutputTokens: Math.min(value, 32000) });
-                    }}
-                    className="h-8 font-mono text-xs"
-                  />
-                </div>
-              </>}
-              {isGrok && (config.model === "grok-4.5" || config.model === "grok-4.6") && <TierSettingSelect
-                label="Reasoning effort"
-                value={(config.reasoningEffort ?? "activity-default") as typeof GROK_46_EFFORT_OPTIONS[number]}
-                options={config.model === "grok-4.6" ? GROK_46_EFFORT_OPTIONS : GROK_EFFORT_OPTIONS}
-                description="Activity default inherits Mantra's resolved depth (Grok defaults to high). Supported models expose their documented effort controls."
-                disabled={mutation.isPending}
-                onChange={(value) => updateTier(tier, { reasoningEffort: value === "activity-default" ? undefined : value })}
-              />}
-              {supported?.reasoningEffort && <TierSettingSelect label="Reasoning effort" value={config.reasoningEffort ?? "medium"} options={REASONING_EFFORTS} description="Default: tier-derived. Higher effort can improve reasoning and increases latency." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningEffort: value })} />}
-              {supported?.reasoningMode && <TierSettingSelect label="Reasoning mode" value={config.reasoningMode ?? "standard"} options={["standard", "pro"] as const} description="Default: standard. Pro is available only on API gpt-5.6 reasoning models." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningMode: value })} />}
-              {supported?.reasoningSummary && <TierSettingSelect label="Reasoning summary" value={config.reasoningSummary ?? "auto"} options={REASONING_SUMMARIES} description="Default: auto. Controls whether OpenAI returns summarized reasoning." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningSummary: value })} />}
-              {supported?.verbosity && <TierSettingSelect label="Verbosity" value={config.verbosity ?? "medium"} options={VERBOSITIES} description="Default: medium. Controls output detail for GPT-5-class text generation." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { verbosity: value })} />}
-              {supported?.serviceTier && <TierSettingSelect label="Service tier" value={config.serviceTier ?? "auto"} options={supported.serviceTierOptions} description="Default: auto. Controls API latency/cost class when the account supports it." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { serviceTier: value })} />}
-              {supported?.maxOutputTokens && <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
-                <div className="min-w-0">
-                  <Label className="text-xs text-muted-foreground">Max output</Label>
-                  <p className="text-xs text-muted-foreground/80">Positive integer. Must not exceed {formatTokenCount(model?.maxTokens)} for this model.</p>
-                </div>
-                <Input type="number" min={1} max={model?.maxTokens} value={config.maxOutputTokens ?? ""} disabled={mutation.isPending} onChange={(event) => { const value = Number.parseInt(event.target.value, 10); if (Number.isFinite(value) && value > 0) updateTier(tier, { maxOutputTokens: model?.maxTokens ? Math.min(value, model.maxTokens) : value }); }} className="h-8 font-mono text-xs" />
-              </div>}
-              {isGrok ? <p className="text-xs text-muted-foreground">Grok subscription exposes model selection and reasoning effort on supported models. Output limits follow the selected model; OpenAI Responses verbosity/service-tier controls do not apply.</p> : null}
-              {isOpenAI && !supported?.reasoningEffort && !supported?.verbosity && !supported?.serviceTier ? <p className="text-xs text-muted-foreground">This model exposes only model selection and max output in the current connector contract.</p> : null}
-            </div>}
-          >
-            <span className="truncate font-mono">{selectedLabel}</span>
-          </ProfileTreeRow>;
+              )}
+            >
+              <span className="truncate font-mono">{selectedLabel}</span>
+            </ProfileTreeRow>
+          );
         })}
-        {models.length === 0 && <p className="px-2 py-1.5 text-sm text-muted-foreground">No models are currently available for this connector.</p>}
+        {models.length === 0 && (
+          <ProfileTreeRow label="Models" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span className="text-muted-foreground">None available</span>
+          </ProfileTreeRow>
+        )}
       </IntegrationTreeSection>
-    </CardContent>
-  </Card>;
+    </div>
+  );
 }
 
 function ModelConnectorSection({ provider, title = "Model mapping" }: { provider: ModelConnectorProvider; title?: string }) {
@@ -6043,26 +5991,60 @@ function ModelConnectorSection({ provider, title = "Model mapping" }: { provider
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
     onError: (error: Error) => toast({ title: "Model mapping failed", description: error.message, variant: "destructive" }),
   });
-  if (!connector) return <Card className="overflow-hidden min-w-0">
-    <CardHeader><CardTitle className="text-base font-semibold">{title}</CardTitle></CardHeader>
-    <CardContent><p className="text-sm text-muted-foreground">No connector is configured for this provider.</p></CardContent>
-  </Card>;
+  if (!connector) {
+    return (
+      <div className="min-w-0">
+        <IntegrationTreeSection label={title} initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
+          <ProfileTreeRow label="Status" icon={<XCircle className="h-3.5 w-3.5 text-muted-foreground" />} hasValue showEmpty>
+            <span className="text-muted-foreground">Not configured</span>
+          </ProfileTreeRow>
+        </IntegrationTreeSection>
+      </div>
+    );
+  }
   if (isOpenAIProvider(provider) || provider === "claude-cli" || isGrokProvider(provider)) {
     return <ConnectorTierTree connector={connector} models={models} title={title} />;
   }
-  return <Card className="overflow-hidden min-w-0">
-    <CardHeader><CardTitle className="text-base font-semibold">{title}</CardTitle></CardHeader>
-    <CardContent className="space-y-3">
-      {MODEL_TIERS.map((tier) => <div key={tier} className="grid gap-2 @sm:grid-cols-[96px_1fr] @sm:items-center">
-        <Label className="capitalize">{tier}</Label>
-        <Select value={tierConfigModel(connector.config.tierMappings[tier])} disabled={mutation.isPending} onValueChange={(model) => mutation.mutate({ ...Object.fromEntries(MODEL_TIERS.map((item) => [item, tierConfigModel(connector.config.tierMappings[item])])), [tier]: model } as Record<SemanticTier, string>)}>
-          <SelectTrigger className="font-mono text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>{models.map((model) => <SelectItem key={model.id} value={`${provider}/${model.id}`}><span>{model.name}</span></SelectItem>)}</SelectContent>
-        </Select>
-      </div>)}
-      {models.length === 0 && <p className="text-sm text-muted-foreground">No models are currently available for this connector.</p>}
-    </CardContent>
-  </Card>;
+  return (
+    <div className="min-w-0">
+      <IntegrationTreeSection label={title} initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
+        {MODEL_TIERS.map((tier) => {
+          const selected = tierConfigModel(connector.config.tierMappings[tier]);
+          const selectedModel = models.find((model) => `${provider}/${model.id}` === selected || model.id === selected);
+          return (
+            <ProfileTreeRow
+              key={tier}
+              label={<span className="capitalize">{tier}</span>}
+              icon={tier === "fast" ? <Zap className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              defaultOpen={tier === "balanced"}
+              expandedContentClassName="space-y-3"
+              expandedContent={(
+                <TierSettingSelect
+                  label="Model"
+                  value={selected}
+                  options={models.map((model) => `${provider}/${model.id}`)}
+                  disabled={mutation.isPending || models.length === 0}
+                  onChange={(model) => mutation.mutate({
+                    ...Object.fromEntries(MODEL_TIERS.map((item) => [item, tierConfigModel(connector.config.tierMappings[item])])),
+                    [tier]: model,
+                  } as Record<SemanticTier, string>)}
+                />
+              )}
+            >
+              <span className="truncate font-mono">{selectedModel?.name ?? selected}</span>
+            </ProfileTreeRow>
+          );
+        })}
+        {models.length === 0 && (
+          <ProfileTreeRow label="Models" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <span className="text-muted-foreground">None available</span>
+          </ProfileTreeRow>
+        )}
+      </IntegrationTreeSection>
+    </div>
+  );
 }
 
 function IntegrationDetail({ provider }: { provider: string }) {
@@ -6137,15 +6119,15 @@ function IntegrationDetail({ provider }: { provider: string }) {
 
       {provider === "claude-cli" && (
         <div className="space-y-4">
-          <Card data-testid="card-secret-claude-cli">
-            <CardHeader>
-              <CardTitle className="text-base font-semibold">Claude Code CLI</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-xs text-muted-foreground mb-3">System integration. Visible to all users; admin-only to edit.</p>
-              <SecretsForSection section="claude-cli" />
-            </CardContent>
-          </Card>
+          <div className="min-w-0" data-testid="card-secret-claude-cli">
+            <IntegrationTreeSection label="Claude Code CLI" initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
+              <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
+                <div className="min-w-0 w-full">
+                  <SecretsForSection section="claude-cli" />
+                </div>
+              </ProfileTreeRow>
+            </IntegrationTreeSection>
+          </div>
           <ModelConnectorSection provider="claude-cli" />
         </div>
       )}
