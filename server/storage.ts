@@ -712,10 +712,15 @@ export class HybridStorage implements IStorage {
 
   async getSkillByName(name: string): Promise<SkillWithReferences | undefined> {
     const principal = requireCurrentPrincipal();
-    const namespaceOrder = principal.actorType === "user" && principal.userId && principal.accountId
-      ? sql`CASE
+    // Resolve the Instance-pin branch in JS. Binding `${principal.instanceId} IS NOT NULL`
+    // as a standalone parameter gives PostgreSQL no type context for the bare bind and
+    // fails the whole SELECT with 42P18 ("could not determine data type of parameter").
+    // instanceId is known at query-build time, so emit only the branch that applies.
+    let namespaceOrder: SQL;
+    if (principal.actorType === "user" && principal.userId && principal.accountId) {
+      if (principal.instanceId) {
+        namespaceOrder = sql`CASE
           WHEN ${skills.scope} = 'user'
-            AND ${principal.instanceId} IS NOT NULL
             AND ${skills.instanceId} = ${principal.instanceId}
           THEN 0
           WHEN ${skills.scope} = 'user'
@@ -724,8 +729,19 @@ export class HybridStorage implements IStorage {
           THEN 1
           WHEN ${skills.scope} = 'global' THEN 2
           ELSE 3
-        END`
-      : sql`CASE WHEN ${skills.scope} = 'global' THEN 0 ELSE 1 END`;
+        END`;
+      } else {
+        namespaceOrder = sql`CASE
+          WHEN ${skills.scope} = 'user'
+            AND ${skills.ownerUserId} = ${principal.userId}
+          THEN 1
+          WHEN ${skills.scope} = 'global' THEN 2
+          ELSE 3
+        END`;
+      }
+    } else {
+      namespaceOrder = sql`CASE WHEN ${skills.scope} = 'global' THEN 0 ELSE 1 END`;
+    }
     const rows = await db
       .select()
       .from(skills)
