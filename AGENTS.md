@@ -44,6 +44,14 @@ Installation controls composition and owned-resource lifecycle; it never grants 
 
 When multiple guards cooperate to enforce a single invariant, the invariant belongs in the data model. Encode ownership in data so invalid states become unrepresentable, not merely prevented. If deleting any one guard reintroduces the bug, the fix is procedural and fragile.
 
+**Code Owns the Contract, Data Owns the Catalog**
+
+Code may branch on a closed set it defines; it must never branch on the identity of instances the data layer accumulates. A skill, timer, persona, provider, hook, or tool is a row — adding one is a data change, never a code edit. When a conditional names specific data-layer instances (`skill.name === …`, `timer.type === …`, `provider === 'oura'`), the stable layer has taken a dependency on the volatile one, and the catalog can no longer grow without dragging a build behind it.
+
+Push the varying behavior onto the instance: a field it carries, or a handler registered against a stable contract the code defines. Then dispatch stays constant while the catalog grows. The cure is not a plugin framework for two stable cases — that spends reliability the other way (see `Complexity Spends Reliability`). It is moving one bit of knowledge onto the instance: a data field, or a single lookup table keyed by a stable contract.
+
+The test: if you cannot add the next row without editing a conditional that names the previous ones, the dependency is inverted — fix the seam, don't extend the switch. The trigger is ownership, not the keyword: a short `switch` over a genuinely closed, code-owned set (render modes you defined, HTTP verbs) is correct and needs no registry. Ask only — does the data layer decide what belongs in this set? Then code may not enumerate it.
+
 **Canonical Mutation Path**
 
 Critical writes go through one canonical path. If an invariant matters, every route, tool, job, and helper that mutates that state must cross the same enforcement boundary. If another write path can bypass the rule, the fix is incomplete.
