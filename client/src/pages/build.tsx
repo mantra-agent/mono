@@ -4560,6 +4560,21 @@ export function DesignTab() {
                 scan, selection, nesting, completion, expansion, and row actions
                 through one compact interaction model.
               </p>
+              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                Two compositions, one language. Object indexes use search, the blue
+                + New Thing row, collapsible sections, and compact nested rows
+                (Session Menu, Features, Issues). Field and detail screens use{" "}
+                <span className="font-mono text-foreground">ProfileDetailSection</span>{" "}
+                or an integration section with one{" "}
+                <span className="font-mono text-foreground">ProfileTreeRow</span> per
+                field (Secrets, Environment SOURCE, Claude CLI). Share{" "}
+                <span className="font-mono text-foreground">HIERARCHY_TREE_STACK_CLASS</span>
+                ,{" "}
+                <span className="font-mono text-foreground">HIERARCHY_PRIMARY_ACTION_CLASS</span>
+                , and{" "}
+                <span className="font-mono text-foreground">HIERARCHY_SECTION_HEADER_CLASS</span>
+                . A leftover Card on a route is migration debt, not a second standard.
+              </p>
             </div>
           </div>
         </DesignSection>
