@@ -174,6 +174,73 @@ export async function ensureLifeAddressingSchema(pool: Pool): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_address_links_scope_owner
       ON address_links(scope, owner_user_id, account_id, lifecycle)
     `);
+    // Active relationship uniqueness is the structural invariant. Legacy producers
+    // could mint multiple active rows for the same endpoints under different
+    // idempotency keys (e.g. two workflow artifacts producing one page). Retire
+    // extras and repoint FK projections before installing the unique index so
+    // boot cannot fail closed on pre-existing duplicates.
+    await client.query(`
+      WITH ranked AS (
+        SELECT
+          id,
+          owner_user_id,
+          account_id,
+          source_address,
+          predicate,
+          target_address,
+          ROW_NUMBER() OVER (
+            PARTITION BY owner_user_id, account_id, source_address, predicate, target_address
+            ORDER BY created_at ASC, id ASC
+          ) AS rn
+        FROM address_links
+        WHERE lifecycle = 'active'
+      ),
+      keepers AS (
+        SELECT id, owner_user_id, account_id, source_address, predicate, target_address
+        FROM ranked
+        WHERE rn = 1
+      ),
+      duplicates AS (
+        SELECT r.id AS duplicate_id, k.id AS keep_id
+        FROM ranked r
+        INNER JOIN keepers k
+          ON k.owner_user_id = r.owner_user_id
+         AND k.account_id = r.account_id
+         AND k.source_address = r.source_address
+         AND k.predicate = r.predicate
+         AND k.target_address = r.target_address
+        WHERE r.rn > 1
+      ),
+      repoint_decision AS (
+        UPDATE decision_links dl
+        SET address_link_id = d.keep_id
+        FROM duplicates d
+        WHERE dl.address_link_id = d.duplicate_id
+        RETURNING dl.id
+      ),
+      repoint_session AS (
+        UPDATE session_artifacts sa
+        SET address_link_id = d.keep_id
+        FROM duplicates d
+        WHERE sa.address_link_id = d.duplicate_id
+        RETURNING sa.id
+      ),
+      repoint_workflow AS (
+        UPDATE workflow_artifacts wa
+        SET address_link_id = d.keep_id
+        FROM duplicates d
+        WHERE wa.address_link_id = d.duplicate_id
+        RETURNING wa.id
+      )
+      UPDATE address_links al
+      SET
+        lifecycle = 'retired',
+        retired_at = COALESCE(al.retired_at, CURRENT_TIMESTAMP),
+        updated_by_user_id = COALESCE(al.updated_by_user_id, al.created_by_user_id)
+      FROM duplicates d
+      WHERE al.id = d.duplicate_id
+        AND al.lifecycle = 'active'
+    `);
     await client.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS uk_address_links_active_relationship
       ON address_links(owner_user_id, account_id, source_address, predicate, target_address)
