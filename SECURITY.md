@@ -1,8 +1,8 @@
 <!-- 2026-08-15 Oura webhook GET challenge handshake:
 - Assets/data: A03 Oura client secret and verification token (S3), A07 inbound `/api/oura/webhook` callback (S1 operational). No new principal or health-row authority.
-- Flow/threat: Oura subscription create sends GET `?verification_token=` and expects 200 + the challenge body. Requiring `x-oura-signature` HMAC on that GET 401s in 1ms, so Oura refuses the subscription (STRIDE denial of service / spoofing analogue; INT-01). A GET that echoes any query without the configured token would let anyone complete the handshake.
-- Deterministic controls/owner: GET verifies the configured `OURA_WEBHOOK_VERIFY_TOKEN` (or HMAC if Oura later signs the challenge). POST events still require `x-oura-signature` HMAC over the raw body. Owner: Wellness Oura. Severity: medium integrity. SLA: immediate.
-- Residual/rollback: GET remains unauthenticated by design so Oura can reach it. Revert the challenge/HMAC split, this finding, and the GET handler together.
+- Flow/threat: Oura subscription create sends GET `?verification_token=` and JSON-parses the 200 body. HMAC-gating that GET 401s in 1ms; a text/plain echo then 400s as "Invalid json in verification response", so Oura refuses the subscription (STRIDE denial of service / spoofing analogue; INT-01). A GET that echoes any query without the configured token would let anyone complete the handshake.
+- Deterministic controls/owner: GET verifies the configured `OURA_WEBHOOK_VERIFY_TOKEN` (or HMAC if Oura later signs the challenge) and returns `{ verification_token }`. POST events still require `x-oura-signature` HMAC over the raw body. Owner: Wellness Oura. Severity: medium integrity. SLA: immediate.
+- Residual/rollback: GET remains unauthenticated by design so Oura can reach it. If Oura later requires a different JSON key, change only the 200 body. Revert the challenge/HMAC split, JSON response, this finding, and the GET handler together.
 -->
 
 <!-- 2026-08-15 Universal Metrics cutover:
