@@ -113,10 +113,6 @@ export interface SimpleFeedSection {
   items: SimpleFeedItem[];
   /** Linked plan artifact for this horizon, or null if none exists yet. */
   planArtifact?: SectionPlanArtifact | null;
-  /** Skill name to run to generate the plan artifact (null = no skill available). */
-  planSkillName?: string | null;
-  /** Cadence parameter passed to the parameterized Plan skill. */
-  planCadence?: "daily" | "weekly" | "monthly" | "quarterly" | null;
 }
 
 export interface SimpleFeed {

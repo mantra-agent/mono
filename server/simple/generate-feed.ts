@@ -150,40 +150,30 @@ function weeklyMondayDateKey(timezone: string, weekOffsetDays = 0): string {
   return `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
 }
 
-/** Map of section → { periodType, dateKeyFn, artifactField, skillName } */
+/** Map of section → { periodType, dateKeyFn, artifactField } */
 const PLAN_ARTIFACT_CONFIG: Record<string, {
   periodType: "daily" | "weekly" | "monthly" | "quarterly";
   artifactField: "dailyPlanPageId" | "weeklyPlanPageId" | "monthlyPlanPageId" | "quarterlyPlanPageId";
-  skillName: "plan";
-  planCadence: "daily" | "weekly" | "monthly" | "quarterly";
   dateKey: (tz: string) => string;
 }> = {
   now: {
     periodType: "daily",
     artifactField: "dailyPlanPageId",
-    skillName: "plan",
-    planCadence: "daily",
     dateKey: (tz) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
   },
   this_week: {
     periodType: "weekly",
     artifactField: "weeklyPlanPageId",
-    skillName: "plan",
-    planCadence: "weekly",
     dateKey: (tz) => weeklyMondayDateKey(tz),
   },
   next_week: {
     periodType: "weekly",
     artifactField: "weeklyPlanPageId",
-    skillName: "plan",
-    planCadence: "weekly",
     dateKey: (tz) => weeklyMondayDateKey(tz, 7),
   },
   this_month: {
     periodType: "monthly",
     artifactField: "monthlyPlanPageId",
-    skillName: "plan",
-    planCadence: "monthly",
     dateKey: (tz) => {
       const parts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit" }).formatToParts(new Date());
       const year = parts.find(p => p.type === "year")?.value ?? "2026";
@@ -194,8 +184,6 @@ const PLAN_ARTIFACT_CONFIG: Record<string, {
   this_quarter: {
     periodType: "quarterly",
     artifactField: "quarterlyPlanPageId",
-    skillName: "plan",
-    planCadence: "quarterly",
     dateKey: (tz) => {
       const parts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit" }).formatToParts(new Date());
       const year = Number(parts.find(p => p.type === "year")?.value ?? "2026");
@@ -222,9 +210,6 @@ async function enrichSectionsWithPlanArtifacts(
   for (const section of sections) {
     const config = PLAN_ARTIFACT_CONFIG[section.section];
     if (!config) continue;
-
-    section.planSkillName = config.skillName;
-    section.planCadence = config.planCadence;
 
     try {
       const dateKey = config.dateKey(timezone);
@@ -294,8 +279,6 @@ function normalizeGeneratedFeed(input: unknown, fallback: SimpleFeed): SimpleFee
       return {
         section: section.section,
         planArtifact: fallbackSection?.planArtifact,
-        planSkillName: fallbackSection?.planSkillName,
-        planCadence: fallbackSection?.planCadence,
         items: section.items
           .filter(item => allowedIds.has(item.id))
           .map(item => {

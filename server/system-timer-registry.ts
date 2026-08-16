@@ -154,47 +154,6 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     timezone: "__USER_TZ__",
   },
   {
-    legacyMatch: (t) => t.type === "skill" && t.name === "Weekly Planning",
-
-    systemKey: "weekly-planning",
-    name: "Weekly Planning",
-    description:
-      "Friday weekly planning using parameterized Plan — sets canonical weekly goals and writes the weekly plan artifact",
-    type: "skill",
-    skillId: "plan",
-    prompt: "cadence=weekly",
-    schedules: [
-      {
-        id: "sys-skill-plan-weekly-1",
-        frequency: "weekly",
-        daysOfWeek: ["fri"],
-        timeOfDay: "14:00",
-      },
-    ],
-    enabled: true,
-    timezone: "__USER_TZ__",
-  },
-  {
-    legacyMatch: (t) => t.type === "skill" && t.name === "Monthly Planning",
-
-    systemKey: "monthly-planning",
-    name: "Monthly Planning",
-    description:
-      "Last-Friday monthly planning using parameterized Plan — sets canonical monthly goals and writes the monthly plan artifact",
-    type: "skill",
-    skillId: "plan",
-    prompt: "cadence=monthly",
-    schedules: [
-      {
-        id: "sys-skill-plan-monthly-1",
-        frequency: "custom",
-        cronExpression: "0 14 * * FRI#L",
-      },
-    ],
-    enabled: true,
-    timezone: "__USER_TZ__",
-  },
-  {
     legacyMatch: (t) => t.type === "system" && t.prompt === "email-sync",
 
     systemKey: "email-sync",
