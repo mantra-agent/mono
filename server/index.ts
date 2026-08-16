@@ -24,6 +24,8 @@ import { bootTracker, registerBootStatusRoute } from "./boot-tracker";
 import { convergeBootSchema, startPostReadySchemaConvergence } from "./schema-convergence";
 import { isRecoverablePostgresConnectionError } from "./postgres-errors";
 import { closeDatabasePools } from "./db";
+import { runWithPrincipal } from "./principal-context";
+import { createNamedSystemPrincipal } from "./principal";
 import { admissionController } from "./run-admission";
 import { runtimeDispatcher } from "./runtime/runtime-dispatcher";
 import { registerRuntimeProofPathHandlers } from "./runtime/proof-path-handlers";
@@ -381,6 +383,15 @@ app.use((req, res, next) => {
   await personaStorage.seedDefaults();
   const { seedSkillPersonaRecommendations } = await import("./skill-seed");
   await seedSkillPersonaRecommendations();
+  const { backfillPromptModulesFromSkills } = await import("./prompt-modules");
+  const promptModuleBackfill = await runWithPrincipal(
+    createNamedSystemPrincipal("prompt-module-bootstrap"),
+    () => backfillPromptModulesFromSkills(),
+  );
+  log(
+    `[startup] prompt modules ready: created=${promptModuleBackfill.created.length} skipped=${promptModuleBackfill.skipped.length} missing=${promptModuleBackfill.missing.length}`,
+    "boot",
+  );
   const { runDocumentStoreWorkspaceMigrationBootstrap } = await import("./memory/document-store-bootstrap");
   await runDocumentStoreWorkspaceMigrationBootstrap();
   const { purgeRetiredBeliefs } = await import("./memory/retired-beliefs-purge");
