@@ -1,17 +1,16 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -28,26 +27,29 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { HierarchyTreeRow } from "@/components/hierarchy-tree";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  HIERARCHY_PRIMARY_ACTION_CLASS,
+  HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { cn } from "@/lib/utils";
 import {
   Archive,
   ArchiveRestore,
-  ChevronDown,
+  ChevronRight,
   Copy,
+  ExternalLink,
+  GitBranch,
   Loader2,
-  MoreVertical,
   Plus,
-  Swords,
   Trash2,
   Users,
-  GitBranch,
 } from "lucide-react";
 
 interface StrategyItem {
@@ -61,24 +63,184 @@ interface StrategyItem {
   stateCount?: number;
 }
 
+function formatUpdatedAt(dateStr: string) {
+  const d = new Date(dateStr);
+  return (
+    d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
+    ", " +
+    d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+  );
+}
+
+function matchesSearch(strategy: StrategyItem, search: string) {
+  if (!search.trim()) return true;
+  const q = search.trim().toLowerCase();
+  return (
+    strategy.title.toLowerCase().includes(q) ||
+    (strategy.description ?? "").toLowerCase().includes(q)
+  );
+}
+
+function ScenarioRow({
+  strategy,
+  onOpen,
+  onDelete,
+  onDuplicate,
+  onArchive,
+  onUnarchive,
+}: {
+  strategy: StrategyItem;
+  onOpen: () => void;
+  onDelete: () => void;
+  onDuplicate: () => void;
+  onArchive?: () => void;
+  onUnarchive?: () => void;
+}) {
+  const actorCount = strategy.actorCount ?? 0;
+  const stateCount = strategy.stateCount ?? 0;
+
+  return (
+    <ProfileTreeRow
+      label={<span data-testid={`text-strategy-title-${strategy.id}`}>{strategy.title}</span>}
+      hasValue
+      showEmpty
+      mobileLayout="inline"
+      valueLayout="compact"
+      testId={`card-strategy-${strategy.id}`}
+      expandedContentClassName="px-2 pb-2 pl-2"
+      expandedContent={(
+        <div className="space-y-0.5">
+          {strategy.description ? (
+            <ProfileTreeRow
+              label="Description"
+              hasValue
+              showEmpty
+              mobileLayout="inline"
+              testId={`text-strategy-desc-${strategy.id}`}
+            >
+              <span className="whitespace-pre-wrap text-right text-xs text-muted-foreground">
+                {strategy.description}
+              </span>
+            </ProfileTreeRow>
+          ) : null}
+
+          <ProfileTreeRow
+            label="Actors"
+            icon={<Users className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            mobileLayout="inline"
+            testId={`text-actor-count-${strategy.id}`}
+          >
+            <span className="text-xs tabular-nums text-muted-foreground">{actorCount}</span>
+          </ProfileTreeRow>
+
+          <ProfileTreeRow
+            label="States"
+            icon={<GitBranch className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            mobileLayout="inline"
+            testId={`text-state-count-${strategy.id}`}
+          >
+            <span className="text-xs tabular-nums text-muted-foreground">{stateCount}</span>
+          </ProfileTreeRow>
+
+          {strategy.updatedAt ? (
+            <ProfileTreeRow
+              label="Updated"
+              hasValue
+              showEmpty
+              mobileLayout="inline"
+              testId={`text-strategy-updated-${strategy.id}`}
+            >
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {formatUpdatedAt(strategy.updatedAt)}
+              </span>
+            </ProfileTreeRow>
+          ) : null}
+
+          <div className="px-2 pt-1">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 text-sm text-cta hover:text-active"
+              onClick={onOpen}
+              data-testid={`button-open-strategy-${strategy.id}`}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Open scenario
+            </button>
+          </div>
+        </div>
+      )}
+      menuContent={(
+        <>
+          <DropdownMenuItem onSelect={onOpen} data-testid={`button-open-menu-strategy-${strategy.id}`}>
+            <ExternalLink className="mr-2 h-3.5 w-3.5" />
+            Open
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={onDuplicate}
+            data-testid={`button-duplicate-strategy-${strategy.id}`}
+          >
+            <Copy className="mr-2 h-3.5 w-3.5" />
+            Duplicate
+          </DropdownMenuItem>
+          {onArchive ? (
+            <DropdownMenuItem
+              onSelect={onArchive}
+              data-testid={`button-archive-strategy-${strategy.id}`}
+            >
+              <Archive className="mr-2 h-3.5 w-3.5" />
+              Archive
+            </DropdownMenuItem>
+          ) : null}
+          {onUnarchive ? (
+            <DropdownMenuItem
+              onSelect={onUnarchive}
+              data-testid={`button-unarchive-strategy-${strategy.id}`}
+            >
+              <ArchiveRestore className="mr-2 h-3.5 w-3.5" />
+              Unarchive
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem
+            className="text-destructive focus:text-destructive"
+            onSelect={onDelete}
+            data-testid={`button-delete-strategy-${strategy.id}`}
+          >
+            <Trash2 className="mr-2 h-3.5 w-3.5" />
+            Delete
+          </DropdownMenuItem>
+        </>
+      )}
+    />
+  );
+}
+
 export default function StrategyListTab() {
   const [, setLocation] = useLocation();
+  const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<StrategyItem | null>(null);
-  const [archivedOpen, setArchivedOpen] = useState(false);
   const { toast } = useToast();
 
   const { data: allStrategies = [], isLoading } = useQuery<StrategyItem[]>({
     queryKey: ["/api/strategy/goals", { includeArchived: true }],
     queryFn: async () => {
-      const res = await fetch("/api/strategy/goals?includeArchived=true");
-      if (!res.ok) throw new Error("Failed to fetch strategies");
+      const res = await apiRequest("GET", "/api/strategy/goals?includeArchived=true");
       return res.json();
     },
   });
 
-  const activeStrategies = allStrategies.filter(s => !s.archived);
-  const archivedStrategies = allStrategies.filter(s => s.archived);
+  const filtered = useMemo(
+    () => allStrategies.filter((strategy) => matchesSearch(strategy, search)),
+    [allStrategies, search],
+  );
+  const activeStrategies = filtered.filter((s) => !s.archived);
+  const archivedStrategies = filtered.filter((s) => s.archived);
+  const hasAny = allStrategies.length > 0;
+  const searchActive = search.trim().length > 0;
 
   const createMutation = useMutation({
     mutationFn: async (data: { title: string; description: string }) => {
@@ -131,115 +293,143 @@ export default function StrategyListTab() {
     },
     onSuccess: (strategy: StrategyItem) => {
       queryClient.invalidateQueries({ queryKey: ["/api/strategy/goals"] });
-      toast({ title: strategy.archived ? `Archived "${strategy.title}"` : `Unarchived "${strategy.title}"` });
+      toast({
+        title: strategy.archived
+          ? `Archived "${strategy.title}"`
+          : `Unarchived "${strategy.title}"`,
+      });
     },
     onError: (err: Error) => {
       toast({ title: "Failed to update scenario", description: err.message, variant: "destructive" });
     },
   });
 
+  const renderRows = (
+    rows: StrategyItem[],
+    emptyCopy: string,
+    mode: "active" | "archived",
+  ) => {
+    if (rows.length === 0) {
+      return <div className="px-2 py-1.5 text-sm text-muted-foreground">{emptyCopy}</div>;
+    }
+
+    return rows.map((strategy, index) => (
+      <HierarchyTreeRow
+        key={strategy.id}
+        continues={index < rows.length - 1}
+        connectorAnchor="first-row-center"
+      >
+        <ScenarioRow
+          strategy={strategy}
+          onOpen={() => setLocation(`/scenarios/${strategy.id}`)}
+          onDelete={() => setDeleteTarget(strategy)}
+          onDuplicate={() => duplicateMutation.mutate(strategy.id)}
+          onArchive={
+            mode === "active"
+              ? () => archiveMutation.mutate({ id: strategy.id, archived: true })
+              : undefined
+          }
+          onUnarchive={
+            mode === "archived"
+              ? () => archiveMutation.mutate({ id: strategy.id, archived: false })
+              : undefined
+          }
+        />
+      </HierarchyTreeRow>
+    ));
+  };
+
   return (
-    <div className="p-4 space-y-4" data-testid="strategy-page">
-      <div className="flex items-center justify-end">
-        <Button onClick={() => setCreateOpen(true)} data-testid="button-create-strategy">
-          <Plus className="h-4 w-4 mr-1.5" />
-          New Strategy
-        </Button>
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className={HIERARCHY_TREE_STACK_CLASS} data-testid="strategy-page">
+          <HierarchySearchInput
+            value={search}
+            onChange={setSearch}
+            inputTestId="input-search-scenarios"
+            clearTestId="button-clear-scenario-search"
+            ariaLabel="Search scenarios"
+          />
+
+          <button
+            type="button"
+            className={HIERARCHY_PRIMARY_ACTION_CLASS}
+            onClick={() => setCreateOpen(true)}
+            data-testid="button-create-strategy"
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            <span>New Scenario</span>
+          </button>
+
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : !hasAny ? (
+            <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="empty-strategy">
+              No scenarios yet.
+            </div>
+          ) : (
+            <>
+              <Collapsible defaultOpen>
+                <CollapsibleTrigger
+                  className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
+                  data-testid="section-active-scenarios"
+                >
+                  <ChevronRight className="h-3 w-3 shrink-0" />
+                  Active
+                </CollapsibleTrigger>
+                <CollapsibleContent data-testid="strategies-grid">
+                  {renderRows(
+                    activeStrategies,
+                    searchActive ? "No matching scenarios." : "No active scenarios.",
+                    "active",
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
+
+              {allStrategies.some((s) => s.archived) ? (
+                <Collapsible defaultOpen={searchActive && archivedStrategies.length > 0}>
+                  <CollapsibleTrigger
+                    className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
+                    data-testid="button-toggle-archived"
+                  >
+                    <ChevronRight className="h-3 w-3 shrink-0" />
+                    Archived
+                  </CollapsibleTrigger>
+                  <CollapsibleContent data-testid="archived-strategies-grid">
+                    {renderRows(
+                      archivedStrategies,
+                      searchActive ? "No matching archived scenarios." : "No archived scenarios.",
+                      "archived",
+                    )}
+                  </CollapsibleContent>
+                </Collapsible>
+              ) : null}
+            </>
+          )}
+        </div>
       </div>
 
-      {isLoading ? (
-        <div className="grid gap-3 @sm:grid-cols-2 @lg:grid-cols-3">
-          {[1, 2, 3].map(i => (
-            <Card key={i} className="p-4">
-              <Skeleton className="h-5 w-3/4 mb-2" />
-              <Skeleton className="h-3 w-full mb-3" />
-              <div className="flex gap-2">
-                <Skeleton className="h-5 w-16" />
-                <Skeleton className="h-5 w-12" />
-              </div>
-            </Card>
-          ))}
-        </div>
-      ) : activeStrategies.length === 0 && archivedStrategies.length === 0 ? (
-        <Card className="p-8" data-testid="empty-strategy">
-          <div className="flex flex-col items-center gap-3 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/5">
-              <Swords className="h-6 w-6 text-primary/40" />
-            </div>
-            <div>
-              <h3 className="text-sm font-medium" data-testid="text-empty-title">No scenarios yet</h3>
-              <p className="text-xs text-muted-foreground mt-1" data-testid="text-empty-description">
-                Create a strategy to start modeling scenarios, actors, and possible outcomes.
-              </p>
-            </div>
-            <Button onClick={() => setCreateOpen(true)} data-testid="button-create-strategy-empty">
-              <Plus className="h-4 w-4 mr-1.5" />
-              Create Strategy
-            </Button>
-          </div>
-        </Card>
-      ) : (
-        <>
-          {activeStrategies.length === 0 ? (
-            <Card className="p-6" data-testid="empty-active-strategies">
-              <p className="text-sm text-muted-foreground text-center">No active scenarios. Create a new one or unarchive an existing scenario.</p>
-            </Card>
-          ) : (
-            <div className="grid gap-3 @sm:grid-cols-2 @lg:grid-cols-3" data-testid="strategies-grid">
-              {activeStrategies.map(strategy => (
-                <StrategyCard
-                  key={strategy.id}
-                  strategy={strategy}
-                  onClick={() => setLocation(`/scenarios/${strategy.id}`)}
-                  onDelete={() => setDeleteTarget(strategy)}
-                  onDuplicate={() => duplicateMutation.mutate(strategy.id)}
-                  onArchive={() => archiveMutation.mutate({ id: strategy.id, archived: true })}
-                />
-              ))}
-            </div>
-          )}
-
-          {archivedStrategies.length > 0 && (
-            <Collapsible open={archivedOpen} onOpenChange={setArchivedOpen}>
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" className="flex items-center gap-2 text-muted-foreground" data-testid="button-toggle-archived">
-                  <ChevronDown className={`h-4 w-4 transition-transform ${archivedOpen ? "rotate-0" : "-rotate-90"}`} />
-                  <Archive className="h-4 w-4" />
-                  Archived ({archivedStrategies.length})
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="mt-3">
-                <div className="grid gap-3 @sm:grid-cols-2 @lg:grid-cols-3" data-testid="archived-strategies-grid">
-                  {archivedStrategies.map(strategy => (
-                    <StrategyCard
-                      key={strategy.id}
-                      strategy={strategy}
-                      onClick={() => setLocation(`/scenarios/${strategy.id}`)}
-                      onDelete={() => setDeleteTarget(strategy)}
-                      onDuplicate={() => duplicateMutation.mutate(strategy.id)}
-                      onUnarchive={() => archiveMutation.mutate({ id: strategy.id, archived: false })}
-                    />
-                  ))}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          )}
-        </>
-      )}
-
-      <CreateStrategyDialog
+      <CreateScenarioDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
         onSubmit={(data) => createMutation.mutate(data)}
         isPending={createMutation.isPending}
       />
 
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle data-testid="text-delete-dialog-title">Delete Scenario</AlertDialogTitle>
             <AlertDialogDescription data-testid="text-delete-dialog-description">
-              Are you sure you want to delete "{deleteTarget?.title}"? This will permanently remove all actors, states, moves, and simulation data. This action cannot be undone.
+              Are you sure you want to delete &quot;{deleteTarget?.title}&quot;? This will permanently
+              remove all actors, states, moves, and simulation data. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -258,114 +448,7 @@ export default function StrategyListTab() {
   );
 }
 
-function StrategyCard({
-  strategy,
-  onClick,
-  onDelete,
-  onDuplicate,
-  onArchive,
-  onUnarchive,
-}: {
-  strategy: StrategyItem;
-  onClick: () => void;
-  onDelete: () => void;
-  onDuplicate: () => void;
-  onArchive?: () => void;
-  onUnarchive?: () => void;
-}) {
-  const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
-      ", " +
-      d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  };
-
-  return (
-    <Card
-      className={`p-4 cursor-pointer hover-elevate transition-colors ${strategy.archived ? "opacity-60" : ""}`}
-      onClick={onClick}
-      data-testid={`card-strategy-${strategy.id}`}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold truncate" data-testid={`text-strategy-title-${strategy.id}`}>
-            {strategy.title}
-          </h3>
-          {strategy.description && (
-            <p className="text-xs text-muted-foreground mt-1 line-clamp-2" data-testid={`text-strategy-desc-${strategy.id}`}>
-              {strategy.description}
-            </p>
-          )}
-        </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-            <Button size="icon" variant="ghost" data-testid={`button-strategy-menu-${strategy.id}`}>
-              <MoreVertical className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-            <DropdownMenuItem
-              onClick={onDuplicate}
-              data-testid={`button-duplicate-strategy-${strategy.id}`}
-            >
-              <Copy className="h-3.5 w-3.5 mr-2" />
-              Duplicate
-            </DropdownMenuItem>
-            {onArchive && (
-              <DropdownMenuItem
-                onClick={onArchive}
-                data-testid={`button-archive-strategy-${strategy.id}`}
-              >
-                <Archive className="h-3.5 w-3.5 mr-2" />
-                Archive
-              </DropdownMenuItem>
-            )}
-            {onUnarchive && (
-              <DropdownMenuItem
-                onClick={onUnarchive}
-                data-testid={`button-unarchive-strategy-${strategy.id}`}
-              >
-                <ArchiveRestore className="h-3.5 w-3.5 mr-2" />
-                Unarchive
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onClick={onDelete}
-              data-testid={`button-delete-strategy-${strategy.id}`}
-            >
-              <Trash2 className="h-3.5 w-3.5 mr-2" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
-      <div className="flex items-center gap-2 mt-3 flex-wrap">
-        {(strategy.actorCount !== undefined && strategy.actorCount > 0) && (
-          <span className="flex items-center gap-1 text-xs text-muted-foreground" data-testid={`text-actor-count-${strategy.id}`}>
-            <Users className="h-3 w-3" />
-            {strategy.actorCount}
-          </span>
-        )}
-        {(strategy.stateCount !== undefined && strategy.stateCount > 0) && (
-          <span className="flex items-center gap-1 text-xs text-muted-foreground" data-testid={`text-state-count-${strategy.id}`}>
-            <GitBranch className="h-3 w-3" />
-            {strategy.stateCount}
-          </span>
-        )}
-      </div>
-
-      {strategy.updatedAt && (
-        <p className="text-xs text-muted-foreground mt-2" data-testid={`text-strategy-updated-${strategy.id}`}>
-          Last Updated: {formatDate(strategy.updatedAt)}
-        </p>
-      )}
-    </Card>
-  );
-}
-
-function CreateStrategyDialog({
+function CreateScenarioDialog({
   open,
   onOpenChange,
   onSubmit,
@@ -397,28 +480,26 @@ function CreateStrategyDialog({
       <DialogContent data-testid="dialog-create-strategy">
         <DialogHeader>
           <DialogTitle data-testid="text-create-dialog-title">New Scenario</DialogTitle>
+          <DialogDescription>Name the scenario and optionally describe the strategic objective.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1 block">Title</label>
-            <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g., Market Expansion Strategy"
-              onKeyDown={(e) => { if (e.key === "Enter" && title.trim()) handleSubmit(); }}
-              data-testid="input-strategy-title"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1 block">Description</label>
-            <Textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe the strategic objective..."
-              className="min-h-[80px] resize-none"
-              data-testid="input-strategy-description"
-            />
-          </div>
+          <Input
+            autoFocus
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Scenario title"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && title.trim()) handleSubmit();
+            }}
+            data-testid="input-strategy-title"
+          />
+          <Textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Description (optional)"
+            className="min-h-[80px] resize-none"
+            data-testid="input-strategy-description"
+          />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => handleOpenChange(false)} data-testid="button-cancel-create">
@@ -429,7 +510,7 @@ function CreateStrategyDialog({
             disabled={!title.trim() || isPending}
             data-testid="button-submit-create"
           >
-            {isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : null}
+            {isPending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
             Create
           </Button>
         </DialogFooter>
