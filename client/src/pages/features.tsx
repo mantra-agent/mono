@@ -407,17 +407,18 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
       )}
       menuContent={(
         <>
-          {FEATURE_STAGES.map((stage) => {
-            const contract = FEATURE_PIPELINE[stage];
-            const pending = launch.isPending && launch.variables?.pendingKey === `feature-${feature.id}-${stage}`;
+          {(() => {
+            // One next-stage action only — Idea→Spec, Spec→Review, Develop→Build, etc.
+            const contract = FEATURE_PIPELINE[feature.stage];
+            const pending =
+              launch.isPending && launch.variables?.pendingKey === `feature-${feature.id}-${feature.stage}`;
             return (
               <DropdownMenuItem
-                key={stage}
                 disabled={launch.isPending}
                 onSelect={(event) => {
                   event.preventDefault();
                   launch.mutate({
-                    pendingKey: `feature-${feature.id}-${stage}`,
+                    pendingKey: `feature-${feature.id}-${feature.stage}`,
                     title: `${contract.actionLabel}: ${feature.summary}`.slice(0, 80),
                     personaName: contract.persona,
                     message: composeFeatureLaunchMessage({
@@ -429,18 +430,18 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
                       ownerPersonId: feature.owner_person_id,
                       specPageId: feature.spec_page_id,
                       description: feature.description,
-                    }, stage),
-                    clientTurnSuffix: `feature-${feature.id}-${stage}`,
+                    }),
+                    clientTurnSuffix: `feature-${feature.id}-${feature.stage}`,
                     errorTitle: `Could not start ${contract.actionLabel.toLowerCase()} session`,
                   });
                 }}
-                data-testid={`button-feature-launch-${stage}-${feature.id}`}
+                data-testid={`button-feature-launch-${feature.stage}-${feature.id}`}
               >
                 {pending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <PenLine className="mr-2 h-3.5 w-3.5" />}
                 {contract.actionLabel}
               </DropdownMenuItem>
             );
-          })}
+          })()}
           <DropdownMenuItem
             onSelect={() =>
               apiRequest("POST", `/api/features/${feature.id}/archive`, { confirm: true }).then(() => {
