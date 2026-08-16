@@ -1,4 +1,4 @@
-import { and, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { requireCurrentPrincipal } from "./principal-context";
 import { ownedInsertValues } from "./scoped-storage";
@@ -29,9 +29,14 @@ async function assertProduct(id: number, writable: boolean) {
 export const featureStorage = {
   async list(input: { productId?: number; includeArchived?: boolean; search?: string } = {}) {
     const p = principal();
-    const filters = [input.productId ? sql`f.product_id = ${input.productId}` : undefined, input.includeArchived ? undefined : sql`f.archived_at IS NULL`, input.search?.trim() ? sql`f.summary ILIKE ${`%${input.search.trim()}%`}` : undefined].filter(Boolean);
-    const scope = p.actorType === "system" ? sql`TRUE` : sql`(f.scope = 'global' OR (f.owner_user_id = ${p.userId} AND f.account_id = ${p.accountId}))`;
-    const result = await db.execute(sql.raw(`SELECT f.*, p.name AS product_name FROM features f JOIN products p ON p.id = f.product_id WHERE ${scope} ${filters.length ? sql`AND ${and(...filters as any)}` : sql``} ORDER BY f.stage, f.updated_at DESC LIMIT 500`));
+    const conditions = [
+      p.actorType === "system" ? sql`TRUE` : sql`(f.scope = 'global' OR (f.owner_user_id = ${p.userId} AND f.account_id = ${p.accountId}))`,
+      input.productId ? sql`f.product_id = ${input.productId}` : undefined,
+      input.includeArchived ? undefined : sql`f.archived_at IS NULL`,
+      input.search?.trim() ? sql`f.summary ILIKE ${`%${input.search.trim()}%`}` : undefined,
+    ].filter((condition): condition is Exclude<typeof condition, undefined> => condition !== undefined);
+    const where = conditions.reduce<ReturnType<typeof sql>>((query, condition) => sql`${query} AND ${condition}`);
+    const result = await db.execute(sql`SELECT f.*, p.name AS product_name FROM features f JOIN products p ON p.id = f.product_id WHERE ${where} ORDER BY f.stage, f.updated_at DESC LIMIT 500`);
     return result.rows;
   },
   async get(id: string) {
