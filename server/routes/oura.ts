@@ -83,6 +83,7 @@ interface OuraPermissionsMetadata {
 }
 
 const oauthStateStore = new Map<string, OuraOAuthState>();
+let webhookReconcileInFlight: Promise<void> | null = null;
 
 function escapeHtml(value: string): string {
   return value
@@ -325,22 +326,26 @@ function firstString(...values: unknown[]): string | undefined {
   return undefined;
 }
 
+async function verifyOuraSignature(req: Request, payload: Buffer | string): Promise<boolean> {
+  const clientSecret = await getSecret("OURA_CLIENT_SECRET");
+  const received = req.get("x-oura-signature");
+  if (!clientSecret || !received) return false;
+  const expected = crypto.createHmac("sha256", clientSecret).update(payload).digest("hex");
+  const normalized = received.replace(/^sha256=/i, "");
+  const receivedBuffer = Buffer.from(normalized, "hex");
+  const expectedBuffer = Buffer.from(expected, "hex");
+  return receivedBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(receivedBuffer, expectedBuffer);
+}
+
 async function verifyOuraWebhook(req: Request, notification: OuraWebhookNotification): Promise<boolean> {
-  const expected = await getSecret("OURA_WEBHOOK_VERIFY_TOKEN");
-  if (!expected) return false;
-  const received = firstString(
-    req.get("x-oura-verification-token"),
-    req.get("x-oura-token"),
-    req.get("x-webhook-verification-token"),
-    req.get("authorization")?.replace(/^Bearer\s+/i, ""),
-    (req.body as { verification_token?: unknown } | undefined)?.verification_token,
-    (notification as { verification_token?: unknown }).verification_token,
-  );
-  if (!received) return false;
-  const receivedBuffer = Buffer.from(received);
-  const expectedBuffer = Buffer.from(expected);
-  if (receivedBuffer.length !== expectedBuffer.length) return false;
-  return crypto.timingSafeEqual(receivedBuffer, expectedBuffer);
+  return verifyOuraSignature(req, req.rawBody ?? JSON.stringify(notification));
+}
+
+async function reconcileOuraWebhooks(req: Request, accountId: string): Promise<void> {
+  if (webhookReconcileInFlight) return webhookReconcileInFlight;
+  webhookReconcileInFlight = attemptOuraWebhookSubscription(accountId, `${getRequestOrigin(req)}/api/oura/webhook`)
+    .finally(() => { webhookReconcileInFlight = null; });
+  return webhookReconcileInFlight;
 }
 
 function triggerOuraWebhookSync(accountId: string): void {
@@ -382,7 +387,7 @@ export async function registerOuraRoutes(app: Express): Promise<void> {
     });
   });
 
-  app.get("/api/oura/status", async (_req, res) => {
+  app.get("/api/oura/status", async (req, res) => {
     try {
       const [oauthConfigured, webhookConfigured, accounts] = await Promise.all([
         isOuraConfigured(),
@@ -391,6 +396,12 @@ export async function registerOuraRoutes(app: Express): Promise<void> {
       ]);
       const account = accounts.find((candidate) => candidate.accountId === OURA_ACCOUNT_ID) || accounts[0] || null;
       const summary = accountSummary(account);
+      const webhookMetadata = account ? sanitizeWebhookMetadata(resolvePermissions(account.permissions).webhooks) : null;
+      if (account && webhookConfigured && (!webhookMetadata?.subscriptions?.length || webhookMetadata.lastSubscriptionError)) {
+        void reconcileOuraWebhooks(req, account.accountId).catch((error: unknown) => {
+          log.warn(`status webhook reconciliation failed errorClass=${classifyOuraRouteError(error)}`);
+        });
+      }
       log.debug(`status checked connected=${!!account} oauthConfigured=${oauthConfigured} webhookConfigured=${webhookConfigured} accounts=${accounts.length}`);
       res.json({
         connected: !!account,
@@ -526,6 +537,16 @@ export async function registerOuraRoutes(app: Express): Promise<void> {
       log.warn(`webhook handling failed dataType=${dataType} eventType=${eventType} errorClass=${classifyOuraRouteError(error)} message=${message}`);
       res.status(500).json({ ok: false });
     }
+  });
+
+  app.get("/api/oura/webhook", async (req, res) => {
+    const challenge = firstString(req.query.challenge, req.query["verification_challenge"]);
+    if (!challenge || !(await verifyOuraSignature(req, challenge))) {
+      log.warn("webhook challenge rejected errorClass=verification_failed");
+      return res.status(401).send("Unauthorized");
+    }
+    log.log("webhook challenge accepted");
+    return res.type("text/plain").send(challenge);
   });
 
   app.post("/api/oura/disconnect", async (_req, res) => {
