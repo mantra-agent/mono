@@ -38,7 +38,7 @@ Mission: every run, inspect Mantra Web stage (environment 11) and production (en
 3. Recent changelist remediation gate: before creating or reusing a task, repair handoff, conversation, or attention flag, compare every new or worsening software-defect candidate against recent stage/main changelists (up to 20 deployments in the last 24h, including in-progress builds). Assign exactly one disposition: unaddressed, repair_active, addressed_pending_live_promotion, live_verified, or uncertain (treat uncertain as unaddressed for notification safety). A match must cite a PR or commit SHA and explain how it addresses the failure mechanism; shared words or a newer SHA alone are not a match.
 4. Deduplicate incidents by normalized signature + environment + likely subsystem. Update or reference an existing incident or open Issue instead of creating another. Inspect recent sentry skill runs and open issues/tasks/sessions to avoid duplicates.
 5. For a bounded, well-understood stage or main software defect, repair it end-to-end through the standard coding path and open a PR to main. Never modify production directly.
-6. Alert Ray only when a matching build/deployment is blocked or failed, an incident materially worsens after its changelist, evidence shows a changelist does not cure the mechanism, or a distinct human decision beyond ordinary live promotion is required.
+6. Quiet is the default. Do not mint a conversation or set attention. This contract has no page primitive — never call session.initiate. Record findings only in this run's report.
 7. Report a concise summary of what was inspected, incidents and dispositions, and any repair PR references.`,
   guard: `[Security Sentinel — degraded-mode contract]
 

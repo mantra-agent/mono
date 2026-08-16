@@ -20,6 +20,7 @@ import type { TrustedEngineeringDelegation } from "./agent-authority";
 import { filterModToolSchemas, requireModSkillAccess } from "./mods/mod-access";
 import { buildStructuralRunEvidence, evaluateStructuralItem } from "./skill-scoring";
 import { BUILD_OWNED_SKILL_FALLBACK_INSTRUCTIONS, BUILD_OWNED_SKILL_NAME_SET, resolveSkillRunName, type BuildOwnedSkillName } from "./skill-identities";
+import { BUILTIN_SKILL_DEFAULTS } from "./skill-defaults";
 import type { ChecklistItem } from "@shared/schema";
 import type { ChildMissionTerminalOutcome, SystemNotice } from "@shared/models/chat";
 
@@ -257,6 +258,8 @@ export interface SkillRunConfig {
   timeoutMs: number;
   sessionType?: "autonomous" | "agent";
   admissionTier?: AdmissionTier;
+  /** When true, autonomous runs may mint a visible conversation. Inspect skills stay silent. */
+  mayInitiateConversation?: boolean;
 }
 
 
@@ -496,6 +499,16 @@ export function getRegisteredSkillIds(): string[] {
   return Object.keys(SKILL_RUN_CONFIGS);
 }
 
+function skillMayInitiateConversation(skillName?: string): boolean {
+  if (!skillName) return false;
+  const canonical = resolveSkillRunName(skillName);
+  return BUILTIN_SKILL_DEFAULTS.some(
+    (def) =>
+      def.mayInitiateConversation === true
+      && (def.name === skillName || def.name === canonical || resolveSkillRunName(def.name) === canonical),
+  );
+}
+
 async function getSkillTools(
   activity: ActivityId,
   sessionKey: string,
@@ -515,6 +528,7 @@ async function getSkillTools(
     activity,
     skillId: authoritySkillId,
     skillName: authoritySkillId ? authoritySkillName : undefined,
+    mayInitiateConversation: skillMayInitiateConversation(authoritySkillName),
     runtimeRunId: runtimeFence?.runId,
     runtimeAttemptId: runtimeFence?.attemptId,
     sessionKey,
