@@ -712,12 +712,20 @@ export class HybridStorage implements IStorage {
 
   async getSkillByName(name: string): Promise<SkillWithReferences | undefined> {
     const principal = requireCurrentPrincipal();
+    // Whether the principal carries an Instance pin is known here in JS; never
+    // null-check the bound value in SQL (a bare `$n IS NOT NULL` gives Postgres
+    // no type context and fails parse with 42P18). Emit the instance-priority
+    // branch only when pinned, so `instance_id` is only ever compared against
+    // the typed column.
+    const hasInstancePin =
+      typeof principal.instanceId === "string" && principal.instanceId.length > 0;
     const namespaceOrder = principal.actorType === "user" && principal.userId && principal.accountId
       ? sql`CASE
-          WHEN ${skills.scope} = 'user'
-            AND ${principal.instanceId} IS NOT NULL
+          ${hasInstancePin
+            ? sql`WHEN ${skills.scope} = 'user'
             AND ${skills.instanceId} = ${principal.instanceId}
-          THEN 0
+          THEN 0`
+            : sql``}
           WHEN ${skills.scope} = 'user'
             AND ${skills.instanceId} IS NULL
             AND ${skills.ownerUserId} = ${principal.userId}
