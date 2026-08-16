@@ -79,8 +79,6 @@ export const SKILL_NAME_ALIASES: Record<string, string> = {
   "reflect-monthly": "reflect",
   "reflect-quarterly": "reflect",
   "reflect-annual": "reflect",
-  "plan-weekly": "plan",
-  "plan-monthly": "plan",
   "idea-generation": "ideate",
   "landscape-scan": "scan",
   "opportunity-research": "research",

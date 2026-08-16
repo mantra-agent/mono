@@ -290,15 +290,6 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
     temperature: 0.6,
     timeoutMs: 10 * 60 * 1000,
   },
-  "plan": {
-    skillId: "plan",
-    label: "Plan",
-    callType: "full",
-    activity: ACTIVITY_WORK,
-    temperature: 0.5,
-    timeoutMs: 10 * 60 * 1000,
-    sessionType: "agent",
-  },
   // Build-owned skills: authoritative runtime config lives here so timer/manual
   // paths never depend on principal-scoped DB lookup for admission.
   "sentry": {

@@ -1071,10 +1071,6 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
       name: "reflect",
       sentinel: "## Cadence Semantics",
     },
-    {
-      name: "plan",
-      sentinel: "## Non-Negotiable Flow",
-    },
   ];
 
   for (const { name, sentinel } of migrations) {
@@ -1091,99 +1087,16 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
   const { getSetting, setSetting } = await import("./system-settings");
 
 
-  const planConversationRefreshed = await getSetting<boolean>("plan_conversation_first_metadata_refreshed_v1");
-  if (!planConversationRefreshed) {
-    const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === "plan");
-    const [existing] = await db.select({ id: skills.id, author: skills.author, customized: skills.customized }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
-    if (def && existing?.author === "system" && existing.customized !== true) {
-      await db.update(skills).set({
-        description: def.description,
-        category: def.category,
-        activity: def.activity,
-        process: def.process,
-        whenToUse: def.whenToUse ?? `Used for ${def.category} operations`,
-        outputSpec: def.outputSpec ?? "See process instructions",
-        checklist: def.checklist ?? [],
-        version: def.version || "1.0",
-        addToMemory: def.addToMemory ?? true,
-        pinnedToContext: def.pinnedToContext ?? false,
-        updatedAt: new Date(),
-      }).where(eq(skills.id, existing.id));
-      log.debug(`Refreshed conversation-first metadata/process for "plan"`);
+  const retiredPlanSkill = await getSetting<boolean>("retired_plan_skill_v1");
+  if (!retiredPlanSkill) {
+    const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan"), eq(skills.author, "system")));
+    if (existing) {
+      await db.delete(skills).where(eq(skills.id, existing.id));
+      log.info(`Retired obsolete global plan Skill id=${existing.id}`);
     }
-    await setSetting("plan_conversation_first_metadata_refreshed_v1", true);
+    await setSetting("retired_plan_skill_v1", true);
   }
 
-
-  const planQuarterlyRefreshed = await getSetting<boolean>("plan_quarterly_metadata_refreshed_v1");
-  if (!planQuarterlyRefreshed) {
-    const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === "plan");
-    const [existing] = await db.select({ id: skills.id, author: skills.author, customized: skills.customized }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
-    if (def && existing?.author === "system" && existing.customized !== true) {
-      await db.update(skills).set({
-        description: def.description,
-        category: def.category,
-        activity: def.activity,
-        process: def.process,
-        whenToUse: def.whenToUse ?? `Used for ${def.category} operations`,
-        outputSpec: def.outputSpec ?? "See process instructions",
-        checklist: def.checklist ?? [],
-        version: def.version || "1.0",
-        addToMemory: def.addToMemory ?? true,
-        pinnedToContext: def.pinnedToContext ?? false,
-        updatedAt: new Date(),
-      }).where(eq(skills.id, existing.id));
-      log.debug(`Refreshed quarterly metadata/process for "plan"`);
-    }
-    await setSetting("plan_quarterly_metadata_refreshed_v1", true);
-  }
-
-
-  const planDailyRefreshed = await getSetting<boolean>("plan_daily_metadata_refreshed_v1");
-  if (!planDailyRefreshed) {
-    const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === "plan");
-    const [existing] = await db.select({ id: skills.id, author: skills.author, customized: skills.customized }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
-    if (def && existing?.author === "system" && existing.customized !== true) {
-      await db.update(skills).set({
-        description: def.description,
-        category: def.category,
-        activity: def.activity,
-        process: def.process,
-        whenToUse: def.whenToUse ?? `Used for ${def.category} operations`,
-        outputSpec: def.outputSpec ?? "See process instructions",
-        checklist: def.checklist ?? [],
-        version: def.version || "1.0",
-        addToMemory: def.addToMemory ?? true,
-        pinnedToContext: def.pinnedToContext ?? false,
-        updatedAt: new Date(),
-      }).where(eq(skills.id, existing.id));
-      log.debug(`Refreshed daily metadata/process for "plan"`);
-    }
-    await setSetting("plan_daily_metadata_refreshed_v1", true);
-  }
-  const metadataRefreshed = await getSetting<boolean>("parameterized_plan_reflect_metadata_refreshed_v1");
-  if (!metadataRefreshed) {
-    for (const name of ["plan", "reflect"]) {
-      const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === name);
-      if (!def) continue;
-      const [existing] = await db.select({ id: skills.id, author: skills.author, customized: skills.customized }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
-      if (!existing || existing.author !== "system" || existing.customized === true) continue;
-      await db.update(skills).set({
-        description: def.description,
-        category: def.category,
-        activity: def.activity,
-        whenToUse: def.whenToUse ?? `Used for ${def.category} operations`,
-        outputSpec: def.outputSpec ?? "See process instructions",
-        checklist: def.checklist ?? [],
-        version: def.version || "1.0",
-        addToMemory: def.addToMemory ?? true,
-        pinnedToContext: def.pinnedToContext ?? false,
-        updatedAt: new Date(),
-      }).where(eq(skills.id, existing.id));
-      log.debug(`Refreshed parameterized skill metadata for "${name}"`);
-    }
-    await setSetting("parameterized_plan_reflect_metadata_refreshed_v1", true);
-  }
 }
 
 export async function deleteZombieSkills(): Promise<void> {

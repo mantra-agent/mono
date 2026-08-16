@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SectionPlanArtifact, SimpleFeed, SimpleFeedItem, SimpleFeedSection } from "@shared/models/simple";
 import type { LibraryPage, LibraryPageFull } from "@/pages/library/types";
@@ -13,10 +13,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LibraryReminderPopover } from "@/components/library-reminder";
-import { ChevronRight, FileText, Loader2, MessageSquare, MoreHorizontal, Plus, X } from "lucide-react";
-import { useFocusSession } from "@/hooks/use-focus-session";
+import { ChevronRight, FileText, MessageSquare, MoreHorizontal, X } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
-import { createLogger } from "@/lib/logger";
 import { cn } from "@/lib/utils";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
@@ -28,11 +26,6 @@ import { SimpleCheckCircle } from "./home-check-circle";
 import { SimpleTextFrame } from "./simple-text-frame";
 import { useUiInteraction } from "@/hooks/use-ui-interaction";
 import { useHomeSectionDisclosure } from "@/hooks/use-home-section-disclosure";
-
-const log = createLogger("SimpleFeed");
-
-
-type CreatedSession = { id: string };
 
 export function SimpleFeedView({ feed }: { feed: SimpleFeed }) {
   const now = useMemo(() => new Date(feed.generatedAt), [feed.generatedAt]);
@@ -91,7 +84,7 @@ function SimpleSectionGroup({
   now: Date;
   timezone: string;
 }) {
-  const { section: sectionKey, items, planArtifact, planSkillName, planCadence } = section;
+  const { section: sectionKey, items, planArtifact } = section;
   const { guidedResource } = useUiInteraction();
   const { open: preferredOpen, setOpen: setPreferredOpen } = useHomeSectionDisclosure(sectionKey);
   const [guideOpened, setGuideOpened] = useState(false);
@@ -117,13 +110,8 @@ function SimpleSectionGroup({
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="mt-0">
-            {hasPlanRow && (
-              <PlanArtifactRow
-                artifact={planArtifact}
-                skillName={planSkillName ?? null}
-                cadence={planCadence ?? null}
-                sectionLabel={dynamicSectionLabel(sectionKey, now, timezone)}
-              />
+            {hasPlanRow && planArtifact && (
+              <PlanArtifactRow artifact={planArtifact} />
             )}
             {items.map(item => <SimpleWidgetRenderer key={item.id} item={item} />)}
           </div>
@@ -133,77 +121,16 @@ function SimpleSectionGroup({
   );
 }
 
-const PLAN_LABEL: Record<string, string> = {
-  "daily": "Daily Plan",
-  "weekly": "Weekly Plan",
-  "monthly": "Monthly Plan",
-  "quarterly": "Quarterly Plan",
-};
-
 function PlanArtifactRow({
   artifact,
-  skillName,
-  cadence,
-  sectionLabel,
 }: {
-  artifact: SectionPlanArtifact | null;
-  skillName: string | null;
-  cadence: "daily" | "weekly" | "monthly" | "quarterly" | null;
-  sectionLabel: string;
+  artifact: SectionPlanArtifact;
 }) {
-  const queryClient = useQueryClient();
-  const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
-  const [running, setRunning] = useState(false);
-
-  const triggerSkill = useCallback(async () => {
-    if (!skillName || running) return;
-    setRunning(true);
-    try {
-      const res = await apiRequest("POST", "/api/home/run-plan-skill", { skillName, cadence });
-      const data = await res.json();
-      if (data.success && data.sessionId) {
-        setSessionForRoute(route, data.sessionId);
-        setWidgetOpen(true);
-      }
-      queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
-    } catch (err) {
-      log.error(`Failed to start plan skill: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setRunning(false);
-    }
-  }, [skillName, cadence, running, queryClient, route, setSessionForRoute, setWidgetOpen]);
-
-  const planLabel = cadence ? PLAN_LABEL[cadence] ?? `${sectionLabel} Plan` : `${sectionLabel} Plan`;
-
-  if (artifact) {
-    return (
-      <SurfacedLibraryRow
-        page={planArtifactToLibraryPage(artifact)}
-        icon={<FileText className="h-3 w-3 text-muted-foreground" />}
-      />
-    );
-  }
-
-  // No artifact — show "Generate plan" action
-  if (!skillName) return null;
-
   return (
-    <button
-      type="button"
-      onClick={triggerSkill}
-      disabled={running}
-      className="flex items-center py-1 rounded-md w-full text-left group hover:bg-accent/50 transition-colors"
-    >
-      <span className="w-14 shrink-0 text-right pr-1.5 text-[11px] leading-tight tabular-nums text-muted-foreground" />
-      <span className="w-4 shrink-0 flex items-center justify-center">
-        {running
-          ? <Loader2 className="h-3 w-3 animate-spin text-foreground" />
-          : <Plus className="h-3 w-3 text-foreground" />}
-      </span>
-      <span className="min-w-0 flex-1 pl-0.5 text-sm text-foreground">
-        {running ? `Creating ${planLabel}…` : `New ${planLabel}`}
-      </span>
-    </button>
+    <SurfacedLibraryRow
+      page={planArtifactToLibraryPage(artifact)}
+      icon={<FileText className="h-3 w-3 text-muted-foreground" />}
+    />
   );
 }
 
