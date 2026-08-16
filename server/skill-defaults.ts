@@ -887,11 +887,11 @@ For each selected idea:
   },
   {
     name: "sleep",
-    description: "Nightly vNext sleep cycle — existing claim lifecycle, REM dream generation over vNext claims and recent sessions, and weekly GSI scoring.",
+    description: "Nightly vNext sleep cycle — claim lifecycle, REM dream generation, optional weekly GSI — filed onto one rolling Dreams Library page that owns sleep-related memory work.",
     category: "memory",
     activity: ACTIVITY_MEMORY,
     author: "system",
-    version: "5.0",
+    version: "5.3",
     addToMemory: false,
     pinnedToContext: false,
     callType: "internal",
@@ -901,13 +901,14 @@ For each selected idea:
     outputSpec: "See process instructions",
     checklist: [
       { check: "run_full_sleep_cycle completed and lifecycle, bridge, and REM results reported", weight: 3 },
-      { check: "Dream narrative filed to Library under Reports/Dreams if REM produced one", weight: 2 },
-      { check: "Sleep report archived to Library covering lifecycle, bridges, REM, and GSI if computed", weight: 2 },
+      { check: "Adopted or created the single Dreams page (slug dreams) and kept title exactly Dreams", weight: 2 },
+      { check: "Prepended one dated night section under the purpose line with Dream and Memory for that night", weight: 3 },
+      { check: "Did not create Sleep Reports, dated Dream pages, or a second Dreams page", weight: 2 },
       { check: "Errors from the cycle surfaced explicitly, not silently dropped", weight: 1 },
     ],
-    process: `You are running the nightly vNext sleep cycle — claim maintenance and dream generation over the vNext memory graph. Legacy memory propagation and maintenance are retired; do not invoke legacy layer operations.
+    process: `You are running the nightly vNext sleep cycle — claim maintenance and dream generation over the vNext memory graph — and filing the night onto ONE rolling Dreams Library page. Legacy memory propagation and maintenance are retired; do not invoke legacy layer operations.
 
-Determine today's day of the week. If it is Sunday, include GSI computation.
+Determine today's day of the week. If it is Sunday, include GSI computation. Use the local calendar date as {YYYY-MM-DD} for the night section.
 
 ## Phase 1: Run the vNext Sleep Cycle
 
@@ -916,21 +917,78 @@ Call the \`memory\` tool with action \`run_full_sleep_cycle\` and includeGSI=tru
 This orchestrates:
 - Existing vNext claim lifecycle: stage advancement (extracted → sourced → linked → canonical), existing confidence decay and retirement rules, and bridge maintenance
 - REM: non-authoritative dream generation seeded from random active claims and recent sessions; no claim state is changed
+- Optional GSI on Sunday
 
-## Phase 2: File the Dream
+The cycle does not persist Library pages. This Skill is the sole durable writer.
 
-If the tool result includes a dream narrative, create a Library page under Reports/Dreams named "Dream — {YYYY-MM-DD} — {DreamTitle}" containing the narrative and the insight. The cycle does not persist dreams itself; this filing step is the only durable copy.
+## Phase 2: File the Night on Dreams
 
-## Report
+Primary artifact every run: one living Dreams page per vault this Skill writes into (stable slug \`dreams\`, title exactly \`Dreams\`). Mirror Daily Brief: one file, newest night first, never a dated sibling catalog.
 
-Write a sleep report to the Library (under Reports, named "Sleep Report — {YYYY-MM-DD}") summarizing:
-- **Lifecycle:** scanned, canonicalized, retired (with reasons if notable), decayed
-- **Bridges:** created, replaced, final edge count
-- **REM:** dream title, key insight, domains woven, source counts
-- **GSI:** score and components if computed
-- **Errors:** any errors reported by the cycle
+### Resolve the write target (read before write, sequential)
 
-Be concise and factual.`,
+In the vault you are writing into, adopt in this order — do not mint a second page when search is ambiguous:
+
+1. Existing page whose slug/id is \`dreams\` (\`library\` get_library_page id "dreams").
+2. Else existing page titled exactly \`Dreams\` under that vault's Reports parent (search / browse; prefer the Reports home when multiple same-title pages exist).
+3. Else the earliest existing page in that vault titled exactly \`Dreams\`.
+4. Else create once:
+   - title: \`Dreams\`
+   - id/slug: \`dreams\`
+   - canonicalFolder: \`"skills"\`
+   - tags: ["dreams", "sleep"]
+   - plainTextContent starting with the purpose sentence below, then tonight's dated section
+
+After adopt or create:
+- Keep title exactly \`Dreams\`.
+- If the adopted page lacks slug \`dreams\`, set it via update when the tool allows.
+- Do not move the adopted page.
+- Do not write to leftover same-title Dreams pages once one target is adopted.
+- Never create \`Dream — YYYY-MM-DD\` pages. Dated leftovers already titled that way stay historical.
+
+### Purpose is the first line
+
+The file opens with this exact sentence, unlabeled, before any dated section:
+
+Dreams exist to help organize and optimize memory.
+
+If the adopted page has a different purpose / "canonical running archive" opening line (or a Purpose heading), replace that opening with this sentence only. Do not add a Purpose heading. Preserve all prior dated \`##\` night sections below it.
+
+### One dated night section, both payloads
+
+Each successful cycle prepends **one** dated section immediately under the purpose line (newest first). Do not append at the bottom. Do not write a second page. If tonight's \`## {YYYY-MM-DD}\` heading already exists at the top, replace only that section rather than duplicating it.
+
+\`\`\`
+## {YYYY-MM-DD} — {DreamTitle or "No dream"}
+
+### Dream
+- Generated during: Nightly REM sleep cycle
+- Domains woven / source counts when present
+- Narrative (full text, or "REM produced no dream")
+- Insight (or omit when absent)
+
+### Memory
+- Lifecycle: scanned, canonicalized, retired, decayed
+- Bridges: created, replaced, final edge count
+- GSI: score and components if computed; otherwise omit
+- Errors: explicit, or "None"
+\`\`\`
+
+If REM produced no narrative, still prepend the Memory section under "No dream". That night's operational record must not recreate a Sleep Reports page.
+
+Be concise and factual in Memory. Put the full dream narrative under Dream when present.
+
+## Forbidden
+
+- Do NOT search for, create, update, or surface a page titled \`Sleep Reports\` or \`Sleep Report — YYYY-MM-DD\`.
+- Do NOT create dated \`Dream — YYYY-MM-DD\` pages.
+- Do NOT create a second Dreams page when one already exists in the vault.
+- Do NOT bulk-copy history from leftover Sleep Reports or other Dreams pages into the adopted page.
+- Do NOT touch the sleep-cycle engine, dream engine, vNext lifecycle, or GSI beyond calling \`run_full_sleep_cycle\`.
+
+## Errors
+
+Surface any errors returned by the cycle explicitly in the Memory section and in the session output. Never silently drop them.`,
   },
   {
     name: "reflect",
