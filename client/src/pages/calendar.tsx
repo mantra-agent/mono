@@ -267,8 +267,23 @@ const TIMER_WEEKDAY_BY_JS: Array<"sun" | "mon" | "tue" | "wed" | "thu" | "fri" |
 interface DayTimerOccurrence {
   timerId: string;
   name: string;
+  description: string;
   slot: number;
   minuteOfDay: number;
+}
+
+function formatMinuteOfDayLabel(minuteOfDay: number): string {
+  const hour = Math.floor(minuteOfDay / 60);
+  const minute = minuteOfDay % 60;
+  const period = hour >= 12 ? "PM" : "AM";
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${hour12}:${String(minute).padStart(2, "0")} ${period}`;
+}
+
+function buildTimerOccurrenceTooltip(occurrence: DayTimerOccurrence): string {
+  const time = formatMinuteOfDayLabel(occurrence.minuteOfDay);
+  const detail = occurrence.description.trim();
+  return detail ? `${occurrence.name} · ${time}\n${detail}` : `${occurrence.name} · ${time}`;
 }
 
 function parseTimeOfDayMinutes(timeOfDay: string | undefined): { hour: number; minute: number } | null {
@@ -341,6 +356,7 @@ function occurrenceFromParts(
   return {
     timerId: timer.id,
     name: timer.name,
+    description: timer.description || "",
     slot: Math.floor((hour * 60 + minute) / 30),
     minuteOfDay: hour * 60 + minute,
   };
@@ -1004,12 +1020,22 @@ function DayTimeline({ rows, events, timerOccurrences = [], accountEmails, timez
     }
     return map;
   }, [rows, timerOccurrences]);
+  const maxTimersInSlot = useMemo(() => {
+    let max = 0;
+    for (const list of timersBySlot.values()) max = Math.max(max, list.length);
+    return max;
+  }, [timersBySlot]);
+  // Compact right rail: one icon column per concurrent timer in a slot (min 1 so borders stay stable).
+  const timerRailColumns = Math.max(1, maxTimersInSlot);
   if (rows.length === 0) return null;
 
   return (
     <div
-      className="grid w-full grid-cols-[3.5rem_minmax(0,1fr)] pr-2"
-      style={{ gridTemplateRows: `repeat(${rows.length}, 1.75rem)` }}
+      className="grid w-full pr-2"
+      style={{
+        gridTemplateColumns: `3.5rem minmax(0,1fr) repeat(${timerRailColumns}, 1.75rem)`,
+        gridTemplateRows: `repeat(${rows.length}, 1.75rem)`,
+      }}
     >
       {rows.map((row, index) => {
         const hourStart = isHourStartSlot(row.slot);
@@ -1028,23 +1054,40 @@ function DayTimeline({ rows, events, timerOccurrences = [], accountEmails, timez
               className={cn(
                 "relative border-b border-l border-border/30",
                 !hourBoundary && "border-b-border/10",
-                slotTimers.length > 0 && "z-30 flex items-center gap-1 overflow-x-auto px-1",
               )}
               style={{ gridColumn: 2, gridRow: index + 1 }}
-            >
-              {slotTimers.map(timer => (
-                <ReferenceRenderer
-                  key={`${timer.timerId}:${timer.minuteOfDay}`}
-                  refValue={{
-                    type: "timer",
-                    id: timer.timerId,
-                    metadata: { label: timer.name },
-                  }}
-                  surface="simple-row"
-                  className="max-w-[11rem] shrink-0 bg-background/90"
-                />
-              ))}
-            </span>
+            />
+            {Array.from({ length: timerRailColumns }, (_, railIndex) => {
+              const timer = slotTimers[railIndex];
+              return (
+                <span
+                  key={`${row.slot}-timer-rail-${railIndex}`}
+                  className={cn(
+                    "relative z-30 flex items-center justify-center border-b border-border/30",
+                    !hourBoundary && "border-b-border/10",
+                    railIndex === 0 && "border-l border-border/20",
+                  )}
+                  style={{ gridColumn: 3 + railIndex, gridRow: index + 1 }}
+                  data-testid={timer ? `schedule-timer-${timer.timerId}` : undefined}
+                >
+                  {timer ? (
+                    <ReferenceRenderer
+                      refValue={{
+                        type: "timer",
+                        id: timer.timerId,
+                        metadata: {
+                          label: timer.name,
+                          description: buildTimerOccurrenceTooltip(timer),
+                        },
+                      }}
+                      surface="simple-row"
+                      iconOnly
+                      className="shrink-0"
+                    />
+                  ) : null}
+                </span>
+              );
+            })}
           </div>
         );
       })}

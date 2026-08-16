@@ -22,6 +22,7 @@ export function ReferenceRenderer({
   IconOverride,
   iconClassName,
   wrapLabel = false,
+  iconOnly = false,
 }: {
   refValue: ReferenceRef;
   surface?: ReferenceSurface;
@@ -30,6 +31,8 @@ export function ReferenceRenderer({
   iconClassName?: string;
   /** Allow multi-line labels for tree/row titles. */
   wrapLabel?: boolean;
+  /** Icon-only chip for dense surfaces; label stays in tooltip/aria-label. */
+  iconOnly?: boolean;
 }) {
   const vaultContext = useOptionalVaults();
   const vaults = vaultContext?.vaults ?? [];
@@ -52,6 +55,7 @@ export function ReferenceRenderer({
       iconClassName={iconClassName}
       color={color}
       wrapLabel={wrapLabel}
+      iconOnly={iconOnly}
     />
   );
 }
