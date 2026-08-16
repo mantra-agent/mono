@@ -3866,7 +3866,8 @@ export async function runSchemaBootstrap(
     //      (advances following seats/copies; offers inbound to customized seats)
     const { storage: skillLatticeStorage } = await import("./storage");
     await skillLatticeStorage.syncSkillCatalogToLattice();
-    //   3) rebase exact-hash leftover user copies onto the current platform revision
+    //   3) rebase exact-hash leftover user copies; flip matching dirty
+    //      updateState back to following (state/lineage only)
     await skillLatticeStorage.healLeftoverSkillFollowers();
   } catch (err: any) {
     log(`Skill seed/migration failed: ${err.message}`, "migration");

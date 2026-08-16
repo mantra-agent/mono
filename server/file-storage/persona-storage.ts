@@ -42,6 +42,8 @@ const personaPreferenceScopeColumns = {
   instanceId: personaPreferences.instanceId,
 };
 
+type PersonaTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 const RESERVED_PERSONA_NAMES = new Set(["root", "router", "default"]);
 
 export class PersonaReservedNameError extends Error {
@@ -975,6 +977,35 @@ class PersonaStorageClass {
     this._cache.invalidateAll();
   }
 
+  /**
+   * When a copy's payload already equals the published default, it is
+   * following — flip only updateState + lineage. Never rewrite matching
+   * content. Real edits stay customized / update_available / conflict.
+   */
+  private async adoptMatchingPersonaCopies(
+    tx: PersonaTx,
+    templateId: number,
+    publishedPayload: PersonaRevisionPayload,
+    platformRevisionId: string,
+  ): Promise<number> {
+    const copies = await tx.select().from(personas).where(and(
+      eq(personas.templatePersonaId, templateId),
+      sql`${personas.updateState} <> 'following'`,
+    ));
+    let adopted = 0;
+    for (const copy of copies) {
+      if (changedFields(publishedPayload, revisionPayload(rowToEntry(copy))).length > 0) continue;
+      await tx.update(personas).set({
+        updateState: "following",
+        baseRevisionId: platformRevisionId,
+        currentRevisionId: platformRevisionId,
+        updatedAt: new Date(),
+      }).where(eq(personas.id, copy.id));
+      adopted++;
+    }
+    return adopted;
+  }
+
   private visiblePersonaRevisionPredicate(principal: Principal, identityPredicate: SQL) {
     return and(
       identityPredicate,
@@ -1053,12 +1084,9 @@ class PersonaStorageClass {
       const baseline = entry.source === "seed" ? entry : entry.templatePersonaId ? platformById.get(entry.templatePersonaId) : undefined;
       const platformBaseline = baseline ? revisionPayload(baseline) : null;
       const drift = platformBaseline ? changedFields(platformBaseline, revisionPayload(entry)) : [];
-      // The inbound "default advanced" mark is content-based, not state-based.
-      // Applying a customized copy to the default leaves that copy's updateState
-      // at update_available even though its content now equals the platform
-      // default; without a content check every authoring copy would read as
-      // behind. Only surface an inbound update when the copy actually differs
-      // from the current platform default.
+      // Inbound is content-based. Publish and leftover heal flip matching
+      // copies back to following; this check stays as defense in depth so a
+      // leftover dirty updateState cannot surface a phantom inbound.
       return {
         ...entry,
         platformBaseline,
@@ -1473,6 +1501,7 @@ class PersonaStorageClass {
       if (!current.isSystem) {
         await tx.update(personas).set({ baseRevisionId: revision.id, currentRevisionId: revision.id, updateState: "following", ...preview.payload, updatedAt: new Date() }).where(and(eq(personas.templatePersonaId, id), eq(personas.updateState, "following")));
         await tx.update(personas).set({ updateState: "update_available" }).where(and(eq(personas.templatePersonaId, id), sql`${personas.updateState} <> 'following'`));
+        await this.adoptMatchingPersonaCopies(tx, id, preview.payload, revision.id);
       }
       this.invalidateCache();
       log.info("Platform Persona revision published", { personaId: id, revisionId: revision.id, actorUserId: principal.userId, parentRevisionId: current.currentRevisionId, contentHash: revision.contentHash, changeSummary: changeSummary.trim() });
@@ -2185,6 +2214,7 @@ class PersonaStorageClass {
             .update(personas)
             .set({ updateState: "update_available" })
             .where(and(eq(personas.templatePersonaId, seed.id), sql`${personas.updateState} <> 'following'`));
+          await this.adoptMatchingPersonaCopies(tx, seed.id, payload, revision.id);
         }
       });
       advanced++;
@@ -2197,10 +2227,11 @@ class PersonaStorageClass {
   }
 
   /**
-   * Rebase leftover followers onto the current platform default.
-   * A leftover is a copy with no user revision that still carries a
-   * retired catalog opener or matches an older platform revision.
-   * Real customizations and Keep-mine copies stay put.
+   * Rebase leftover followers onto the current platform default, then
+   * flip leftover dirty updateState back to following when content
+   * already matches. A leftover is a copy with no user revision that
+   * still carries a retired catalog opener or matches an older platform
+   * revision. Real customizations and Keep-mine copies stay put.
    */
   private async healLeftoverFollowers(): Promise<number> {
     let healed = 0;
@@ -2270,11 +2301,33 @@ class PersonaStorageClass {
         .where(eq(personas.id, copy.id));
       healed++;
     }
-    if (healed > 0) {
-      this.invalidateCache();
-      log.log(`healLeftoverFollowers: rebased ${healed} user copies`);
+    const templates = await db
+      .select()
+      .from(personas)
+      .where(and(eq(personas.source, "seed"), eq(personas.scope, "global")));
+    let adopted = 0;
+    for (const template of templates) {
+      if (!template.currentRevisionId) continue;
+      const [platform] = await db
+        .select()
+        .from(personaRevisions)
+        .where(eq(personaRevisions.id, template.currentRevisionId))
+        .limit(1);
+      if (!platform) continue;
+      adopted += await db.transaction((tx) =>
+        this.adoptMatchingPersonaCopies(
+          tx,
+          template.id,
+          sanitizeRevisionPayload(platform.payload),
+          platform.id,
+        ),
+      );
     }
-    return healed;
+    if (healed > 0 || adopted > 0) {
+      this.invalidateCache();
+      log.log(`healLeftoverFollowers: rebased ${healed} user copies; adopted ${adopted} matching`);
+    }
+    return healed + adopted;
   }
 
   /** Resolve a user-facing global seed template by name (excludes system seeds). */
