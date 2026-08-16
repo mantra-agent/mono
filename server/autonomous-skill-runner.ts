@@ -14,7 +14,6 @@ import { ACTIVITY_THINKING, ACTIVITY_WORK, ACTIVITY_STRATEGY, ACTIVITY_MEMORY, A
 import type { AdmissionTier } from "./run-admission";
 
 import { getSideEffectTier, type SideEffectTier } from "./autonomy-tiers";
-import { isAgentType } from "@shared/instance-config";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { getCurrentPrincipal } from "./principal-context";
 import type { TrustedEngineeringDelegation } from "./agent-authority";
@@ -174,15 +173,6 @@ async function applyPendingSessionEndAfterTools(sessionId: string): Promise<bool
     });
   await chatFileStorage.setSessionPinned(sessionId, false).catch(() => undefined);
   agentExecutor.markAppliedSessionEnd(sessionId, pending);
-  if (pending.status === "saved") {
-    try {
-      await runDeferredPostRunVerify(sessionId);
-    } catch (e: unknown) {
-      logger.warn(
-        `[SkillChat] [${sessionId}] deferred postRunVerify after pending end failed: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
   return true;
 }
 
@@ -256,130 +246,6 @@ async function persistExecutorResult(
 
 type ToolCallLog = Array<{ name: string; action?: string; error?: boolean; result?: string }>;
 
-const deferredPostRunVerify = new Map<string, { toolCalls: ToolCallLog; verifyFn: (sessionId: string, toolCalls: ToolCallLog) => Promise<void> }>();
-
-export async function runDeferredPostRunVerify(sessionId: string): Promise<void> {
-  const deferred = deferredPostRunVerify.get(sessionId);
-  if (!deferred) return;
-  deferredPostRunVerify.delete(sessionId);
-  try {
-    await deferred.verifyFn(sessionId, deferred.toolCalls);
-  } catch (err: unknown) {
-    logger.error(`[SkillChat] [${sessionId}] deferred postRunVerify failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-async function pageWritePostRunVerify(sessionId: string, toolCalls: ToolCallLog): Promise<void> {
-  const wrotePage = toolCalls.some(t => t.name === "library" && (t.action === "create_library_page" || t.action === "update_library_page") && !t.error);
-  const attentionSucceeded = toolCalls.some(t => (t.name === "converse" && t.action === "set_attention" && !t.error) || (t.name === "set_attention" && !t.error));
-
-  await verifyPageCreated(sessionId, toolCalls, wrotePage, attentionSucceeded);
-  await verifyAttentionSet(sessionId, toolCalls, attentionSucceeded);
-  await verifyPageLinkPosted(sessionId, toolCalls, wrotePage);
-}
-async function dailyBriefSurfacePostRunVerify(sessionId: string, toolCalls: ToolCallLog): Promise<void> {
-  const pageWriteCalls = toolCalls.filter(t =>
-    t.name === "library"
-    && (t.action === "create_library_page" || t.action === "update_library_page" || t.action === "edit_library_page")
-    && !t.error
-    && t.result
-  );
-  if (pageWriteCalls.length === 0) {
-    logger.warn(`[daily-brief] [${sessionId}] Post-run: no Library page write detected, cannot enforce INBOX surfacing`);
-    return;
-  }
-
-  const slugMatch = pageWriteCalls
-    .map(t => t.result!.match(/\[page:([^\]]+)\]/) || t.result!.match(/@page:([a-zA-Z0-9_-]+)/))
-    .find(Boolean);
-
-  // One rolling Morning Brief page. Prefer the page the skill just wrote;
-  // fall back to the stable slug, never a dated daily-brief-YYYY-MM-DD page.
-  const pageId = slugMatch?.[1] || "morning-brief";
-  const { getDateInTimezone } = await import("./timezone");
-  const dateLabel = getDateInTimezone();
-  const result = await executeTool("library", generateToolCallId("auto-tc"), {
-    action: "update_library_page",
-    id: pageId,
-    surface: true,
-    surfaceDurationHours: 24,
-    surfaceReason: `Daily Brief — ${dateLabel}`,
-    surfaceSection: "inbox",
-  }, {
-    sessionId,
-    sessionKey: `auto:brief-daily`,
-  });
-
-  if (result.error) {
-    logger.warn(`[daily-brief] [${sessionId}] Failed to enforce Library INBOX surfacing for ${pageId}: ${result.result}`);
-    return;
-  }
-
-  logger.log(`[daily-brief] [${sessionId}] Enforced Library INBOX surfacing for ${pageId}`);
-}
-
-
-async function verifyPageCreated(
-  sessionId: string,
-  toolCalls: ToolCallLog,
-  wrotePage: boolean,
-  attentionSucceeded: boolean,
-): Promise<void> {
-  if (wrotePage) return;
-  if (attentionSucceeded) {
-    logger.log(`[spec] [${sessionId}] Post-run: no page created but attention was set — likely awaiting user clarification, skipping fallback`);
-    return;
-  }
-
-  const anyLibrary = toolCalls.some(t => t.name === "library");
-  const detail = anyLibrary
-    ? "library was called but never with a page-write action"
-    : "library tool was never called";
-  logger.warn(`[spec] [${sessionId}] Post-run: no page created — ${detail}`);
-}
-
-async function verifyAttentionSet(
-  sessionId: string,
-  toolCalls: ToolCallLog,
-  attentionSucceeded: boolean,
-): Promise<void> {
-  if (attentionSucceeded) return;
-  const attentionAttempted = toolCalls.some(t => (t.name === "converse" && t.action === "set_attention") || t.name === "set_attention");
-  const reason = attentionAttempted
-    ? "converse(set_attention) was called but failed"
-    : "converse(set_attention) was never called";
-  logger.warn(`[spec] [${sessionId}] Post-run check: ${reason} — auto-flagging conversation`);
-  await chatFileStorage.setSessionPinned(sessionId, true);
-}
-
-async function verifyPageLinkPosted(
-  sessionId: string,
-  toolCalls: ToolCallLog,
-  wrotePage: boolean,
-): Promise<void> {
-  if (!wrotePage) return;
-  const messages = await chatFileStorage.getMessagesBySession(sessionId);
-  const assistantMessages = messages.filter((m) => m.role === "assistant");
-  const hasPageLink = assistantMessages.some((m) => /\[page:[^\]]+\]/.test(m.content));
-  if (hasPageLink) return;
-
-  const pageResults = toolCalls
-    .filter(t => t.name === "library" && (t.action === "create_library_page" || t.action === "update_library_page") && !t.error && t.result)
-    .map(t => t.result!);
-  const slugMatch = pageResults
-    .map(r => r.match(/\[page:([^\]]+)\]/))
-    .find(m => m);
-  const pageRef = slugMatch ? `[page:${slugMatch[1]}]` : null;
-  logger.warn(`[spec] [${sessionId}] Post-run check: no [page:slug] link found in assistant messages — injecting page link`);
-  await chatFileStorage.createMessage(sessionId, "system",
-    pageRef
-      ? `[auto] The page was created successfully: ${pageRef}`
-      : `[auto] A page was created but the link could not be determined. Check the library.`
-  ).catch((e: unknown) => {
-    logger.error(`[spec] [${sessionId}] Failed to persist page link message: ${e instanceof Error ? e.message : String(e)}`);
-  });
-}
-
 export interface SkillRunConfig {
   skillId: string;
   label: string;
@@ -391,15 +257,8 @@ export interface SkillRunConfig {
   timeoutMs: number;
   sessionType?: "autonomous" | "agent";
   admissionTier?: AdmissionTier;
-  postRunVerify?: (sessionId: string, toolCalls: Array<{ name: string; action?: string; error?: boolean; result?: string }>) => Promise<void>;
 }
 
-
-function isAnnualReflectRun(config: SkillRunConfig, preContext?: string): boolean {
-  if (config.skillId === "reflect-annual") return true;
-  if (config.skillId !== "reflect") return false;
-  return /["']?cadence["']?\s*[:=]\s*["']?annual["']?/i.test(preContext || "");
-}
 
 function parseEstimatedDurationMs(duration: string | null | undefined): number | null {
   if (!duration) return null;
@@ -520,9 +379,6 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
     temperature: 0.4,
     timeoutMs: 3 * 60 * 1000,
     sessionType: "agent",
-    async postRunVerify(sessionId: string, toolCalls: Array<{ name: string; action?: string; error?: boolean; result?: string }>) {
-      await dailyBriefSurfacePostRunVerify(sessionId, toolCalls);
-    },
   },
   "goal-manager": {
     skillId: "goal-manager",
@@ -1795,47 +1651,6 @@ async function runSkillPipeline(
     await persistExecutorResult(sessionId, result, "Skill run completed.", false, deferSettlementRelease).catch((e: unknown) => {
       logger.error(`[SkillChat] [${sessionId}] Failed to persist success result: ${e instanceof Error ? e.message : String(e)}`);
     });
-
-    if (isAnnualReflectRun(config, options.preContext) && content) {
-      try {
-        const { saveJournalToLibrary } = await import("./thoughts");
-        const { stripLeadingProse } = await import("./temporal-log");
-        const today = new Date().toISOString().split("T")[0];
-        await saveJournalToLibrary(
-          stripLeadingProse(content),
-          `${today} — Annual Reflection`,
-          ["annual-reflection", "identity"],
-          "annual-reflections",
-        );
-      } catch (journalErr: unknown) {
-        logger.error(`[SkillChat] [${sessionId}] JOURNAL SAVE FAILED for annual reflect: ${journalErr instanceof Error ? journalErr.message : String(journalErr)}`);
-      }
-    }
-
-    if (content) {
-      try {
-        if (isAnnualReflectRun(config, options.preContext)) {
-          const { writeAnnualTemporalLayers } = await import("./temporal-log");
-          await writeAnnualTemporalLayers(content);
-        }
-      } catch (tlErr: unknown) {
-        logger.error(`[SkillChat] [${sessionId}] Temporal log write failed for ${config.skillId}: ${tlErr instanceof Error ? tlErr.message : String(tlErr)}`);
-      }
-    }
-
-    if (config.postRunVerify) {
-      if (isAgentType(config.sessionType)) {
-        logger.log(`[SkillChat] [${sessionId}] Deferring postRunVerify for Agent session — will run when session completes`);
-        deferredPostRunVerify.set(sessionId, { toolCalls: toolCallLog, verifyFn: config.postRunVerify });
-      } else {
-        try {
-          await config.postRunVerify(sessionId, toolCallLog);
-        } catch (verifyErr: unknown) {
-          logger.error(`[SkillChat] [${sessionId}] postRunVerify failed: ${verifyErr instanceof Error ? verifyErr.message : String(verifyErr)}`);
-          if (config.skillId === "regression") throw verifyErr;
-        }
-      }
-    }
 
     logger.log(`[SkillChat] [${sessionId}] Skill completed: ${config.label} in ${durationMs}ms, ${toolCallCount} tool calls`);
     return {
