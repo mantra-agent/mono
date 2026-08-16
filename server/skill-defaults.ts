@@ -435,7 +435,7 @@ Do NOT create \`daily-brief-YYYY-MM-DD\` pages. Do NOT use the \`priorities\` to
     category: "system",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "1.7",
+    version: "1.8",
     addToMemory: true,
     pinnedToContext: false,
     whenToUse: "Used for recurring autonomous scan-and-execute work. Replaces the retired advance and prioritize skills.",
@@ -449,6 +449,7 @@ Do NOT create \`daily-brief-YYYY-MM-DD\` pages. Do NOT use the \`priorities\` to
       { check: "For each upcoming external or high-prep meeting, resolves the single canonical preparation page from meeting metadata, follows missing agenda → agenda conversation → confirmed agenda → one preparation page, and never creates a duplicate brief or parallel conversation", weight: 3 },
       { check: "Creates or identifies corresponding tasks for non-trivial Agent work, attaches them to the best existing project/milestone when possible, and records terminal status before ending", weight: 4 },
       { check: "Treats aligned Agent-assigned tasks as a legitimate work queue subject to goals, safety gates, and timing", weight: 3 },
+      { check: "Consumes the Work Dependencies (blocked_by) projection before selecting work: never starts or advances a task with an unresolved active blocker, prefers executable prerequisites, and mutates dependencies only via blocking_graph", weight: 4 },
       { check: "Produces a compact report with evidence, task/project/milestone placement, final task statuses, blockers, and next action", weight: 2 },
     ],
     process: `You are the Agent's autonomous scan-and-execute loop.
@@ -482,6 +483,15 @@ If the work does not fit cleanly into the current project stack, stop and surfac
 Before ending the run or work item, update the task to the truthful state: completed, blocked, active, or another accurate status. Include the outcome or blocker so the canonical work record reflects reality.
 
 Aligned Agent-assigned tasks are a legitimate autonomous work queue. Work them when they support current goals and pass safety/timing gates. Skip or gate them when stale, misaligned, unsafe, or unclear.
+
+## Dependency-aware execution
+
+Work prerequisites live in one Core graph: the \`blocked_by\` relationship, read through the Work Dependencies projection in context and mutated only through \`blocking_graph\`.
+
+- A task or project reported as \`blocked\` in that projection has an unresolved active prerequisite. Do not start it, advance it, or count it as executable. Task status is separate evidence; the graph is prerequisite truth.
+- Prefer executable prerequisites: when a target is blocked, the highest-leverage move is often the prerequisite that unblocks it, if that prerequisite is itself ready and safe.
+- A \`stale\` entry means the prerequisite is already satisfied, inaccessible, or invalid — the edge should be reviewed or retired via \`blocking_graph\`, not silently ignored.
+- When you discover a real prerequisite while working, record it with \`blocking_graph.add_blocker\` (or the \`blockedBy\` convenience on the work item). Never invent a second dependency store, a task \`dependencies\` field, or a private dependency vocabulary.
 
 ## Execution rules
 
@@ -1469,7 +1479,7 @@ Return a 3-5 line summary: goals reviewed, mutations by type, count flagged, and
     category: "thinking",
     activity: ACTIVITY_THINKING,
     author: "system",
-    version: "1.3",
+    version: "1.4",
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "autonomous",
@@ -1480,6 +1490,7 @@ Return a 3-5 line summary: goals reviewed, mutations by type, count flagged, and
       { check: "Enumerated and reconciled the complete active-project registry, every accessible project, milestones, and all ready/active/blocked/on-hold tasks before judging capacity; access gaps were explicit.", weight: 5 },
       { check: "Inspected the next 14 days of fixed calendar commitments and active goals before judging capacity.", weight: 4 },
       { check: "Applied Ray's capacity model correctly, separating Agent execution while counting Ray-required reviews/handoffs.", weight: 5 },
+      { check: "Excluded work with unresolved active blockers from executable capacity using the Work Dependencies (blocked_by) projection, and did not count blocked work as available bandwidth.", weight: 4 },
       { check: "Preserved hard external commitments and made only reversible, evidence-backed internal corrections.", weight: 5 },
       { check: "Recalibrated low/mid/high effort only from specific execution or scope evidence without false precision.", weight: 4 },
       { check: "Resolved relevant dependency, hierarchy, duplicate, stale-link, and developmental-window drift.", weight: 4 },
@@ -1516,6 +1527,8 @@ Apply Ray's standing model:
 - Ray-required reviews, approvals, decisions, and handoffs consume Ray capacity
 
 Evaluate outcomes and dependency order, not raw task count.
+
+Exclude blocked work from executable capacity. The Work Dependencies (\`blocked_by\`) projection in context is the read model: any task or project marked \`blocked\` there has an unresolved active prerequisite and must not count as available bandwidth this week. A \`stale\` entry signals a satisfied or invalid edge to review or retire via \`blocking_graph\`. Dependency truth lives only in that graph — never infer prerequisites from titles or create a parallel dependency store.
 
 ## 3. Recalibrate effort
 
