@@ -65,7 +65,6 @@ import {
   Users,
   Vault,
   Waypoints,
-  Workflow,
   Wrench,
   Zap,
   type LucideIcon,
@@ -176,7 +175,6 @@ const MOD_NAV_ICONS = {
   Users,
   Vault,
   Waypoints,
-  Workflow,
   Wrench,
   Zap,
 } satisfies Record<string, LucideIcon>;
@@ -295,7 +293,6 @@ const navSections: NavSection[] = [
       navItem("Agendas", "navigation.agendas.open", ClipboardList),
       navItem("Skills", "navigation.skills.open", Lightbulb),
       navItem("Plans", "navigation.plans.open", FileText),
-      navItem("Workflows", "navigation.workflows.open", Workflow),
       navItem("Hooks", "navigation.hooks.open", GitBranch),
       navItem("Timers", "navigation.timers.open", Clock),
     ],

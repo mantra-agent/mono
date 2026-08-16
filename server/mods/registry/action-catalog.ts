@@ -30,7 +30,6 @@ const ACTION_ROWS: ActionRow[] = [
   { slug: "agendas", owner: "core", routeId: "core.route.agendas" },
   { slug: "skills", owner: "core", routeId: "core.route.skills" },
   { slug: "plans", owner: "core", routeId: "core.route.brain" },
-  { slug: "workflows", owner: "core", routeId: "core.route.workflows" },
   { slug: "hooks", owner: "core", routeId: "core.route.system", permission: "system:read" },
   { slug: "timers", owner: "core", routeId: "core.route.system", permission: "system:read" },
   { slug: "orientation", owner: "core", routeId: "core.route.orientation" },
