@@ -3564,6 +3564,10 @@ type SentryAvailabilityStatus =
 
 function SentryDetail() {
   const { toast } = useToast();
+  const { data: secretsStatus, isLoading: secretsLoading } = useQuery<Record<string, any>>({
+    queryKey: ["/api/setup/secrets-status"],
+  });
+  const crashReady = Boolean(secretsStatus?.sentry);
   const { data: status, isLoading } = useQuery<SentryAvailabilityStatus>({
     queryKey: ["/api/integrations/sentry/status"],
     refetchInterval: false,
@@ -3577,6 +3581,11 @@ function SentryDetail() {
     },
     onError: (error: Error) => toast({ title: "Availability not synced", description: error.message, variant: "destructive" }),
   });
+  const crashValue = secretsLoading
+    ? <Skeleton className="h-4 w-28" />
+    : crashReady
+      ? <span className="text-active">One setup arms all surfaces</span>
+      : <span className="text-muted-foreground">Needs DSN + API credentials</span>;
   const uptimeValue = isLoading
     ? <Skeleton className="h-4 w-28" />
     : status?.status === "ready"
@@ -3585,13 +3594,15 @@ function SentryDetail() {
         ? <span className="text-foreground">Waiting for a complete day · {status.checkCount}/{status.expectedChecks}</span>
         : status?.status === "unavailable"
           ? <span className="text-error">{status.error}</span>
-          : <span className="text-muted-foreground">Add DSN + API credentials once</span>;
+          : !crashReady && !secretsLoading
+            ? <span className="text-muted-foreground">Add DSN + API credentials once</span>
+            : <span className="text-muted-foreground">Uptime status is unavailable</span>;
 
   return (
     <div className="min-w-0 space-y-2">
-      <IntegrationTreeSection label="Crash reporting" initialOpen={status?.status === "not_configured"} testIdPrefix="sentry">
+      <IntegrationTreeSection label="Crash reporting" initialOpen={!crashReady} testIdPrefix="sentry">
         <ProfileTreeRow label="Web · Mobile · Server" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
-          <span className={status?.crashReportingConfigured ? "text-active" : "text-muted-foreground"}>{status?.crashReportingConfigured ? "One setup arms all surfaces" : "Needs DSN + API credentials"}</span>
+          {crashValue}
         </ProfileTreeRow>
         <div className="min-w-0 px-2 py-1.5"><SecretsForSection section="sentry" /></div>
       </IntegrationTreeSection>
