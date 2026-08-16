@@ -606,11 +606,14 @@ export const timers = pgTable("timers", {
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
+  /** Pinned Agent Instance mind owner; owner_user_id stays created_by. */
+  instanceId: text("instance_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_timers_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_timers_account").on(table.accountId),
+  index("idx_timers_instance").on(table.instanceId),
   index("idx_timers_type").on(table.type),
   uniqueIndex("idx_timers_system_key_system_unique").on(table.systemKey).where(sql`${table.scope} = 'system' AND ${table.systemKey} IS NOT NULL`),
   uniqueIndex("idx_timers_system_key_user_unique").on(table.ownerUserId, table.systemKey).where(sql`${table.scope} = 'user' AND ${table.systemKey} IS NOT NULL`),
@@ -648,9 +651,12 @@ export const responsibilityRuns = pgTable("responsibility_runs", {
   scope: text("scope").notNull().default("quarantine"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
+  /** Pinned Agent Instance mind owner; owner_user_id stays created_by. */
+  instanceId: text("instance_id"),
 }, (table) => [
   index("idx_responsibility_runs_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_responsibility_runs_account").on(table.accountId),
+  index("idx_responsibility_runs_instance").on(table.instanceId),
   check("responsibility_runs_ownership_contract", sql`
     (${table.scope} = 'user' AND ${table.ownerUserId} IS NOT NULL AND ${table.accountId} IS NOT NULL)
     OR (${table.scope} IN ('system', 'quarantine') AND ${table.ownerUserId} IS NULL AND ${table.accountId} IS NULL)

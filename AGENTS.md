@@ -279,22 +279,25 @@ These are the correct way to enforce ownership. Do not write raw queries against
 - Product thesis / mission library pages
 - System settings that are platform-wide
 
+**Instance-owned (mind / continuity; `owner_user_id` stays created_by):**
+- Memory claim graph
+- Personas + affect
+- Live Timers, Skill installations, and Skill runs
+
 **User-owned (private by default):**
 - Chat sessions and messages
-- Memory entries, links, content blocks, entity links
 - Library pages (most), notes, annotations
 - People, contacts, interactions
 - Goals, priorities, check-ins
 - Projects, tasks, milestones
 - Decisions, strategies, theses
-- Emotional states, active persona selection
 - Personal Rules, observations
-- Timers, hooks, intentions, parked ideas
+- Hooks, intentions, parked ideas
+- Skill persona preferences and failure dismissals
 - Email cache, calendar metadata, connected accounts
 - Finance (Plaid), health/wellness logs
 - Media items, render jobs, exports
 - Content queue, landscape signals
-- Skill runs, skill scores (the run belongs to the user; the skill definition may be global)
 
 ### Common Mistakes That Cause Data Bleed
 

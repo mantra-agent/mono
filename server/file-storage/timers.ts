@@ -16,6 +16,7 @@ import { createLogger } from "../log";
 import { requireCurrentUserPrincipal } from "../principal-context";
 import type { Principal } from "../principal";
 import { getPostgresErrorCode } from "../postgres-errors";
+import { combineWithWritableScope } from "../scoped-storage";
 
 const log = createLogger("StoreTimers");
 
@@ -44,10 +45,18 @@ function rowToTimer(row: typeof timers.$inferSelect): Timer {
     scope,
     ownerUserId: row.ownerUserId ?? undefined,
     accountId: row.accountId ?? undefined,
+    instanceId: row.instanceId ?? undefined,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
+
+const timerScopeColumns = {
+  scope: timers.scope,
+  ownerUserId: timers.ownerUserId,
+  accountId: timers.accountId,
+  instanceId: timers.instanceId,
+};
 
 interface RunRow {
   runId: string;
@@ -92,11 +101,7 @@ function userTimerPredicate(principal: Principal) {
   if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
     throw new Error("User Timer access requires a user principal with account ownership");
   }
-  return and(
-    eq(timers.scope, "user"),
-    eq(timers.ownerUserId, principal.userId),
-    eq(timers.accountId, principal.accountId),
-  )!;
+  return combineWithWritableScope(principal, timerScopeColumns, eq(timers.scope, "user"));
 }
 
 function validSchedulerTimerPredicate() {
@@ -108,12 +113,26 @@ function validSchedulerTimerPredicate() {
 
 function ownershipForTimer(timer: Timer) {
   if (timer.scope === "user" && timer.ownerUserId && timer.accountId) {
-    return { scope: "user", ownerUserId: timer.ownerUserId, accountId: timer.accountId } as const;
+    return {
+      scope: "user" as const,
+      ownerUserId: timer.ownerUserId,
+      accountId: timer.accountId,
+      instanceId: timer.instanceId ?? null,
+    };
   }
   if (timer.scope === "system" && timer.systemKey) {
-    return { scope: "system", ownerUserId: null, accountId: null } as const;
+    return { scope: "system" as const, ownerUserId: null, accountId: null, instanceId: null };
   }
   throw new Error(`Timer ${timer.id} has invalid execution ownership`);
+}
+
+function userTimerOwnership(principal: Principal) {
+  return {
+    scope: "user" as const,
+    ownerUserId: principal.userId!,
+    accountId: principal.accountId!,
+    instanceId: principal.instanceId ?? null,
+  };
 }
 
 export class FileTimerStorage {
@@ -128,7 +147,9 @@ export class FileTimerStorage {
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
       throw new Error("User Timer cache requires complete user ownership");
     }
-    return `user:${principal.userId}:${principal.accountId}`;
+    return principal.instanceId
+      ? `instance:${principal.instanceId}`
+      : `user:${principal.userId}:${principal.accountId}`;
   }
 
   async getAll(): Promise<Timer[]> {
@@ -233,20 +254,14 @@ export class FileTimerStorage {
   async create(input: InsertTimer): Promise<Timer> {
     if (input.type === "system") throw new Error("System Timers require explicit platform authority");
     const principal = requireCurrentUserPrincipal();
-    const [row] = await db.insert(timers).values(this.valuesFromInput(input, {
-      scope: "user",
-      ownerUserId: principal.userId,
-      accountId: principal.accountId,
-    })).returning();
+    const [row] = await db.insert(timers).values(this.valuesFromInput(input, userTimerOwnership(principal))).returning();
     this.invalidateCache();
     return rowToTimer(row);
   }
 
   async createManagedUser(input: InsertTimer, systemKey: string, principal: Principal): Promise<Timer> {
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) throw new Error("Managed user Timer creation requires an owning user principal");
-    const [row] = await db.insert(timers).values(this.valuesFromInput(input, {
-      scope: "user", ownerUserId: principal.userId, accountId: principal.accountId,
-    }, systemKey)).returning();
+    const [row] = await db.insert(timers).values(this.valuesFromInput(input, userTimerOwnership(principal), systemKey)).returning();
     this.invalidateCache();
     return rowToTimer(row);
   }
@@ -254,7 +269,7 @@ export class FileTimerStorage {
   async createSystem(input: InsertTimer, systemKey: string): Promise<Timer> {
     if (input.type !== "system") throw new Error("System-scoped Timers must use type=system");
     const [row] = await db.insert(timers).values(this.valuesFromInput(input, {
-      scope: "system", ownerUserId: null, accountId: null,
+      scope: "system", ownerUserId: null, accountId: null, instanceId: null,
     }, systemKey)).returning();
     this.invalidateCache();
     return rowToTimer(row);
@@ -279,7 +294,11 @@ export class FileTimerStorage {
   async updateForScheduler(timer: Timer, updates: Partial<Omit<Timer, "id" | "createdAt" | "scope" | "ownerUserId" | "accountId">>): Promise<Timer | null> {
     const ownership = ownershipForTimer(timer);
     const ownershipPredicate = ownership.scope === "user"
-      ? and(eq(timers.scope, "user"), eq(timers.ownerUserId, ownership.ownerUserId), eq(timers.accountId, ownership.accountId))
+      ? and(
+          eq(timers.scope, "user"),
+          eq(timers.ownerUserId, ownership.ownerUserId),
+          eq(timers.accountId, ownership.accountId),
+        )
       : and(eq(timers.scope, "system"), eq(timers.systemKey, timer.systemKey!));
     const [row] = await db.update(timers).set(this.updateValues(updates)).where(and(eq(timers.id, timer.id), ownershipPredicate)).returning();
     this.invalidateCache();

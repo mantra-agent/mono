@@ -171,6 +171,7 @@ async function adoptOrCreateTimer(
     scope: "user",
     ownerUserId: principal.userId!,
     accountId: principal.accountId!,
+    instanceId: principal.instanceId ?? null,
     createdAt: now,
   }).returning({ id: timers.id });
   if (!created) throw new Error(`Build-managed Timer creation failed: ${definition.contributionId}`);

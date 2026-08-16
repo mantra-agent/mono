@@ -106,6 +106,7 @@ export async function convergeBootSchema(): Promise<void> {
         const { ensureAgentInstanceSchema } = await import("./agent-instance-schema");
         const { ensureMemoryInstanceOwnershipSchema } = await import("./memory-instance-schema");
         const { ensurePersonaInstanceOwnershipSchema } = await import("./persona-instance-schema");
+        const { ensureTimerSkillInstanceOwnershipSchema } = await import("./timer-skill-instance-schema");
         const { ensureDriveResourcesSchema } = await import("./drive-resources-schema");
         const { ensureFilesIndexSchema } = await import("./files-index-schema");
         const { ensureDocumentArtifactsSchema } = await import("./document-artifacts-schema");
@@ -123,6 +124,8 @@ export async function convergeBootSchema(): Promise<void> {
         await ensureMemoryInstanceOwnershipSchema(pool);
         // Phase 2 mind seam: personas + affect stamp/read pinned Instance.
         await ensurePersonaInstanceOwnershipSchema(pool);
+        // Phase 2 mind seam: live Timers + Skills stamp/read pinned Instance.
+        await ensureTimerSkillInstanceOwnershipSchema(pool);
         await ensureDriveResourcesSchema(pool);
         await ensureFilesIndexSchema(pool);
         await ensureDocumentArtifactsSchema(pool);
