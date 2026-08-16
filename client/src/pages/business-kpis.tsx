@@ -31,6 +31,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 
 interface KpisResponse {
@@ -170,6 +171,7 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
 
 export default function BusinessKpisPage() {
   const { businesses, selectedId, setSelectedId } = useSelectedBusiness();
+  usePageHeader({ title: "KPIs" });
   const [query, setQuery] = useState("");
   const kpisUrl = selectedId ? `/api/kpis?businessId=${encodeURIComponent(selectedId)}` : "/api/kpis";
   const metricsUrl = selectedId ? `/api/business/metrics?businessId=${encodeURIComponent(selectedId)}` : "/api/business/metrics";
