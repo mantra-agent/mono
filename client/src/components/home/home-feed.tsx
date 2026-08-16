@@ -399,7 +399,7 @@ function SurfacedLibraryRow({
             }
           }}
         >
-          <span className="w-14 shrink-0 text-right pr-1.5 text-[11px] leading-tight tabular-nums text-muted-foreground whitespace-nowrap">
+          <span className="w-14 shrink-0 whitespace-pre-line pr-1.5 text-right text-[11px] leading-tight tabular-nums text-muted-foreground">
             {dateLabel ?? ""}
           </span>
 

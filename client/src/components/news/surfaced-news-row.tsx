@@ -106,7 +106,7 @@ export function SurfacedNewsRow({ item, dateLabel }: SurfacedNewsRowProps) {
           }}
           data-testid={`surfaced-news-row-${signalId ?? item.id}`}
         >
-          <span className="w-14 shrink-0 text-right pr-1.5 text-[11px] leading-tight tabular-nums text-muted-foreground whitespace-nowrap">
+          <span className="w-14 shrink-0 whitespace-pre-line pr-1.5 text-right text-[11px] leading-tight tabular-nums text-muted-foreground">
             {dateLabel ?? ""}
           </span>
           <span className="w-4 shrink-0 flex items-center justify-center">

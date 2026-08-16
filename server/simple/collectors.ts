@@ -420,7 +420,7 @@ function relationshipOutreachType(item: TieredAgendaItem): RelationshipOutreachT
   return item.cabinetLevel === "family" || item.cabinetLevel === "cabinet" ? "check_in" : "reconnect";
 }
 
-function itemFromAgendaPerson(item: TieredAgendaItem, index: number): SimpleFeedItem {
+function itemFromAgendaPerson(item: TieredAgendaItem, index: number, timezone: string): SimpleFeedItem {
   const sourceRef: SimpleSourceRef = {
     type: "person",
     id: item.personId,
@@ -430,7 +430,7 @@ function itemFromAgendaPerson(item: TieredAgendaItem, index: number): SimpleFeed
   const badge = item.contextBadge?.label;
   const section: SimpleSection = item.snoozedUntil ? "snoozed" : "inbox";
   const inboxAddedAt = item.surfacedAt || new Date().toISOString();
-  const inboxAddedDate = dateInTimezone(inboxAddedAt);
+  const observedDate = new Date(inboxAddedAt);
   return {
     id: `person-${item.personId}`,
     section,
@@ -439,7 +439,10 @@ function itemFromAgendaPerson(item: TieredAgendaItem, index: number): SimpleFeed
     status: "active",
     priority: 35 + index,
     anchorTime: inboxAddedAt,
-    time: formatInboxDate(inboxAddedDate),
+    // Match Builds/email: clock time above M/D (whitespace-pre-line in the time column).
+    time: Number.isNaN(observedDate.getTime())
+      ? formatInboxDate(dateInTimezone(inboxAddedAt, timezone), timezone)
+      : stackTimeOverDate(formatClockTime(observedDate, timezone), observedDate, timezone),
     sourceRefs: [sourceRef],
     references: sourceRefsToReferenceRefs([sourceRef]),
     payload: {
@@ -895,7 +898,7 @@ function newsReferenceType(sourceType: string): "web_article" | "x_item" | "redd
   return "news";
 }
 
-function itemFromNewsSignal(signal: SignalItem, index: number): SimpleFeedItem {
+function itemFromNewsSignal(signal: SignalItem, index: number, timezone: string): SimpleFeedItem {
   const title = cleanNewsText(signal.curatedTitle || signal.title) || "News item";
   const summary = cleanNewsText(signal.agentSummary);
   const reason = cleanNewsText(signal.curatedReason);
@@ -909,7 +912,7 @@ function itemFromNewsSignal(signal: SignalItem, index: number): SimpleFeedItem {
     href: signal.url,
     observedAt,
   };
-  const inboxAddedDate = dateInTimezone(observedAt);
+  const observedDate = new Date(observedAt);
   return {
     id: `news-${signal.id}`,
     section: signal.snoozedUntil && signal.snoozedUntil.getTime() > Date.now() ? "snoozed" : "inbox",
@@ -918,7 +921,10 @@ function itemFromNewsSignal(signal: SignalItem, index: number): SimpleFeedItem {
     status: "active",
     priority: 45 + index,
     anchorTime: observedAt,
-    time: formatInboxDate(inboxAddedDate),
+    // Match Builds/email: clock time above M/D (whitespace-pre-line in the time column).
+    time: Number.isNaN(observedDate.getTime())
+      ? formatInboxDate(dateInTimezone(observedAt, timezone), timezone)
+      : stackTimeOverDate(formatClockTime(observedDate, timezone), observedDate, timezone),
     sourceRefs: [sourceRef],
     references: [createReferenceRef({
       type: newsReferenceType(signal.sourceType),
@@ -2067,7 +2073,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   // People (relationship follow-ups are visible but not immediate needs)
   try {
     const agendaPeople = await collectAgendaPeople(today);
-    agendaPeople.forEach((person, index) => items.push(itemFromAgendaPerson(person, index)));
+    agendaPeople.forEach((person, index) => items.push(itemFromAgendaPerson(person, index, timezone)));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`people agenda collection failed: ${message}`);
@@ -2077,7 +2083,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   // News (curated surfaced signals belong in the same inbox stream as surfaced people/pages)
   try {
     const surfacedNews = await signalStorage.listSignals({ status: "surfaced", limit: NEWS_INBOX_LIMIT, hasCuration: true });
-    surfacedNews.items.forEach((signal, index) => items.push(itemFromNewsSignal(signal, index)));
+    surfacedNews.items.forEach((signal, index) => items.push(itemFromNewsSignal(signal, index, timezone)));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`news collection failed: ${message}`);

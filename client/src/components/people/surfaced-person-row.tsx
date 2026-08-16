@@ -28,11 +28,18 @@ interface SurfacedPersonRowProps {
   dateLabel?: string;
 }
 
+/** Stack clock time over M/D — matches Builds/email inbox time column. */
 function formatSurfacedDate(value?: string | Date | null): string {
   if (!value) return "";
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return "";
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(d);
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "numeric",
+  }).formatToParts(d);
+  const get = (type: string) => parts.find(part => part.type === type)?.value ?? "";
+  return `${time}\n${get("month")}/${get("day")}`;
 }
 
 export function surfacedDateLabel(item: SimpleFeedItem | LibraryPage): string {
@@ -125,7 +132,7 @@ export function SurfacedPersonRow({ item, onSurfaceChange, dateLabel }: Surfaced
           }}
           data-testid={`surfaced-person-row-${personId ?? item.id}`}
         >
-          <span className="w-14 shrink-0 text-right pr-1.5 text-[11px] leading-tight tabular-nums text-muted-foreground whitespace-nowrap">
+          <span className="w-14 shrink-0 whitespace-pre-line pr-1.5 text-right text-[11px] leading-tight tabular-nums text-muted-foreground">
             {snoozedUntil ? "SNOOZED" : dateLabel ?? ""}
           </span>
           <span className="w-4 shrink-0 flex items-center justify-center">
