@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Activity, ChevronRight, FileText, Loader2, Package, PenLine, Plus, User } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
@@ -59,17 +57,18 @@ function formatStage(stage: FeatureStage) {
   return formatFeatureStage(stage);
 }
 
-function CreateFeatureDialog({
+function NewFeature({
   products,
   currentPerson,
   onCreated,
+  onCancel,
 }: {
   products: Product[];
   currentPerson: Person | null;
   onCreated: () => void;
+  onCancel: () => void;
 }) {
   const { toast } = useToast();
-  const [open, setOpen] = useState(false);
   const [summary, setSummary] = useState("");
   const [productId, setProductId] = useState("");
   const [owner, setOwner] = useState<ReferencePickerValue[]>([]);
@@ -92,10 +91,6 @@ function CreateFeatureDialog({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/features"] });
       toast({ title: "Feature created", description: summary.trim() });
-      setSummary("");
-      setProductId("");
-      setOwner(currentPerson ? [{ type: "person", id: currentPerson.id, label: currentPerson.name }] : []);
-      setOpen(false);
       onCreated();
     },
     onError: (error: unknown) =>
@@ -106,58 +101,74 @@ function CreateFeatureDialog({
       }),
   });
   const valid = summary.trim().length > 0 && Boolean(productId) && Boolean(owner[0]?.id);
+  const submit = () => {
+    if (valid && !create.isPending) create.mutate();
+  };
 
   return (
-    <>
-      <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => setOpen(true)} data-testid="button-new-feature">
-        <Plus className="h-3.5 w-3.5 shrink-0" />
-        <span>New Feature</span>
-      </button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New Feature</DialogTitle>
-            <DialogDescription>Give the roadmap item a clear summary, Product, and Owner.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Input
-              autoFocus
-              placeholder="Feature summary"
-              value={summary}
-              onChange={(event) => setSummary(event.target.value)}
-              data-testid="input-feature-summary"
-            />
-            <Select value={productId} onValueChange={setProductId}>
-              <SelectTrigger data-testid="select-feature-product">
-                <SelectValue placeholder="Product" />
-              </SelectTrigger>
-              <SelectContent>
-                {products.map((product) => (
-                  <SelectItem key={product.id} value={String(product.id)}>
-                    {product.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <ReferencePicker
-              types={["person"]}
-              mode="single"
-              variant="compact"
-              placeholder="Owner"
-              value={owner}
-              onChange={setOwner}
-              testId="picker-feature-owner"
-            />
-          </div>
-          <DialogFooter>
-            <Button onClick={() => create.mutate()} disabled={!valid || create.isPending} data-testid="button-create-feature">
-              {create.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-              Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+    <div className="space-y-0.5 px-2 pb-2">
+      <ProfileTreeRow label="Summary" icon={<PenLine className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-new-feature-summary">
+        <Input
+          autoFocus
+          placeholder="Feature summary"
+          value={summary}
+          onChange={(event) => setSummary(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              submit();
+            }
+            if (event.key === "Escape") onCancel();
+          }}
+          className="h-7 text-right text-xs"
+          data-testid="input-feature-summary"
+        />
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Product" icon={<Package className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-new-feature-product">
+        <Select value={productId} onValueChange={setProductId}>
+          <SelectTrigger className="h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0" data-testid="select-feature-product">
+            <SelectValue placeholder="Product" />
+          </SelectTrigger>
+          <SelectContent>
+            {products.map((product) => (
+              <SelectItem key={product.id} value={String(product.id)}>
+                {product.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </ProfileTreeRow>
+      <ProfileTreeRow
+        label="Owner"
+        icon={<User className="h-3.5 w-3.5" />}
+        hasValue
+        showEmpty
+        mobileLayout="inline"
+        testId="row-new-feature-owner"
+        actionContent={(
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!valid || create.isPending}
+            className="text-xs text-cta disabled:text-muted-foreground"
+            data-testid="button-create-feature"
+          >
+            {create.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Create"}
+          </button>
+        )}
+      >
+        <ReferencePicker
+          types={["person"]}
+          mode="single"
+          variant="compact"
+          dense
+          placeholder="Owner"
+          value={owner}
+          onChange={setOwner}
+          testId="picker-feature-owner"
+        />
+      </ProfileTreeRow>
+    </div>
   );
 }
 
@@ -469,6 +480,7 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
 
 export default function FeaturesPage() {
   const [search, setSearch] = useState("");
+  const [creating, setCreating] = useState(false);
   const features = useQuery<Feature[]>({
     queryKey: ["/api/features", search],
     queryFn: async () => {
@@ -496,7 +508,22 @@ export default function FeaturesPage() {
             clearTestId="button-clear-feature-search"
             ariaLabel="Search features"
           />
-          <CreateFeatureDialog products={productList} currentPerson={currentPerson} onCreated={() => features.refetch()} />
+          {creating ? (
+            <NewFeature
+              products={productList}
+              currentPerson={currentPerson}
+              onCreated={() => {
+                setCreating(false);
+                void features.refetch();
+              }}
+              onCancel={() => setCreating(false)}
+            />
+          ) : (
+            <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => setCreating(true)} data-testid="button-new-feature">
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+              <span>New Feature</span>
+            </button>
+          )}
           {grouped.map(({ stage, rows }) => (
             <Collapsible key={stage} defaultOpen>
               <CollapsibleTrigger className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}>
