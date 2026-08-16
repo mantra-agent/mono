@@ -270,7 +270,11 @@ export class FileTimerStorage {
       .values(this.valuesFromInput(input, userTimerOwnership(principal), systemKey))
       .onConflictDoNothing({
         target: [timers.ownerUserId, timers.systemKey],
-        targetWhere: sql`${timers.scope} = 'user' AND ${timers.systemKey} IS NOT NULL`,
+        // Must match the partial unique index predicate so Postgres can infer
+        // the arbiter. onConflictDoNothing takes `where` for the index predicate;
+        // `targetWhere` only exists on onConflictDoUpdate and is silently dropped
+        // here, which emitted a bare conflict target and raised 42P10.
+        where: sql`${timers.scope} = 'user' AND ${timers.systemKey} IS NOT NULL`,
       })
       .returning();
     this.invalidateCache();
