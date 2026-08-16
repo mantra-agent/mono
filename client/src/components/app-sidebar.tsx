@@ -253,7 +253,6 @@ const navSections: NavSection[] = [
       navItem("Wellness", "navigation.wellness.open", Activity, "muted"),
       navItem("KPIs", "navigation.kpis.open", Gauge),
       navItem("Metrics", "navigation.metrics.open", Activity),
-      navItem("Performance", "navigation.performance.open", Gauge),
     ],
   },
   {
@@ -344,6 +343,7 @@ const navSections: NavSection[] = [
       navItem("Models", "navigation.models.open", SlidersHorizontal),
       navItem("Routers", "navigation.routers.open", Route),
       navItem("Cost", "navigation.cost.open", DollarSign),
+      navItem("Performance", "navigation.performance.open", Gauge),
     ],
   },
   {

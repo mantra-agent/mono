@@ -46,7 +46,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.design.open": { href: "/design", permission: "build:read", description: "Explore the design system." },
   "navigation.database.open": { href: "/database", permission: "build:read", description: "Inspect your database." },
   "navigation.issues.open": { href: "/build?tab=issues", permission: "build:read", description: "Track and resolve reported issues." },
-  "navigation.performance.open": { href: "/tools/performance", permission: "system:read", description: "Watch performance measurements and resources." },
+  "navigation.performance.open": { href: "/performance", permission: "system:read", description: "Watch performance measurements and resources." },
   "navigation.logs.open": { href: "/system?tab=logs", permission: "system:read", description: "Read the system logs." },
   "navigation.events.open": { href: "/system?tab=events", permission: "system:read", description: "Trace system events." },
   "navigation.tools.open": { href: "/system?tab=tools", permission: "system:read", description: "Inspect the tool registry." },
