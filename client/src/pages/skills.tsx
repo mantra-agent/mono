@@ -4,19 +4,15 @@ import { usePageHeader } from "@/hooks/use-page-header";
 import { useQuery, useMutation } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ProfileDetailSection } from "@/components/profile-detail-section";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  HIERARCHY_PRIMARY_ACTION_CLASS,
+} from "@/components/hierarchy-section-header";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -63,7 +59,6 @@ import {
   Clock,
   Lightbulb,
   X,
-  BookOpen,
   Download,
   Upload,
   Pin,
@@ -103,6 +98,17 @@ import { MOD_KEYS, type ModKey } from "@shared/models/mods";
 
 const WRITE_CATEGORIES: SkillWriteCategory[] = ["read-only", "internal-data", "internal-control", "external", "destructive"];
 const INPUT_TYPES: SkillInputType[] = ["task", "people", "memories", "events", "files", "project"];
+const CATEGORY_OPTIONS = ["memory", "thinking", "chat", "goals", "people", "projects", "strategy", "reflection", "other"];
+const ACTIVITY_OPTIONS = [
+  { value: "c7a1e3b4-5d2f-4a89-b6e0-1f8c9d2e3a4b", label: "Chat" },
+  { value: "d8b2f4c5-6e3a-4b90-c7f1-2a9d0e3f4b5c", label: "Work" },
+  { value: "e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d", label: "Framing" },
+  { value: "f0d4b6e7-8a5c-4d12-e9b3-4c1f2a5b6d7e", label: "Recall" },
+  { value: "a1e5c7f8-9b6d-4e23-f0c4-5d2a3b6c7e8f", label: "Memory" },
+  { value: "b2f6d8a9-0c7e-4f34-a1d5-6e3b4c7d8f0a", label: "Thinking" },
+  { value: "c3a7e9b0-1d8f-4a45-b2e6-7f4c5d8e9a1b", label: "Strategy" },
+];
+const FIELD_SELECT_TRIGGER_CLASS = "h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0";
 const SOURCE_MOD_LABELS: Record<"core" | ModKey, string> = {
   core: "Core",
   planning: "Planning",
@@ -323,7 +329,6 @@ function SkillTreeRow({
   hasFailed,
   onToggleExpand,
   onRun,
-  onEdit,
   onDelete,
   onExport,
   onPin,
@@ -333,7 +338,6 @@ function SkillTreeRow({
   hasFailed: boolean;
   onToggleExpand: () => void;
   onRun: () => void;
-  onEdit: () => void;
   onDelete: () => void;
   onExport: () => void;
   onPin: () => void;
@@ -412,7 +416,7 @@ function SkillTreeRow({
               <Pin className={cn("h-3.5 w-3.5 mr-2", skill.pinnedToContext && "fill-current text-info")} />
               {skill.pinnedToContext ? "Unpin from Context" : "Pin to Context"}
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => { setMenuOpen(false); onEdit(); }} data-testid="menu-edit-skill">
+            <DropdownMenuItem onClick={() => { setMenuOpen(false); onToggleExpand(); }} data-testid="menu-edit-skill">
               <Pencil className="h-3.5 w-3.5 mr-2" /> Edit
             </DropdownMenuItem>
             {cell.showUpdate && (
@@ -449,94 +453,8 @@ function SkillTreeRow({
         </DropdownMenu>
       </div>
       {expanded && (
-        <SkillInlineDetail skill={skill} />
+        <SkillEditor skill={skill} />
       )}
-    </div>
-  );
-}
-
-function SkillInlineDetail({ skill }: { skill: SkillWithReferences }) {
-  return (
-    <div className="ml-5 mr-1 mb-2 mt-1 space-y-3 border-l border-border/50 pl-3">
-      <div className="flex items-center gap-1 flex-wrap">
-        {skill.category && (
-          <Badge variant="outline" className="text-xs px-1.5 py-0 h-4 capitalize">{skill.category}</Badge>
-        )}
-        {skill.scope === "global" && (
-          <span className="inline-flex items-center bg-cat-system/15 text-cat-system-foreground border border-cat-system/30 rounded-sm text-xs font-medium px-2 py-0.5 h-4">template</span>
-        )}
-        <span className="text-xs text-muted-foreground">v{skill.version} · {skill.estimatedTokens.toLocaleString()} tokens · {skill.writeCategory}</span>
-      </div>
-      <p className="text-xs text-muted-foreground">{skill.description}</p>
-
-      <SkillLatticeSection skill={skill} />
-
-      {skill.whenToUse && (
-        <div>
-          <Label className="text-xs text-muted-foreground mb-1 block font-medium">When to Use</Label>
-          <pre className="text-xs bg-muted/50 rounded-md p-2 whitespace-pre-wrap max-h-32 overflow-y-auto" data-testid="text-when-to-use">
-            {skill.whenToUse}
-          </pre>
-        </div>
-      )}
-
-      <CollapsibleSection title="Process">
-        <pre className="text-xs bg-muted/50 rounded-md p-2 whitespace-pre-wrap max-h-48 overflow-y-auto" data-testid="text-process">
-          {skill.process}
-        </pre>
-      </CollapsibleSection>
-
-      <CollapsibleSection title="Output Spec">
-        <pre className="text-xs bg-muted/50 rounded-md p-2 whitespace-pre-wrap max-h-32 overflow-y-auto" data-testid="text-output-spec">
-          {skill.outputSpec}
-        </pre>
-      </CollapsibleSection>
-
-      <CollapsibleSection title="Checklist">
-        {Array.isArray(skill.checklist) && (skill.checklist as ChecklistItem[]).length > 0 ? (
-          <ul className="space-y-1" data-testid="list-checklist">
-            {(skill.checklist as ChecklistItem[]).map((item, i) => (
-              <li key={i} className="flex items-start gap-2 text-xs bg-muted/50 rounded-md px-2 py-1.5" data-testid={`text-checklist-item-${i}`}>
-                <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />
-                <span className="flex-1">{item.check}</span>
-                {item.weight != null && item.weight !== 1 && (
-                  <span className="text-muted-foreground shrink-0">w:{item.weight}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-xs text-muted-foreground italic" data-testid="text-checklist-empty">No custom checklist — default scoring checklist will be used.</p>
-        )}
-      </CollapsibleSection>
-
-      {skill.inputs.length > 0 && (
-        <CollapsibleSection title="Inputs">
-          <div className="flex flex-wrap gap-1">
-            {skill.inputs.map((input, i) => (
-              <Badge key={i} variant="outline" className="text-xs">{input}</Badge>
-            ))}
-          </div>
-        </CollapsibleSection>
-      )}
-
-      {skill.references.length > 0 && (
-        <CollapsibleSection title={`References (${skill.references.length})`}>
-          <div className="space-y-2">
-            {skill.references.map((ref) => (
-              <div key={ref.id} className="bg-muted/50 rounded-md p-2">
-                <span className="text-xs font-medium flex items-center gap-1 mb-1">
-                  <BookOpen className="h-3 w-3" />
-                  {ref.name}
-                </span>
-                <pre className="text-xs whitespace-pre-wrap max-h-20 overflow-y-auto">{ref.content}</pre>
-              </div>
-            ))}
-          </div>
-        </CollapsibleSection>
-      )}
-
-      <RunHistorySection skillName={skill.name} />
     </div>
   );
 }
@@ -575,11 +493,9 @@ function SkillListSidebar({
   skills,
   lastRuns,
   isLoading,
-  onCreate,
   onImport,
   onExportAll,
   onRun,
-  onEdit,
   onDelete,
   onExport,
   onPin,
@@ -588,17 +504,16 @@ function SkillListSidebar({
   skills: SkillWithReferences[];
   lastRuns: Record<string, string>;
   isLoading: boolean;
-  onCreate: () => void;
   onImport: () => void;
   onExportAll: () => void;
   onRun: (skill: SkillWithReferences) => void;
-  onEdit: (skill: SkillWithReferences) => void;
   onDelete: (skill: SkillWithReferences) => void;
   onExport: (skill: SkillWithReferences) => void;
   onPin: (skill: SkillWithReferences) => void;
   failedNames: Set<string>;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [creating, setCreating] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [globalMenuOpen, setGlobalMenuOpen] = useState(false);
 
@@ -669,9 +584,8 @@ function SkillListSidebar({
       skill={skill}
       expanded={expandedIds.has(skill.id)}
       hasFailed={failedNames.has(skill.name)}
-      onToggleExpand={() => toggleExpanded(skill.id)}
+      onToggleExpand={() => { setCreating(false); toggleExpanded(skill.id); }}
       onRun={() => onRun(skill)}
-      onEdit={() => onEdit(skill)}
       onDelete={() => onDelete(skill)}
       onExport={() => onExport(skill)}
       onPin={() => onPin(skill)}
@@ -720,16 +634,22 @@ function SkillListSidebar({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        {/* + New Skill button */}
-        <button
-          type="button"
-          onClick={onCreate}
-          className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-cta hover:text-cta/80 hover:bg-accent/70 rounded-md transition-colors"
-          data-testid="button-create-skill"
-        >
-          <Plus className="h-3.5 w-3.5 shrink-0" />
-          <span>New Skill</span>
-        </button>
+        {creating ? (
+          <SkillEditor
+            onCreated={() => setCreating(false)}
+            onCancel={() => setCreating(false)}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => { setExpandedIds(new Set()); setCreating(true); }}
+            className={HIERARCHY_PRIMARY_ACTION_CLASS}
+            data-testid="button-create-skill"
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            <span>New Skill</span>
+          </button>
+        )}
         {isLoading ? (
           <div className="space-y-2 pt-2">
             {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-8 w-full rounded-md" />)}
@@ -752,23 +672,6 @@ function SkillListSidebar({
         )}
       </div>
     </ScrollArea>
-  );
-}
-
-function CollapsibleSection({ title, children, defaultOpen = false }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex items-center gap-1.5 w-full text-left py-1 hover:bg-muted/30 rounded px-1 transition-colors" data-testid={`button-toggle-${title.toLowerCase().replace(/\s+/g, "-")}`}>
-        {open ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />}
-        <span className="text-xs font-medium text-muted-foreground">{title}</span>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <div className="pl-4 pt-1 pb-2">
-          {children}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
   );
 }
 
@@ -1079,79 +982,59 @@ function RunHistorySection({ skillName }: { skillName: string }) {
 }
 
 
-function SkillEditorDialog({
-  open,
-  onOpenChange,
-  editingSkill,
+function SkillEditor({
+  skill,
+  onCreated,
+  onCancel,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  editingSkill: SkillWithReferences | null;
+  skill?: SkillWithReferences | null;
+  onCreated?: () => void;
+  onCancel?: () => void;
 }) {
   const { toast } = useToast();
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("other");
-  const [activity, setActivity] = useState("e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d");
-  const [writeCategory, setWriteCategory] = useState<SkillWriteCategory>("read-only");
-  const [inputs, setInputs] = useState<SkillInputType[]>([]);
-  const [estimatedTokens, setEstimatedTokens] = useState(0);
-  const [estimatedDuration, setEstimatedDuration] = useState("5min");
-  const [whenToUse, setWhenToUse] = useState("");
-  const [process, setProcess] = useState("");
-  const [outputSpec, setOutputSpec] = useState("");
-  const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
-  const [addToMemory, setAddToMemory] = useState(true);
-  const [sessionType, setSessionType] = useState<string>("agent");
+  const [name, setName] = useState(skill?.name ?? "");
+  const [description, setDescription] = useState(skill?.description ?? "");
+  const [category, setCategory] = useState(skill?.category || "other");
+  const [activity, setActivity] = useState(skill?.activity || "e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d");
+  const [writeCategory, setWriteCategory] = useState<SkillWriteCategory>((skill?.writeCategory as SkillWriteCategory) || "read-only");
+  const [inputs, setInputs] = useState<SkillInputType[]>((skill?.inputs as SkillInputType[]) ?? []);
+  const [estimatedTokens, setEstimatedTokens] = useState(skill?.estimatedTokens ?? 0);
+  const [estimatedDuration, setEstimatedDuration] = useState(skill?.estimatedDuration ?? "5min");
+  const [whenToUse, setWhenToUse] = useState(skill?.whenToUse ?? "");
+  const [process, setProcess] = useState(skill?.process ?? "");
+  const [outputSpec, setOutputSpec] = useState(skill?.outputSpec ?? "");
+  const [checklist, setChecklist] = useState<ChecklistItem[]>(Array.isArray(skill?.checklist) ? skill.checklist as ChecklistItem[] : []);
+  const [addToMemory, setAddToMemory] = useState(skill?.addToMemory !== false);
+  const [sessionType, setSessionType] = useState<string>(skill?.sessionType || "agent");
   const [personaChoice, setPersonaChoice] = useState<number | "recommended">("recommended");
   const personaTouchedRef = useRef(false);
-  const [version, setVersion] = useState("1.0");
-  const [author, setAuthor] = useState("user");
-  const [references, setReferences] = useState<{ name: string; content: string }[]>([]);
+  const [version, setVersion] = useState(skill?.version ?? "1.0");
+  const [author, setAuthor] = useState(skill?.author ?? "user");
+  const [references, setReferences] = useState<{ name: string; content: string }[]>(skill?.references.map((ref) => ({ name: ref.name, content: ref.content })) ?? []);
 
   useEffect(() => {
-    if (editingSkill) {
-      setName(editingSkill.name);
-      setDescription(editingSkill.description);
-      setCategory(editingSkill.category || "other");
-      setActivity(editingSkill.activity || "e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d");
-      setWriteCategory(editingSkill.writeCategory as SkillWriteCategory);
-      setInputs(editingSkill.inputs as SkillInputType[]);
-      setEstimatedTokens(editingSkill.estimatedTokens);
-      setEstimatedDuration(editingSkill.estimatedDuration);
-      setWhenToUse(editingSkill.whenToUse);
-      setProcess(editingSkill.process);
-      setOutputSpec(editingSkill.outputSpec);
-      setChecklist(Array.isArray(editingSkill.checklist) ? editingSkill.checklist as ChecklistItem[] : []);
-      setAddToMemory(editingSkill.addToMemory !== false);
-      setSessionType(editingSkill.sessionType || "agent");
-      setVersion(editingSkill.version);
-      setAuthor(editingSkill.author);
-      setReferences(editingSkill.references.map(r => ({ name: r.name, content: r.content })));
-    } else {
-      setName("");
-      setDescription("");
-      setCategory("other");
-      setActivity("e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d");
-      setWriteCategory("read-only");
-      setInputs([]);
-      setEstimatedTokens(0);
-      setEstimatedDuration("5min");
-      setWhenToUse("");
-      setProcess("");
-      setOutputSpec("");
-      setChecklist([]);
-      setAddToMemory(true);
-      setSessionType("agent");
-      setVersion("1.0");
-      setAuthor("user");
-      setReferences([]);
-    }
-  }, [editingSkill, open]);
+    if (!skill) return;
+    setName(skill.name);
+    setDescription(skill.description);
+    setCategory(skill.category || "other");
+    setActivity(skill.activity || "e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d");
+    setWriteCategory(skill.writeCategory as SkillWriteCategory);
+    setInputs(skill.inputs as SkillInputType[]);
+    setEstimatedTokens(skill.estimatedTokens);
+    setEstimatedDuration(skill.estimatedDuration);
+    setWhenToUse(skill.whenToUse);
+    setProcess(skill.process);
+    setOutputSpec(skill.outputSpec);
+    setChecklist(Array.isArray(skill.checklist) ? skill.checklist as ChecklistItem[] : []);
+    setAddToMemory(skill.addToMemory !== false);
+    setSessionType(skill.sessionType || "agent");
+    setVersion(skill.version);
+    setAuthor(skill.author);
+    setReferences(skill.references.map((ref) => ({ name: ref.name, content: ref.content })));
+  }, [skill]);
 
   const { data: personas = [] } = useQuery<{ id: number; name: string }[]>({
     queryKey: ["/api/personas"],
-    enabled: open,
   });
 
   const { data: personaConfig } = useQuery<{
@@ -1159,25 +1042,16 @@ function SkillEditorDialog({
     recommendations: Record<string, { templateId: number; name: string }>;
   }>({
     queryKey: ["/api/skills/persona-config"],
-    enabled: open,
   });
 
-  // Hydrate the persona choice from the user's saved preference. "recommended"
-  // means no override: the run falls back to the product recommendation.
   useEffect(() => {
-    if (!open) {
-      personaTouchedRef.current = false;
-      return;
-    }
-    if (personaTouchedRef.current) return;
-    const saved = editingSkill
-      ? personaConfig?.preferences[editingSkill.id]
-      : undefined;
+    personaTouchedRef.current = false;
+    const saved = skill ? personaConfig?.preferences[skill.id] : undefined;
     setPersonaChoice(typeof saved === "number" ? saved : "recommended");
-  }, [open, editingSkill, personaConfig]);
+  }, [skill, personaConfig]);
 
-  const recommendedName = editingSkill
-    ? personaConfig?.recommendations[editingSkill.id]?.name ?? null
+  const recommendedName = skill
+    ? personaConfig?.recommendations[skill.id]?.name ?? null
     : null;
 
   const savePersonaPreference = async (skillId: string) => {
@@ -1199,7 +1073,7 @@ function SkillEditorDialog({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
-      onOpenChange(false);
+      onCreated?.();
       toast({ title: "Skill created" });
     },
     onError: (err: Error) => {
@@ -1209,14 +1083,13 @@ function SkillEditorDialog({
 
   const updateMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await apiRequest("PATCH", `/api/skills/${editingSkill!.id}`, data);
-      const skill = await res.json() as { id: string };
-      await savePersonaPreference(skill.id);
-      return skill;
+      const res = await apiRequest("PATCH", `/api/skills/${skill!.id}`, data);
+      const saved = await res.json() as { id: string };
+      await savePersonaPreference(saved.id);
+      return saved;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
-      onOpenChange(false);
       toast({ title: "Skill updated" });
     },
     onError: (err: Error) => {
@@ -1231,7 +1104,7 @@ function SkillEditorDialog({
       description,
       category,
       activity,
-      authority: editingSkill?.authority || "full",
+      authority: skill?.authority || "full",
       writeCategory,
       inputs,
       estimatedTokens,
@@ -1239,16 +1112,16 @@ function SkillEditorDialog({
       whenToUse,
       process,
       outputSpec,
-      qualityCriteria: editingSkill?.qualityCriteria || "",
+      qualityCriteria: skill?.qualityCriteria || "",
       checklist: validChecklist,
       addToMemory,
       sessionType,
-      status: editingSkill?.status || "draft",
+      status: skill?.status || "draft",
       version,
       author,
       references,
     };
-    if (editingSkill) {
+    if (skill) {
       updateMutation.mutate(data);
     } else {
       createMutation.mutate(data);
@@ -1266,321 +1139,271 @@ function SkillEditorDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="dialog-skill-editor">
-        <DialogHeader>
-          <DialogTitle data-testid="text-dialog-title">{editingSkill ? "Edit Skill" : "New Skill"}</DialogTitle>
-          <DialogDescription>
-            {editingSkill ? "Modify the skill definition below." : "Define a new compound capability."}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-5">
-          <div className="space-y-3">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Identity</h4>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs mb-1 block">Name</Label>
-                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-skill-name" className="h-8 text-xs font-mono" data-testid="input-skill-name" />
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <Label className="text-xs mb-1 block">Category</Label>
-                  <Select value={category} onValueChange={setCategory}>
-                    <SelectTrigger className="h-8 text-xs" data-testid="select-category">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {["memory", "thinking", "chat", "goals", "people", "projects", "strategy", "reflection", "other"].map(c => (
-                        <SelectItem key={c} value={c}>{c}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-xs mb-1 block">Version</Label>
-                  <Input value={version} onChange={(e) => setVersion(e.target.value)} className="h-8 text-xs" data-testid="input-version" />
-                </div>
-                <div>
-                  <Label className="text-xs mb-1 block">Author</Label>
-                  <Input value={author} onChange={(e) => setAuthor(e.target.value)} className="h-8 text-xs" data-testid="input-author" />
-                </div>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs mb-1 block">Activity</Label>
-                <Select value={activity} onValueChange={setActivity}>
-                  <SelectTrigger className="h-8 text-xs" data-testid="input-activity">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="c7a1e3b4-5d2f-4a89-b6e0-1f8c9d2e3a4b">Chat</SelectItem>
-                    <SelectItem value="d8b2f4c5-6e3a-4b90-c7f1-2a9d0e3f4b5c">Work</SelectItem>
-                    <SelectItem value="e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d">Framing</SelectItem>
-                    <SelectItem value="f0d4b6e7-8a5c-4d12-e9b3-4c1f2a5b6d7e">Recall</SelectItem>
-                    <SelectItem value="a1e5c7f8-9b6d-4e23-f0c4-5d2a3b6c7e8f">Memory</SelectItem>
-                    <SelectItem value="b2f6d8a9-0c7e-4f34-a1d5-6e3b4c7d8f0a">Thinking</SelectItem>
-                    <SelectItem value="c3a7e9b0-1d8f-4a45-b2e6-7f4c5d8e9a1b">Strategy</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs mb-1 block">Persona</Label>
-                <Select
-                  value={personaChoice === "recommended" ? "recommended" : String(personaChoice)}
-                  onValueChange={(v) => {
-                    personaTouchedRef.current = true;
-                    setPersonaChoice(v === "recommended" ? "recommended" : Number(v));
-                  }}
-                >
-                  <SelectTrigger className="h-8 text-xs" data-testid="select-persona">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="recommended">
-                      {recommendedName ? `Recommended · ${recommendedName}` : "Default persona"}
-                    </SelectItem>
-                    {personas.map(p => (
-                      <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div>
-              <Label className="text-xs mb-1 block">Description</Label>
-              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this skill does and when to use it..." className="text-xs min-h-[60px]" data-testid="input-description" />
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Write Category</h4>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs mb-1 block">Write Category</Label>
-                <Select value={writeCategory} onValueChange={(v) => setWriteCategory(v as SkillWriteCategory)}>
-                  <SelectTrigger className="h-8 text-xs" data-testid="select-write-category">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {WRITE_CATEGORIES.map(c => (
-                      <SelectItem key={c} value={c}>{c}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-
-
-          <div className="space-y-3">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Inputs</h4>
-            <div className="flex flex-wrap gap-1.5">
-              {INPUT_TYPES.map(type => (
-                <Badge
+    <div className="space-y-1" data-testid={skill ? `skill-editor-${skill.id}` : "skill-editor-new"}>
+      <ProfileDetailSection title="Skill" defaultOpen>
+        <ProfileTreeRow label="Name" hasValue showEmpty mobileLayout="inline" testId="row-skill-name">
+          <Input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="my-skill-name"
+            className="h-7 text-right text-xs font-mono"
+            data-testid="input-skill-name"
+          />
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Category" hasValue showEmpty mobileLayout="inline" testId="row-skill-category">
+          <Select value={category} onValueChange={setCategory}>
+            <SelectTrigger className={FIELD_SELECT_TRIGGER_CLASS} data-testid="select-category">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CATEGORY_OPTIONS.map((option) => (
+                <SelectItem key={option} value={option}>{option}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Version" hasValue showEmpty mobileLayout="inline" testId="row-skill-version">
+          <Input value={version} onChange={(event) => setVersion(event.target.value)} className="h-7 text-right text-xs" data-testid="input-version" />
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Author" hasValue showEmpty mobileLayout="inline" testId="row-skill-author">
+          <Input value={author} onChange={(event) => setAuthor(event.target.value)} className="h-7 text-right text-xs" data-testid="input-author" />
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Activity" hasValue showEmpty mobileLayout="inline" testId="row-skill-activity">
+          <Select value={activity} onValueChange={setActivity}>
+            <SelectTrigger className={FIELD_SELECT_TRIGGER_CLASS} data-testid="input-activity">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ACTIVITY_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Persona" hasValue showEmpty mobileLayout="inline" testId="row-skill-persona">
+          <Select
+            value={personaChoice === "recommended" ? "recommended" : String(personaChoice)}
+            onValueChange={(value) => {
+              personaTouchedRef.current = true;
+              setPersonaChoice(value === "recommended" ? "recommended" : Number(value));
+            }}
+          >
+            <SelectTrigger className={FIELD_SELECT_TRIGGER_CLASS} data-testid="select-persona">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="recommended">
+                {recommendedName ? `Recommended · ${recommendedName}` : "Default persona"}
+              </SelectItem>
+              {personas.map((persona) => (
+                <SelectItem key={persona.id} value={String(persona.id)}>{persona.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Write" hasValue showEmpty mobileLayout="inline" testId="row-skill-write">
+          <Select value={writeCategory} onValueChange={(value) => setWriteCategory(value as SkillWriteCategory)}>
+            <SelectTrigger className={FIELD_SELECT_TRIGGER_CLASS} data-testid="select-write-category">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {WRITE_CATEGORIES.map((option) => (
+                <SelectItem key={option} value={option}>{option}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Session" hasValue showEmpty mobileLayout="inline" testId="row-skill-session">
+          <Select value={sessionType || "agent"} onValueChange={setSessionType}>
+            <SelectTrigger className={FIELD_SELECT_TRIGGER_CLASS} data-testid="select-session-type">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="agent">Agent</SelectItem>
+              <SelectItem value="autonomous">Auto</SelectItem>
+            </SelectContent>
+          </Select>
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Tokens" hasValue showEmpty mobileLayout="inline" testId="row-skill-tokens">
+          <Input type="number" value={estimatedTokens} onChange={(event) => setEstimatedTokens(parseInt(event.target.value) || 0)} className="h-7 text-right text-xs" data-testid="input-estimated-tokens" />
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Duration" hasValue showEmpty mobileLayout="inline" testId="row-skill-duration">
+          <Input value={estimatedDuration} onChange={(event) => setEstimatedDuration(event.target.value)} placeholder="5min" className="h-7 text-right text-xs" data-testid="input-estimated-duration" />
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Memory" hasValue showEmpty mobileLayout="inline" testId="row-skill-memory">
+          <button
+            type="button"
+            onClick={() => setAddToMemory((current) => !current)}
+            className="text-xs text-right"
+            data-testid="toggle-add-to-memory"
+          >
+            {addToMemory ? "On" : "Off"}
+          </button>
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Inputs"
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-skill-inputs"
+          expandedContent={(
+            <div className="space-y-0.5">
+              {INPUT_TYPES.map((type) => (
+                <button
                   key={type}
-                  variant={inputs.includes(type) ? "default" : "outline"}
-                  className="text-xs cursor-pointer select-none"
+                  type="button"
                   onClick={() => toggleInput(type)}
+                  className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-accent/70"
                   data-testid={`toggle-input-${type}`}
                 >
+                  <span className={cn("flex h-3.5 w-3.5 items-center justify-center rounded-sm border", inputs.includes(type) && "border-cta bg-cta text-cta-foreground")}>
+                    {inputs.includes(type) ? <CheckCircle2 className="h-3 w-3" /> : null}
+                  </span>
                   {type}
-                </Badge>
+                </button>
               ))}
             </div>
-          </div>
-
-          <div className="space-y-3">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Cost Envelope</h4>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <Label className="text-xs mb-1 block">Est. Tokens</Label>
-                <Input type="number" value={estimatedTokens} onChange={(e) => setEstimatedTokens(parseInt(e.target.value) || 0)} className="h-8 text-xs" data-testid="input-estimated-tokens" />
-              </div>
-              <div>
-                <Label className="text-xs mb-1 block">Est. Duration</Label>
-                <Input value={estimatedDuration} onChange={(e) => setEstimatedDuration(e.target.value)} placeholder="5min" className="h-8 text-xs" data-testid="input-estimated-duration" />
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Instructions</h4>
-            <div>
-              <Label className="text-xs mb-1 block">When to Use</Label>
-              <Textarea value={whenToUse} onChange={(e) => setWhenToUse(e.target.value)} placeholder="Conditions that indicate this skill matches a task..." className="text-xs min-h-[60px]" data-testid="input-when-to-use" />
-            </div>
-            <div>
-              <Label className="text-xs mb-1 block">Process</Label>
-              <Textarea value={process} onChange={(e) => setProcess(e.target.value)} placeholder="Step-by-step workflow..." className="text-xs min-h-[80px]" data-testid="input-process" />
-            </div>
-            <div>
-              <Label className="text-xs mb-1 block">Output Spec</Label>
-              <Textarea value={outputSpec} onChange={(e) => setOutputSpec(e.target.value)} placeholder="What it produces and where each output goes..." className="text-xs min-h-[60px]" data-testid="input-output-spec" />
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs mb-0 block">Checklist</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => setChecklist([...checklist, { check: "", weight: 1 }])}
-                  data-testid="button-add-checklist-item"
-                >
-                  <Plus className="h-3 w-3 mr-1" />
-                  Add Check
-                </Button>
-              </div>
-              {checklist.length === 0 && (
-                <p className="text-xs text-muted-foreground italic">No checklist items. A default checklist will be used for scoring.</p>
-              )}
-              {checklist.map((item, i) => (
-                <div key={i} className="flex items-start gap-2 border rounded-md p-2" data-testid={`checklist-item-${i}`}>
-                  <div className="flex-1">
-                    <Input
-                      value={item.check}
-                      onChange={(e) => {
-                        const next = [...checklist];
-                        next[i] = { ...next[i], check: e.target.value };
-                        setChecklist(next);
-                      }}
-                      placeholder="What to verify..."
-                      className="h-7 text-xs"
-                      data-testid={`input-checklist-check-${i}`}
-                    />
-                  </div>
-                  <div className="w-16">
-                    <Input
-                      type="number"
-                      value={item.weight ?? 1}
-                      onChange={(e) => {
-                        const next = [...checklist];
-                        next[i] = { ...next[i], weight: parseFloat(e.target.value) || 1 };
-                        setChecklist(next);
-                      }}
-                      min={0}
-                      step={0.5}
-                      className="h-7 text-xs"
-                      title="Weight"
-                      data-testid={`input-checklist-weight-${i}`}
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-destructive shrink-0"
-                    onClick={() => setChecklist(checklist.filter((_, j) => j !== i))}
-                    data-testid={`button-remove-checklist-item-${i}`}
-                  >
-                    <X className="h-3 w-3" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={addToMemory}
-                onChange={(e) => setAddToMemory(e.target.checked)}
-                id="add-to-memory"
-                className="h-4 w-4 rounded border-border"
-                data-testid="toggle-add-to-memory"
+          )}
+        >
+          <span className="truncate text-xs">{inputs.length ? inputs.join(", ") : "None"}</span>
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Description" hasValue={Boolean(description.trim())} showEmpty mobileLayout="stacked" testId="row-skill-description">
+          <Textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What this skill does and when to use it..." className="min-h-[60px] text-xs" data-testid="input-description" />
+        </ProfileTreeRow>
+        <ProfileTreeRow label="When to Use" hasValue={Boolean(whenToUse.trim())} showEmpty mobileLayout="stacked" testId="row-skill-when-to-use">
+          <Textarea value={whenToUse} onChange={(event) => setWhenToUse(event.target.value)} placeholder="Conditions that indicate this skill matches a task..." className="min-h-[60px] text-xs" data-testid="input-when-to-use" />
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Process" hasValue={Boolean(process.trim())} showEmpty mobileLayout="stacked" testId="row-skill-process">
+          <Textarea value={process} onChange={(event) => setProcess(event.target.value)} placeholder="Step-by-step workflow..." className="min-h-20 text-xs" data-testid="input-process" />
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Output Spec" hasValue={Boolean(outputSpec.trim())} showEmpty mobileLayout="stacked" testId="row-skill-output-spec">
+          <Textarea value={outputSpec} onChange={(event) => setOutputSpec(event.target.value)} placeholder="What it produces and where each output goes..." className="min-h-[60px] text-xs" data-testid="input-output-spec" />
+        </ProfileTreeRow>
+      </ProfileDetailSection>
+      <ProfileDetailSection
+        title="Checklist"
+        count={checklist.length}
+        headerAction={(
+          <button type="button" className="text-xs text-cta" onClick={() => setChecklist([...checklist, { check: "", weight: 1 }])} data-testid="button-add-checklist-item">
+            Add
+          </button>
+        )}
+      >
+        {checklist.length === 0 ? (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">No custom checklist.</div>
+        ) : checklist.map((item, index) => (
+          <ProfileTreeRow
+            key={index}
+            label={`Check ${index + 1}`}
+            hasValue
+            showEmpty
+            mobileLayout="inline"
+            testId={`checklist-item-${index}`}
+            actionContent={(
+              <button type="button" className="text-xs text-destructive" onClick={() => setChecklist(checklist.filter((_, current) => current !== index))} data-testid={`button-remove-checklist-item-${index}`}>
+                Remove
+              </button>
+            )}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <Input
+                value={item.check}
+                onChange={(event) => {
+                  const next = [...checklist];
+                  next[index] = { ...next[index], check: event.target.value };
+                  setChecklist(next);
+                }}
+                placeholder="What to verify..."
+                className="h-7 text-right text-xs"
+                data-testid={`input-checklist-check-${index}`}
               />
-              <Label htmlFor="add-to-memory" className="text-xs cursor-pointer">Add exchanges to memory</Label>
+              <Input
+                type="number"
+                value={item.weight ?? 1}
+                onChange={(event) => {
+                  const next = [...checklist];
+                  next[index] = { ...next[index], weight: parseFloat(event.target.value) || 1 };
+                  setChecklist(next);
+                }}
+                min={0}
+                step={0.5}
+                className="h-7 w-16 text-right text-xs"
+                title="Weight"
+                data-testid={`input-checklist-weight-${index}`}
+              />
             </div>
-            <div>
-              <Label className="text-xs mb-1 block">Session Type</Label>
-              <Select value={sessionType || "agent"} onValueChange={(v) => setSessionType(v)}>
-                <SelectTrigger className="h-8 text-xs" data-testid="select-session-type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="agent">Agent</SelectItem>
-                  <SelectItem value="autonomous">Auto</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">References</h4>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
+          </ProfileTreeRow>
+        ))}
+      </ProfileDetailSection>
+      <ProfileDetailSection
+        title="References"
+        count={references.length}
+        headerAction={(
+          <button type="button" className="text-xs text-cta" onClick={() => setReferences([...references, { name: "", content: "" }])} data-testid="button-add-reference">
+            Add
+          </button>
+        )}
+      >
+        {references.length === 0 ? (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">No references.</div>
+        ) : references.map((ref, index) => (
+          <ProfileTreeRow
+            key={index}
+            label={ref.name || `Reference ${index + 1}`}
+            hasValue
+            showEmpty
+            mobileLayout="stacked"
+            testId={`reference-item-${index}`}
+            actionContent={(
+              <button type="button" className="text-xs text-destructive" onClick={() => setReferences(references.filter((_, current) => current !== index))} data-testid={`button-remove-reference-${index}`}>
+                Remove
+              </button>
+            )}
+          >
+            <div className="space-y-1">
+              <Input
+                value={ref.name}
+                onChange={(event) => {
+                  const next = [...references];
+                  next[index] = { ...next[index], name: event.target.value };
+                  setReferences(next);
+                }}
+                placeholder="reference-name"
                 className="h-7 text-xs"
-                onClick={() => setReferences([...references, { name: "", content: "" }])}
-                data-testid="button-add-reference"
-              >
-                <Plus className="h-3 w-3 mr-1" />
-                Add
-              </Button>
+                data-testid={`input-reference-name-${index}`}
+              />
+              <Textarea
+                value={ref.content}
+                onChange={(event) => {
+                  const next = [...references];
+                  next[index] = { ...next[index], content: event.target.value };
+                  setReferences(next);
+                }}
+                placeholder="Reference content loaded into context on activation..."
+                className="min-h-10 text-xs"
+                data-testid={`input-reference-content-${index}`}
+              />
             </div>
-            {references.map((ref, i) => (
-              <div key={i} className="border rounded-md p-3 space-y-2 relative">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-5 w-5 absolute top-2 right-2 text-destructive"
-                  onClick={() => setReferences(references.filter((_, j) => j !== i))}
-                  data-testid={`button-remove-reference-${i}`}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
-                <div>
-                  <Label className="text-xs mb-1 block">Name</Label>
-                  <Input
-                    value={ref.name}
-                    onChange={(e) => {
-                      const next = [...references];
-                      next[i] = { ...next[i], name: e.target.value };
-                      setReferences(next);
-                    }}
-                    placeholder="reference-name"
-                    className="h-8 text-xs"
-                    data-testid={`input-reference-name-${i}`}
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs mb-1 block">Content</Label>
-                  <Textarea
-                    value={ref.content}
-                    onChange={(e) => {
-                      const next = [...references];
-                      next[i] = { ...next[i], content: e.target.value };
-                      setReferences(next);
-                    }}
-                    placeholder="Reference content loaded into context on activation..."
-                    className="text-xs min-h-[40px]"
-                    data-testid={`input-reference-content-${i}`}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending} data-testid="button-cancel">
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSubmit}
-              disabled={isPending || !name || !description || !whenToUse || !process || !outputSpec}
-              data-testid="button-save-skill"
-            >
-              {isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-              {editingSkill ? "Save Changes" : "Create Skill"}
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+          </ProfileTreeRow>
+        ))}
+      </ProfileDetailSection>
+      {skill ? <SkillLatticeSection skill={skill} /> : null}
+      {skill ? <RunHistorySection skillName={skill.name} /> : null}
+      <div className="flex justify-end gap-2 px-2 py-1">
+        {onCancel ? (
+          <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending} data-testid="button-cancel">Cancel</Button>
+        ) : null}
+        <Button
+          size="sm"
+          onClick={handleSubmit}
+          disabled={isPending || !name || !description || !whenToUse || !process || !outputSpec}
+          data-testid="button-save-skill"
+        >
+          {isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+          {skill ? "Save" : "Create"}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -1588,8 +1411,6 @@ export function SkillsContent({ embedded }: { embedded?: boolean }) {
   usePageHeader({ title: "Skills", skip: !!embedded });
   const { toast } = useToast();
   const { hasPermission } = useAuth();
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editingSkill, setEditingSkill] = useState<SkillWithReferences | null>(null);
   const [deletingSkill, setDeletingSkill] = useState<SkillWithReferences | null>(null);
   const { unseenNames } = useSkillFailures();
 
@@ -1651,16 +1472,6 @@ export function SkillsContent({ embedded }: { embedded?: boolean }) {
       toast({ title: `Failed to run ${skill.name}`, description: err.message, variant: "destructive" });
     },
   });
-
-  const handleEdit = (skill: SkillWithReferences) => {
-    setEditingSkill(skill);
-    setEditorOpen(true);
-  };
-
-  const handleCreate = () => {
-    setEditingSkill(null);
-    setEditorOpen(true);
-  };
 
   const handleExportSkill = async (skill: SkillWithReferences) => {
     try {
@@ -1731,21 +1542,13 @@ export function SkillsContent({ embedded }: { embedded?: boolean }) {
         skills={skills}
         lastRuns={lastRuns}
         isLoading={isLoading}
-        onCreate={handleCreate}
         onImport={handleImport}
         onExportAll={handleExportAll}
         onRun={(skill) => runMutation.mutate(skill)}
-        onEdit={handleEdit}
         onDelete={(skill) => setDeletingSkill(skill)}
         onExport={handleExportSkill}
         onPin={handlePin}
         failedNames={unseenNames}
-      />
-
-      <SkillEditorDialog
-        open={editorOpen}
-        onOpenChange={setEditorOpen}
-        editingSkill={editingSkill}
       />
 
       <AlertDialog open={!!deletingSkill} onOpenChange={() => setDeletingSkill(null)}>
