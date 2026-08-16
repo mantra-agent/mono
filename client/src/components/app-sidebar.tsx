@@ -252,7 +252,6 @@ const navSections: NavSection[] = [
       navItem("Files", "navigation.files.open", HardDrive),
       navItem("KPIs", "navigation.kpis.open", Gauge),
       navItem("Metrics", "navigation.metrics.open", Activity),
-      navItem("Health", "navigation.health.open", Heart, "muted"),
     ],
   },
   {
@@ -262,6 +261,7 @@ const navSections: NavSection[] = [
       navItem("Habits", "navigation.habits.open", Activity, "muted"),
       navItem("Reflections", "navigation.reflections.open", BookOpen, "muted"),
       navItem("Gratitude", "navigation.gratitude.open", Heart, "muted"),
+      navItem("Health", "navigation.health.open", Heart, "muted"),
     ],
   },
   {
