@@ -514,23 +514,35 @@ export function IssueCaptureDialog() {
               <span data-testid="text-issue-route">Page: {routeRef.current}</span>
             </div>
 
-            <Textarea
-              value={reproSteps}
-              onChange={(e) => setReproSteps(e.target.value)}
-              placeholder="Describe the issue that you're seeing."
-              rows={4}
-              className="min-h-0 resize-y text-sm scrollbar-thin is-scrolling"
-              autoFocus
-              data-testid="input-issue-repro"
-            />
-
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => enhanceMutation.mutate(reproSteps.trim())} disabled={!reproSteps.trim() || enhanceMutation.isPending} data-testid="button-enhance-issue">
-                {enhanceMutation.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 mr-1.5" />}
-                Enhance
+            <div className="relative">
+              <Textarea
+                value={reproSteps}
+                onChange={(e) => setReproSteps(e.target.value)}
+                placeholder="Describe the issue that you're seeing."
+                rows={4}
+                className="min-h-0 resize-y pr-12 text-sm scrollbar-thin is-scrolling"
+                autoFocus
+                data-testid="input-issue-repro"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute right-1 top-1 h-9 w-9 text-muted-foreground hover:text-foreground"
+                onClick={() => enhanceMutation.mutate(reproSteps.trim())}
+                disabled={!reproSteps.trim() || enhanceMutation.isPending}
+                aria-label="Enhance issue text with AI"
+                title="Enhance issue text with AI"
+                data-testid="button-enhance-issue"
+              >
+                {enhanceMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               </Button>
-              {originalReproSteps !== null && <Button variant="ghost" size="sm" onClick={() => { setReproSteps(originalReproSteps); setOriginalReproSteps(null); }}>Undo enhancement</Button>}
             </div>
+            {originalReproSteps !== null && (
+              <Button variant="ghost" size="sm" onClick={() => { setReproSteps(originalReproSteps); setOriginalReproSteps(null); }}>
+                Undo enhancement
+              </Button>
+            )}
 
             {screenshot && (
               <div className="space-y-1.5">
