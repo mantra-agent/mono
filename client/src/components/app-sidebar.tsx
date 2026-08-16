@@ -253,7 +253,6 @@ const navSections: NavSection[] = [
       navItem("Wellness", "navigation.wellness.open", Activity, "muted"),
       navItem("KPIs", "navigation.kpis.open", Gauge),
       navItem("Metrics", "navigation.metrics.open", Activity),
-      navItem("Performance", "navigation.performance.open", Gauge),
     ],
   },
   {
@@ -335,6 +334,7 @@ const navSections: NavSection[] = [
     label: "System",
     defaultOpen: false,
     items: [
+      navItem("Performance", "navigation.performance.open", Gauge),
       navItem("Logs", "navigation.logs.open", ScrollText),
       navItem("Events", "navigation.events.open", Zap),
       navItem("Tools", "navigation.tools.open", Wrench),
