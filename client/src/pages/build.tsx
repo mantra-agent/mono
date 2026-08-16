@@ -4568,8 +4568,8 @@ export function DesignTab() {
                 or an integration section with one{" "}
                 <span className="font-mono text-foreground">ProfileTreeRow</span> per
                 field that edits in place (Person profile is the archetype;
-                Secrets, Environment SOURCE, Claude CLI, OpenAI API, and
-                Anthropic API follow it). Share{" "}
+                Secrets, Environment SOURCE, Claude CLI, OpenAI API,
+                Anthropic API, Model tab, ElevenLabs, Twitter, and Expo follow it). Share{" "}
                 <span className="font-mono text-foreground">HIERARCHY_TREE_STACK_CLASS</span>
                 ,{" "}
                 <span className="font-mono text-foreground">HIERARCHY_PRIMARY_ACTION_CLASS</span>
