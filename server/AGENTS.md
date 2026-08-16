@@ -772,7 +772,7 @@ Runnable workflow skills are stored in the DB, executed by the autonomous runner
 - **Scoring pipeline:** Event-driven on `chat.session.status_changed` → transcript assembly (50K char budget) + artifact content enrichment → checklist evaluation → comparative (vs prior run) → persist to `skill_runs`
 - **Session artifacts:** `session_artifacts` join table links sessions to artifacts created during tool calls. Recorded by `recordSessionArtifact()` in bridge-tools handlers (library create/update/edit, files write, memory write, content queue_draft, exec render_artifact_docx, docx write/clone). The scorer fetches artifact content via `resolveArtifactContent()` to evaluate actual output quality
 - **Trust score:** `successCount / (successCount + failureCount * 3)` — failures weighted 3×
-- **3 pinned to context:** plan, spec, draft (always in prompt regardless of recency)
+- **1 pinned to context in the code catalog:** learning. Removing a name from `BUILTIN_SKILL_DEFAULTS` stops seeding and lattice publication; it does not delete live shadows or run history.
 - **8 skip memory:** enrich-email, sleep, integrate, consolidate, tools-indexcontent, council, advocate
 
 ### When Working Here

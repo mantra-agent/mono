@@ -99,9 +99,21 @@ import type {
   CheckResult,
 } from "@shared/models/skills";
 import type { PromptModule } from "@shared/models/prompt-modules";
+import { MOD_KEYS, type ModKey } from "@shared/models/mods";
 
 const WRITE_CATEGORIES: SkillWriteCategory[] = ["read-only", "internal-data", "internal-control", "external", "destructive"];
 const INPUT_TYPES: SkillInputType[] = ["task", "people", "memories", "events", "files", "project"];
+const SOURCE_MOD_LABELS: Record<"core" | ModKey, string> = {
+  core: "Core",
+  planning: "Planning",
+  build: "Build",
+  business: "Business",
+  wellness: "Wellness",
+  network: "Network",
+  finance: "Finance",
+  slack: "Slack",
+};
+const SOURCE_MOD_ORDER: Array<"core" | ModKey> = ["core", ...MOD_KEYS];
 
 function downloadJson(data: unknown, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -603,9 +615,19 @@ function SkillListSidebar({
       return [...withRun, ...withoutRun];
     };
 
+    const byOwner = new Map<"core" | ModKey, SkillWithReferences[]>();
+    for (const skill of sortGroup(unpinned)) {
+      const owner = skill.sourceMod ?? "core";
+      const group = byOwner.get(owner);
+      if (group) group.push(skill);
+      else byOwner.set(owner, [skill]);
+    }
+
     return {
       pinned: sortGroup(pinned),
-      skills: sortGroup(unpinned),
+      sections: SOURCE_MOD_ORDER
+        .filter((owner) => byOwner.has(owner))
+        .map((owner) => ({ owner, title: SOURCE_MOD_LABELS[owner], skills: byOwner.get(owner)! })),
     };
   }, [skills, lastRuns, searchQuery]);
 
@@ -624,7 +646,7 @@ function SkillListSidebar({
     />
   ));
 
-  const total = sorted.pinned.length + sorted.skills.length;
+  const total = sorted.pinned.length + sorted.sections.reduce((sum, section) => sum + section.skills.length, 0);
 
   return (
     <ScrollArea className="flex-1">
@@ -689,9 +711,11 @@ function SkillListSidebar({
             <SkillTreeSection title="PINNED" isEmpty={sorted.pinned.length === 0}>
               {renderRows(sorted.pinned)}
             </SkillTreeSection>
-            <SkillTreeSection title="SKILLS" isEmpty={sorted.skills.length === 0}>
-              {renderRows(sorted.skills)}
-            </SkillTreeSection>
+            {sorted.sections.map((section) => (
+              <SkillTreeSection key={section.owner} title={section.title} isEmpty={section.skills.length === 0}>
+                {renderRows(section.skills)}
+              </SkillTreeSection>
+            ))}
           </div>
         )}
       </div>
