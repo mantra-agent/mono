@@ -6,6 +6,23 @@ import { unionRootContextSections, unionRootToolBundle } from "../shared/persona
 
 const log = createLogger("SessionPersona");
 
+/**
+ * Following user copies pin the seed's platform revision id (personaIdentityId =
+ * template). User-authored revisions pin the copy itself. Both are valid
+ * provenance; only foreign identities fail closed.
+ */
+function revisionBelongsToSelectedPersona(
+  persona: PersonaEntry,
+  revision: { personaIdentityId: number; scope: string },
+): boolean {
+  if (revision.personaIdentityId === persona.id) return true;
+  return (
+    revision.scope === "platform" &&
+    persona.templatePersonaId != null &&
+    revision.personaIdentityId === persona.templatePersonaId
+  );
+}
+
 /** Resolve the persona that governs one session. Missing persona stays unset. */
 export async function resolveSessionPersona(
   sessionId?: string | null,
@@ -17,7 +34,7 @@ export async function resolveSessionPersona(
       const persona = await personaStorage.get(session.personaId);
       if (persona && session.selectedPersonaRevisionId) {
         const revision = await personaStorage.getRevision(session.selectedPersonaRevisionId);
-        if (!revision || revision.personaIdentityId !== persona.id) {
+        if (!revision || !revisionBelongsToSelectedPersona(persona, revision)) {
           throw new Error(`Session ${sessionId} has invalid selected Persona revision provenance`);
         }
         return { ...persona, ...(revision.payload as PersonaRevisionPayload), currentRevisionId: revision.id };
