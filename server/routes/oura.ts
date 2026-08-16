@@ -585,7 +585,7 @@ export async function registerOuraRoutes(app: Express): Promise<void> {
       return res.status(401).send("Unauthorized");
     }
     log.log("webhook challenge accepted");
-    return res.type("text/plain").send(result.challenge);
+    return res.status(200).json({ verification_token: result.challenge });
   });
 
   app.post("/api/oura/disconnect", async (_req, res) => {
