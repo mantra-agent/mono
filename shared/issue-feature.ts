@@ -42,7 +42,7 @@ export function composeIssueContext(issue: IssueLaunchContext): string {
 
 /** Procedure for the conversion. Shared by the Skill body and the launcher. */
 export function composeIssueFeatureProcess(): string {
-  return `# Launch — Issue → Feature idea
+  return `# Feature — Issue → Feature idea
 
 ## Purpose
 Convert one product Issue into a Feature idea. The Feature is the durable product intent; the Issue is the temporary defect/report shell and must not remain after a successful conversion.

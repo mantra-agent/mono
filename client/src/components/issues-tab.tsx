@@ -285,7 +285,7 @@ function IssueTreeRow({
             ) : (
               <Rocket className="mr-2 h-4 w-4" />
             )}
-            Launch
+            Feature
           </DropdownMenuItem>
           <DropdownMenuItem
             onSelect={(event) => {
@@ -676,7 +676,7 @@ export function IssuesTab() {
   const launchIssueFeature = (issue: Issue) => {
     launch.mutate({
       pendingKey: `issue-launch-${issue.id}`,
-      title: `Launch: ${issue.title}`.slice(0, 80),
+      title: `Feature: ${issue.title}`.slice(0, 80),
       message: composeIssueFeatureLaunchMessage({
         id: issue.id,
         title: issue.title,
@@ -691,7 +691,7 @@ export function IssuesTab() {
       clientTurnSuffix: `issue-launch-${issue.id}`,
       personaId: visionaryId,
       personaName: visionaryId ? undefined : "Visionary",
-      errorTitle: "Could not start Feature launch",
+      errorTitle: "Could not start Feature conversion",
     });
   };
 
