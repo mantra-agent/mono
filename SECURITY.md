@@ -1,3 +1,10 @@
+<!-- 2026-08-15 Oura webhook GET challenge handshake:
+- Assets/data: A03 Oura client secret and verification token (S3), A07 inbound `/api/oura/webhook` callback (S1 operational). No new principal or health-row authority.
+- Flow/threat: Oura subscription create sends GET `?verification_token=` and expects 200 + the challenge body. Requiring `x-oura-signature` HMAC on that GET 401s in 1ms, so Oura refuses the subscription (STRIDE denial of service / spoofing analogue; INT-01). A GET that echoes any query without the configured token would let anyone complete the handshake.
+- Deterministic controls/owner: GET verifies the configured `OURA_WEBHOOK_VERIFY_TOKEN` (or HMAC if Oura later signs the challenge). POST events still require `x-oura-signature` HMAC over the raw body. Owner: Wellness Oura. Severity: medium integrity. SLA: immediate.
+- Residual/rollback: GET remains unauthenticated by design so Oura can reach it. Revert the challenge/HMAC split, this finding, and the GET handler together.
+-->
+
 <!-- 2026-08-15 Universal Metrics cutover:
 - Assets/data: Core Metric and KPI definitions, samples, KPI links, and domain adapter projections (S1 operational measurement identity; S2 health/business values). No history delete and no second measurement store.
 - Flow/threat: Business, Performance, and Health/Oura all write or project into Core metrics, while clients and tools still hit Business-prefixed routes. Leaving Business as the producer path would keep dual ownership and let a domain disable path look like data loss (STRIDE tampering/repudiation; DATA-01/AGENT-03).
