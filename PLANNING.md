@@ -35,7 +35,20 @@ Durable work prerequisites live in one Core graph: `address_links` rows with pre
 4. **Provenance when it helps.** Prefer an optional `provenanceAddress` (decision, page, session, or other supporting address) when the edge is non-obvious. Idempotency keys are required on explicit adds; work convenience keys are deterministic per `(source, target)`.
 5. **Conservative mutation.** Add or retire deliberate edges only. Do not bulk-rewrite the graph, infer edges from free text, or “fix” status by deleting prerequisites silently. Retire with `blocking_graph.remove_blocker` when the prerequisite no longer applies; do not hard-delete history (lifecycle is active → retired).
 6. **Completion review.** Before marking work complete, review active blockers for that address. Either finish or explicitly retire each edge with cause. Do not complete work that still has unresolved active blockers unless the human accepts the exception.
-7. **No duplicate dependency fields.** Never add `dependencies`, `blocked_by`, or equivalent arrays on task/plan/goal JSON as a second store. Never teach Streamline, Autonomy, Brief, or other skills a private dependency model. Reads go through the blocking graph (and, once shipped, the shared dependency-context resolver).
+7. **No duplicate dependency fields.** Never add `dependencies`, `blocked_by`, or equivalent arrays on task/plan/goal JSON as a second store. Never teach Streamline, Autonomy, Brief, or other skills a private dependency model. Reads go through the blocking graph and the shared dependency-context resolver.
+
+### Dependency-context resolver
+
+`resolveWorkDependencyContext` (`server/work-dependency-context.ts`, contract `shared/work-dependency-context.ts`) is the sole read model for work prerequisites. It returns one discriminated state per address:
+
+| State | Meaning |
+|-------|---------|
+| `ready` | No active `blocked_by` edges in scope |
+| `blocked` | At least one active edge whose target is unresolved (not done/completed) |
+| `stale` | Edges exist but every target is satisfied, inaccessible, or invalid — review/retire |
+| `unavailable` | Address invalid, unauthorized, resolution error, or bound exceeded |
+
+Bounds (callers may narrow, never exceed): 25 addresses, depth 1–2, fanout 20, 200 edges. Blocker rows may include status/owner/label/provenance only when the principal can see them. Load only for planning, selection, sequencing, scheduling, capacity, autonomy, or explicit work/dependency purposes (`WORK_DEPENDENCY_CONTEXT_PURPOSES`). Context assembly exposes a compact projection under `world_model.active_work.dependencies` when the active-work instruction group is on — never ambient full-chat noise, never a second graph.
 
 ### Goal Manager stays separate
 
@@ -43,10 +56,10 @@ Goal Manager owns goal hierarchy, horizons, and goal↔person/meeting links. It 
 
 ### Consumers (placement)
 
-- **Plan tool / decomposition** — primary producer/consumer for discovered work prerequisites; distinguishes durable external blockers from internal step order.
-- **Streamline / capacity** — excludes work with unresolved active blockers from executable capacity.
-- **Autonomy** — gates Agent execution on unresolved blockers and prefers executable prerequisites.
-- **Bootstrap / context** — may load bounded dependency state only for planning, selection, sequencing, scheduling, capacity, autonomy, or explicit work/dependency contexts.
+- **Plan tool / decomposition** — primary producer/consumer for discovered work prerequisites; distinguishes durable external blockers from internal step order; consumes `resolveWorkDependencyContext`.
+- **Streamline / capacity** — excludes work with unresolved active blockers from executable capacity via the shared resolver.
+- **Autonomy** — gates Agent execution on unresolved blockers and prefers executable prerequisites via the shared resolver.
+- **Bootstrap / context** — may load bounded dependency state only for planning, selection, sequencing, scheduling, capacity, autonomy, or explicit work/dependency contexts (`world_model.active_work.dependencies`).
 - All other skills — context-only if needed; no graph mutation and no private dependency fields.
 
 ## Agenda vs Plan

@@ -4,6 +4,7 @@
  * Single source of truth for the relationship semantic used by planning,
  * work mutation convenience paths, and BlockingGraphService. Durable edges
  * live only in address_links via the blocking_graph mutation boundary.
+ * Read model: shared/work-dependency-context.ts + server/work-dependency-context.ts.
  * Do not invent a second graph, task.dependencies array, or plan-local
  * dependency store.
  *
