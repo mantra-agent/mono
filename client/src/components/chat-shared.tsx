@@ -78,6 +78,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useIsMobileViewport } from "@/hooks/use-mobile";
 import { useQuery } from "@tanstack/react-query";
 import { isSessionOrientationEstablished } from "@shared/session-orientation";
 import type { ChatSession } from "@shared/models/chat";
@@ -1439,6 +1440,71 @@ function SystemStepRow({
   );
 }
 
+/**
+ * Words-only tool icon with desktop hover tooltip and mobile tap-to-read.
+ * Icon size/hit chrome stay fixed (h-5 w-5); only the portal label opens.
+ */
+function ToolIconTooltip({
+  id,
+  ariaLabel,
+  className,
+  children,
+  content,
+  openId,
+  onOpenIdChange,
+  tapToOpen,
+}: {
+  id: string;
+  ariaLabel: string;
+  className: string;
+  children: ReactNode;
+  content: ReactNode;
+  openId: string | null;
+  onOpenIdChange: (id: string | null) => void;
+  tapToOpen: boolean;
+}) {
+  const isOpen = openId === id;
+
+  return (
+    <Tooltip
+      open={tapToOpen ? isOpen : undefined}
+      delayDuration={tapToOpen ? 0 : undefined}
+      onOpenChange={
+        tapToOpen
+          ? (next) => {
+              onOpenIdChange(next ? id : null);
+            }
+          : undefined
+      }
+    >
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className={className}
+          aria-label={ariaLabel}
+          data-testid={`tool-icon-${id}`}
+          data-tool-icon-tooltip={id}
+          onClick={
+            tapToOpen
+              ? (event) => {
+                  // Touch has no hover; toggle the same tooltip content on tap.
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onOpenIdChange(isOpen ? null : id);
+                }
+              : undefined
+          }
+        >
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" data-tool-icon-tooltip-content={id}>
+        {content}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 /** Compact horizontal icon strip for tool calls in "Words Only" mode (layer 1). */
 function ToolIconStrip({
   steps,
@@ -1449,6 +1515,34 @@ function ToolIconStrip({
   iconOverrides?: Record<string, string>;
   showThinking?: boolean;
 }) {
+  // Interaction modality: phone-width viewport or native WebView — not narrow desktop panes.
+  const tapToOpen = useIsMobileViewport();
+  const [openTooltipId, setOpenTooltipId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!tapToOpen || !openTooltipId) return;
+
+    const closeIfOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        setOpenTooltipId(null);
+        return;
+      }
+      if (
+        target.closest(`[data-tool-icon-tooltip="${openTooltipId}"]`) ||
+        target.closest(`[data-tool-icon-tooltip-content="${openTooltipId}"]`)
+      ) {
+        return;
+      }
+      setOpenTooltipId(null);
+    };
+
+    document.addEventListener("pointerdown", closeIfOutside, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeIfOutside, true);
+    };
+  }, [tapToOpen, openTooltipId]);
+
   const compactingSteps = steps.filter(
     (step) =>
       step.type === "system" &&
@@ -1473,24 +1567,21 @@ function ToolIconStrip({
           step.systemStepLabel || SYSTEM_STEP_META.compaction.label;
 
         return (
-          <Tooltip key={step.id}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 bg-warning/15 touch-manipulation animate-in fade-in duration-200"
-                aria-label={label}
-                data-testid={`tool-icon-${step.id}`}
-              >
-                <ChevronsDownUp className="h-3 w-3 text-warning" />
-                {isActive && (
-                  <span className="absolute inset-0 rounded-full animate-ping bg-warning/25" />
-                )}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              <p className="text-xs text-white/90">{label}</p>
-            </TooltipContent>
-          </Tooltip>
+          <ToolIconTooltip
+            key={step.id}
+            id={step.id}
+            ariaLabel={label}
+            className="relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 bg-warning/15 touch-manipulation animate-in fade-in duration-200"
+            openId={openTooltipId}
+            onOpenIdChange={setOpenTooltipId}
+            tapToOpen={tapToOpen}
+            content={<p className="text-xs text-white/90">{label}</p>}
+          >
+            <ChevronsDownUp className="h-3 w-3 text-warning" />
+            {isActive && (
+              <span className="absolute inset-0 rounded-full animate-ping bg-warning/25" />
+            )}
+          </ToolIconTooltip>
         );
       })}
       {toolSteps.map((step) => {
@@ -1538,22 +1629,16 @@ function ToolIconStrip({
           : toolReasoning || fallbackLabel;
 
         return (
-          <Tooltip key={step.id}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className={`relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 ${bgColor} touch-manipulation animate-in fade-in duration-200`}
-                aria-label={ariaLabel}
-                data-testid={`tool-icon-${step.id}`}
-              >
-                <ToolIcon className={`h-3 w-3 ${iconColor}`} />
-                {isActive && (
-                  <span className="absolute inset-0 rounded-full animate-ping bg-active/20" />
-                )}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              {isObservation ? (
+          <ToolIconTooltip
+            key={step.id}
+            id={step.id}
+            ariaLabel={ariaLabel}
+            className={`relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 ${bgColor} touch-manipulation animate-in fade-in duration-200`}
+            openId={openTooltipId}
+            onOpenIdChange={setOpenTooltipId}
+            tapToOpen={tapToOpen}
+            content={
+              isObservation ? (
                 <div className="space-y-0.5">
                   <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/55">
                     {observationType}
@@ -1571,9 +1656,14 @@ function ToolIconStrip({
                 </div>
               ) : (
                 <p className="text-xs text-white">{fallbackLabel}</p>
-              )}
-            </TooltipContent>
-          </Tooltip>
+              )
+            }
+          >
+            <ToolIcon className={`h-3 w-3 ${iconColor}`} />
+            {isActive && (
+              <span className="absolute inset-0 rounded-full animate-ping bg-active/20" />
+            )}
+          </ToolIconTooltip>
         );
       })}
       {showThinking && (
