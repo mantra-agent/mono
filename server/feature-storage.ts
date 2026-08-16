@@ -2,8 +2,10 @@ import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { requireCurrentPrincipal } from "./principal-context";
 import { ownedInsertValues } from "./scoped-storage";
-import { createAddressLink, listAddressLinks, retireAddressLink } from "./life-addressing-storage";
+import { createAddressLink, listAddressLinks, listReferenceOccurrences, retireAddressLink } from "./life-addressing-storage";
 import { getVisibleProduct, getWritableProduct } from "./platforms/platform-access";
+import { getSessionsByArtifact } from "./session-artifacts";
+import { chatFileStorage } from "./chat-file-storage";
 
 export const FEATURE_STAGES = ["idea", "spec", "develop", "test", "calibrate", "maintain", "deprecate"] as const;
 export const FEATURE_STATUSES = ["ready", "in_progress", "needs_review"] as const;
@@ -84,4 +86,29 @@ export const featureStorage = {
     return createAddressLink(p, { sourceAddress: `@feature:${id}`, predicate: "intended_benefit", targetAddress: kpiAddress, createdBy: "feature", idempotencyKey });
   },
   async unlinkKpi(id: string, linkId: string) { const p = principal(); const feature = await this.get(id); if (!feature) throw Object.assign(new Error("Feature not found"), { status: 404 }); return retireAddressLink(p, linkId); },
+  /**
+   * Session history for one Feature: explicit artifact links plus discovered
+   * @feature: address occurrences. Sole ordinary producer for HTTP and Agent tools.
+   */
+  async listSessions(id: string) {
+    const p = principal();
+    const feature = await this.get(id);
+    if (!feature) return undefined;
+    const explicitRows = await getSessionsByArtifact("feature", id);
+    const discoveredPage = await listReferenceOccurrences(p, { targetAddress: `@feature:${id}`, limit: 100 });
+    const explicit = await Promise.all(explicitRows.map(async (row) => {
+      const session = await chatFileStorage.getSession(row.sessionId);
+      return session
+        ? { sessionId: row.sessionId, title: session.title || "Untitled", evidenceType: "explicit" as const, createdAt: row.createdAt }
+        : null;
+    }));
+    const discovered = await Promise.all([...new Set(discoveredPage.items.map((item) => item.sourceAddress))].map(async (sourceAddress) => {
+      const sessionId = sourceAddress.replace(/^@session:/, "");
+      const session = await chatFileStorage.getSession(sessionId);
+      return session
+        ? { sessionId, title: session.title || "Untitled", evidenceType: "discovered" as const, createdAt: session.updatedAt }
+        : null;
+    }));
+    return [...explicit, ...discovered].filter((row): row is NonNullable<typeof row> => row !== null);
+  },
 };
