@@ -4,15 +4,19 @@ import { useState, useEffect, useMemo, type ReactNode } from "react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getInstanceName, isAgentType } from "@/lib/instance-config";
-import { Card, CardContent } from "@/components/ui/card";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import {
+  HIERARCHY_PRIMARY_ACTION_CLASS,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
+import { ProfileDetailSection } from "@/components/profile-detail-section";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
 import type {
   Schedule,
   ScheduleFrequency,
@@ -27,12 +31,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -60,7 +58,6 @@ import {
   User,
   Settings,
   Trash2,
-  Pencil,
   ChevronRight,
   Loader2,
   CheckCircle2,
@@ -298,52 +295,53 @@ function ScheduleEditor({ schedules, onChange }: { schedules: Schedule[]; onChan
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <Label className="text-sm font-medium">Schedules</Label>
-        <Button variant="ghost" size="sm" onClick={addSchedule} data-testid="button-add-schedule">
+    <ProfileDetailSection
+      title="Schedules"
+      count={schedules.length}
+      defaultOpen
+      headerAction={
+        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={addSchedule} data-testid="button-add-schedule">
           <Plus className="h-3.5 w-3.5 mr-1" /> Add
         </Button>
-      </div>
-
-      {schedules.length === 0 && (
-        <p className="text-sm text-muted-foreground py-2">No schedules yet. Add one to define when this runs.</p>
-      )}
-
-      {schedules.map((schedule, idx) => (
-        <Card key={schedule.id} className="border-dashed">
-          <CardContent className="p-3 space-y-2">
-            <div className="flex items-center gap-2">
-              <Select
-                value={schedule.frequency}
-                onValueChange={(v) => updateSchedule(idx, { frequency: v as ScheduleFrequency })}
-              >
-                <SelectTrigger className="flex-1 h-8 text-sm" data-testid={`select-frequency-${idx}`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="every_x_minutes">Every X Minutes</SelectItem>
-                  <SelectItem value="every_x_hours">Every X Hours</SelectItem>
-                  <SelectItem value="daily">Daily</SelectItem>
-                  <SelectItem value="weekly">Weekly</SelectItem>
-                  <SelectItem value="monthly">Monthly</SelectItem>
-                  <SelectItem value="quarterly">Quarterly</SelectItem>
-                  <SelectItem value="annually">Annually</SelectItem>
-                  <SelectItem value="custom">Custom</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => removeSchedule(idx)} data-testid={`button-remove-schedule-${idx}`}>
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-
-            {(schedule.frequency === "every_x_minutes" || schedule.frequency === "every_x_hours") && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs shrink-0">Every</Label>
+      }
+    >
+      {schedules.length === 0 ? (
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">No schedules yet.</div>
+      ) : schedules.map((schedule, idx) => (
+        <ProfileDetailSection
+          key={schedule.id}
+          title={humanizeSchedule(schedule)}
+          defaultOpen
+          headerAction={
+            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeSchedule(idx)} data-testid={`button-remove-schedule-${idx}`}>
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          }
+        >
+          <ProfileTreeRow label="Frequency" hasValue showEmpty mobileLayout="inline">
+            <Select value={schedule.frequency} onValueChange={(v) => updateSchedule(idx, { frequency: v as ScheduleFrequency })}>
+              <SelectTrigger className="h-7 w-44 text-sm" data-testid={`select-frequency-${idx}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="every_x_minutes">Every X Minutes</SelectItem>
+                <SelectItem value="every_x_hours">Every X Hours</SelectItem>
+                <SelectItem value="daily">Daily</SelectItem>
+                <SelectItem value="weekly">Weekly</SelectItem>
+                <SelectItem value="monthly">Monthly</SelectItem>
+                <SelectItem value="quarterly">Quarterly</SelectItem>
+                <SelectItem value="annually">Annually</SelectItem>
+                <SelectItem value="custom">Custom</SelectItem>
+              </SelectContent>
+            </Select>
+          </ProfileTreeRow>
+          {(schedule.frequency === "every_x_minutes" || schedule.frequency === "every_x_hours") && (
+            <ProfileTreeRow label="Every" hasValue showEmpty mobileLayout="inline">
+              <div className="flex items-center justify-end gap-2">
                 <Input
                   type="number"
                   min={1}
-                  className="h-7 text-sm w-20"
+                  className="h-7 w-20 text-right text-sm"
                   value={schedule.interval || (schedule.frequency === "every_x_minutes" ? 30 : 1)}
                   onChange={(e) => updateSchedule(idx, { interval: parseInt(e.target.value, 10) || 1 })}
                   data-testid={`input-interval-${idx}`}
@@ -352,28 +350,28 @@ function ScheduleEditor({ schedules, onChange }: { schedules: Schedule[]; onChan
                   {schedule.frequency === "every_x_minutes" ? "minutes" : "hours"}
                 </span>
               </div>
-            )}
-
-            {["daily", "weekly", "monthly", "quarterly", "annually"].includes(schedule.frequency) && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs shrink-0">Time</Label>
-                <Input
-                  type="time"
-                  className="h-7 text-sm w-28"
-                  value={schedule.timeOfDay || "09:00"}
-                  onChange={(e) => updateSchedule(idx, { timeOfDay: e.target.value })}
-                  data-testid={`input-time-${idx}`}
-                />
-              </div>
-            )}
-
-            {schedule.frequency === "weekly" && (
-              <div className="flex flex-wrap gap-1">
+            </ProfileTreeRow>
+          )}
+          {["daily", "weekly", "monthly", "quarterly", "annually"].includes(schedule.frequency) && (
+            <ProfileTreeRow label="Time" hasValue showEmpty mobileLayout="inline">
+              <Input
+                type="time"
+                className="h-7 w-28 text-right text-sm"
+                value={schedule.timeOfDay || "09:00"}
+                onChange={(e) => updateSchedule(idx, { timeOfDay: e.target.value })}
+                data-testid={`input-time-${idx}`}
+              />
+            </ProfileTreeRow>
+          )}
+          {schedule.frequency === "weekly" && (
+            <ProfileTreeRow label="Days" hasValue showEmpty mobileLayout="stacked">
+              <div className="flex flex-wrap justify-end gap-1">
                 {DAYS.map((day) => {
                   const selected = (schedule.daysOfWeek || []).includes(day.value);
                   return (
                     <button
                       key={day.value}
+                      type="button"
                       className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
                         selected
                           ? "bg-primary text-primary-foreground border-primary"
@@ -393,56 +391,48 @@ function ScheduleEditor({ schedules, onChange }: { schedules: Schedule[]; onChan
                   );
                 })}
               </div>
-            )}
-
-            {schedule.frequency === "monthly" && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs shrink-0">Day of month</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={31}
-                  className="h-7 text-sm w-16"
-                  value={schedule.dayOfMonth || 1}
-                  onChange={(e) => updateSchedule(idx, { dayOfMonth: parseInt(e.target.value, 10) || 1 })}
-                  data-testid={`input-day-of-month-${idx}`}
-                />
-              </div>
-            )}
-
-            {schedule.frequency === "annually" && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs shrink-0">Day of year</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={366}
-                  className="h-7 text-sm w-16"
-                  value={schedule.dayOfYear || 1}
-                  onChange={(e) => updateSchedule(idx, { dayOfYear: parseInt(e.target.value, 10) || 1 })}
-                  data-testid={`input-day-of-year-${idx}`}
-                />
-              </div>
-            )}
-
-            {schedule.frequency === "custom" && (
-              <div className="flex items-center gap-2">
-                <Label className="text-xs shrink-0">Cron</Label>
-                <Input
-                  className="h-7 text-sm flex-1"
-                  placeholder="0 9 * * *"
-                  value={schedule.cronExpression || ""}
-                  onChange={(e) => updateSchedule(idx, { cronExpression: e.target.value })}
-                  data-testid={`input-cron-${idx}`}
-                />
-              </div>
-            )}
-
-            <div className="text-xs text-muted-foreground">{humanizeSchedule(schedule)}</div>
-          </CardContent>
-        </Card>
+            </ProfileTreeRow>
+          )}
+          {schedule.frequency === "monthly" && (
+            <ProfileTreeRow label="Day of month" hasValue showEmpty mobileLayout="inline">
+              <Input
+                type="number"
+                min={1}
+                max={31}
+                className="h-7 w-16 text-right text-sm"
+                value={schedule.dayOfMonth || 1}
+                onChange={(e) => updateSchedule(idx, { dayOfMonth: parseInt(e.target.value, 10) || 1 })}
+                data-testid={`input-day-of-month-${idx}`}
+              />
+            </ProfileTreeRow>
+          )}
+          {schedule.frequency === "annually" && (
+            <ProfileTreeRow label="Day of year" hasValue showEmpty mobileLayout="inline">
+              <Input
+                type="number"
+                min={1}
+                max={366}
+                className="h-7 w-16 text-right text-sm"
+                value={schedule.dayOfYear || 1}
+                onChange={(e) => updateSchedule(idx, { dayOfYear: parseInt(e.target.value, 10) || 1 })}
+                data-testid={`input-day-of-year-${idx}`}
+              />
+            </ProfileTreeRow>
+          )}
+          {schedule.frequency === "custom" && (
+            <ProfileTreeRow label="Cron" hasValue={Boolean(schedule.cronExpression)} showEmpty mobileLayout="inline">
+              <Input
+                className="h-7 w-44 text-right text-sm"
+                placeholder="0 9 * * *"
+                value={schedule.cronExpression || ""}
+                onChange={(e) => updateSchedule(idx, { cronExpression: e.target.value })}
+                data-testid={`input-cron-${idx}`}
+              />
+            </ProfileTreeRow>
+          )}
+        </ProfileDetailSection>
       ))}
-    </div>
+    </ProfileDetailSection>
   );
 }
 
@@ -503,76 +493,74 @@ function TimerActions({
   timer,
   onExport,
   onRunNow,
-  onEdit,
   onDelete,
   globalPaused,
 }: {
   timer: TimerItem;
   onExport: () => void;
   onRunNow: () => void;
-  onEdit: () => void;
   onDelete: () => void;
   globalPaused: boolean;
 }) {
   return (
-    <>
-      <DropdownMenu modal={false}>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md bg-accent/50 opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
-            onClick={(event) => event.stopPropagation()}
-            onKeyDown={(event) => event.stopPropagation()}
-            aria-label={`Actions for ${timer.name}`}
-            data-testid={`button-timer-menu-${timer.id}`}
-          >
-            <MoreHorizontal className="h-3.5 w-3.5" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
-          <DropdownMenuItem onClick={onRunNow} disabled={globalPaused} data-testid={`menu-run-now-${timer.id}`}>
-            <Zap className="mr-2 h-3.5 w-3.5" /> Run Now
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={onEdit} data-testid={`menu-edit-${timer.id}`}>
-            <Pencil className="mr-2 h-3.5 w-3.5" /> Edit
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={onExport} data-testid={`menu-export-${timer.id}`}>
-            <Download className="mr-2 h-3.5 w-3.5" /> Export
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={onDelete} className="text-destructive" data-testid={`menu-delete-${timer.id}`}>
-            <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </>
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md bg-accent/50 opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+          aria-label={`Actions for ${timer.name}`}
+          data-testid={`button-timer-menu-${timer.id}`}
+        >
+          <MoreHorizontal className="h-3.5 w-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
+        <DropdownMenuItem onClick={onRunNow} disabled={globalPaused} data-testid={`menu-run-now-${timer.id}`}>
+          <Zap className="mr-2 h-3.5 w-3.5" /> Run Now
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onExport} data-testid={`menu-export-${timer.id}`}>
+          <Download className="mr-2 h-3.5 w-3.5" /> Export
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onDelete} className="text-destructive" data-testid={`menu-delete-${timer.id}`}>
+          <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
 function TimerTreeRow({
   timer,
-  onEdit,
+  open,
+  onToggleOpen,
   onDelete,
   onToggle,
   onRunNow,
   onExport,
   globalPaused,
+  skills,
+  skillsLoading,
+  skillSlugToId,
   skillNameMap,
 }: {
   timer: TimerItem;
-  onEdit: () => void;
+  open: boolean;
+  onToggleOpen: () => void;
   onDelete: () => void;
   onToggle: (enabled: boolean) => void;
   onRunNow: () => void;
   onExport: () => void;
+  skills: { id: string; name: string }[];
+  skillsLoading: boolean;
+  skillSlugToId: Record<string, string>;
   skillNameMap: Record<string, string>;
   globalPaused: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const expanded = open;
   const typeMeta = TYPE_META[timer.type] || TYPE_META.agent;
   const TypeIcon = (timer.systemKey && SYSTEM_TIMER_ICON_MAP[timer.systemKey]) || typeMeta.icon;
-  const skillLabel = timer.type === "skill" && timer.skillId
-    ? (skillNameMap[timer.skillId] || timer.skillId)
-    : null;
   return (
     <div className="min-w-0" data-testid={`tree-timer-${timer.id}`}>
       <div className="relative min-w-0 overflow-hidden">
@@ -580,11 +568,11 @@ function TimerTreeRow({
           role="button"
           tabIndex={0}
           aria-expanded={expanded}
-          onClick={() => setExpanded((current) => !current)}
+          onClick={onToggleOpen}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
-              setExpanded((current) => !current);
+              onToggleOpen();
             }
           }}
           className="group relative flex w-full min-w-0 cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/70"
@@ -624,7 +612,6 @@ function TimerTreeRow({
             timer={timer}
             onExport={onExport}
             onRunNow={onRunNow}
-            onEdit={onEdit}
             onDelete={onDelete}
             globalPaused={globalPaused}
           />
@@ -632,7 +619,7 @@ function TimerTreeRow({
             type="button"
             onClick={(event) => {
               event.stopPropagation();
-              setExpanded((current) => !current);
+              onToggleOpen();
             }}
             onKeyDown={(event) => event.stopPropagation()}
             className="absolute right-8 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
@@ -645,59 +632,21 @@ function TimerTreeRow({
       </div>
 
       {expanded && (
-        <div className="ml-5 flex min-w-0" data-testid={`tree-timer-details-${timer.id}`}>
-          <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
-            <div className="absolute bottom-1/2 left-1/2 top-0 -translate-x-px border-l border-border" />
-            <div className="absolute left-1/2 right-0 top-1/2 border-t border-border" />
-          </div>
-          <div className="min-w-0 flex-1 space-y-3 px-2 py-2 text-xs">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground">
-              <span>{typeMeta.label}</span>
-              <span>{timer.schedules.map(humanizeSchedule).join(" · ") || "No schedule"}</span>
-              <span>{timer.timezone}</span>
-              {timer.nextRunAt && timer.enabled && !globalPaused && (
-                <span title={`Next run ${new Date(timer.nextRunAt).toLocaleString()}`}>
-                  Next {humanizeNextRun(timer.nextRunAt)}
-                </span>
-              )}
-              {timer.stats && timer.stats.totalRuns > 0 && (
-                <>
-                  <span>{timer.stats.successCount} succeeded</span>
-                  {timer.stats.errorCount > 0 && <span className="text-error">{timer.stats.errorCount} failed</span>}
-                  {timer.stats.avgDurationMs > 0 && <span>avg {formatDuration(timer.stats.avgDurationMs)}</span>}
-                </>
-              )}
-            </div>
-
-            {timer.description && <p className="text-muted-foreground">{timer.description}</p>}
-
-            {timer.type === "skill" && timer.skillId && (
-              <div>
-                <Label className="mb-1 block text-xs text-muted-foreground">Skill</Label>
-                <span className="break-all font-mono" data-testid={`text-skillid-${timer.id}`}>{skillLabel}</span>
-              </div>
+        <div className="space-y-1 pb-2" data-testid={`tree-timer-details-${timer.id}`}>
+          <TimerEditor
+            timer={timer}
+            skills={skills}
+            skillsLoading={skillsLoading}
+            skillSlugToId={skillSlugToId}
+            skillNameMap={skillNameMap}
+          />
+          <ProfileDetailSection title="Recent Runs" count={timer.recentRuns?.length ?? 0} defaultOpen>
+            {timer.recentRuns && timer.recentRuns.length > 0 ? (
+              timer.recentRuns.map((run) => <RunHistoryItem key={run.id} run={run} />)
+            ) : (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">No runs yet.</div>
             )}
-
-            {timer.prompt && timer.type !== "skill" && (
-              <div>
-                <Label className="mb-1 block text-xs text-muted-foreground">Prompt</Label>
-                <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap text-xs text-foreground" data-testid={`text-prompt-${timer.id}`}>
-                  {timer.prompt}
-                </pre>
-              </div>
-            )}
-
-            <div>
-              <Label className="mb-1 block text-xs text-muted-foreground">Recent Runs</Label>
-              {timer.recentRuns && timer.recentRuns.length > 0 ? (
-                <div className="max-h-40 space-y-0.5 overflow-y-auto">
-                  {timer.recentRuns.map((run) => <RunHistoryItem key={run.id} run={run} />)}
-                </div>
-              ) : (
-                <div className="px-2 py-1.5 text-sm text-muted-foreground">No runs yet.</div>
-              )}
-            </div>
-          </div>
+          </ProfileDetailSection>
         </div>
       )}
     </div>
@@ -740,33 +689,41 @@ function TimerTreeSection({
   );
 }
 
-function CreateEditDialog({
-  open,
-  onOpenChange,
-  editingTimer,
+function fireAtLocalValue(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function TimerEditor({
+  timer,
   skills,
   skillsLoading,
   skillSlugToId,
   skillNameMap,
+  onCreated,
+  onCancel,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  editingTimer: TimerItem | null;
+  timer?: TimerItem | null;
   skills: { id: string; name: string }[];
   skillsLoading: boolean;
   skillSlugToId: Record<string, string>;
   skillNameMap: Record<string, string>;
+  onCreated?: (timer: TimerItem) => void;
+  onCancel?: () => void;
 }) {
   const { toast } = useToast();
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [type, setType] = useState<TimerType>("agent");
-  const [prompt, setPrompt] = useState("");
-  const [skillId, setSkillId] = useState("");
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [enabled, setEnabled] = useState(true);
-  const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York");
-  const [fireAt, setFireAt] = useState("");
+  const [name, setName] = useState(timer?.name ?? "");
+  const [description, setDescription] = useState(timer?.description ?? "");
+  const [type, setType] = useState<TimerType>((timer?.type as TimerType) || "agent");
+  const [prompt, setPrompt] = useState(timer?.prompt ?? "");
+  const [skillId, setSkillId] = useState(timer?.skillId ?? "");
+  const [schedules, setSchedules] = useState<Schedule[]>(
+    timer?.schedules ?? [{ id: generateScheduleId(), frequency: "daily", timeOfDay: "09:00" }],
+  );
+  const [enabled, setEnabled] = useState(timer?.enabled ?? true);
+  const [timezone, setTimezone] = useState(timer?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York");
+  const [fireAt, setFireAt] = useState(fireAtLocalValue(timer?.schedules.find((schedule) => schedule.frequency === "once")?.fireAt));
 
   const resolveSkillId = (raw: string) => {
     if (!raw) return "";
@@ -775,54 +732,21 @@ function CreateEditDialog({
   };
 
   useEffect(() => {
-    if (editingTimer) {
-      setName(editingTimer.name);
-      setDescription(editingTimer.description);
-      setType(editingTimer.type as TimerType);
-      setPrompt(editingTimer.prompt);
-      setSkillId(resolveSkillId(editingTimer.skillId || ""));
-      setSchedules(editingTimer.schedules);
-      setEnabled(editingTimer.enabled);
-      setTimezone(editingTimer.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone);
-      const onceSchedule = editingTimer.schedules.find(s => s.frequency === "once");
-      if (onceSchedule?.fireAt) {
-        const d = new Date(onceSchedule.fireAt);
-        const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-        setFireAt(local);
-      } else {
-        setFireAt("");
-      }
-    } else {
-      setName("");
-      setDescription("");
-      setType("agent");
-      setPrompt("");
-      setSkillId("");
-      setSchedules([{ id: generateScheduleId(), frequency: "daily", timeOfDay: "09:00" }]);
-      setEnabled(true);
-      setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York");
-      setFireAt("");
-    }
-  }, [editingTimer, open]);
-
-  useEffect(() => {
-    if (editingTimer && skillId && Object.keys(skillSlugToId).length > 0) {
+    if (timer && skillId && Object.keys(skillSlugToId).length > 0) {
       const resolved = resolveSkillId(skillId);
-      if (resolved !== skillId) {
-        setSkillId(resolved);
-      }
+      if (resolved !== skillId) setSkillId(resolved);
     }
   }, [skillSlugToId]);
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
       const res = await apiRequest("POST", "/api/timers", data);
-      return res.json();
+      return res.json() as Promise<TimerItem>;
     },
-    onSuccess: () => {
+    onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ["/api/timers"] });
-      onOpenChange(false);
       toast({ title: "Timer created" });
+      onCreated?.(created);
     },
     onError: (err: any) => {
       log.error("create failed:", err);
@@ -832,12 +756,11 @@ function CreateEditDialog({
 
   const updateMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await apiRequest("PATCH", `/api/timers/${editingTimer!.id}`, data);
+      const res = await apiRequest("PATCH", `/api/timers/${timer!.id}`, data);
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/timers"] });
-      onOpenChange(false);
       toast({ title: "Timer updated" });
     },
     onError: (err: any) => {
@@ -865,7 +788,7 @@ function CreateEditDialog({
     }
     const data: any = { name: name.trim(), description, type, schedules: finalSchedules, enabled, timezone };
     if (type === "skill") {
-      const originalSkillId = editingTimer?.skillId || "";
+      const originalSkillId = timer?.skillId || "";
       const originalIsSlug = originalSkillId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(originalSkillId);
       if (originalIsSlug && skillSlugToId[originalSkillId] === skillId.trim()) {
         data.skillId = originalSkillId;
@@ -876,7 +799,7 @@ function CreateEditDialog({
     } else {
       data.prompt = prompt;
     }
-    if (editingTimer) {
+    if (timer) {
       updateMutation.mutate(data);
     } else {
       createMutation.mutate(data);
@@ -886,146 +809,124 @@ function CreateEditDialog({
   const isPending = createMutation.isPending || updateMutation.isPending;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{editingTimer ? (editingTimer.type === "reminder" ? "Edit Reminder" : "Edit Timer") : (type === "reminder" ? "New Reminder" : "New Timer")}</DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-4 mt-2">
-          <div>
-            <Label className="text-sm">Name</Label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Daily standup review"
-              className="mt-1"
-              data-testid="input-timer-name"
-            />
-          </div>
-
-          <div>
-            <Label className="text-sm">Description</Label>
-            <Input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Optional description"
-              className="mt-1"
-              data-testid="input-timer-description"
-            />
-          </div>
-
-          <div>
-            <Label className="text-sm">Type</Label>
-            <Select value={type} onValueChange={(v) => setType(v as TimerType)}>
-              <SelectTrigger className="mt-1" data-testid="select-timer-type">
-                <SelectValue />
+    <div className="space-y-1" data-testid={timer ? `timer-editor-${timer.id}` : "timer-editor-new"}>
+      <ProfileDetailSection title="Timer" defaultOpen>
+        <ProfileTreeRow label="Name" hasValue showEmpty mobileLayout="inline">
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Daily standup review"
+            className="h-7 w-56 text-right"
+            data-testid="input-timer-name"
+          />
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Description" hasValue={Boolean(description.trim())} showEmpty mobileLayout="inline">
+          <Input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Optional description"
+            className="h-7 w-56 text-right"
+            data-testid="input-timer-description"
+          />
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Type" hasValue showEmpty mobileLayout="inline">
+          <Select value={type} onValueChange={(v) => setType(v as TimerType)}>
+            <SelectTrigger className="h-7 w-56" data-testid="select-timer-type">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="agent">{getInstanceName()} — AI agent executes prompt</SelectItem>
+              <SelectItem value="system">System — System-level function</SelectItem>
+              <SelectItem value="me">Me — Personal reminder</SelectItem>
+              <SelectItem value="skill">Skill — Run a skill directly</SelectItem>
+              <SelectItem value="pipeline">Pipeline — Run a deterministic data pipeline</SelectItem>
+              <SelectItem value="reminder">Reminder — One-time scheduled action</SelectItem>
+            </SelectContent>
+          </Select>
+        </ProfileTreeRow>
+        {type === "skill" ? (
+          <ProfileTreeRow label="Skill" hasValue={Boolean(skillId)} showEmpty mobileLayout="inline">
+            <Select value={skillId} onValueChange={setSkillId}>
+              <SelectTrigger className="h-7 w-56" data-testid="select-timer-skill">
+                <SelectValue placeholder={skillsLoading ? "Loading skills..." : "Select a skill..."} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="agent">{getInstanceName()} — AI agent executes prompt</SelectItem>
-                <SelectItem value="system">System — System-level function</SelectItem>
-                <SelectItem value="me">Me — Personal reminder</SelectItem>
-                <SelectItem value="skill">Skill — Run a skill directly</SelectItem>
-                <SelectItem value="pipeline">Pipeline — Run a deterministic data pipeline</SelectItem>
-                <SelectItem value="reminder">Reminder — One-time scheduled action</SelectItem>
+                {skillsLoading ? (
+                  <div className="flex items-center justify-center py-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  </div>
+                ) : skills.length === 0 ? (
+                  <div className="text-xs text-muted-foreground text-center py-2">No skills found</div>
+                ) : (
+                  <>
+                    {skillId && !skills.some((s) => s.id === skillId) && (
+                      <SelectItem key={skillId} value={skillId} data-testid={`select-skill-${skillId}`}>
+                        {skillNameMap[skillId] || skillId}
+                      </SelectItem>
+                    )}
+                    {skills.map((s) => (
+                      <SelectItem key={s.id} value={s.id} data-testid={`select-skill-${s.id}`}>{s.name}</SelectItem>
+                    ))}
+                  </>
+                )}
               </SelectContent>
             </Select>
-          </div>
-
-          {type === "skill" ? (
-            <div>
-              <Label className="text-sm">Skill</Label>
-              <Select value={skillId} onValueChange={setSkillId}>
-                <SelectTrigger className="mt-1" data-testid="select-timer-skill">
-                  <SelectValue placeholder={skillsLoading ? "Loading skills..." : "Select a skill..."} />
-                </SelectTrigger>
-                <SelectContent>
-                  {skillsLoading ? (
-                    <div className="flex items-center justify-center py-2">
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    </div>
-                  ) : skills.length === 0 ? (
-                    <div className="text-xs text-muted-foreground text-center py-2">No skills found</div>
-                  ) : (
-                    <>
-                      {skillId && !skills.some((s) => s.id === skillId) && (
-                        <SelectItem key={skillId} value={skillId} data-testid={`select-skill-${skillId}`}>
-                          {skillNameMap[skillId] || skillId}
-                        </SelectItem>
-                      )}
-                      {skills.map((s) => (
-                        <SelectItem key={s.id} value={s.id} data-testid={`select-skill-${s.id}`}>{s.name}</SelectItem>
-                      ))}
-                    </>
-                  )}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground mt-1">The skill will be executed via the Act Engine when this timer fires.</p>
-            </div>
-          ) : (
-            <div>
-              <Label className="text-sm">Prompt</Label>
-              <Textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder={type === "reminder" ? `What should ${getInstanceName()} do when this reminder fires?` : isAgentType(type) ? `What should ${getInstanceName()} do when this runs?` : "Notes or instructions for this timer"}
-                className="mt-1 min-h-[100px] text-sm font-mono"
-                data-testid="textarea-timer-prompt"
-              />
-            </div>
-          )}
-
-          {type === "reminder" ? (
-            <div>
-              <Label className="text-sm">Fire At</Label>
-              <Input
-                type="datetime-local"
-                value={fireAt}
-                onChange={(e) => setFireAt(e.target.value)}
-                className="mt-1"
-                data-testid="input-reminder-fire-at"
-              />
-              <p className="text-xs text-muted-foreground mt-1">The reminder will fire once at this date and time, then auto-disable.</p>
-            </div>
-          ) : (
-            <ScheduleEditor schedules={schedules} onChange={setSchedules} />
-          )}
-
-          <div>
-            <Label className="text-sm">Timezone</Label>
-            <Input
-              value={timezone}
-              onChange={(e) => setTimezone(e.target.value)}
-              placeholder="America/New_York"
-              className="mt-1"
-              data-testid="input-timer-timezone"
+          </ProfileTreeRow>
+        ) : (
+          <ProfileTreeRow label="Prompt" hasValue={Boolean(prompt.trim())} showEmpty mobileLayout="stacked">
+            <Textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder={type === "reminder" ? `What should ${getInstanceName()} do when this reminder fires?` : isAgentType(type) ? `What should ${getInstanceName()} do when this runs?` : "Notes or instructions for this timer"}
+              className="min-h-20 font-mono text-sm"
+              data-testid="textarea-timer-prompt"
             />
-            <p className="text-xs text-muted-foreground mt-1">IANA timezone (auto-detected from your browser)</p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Switch checked={enabled} onCheckedChange={setEnabled} data-testid="switch-timer-enabled" />
-            <Label className="text-sm">Enabled</Label>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel">Cancel</Button>
-            <Button onClick={handleSubmit} disabled={isPending} data-testid="button-save">
-              {isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {editingTimer ? "Save Changes" : "Create"}
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+          </ProfileTreeRow>
+        )}
+        {type === "reminder" ? (
+          <ProfileTreeRow label="Fire at" hasValue={Boolean(fireAt)} showEmpty mobileLayout="inline">
+            <Input
+              type="datetime-local"
+              value={fireAt}
+              onChange={(e) => setFireAt(e.target.value)}
+              className="h-7 w-56 text-right"
+              data-testid="input-reminder-fire-at"
+            />
+          </ProfileTreeRow>
+        ) : (
+          <ScheduleEditor schedules={schedules} onChange={setSchedules} />
+        )}
+        <ProfileTreeRow label="Timezone" hasValue={Boolean(timezone.trim())} showEmpty mobileLayout="inline">
+          <Input
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+            placeholder="America/New_York"
+            className="h-7 w-56 text-right"
+            data-testid="input-timer-timezone"
+          />
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Enabled" hasValue showEmpty mobileLayout="inline">
+          <Switch checked={enabled} onCheckedChange={setEnabled} data-testid="switch-timer-enabled" />
+        </ProfileTreeRow>
+      </ProfileDetailSection>
+      <div className="flex justify-end gap-2 px-2 py-1">
+        {onCancel ? (
+          <Button variant="ghost" size="sm" onClick={onCancel} data-testid="button-cancel">Cancel</Button>
+        ) : null}
+        <Button size="sm" onClick={handleSubmit} disabled={isPending} data-testid="button-save">
+          {isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          {timer ? "Save" : "Create"}
+        </Button>
+      </div>
+    </div>
   );
 }
 
 export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
   usePageHeader({ title: "Timers", skip: !!embedded });
   const { toast } = useToast();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingTimer, setEditingTimer] = useState<TimerItem | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TimerItem | null>(null);
   const [runNowTarget, setRunNowTarget] = useState<TimerItem | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1156,9 +1057,13 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
     <TimerTreeRow
       key={timer.id}
       timer={timer}
+      open={openId === timer.id}
+      onToggleOpen={() => { setCreating(false); setOpenId(openId === timer.id ? null : timer.id); }}
       globalPaused={globalPaused}
+      skills={allSkills}
+      skillsLoading={skillsLoading}
+      skillSlugToId={skillSlugToId}
       skillNameMap={skillNameMap}
-      onEdit={() => { setEditingTimer(timer); setDialogOpen(true); }}
       onDelete={() => setDeleteTarget(timer)}
       onToggle={(enabled) => toggleMutation.mutate({ id: timer.id, enabled })}
       onRunNow={() => setRunNowTarget(timer)}
@@ -1216,8 +1121,8 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
   const hasSearchResults = recurringTimers.length > 0 || onceTimers.length > 0 || reminders.length > 0;
 
   return (
-    <div className="min-w-0 overflow-x-hidden bg-background p-2 text-foreground">
-      <div className="min-w-0 space-y-1">
+    <div className="min-w-0 overflow-x-hidden bg-background text-foreground">
+      <div className={HIERARCHY_TREE_STACK_CLASS}>
         <HierarchySearchInput
           value={searchQuery}
           onChange={setSearchQuery}
@@ -1226,11 +1131,24 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
           ariaLabel="Search timers"
         />
 
+        {creating ? (
+          <TimerEditor
+            skills={allSkills}
+            skillsLoading={skillsLoading}
+            skillSlugToId={skillSlugToId}
+            skillNameMap={skillNameMap}
+            onCreated={(created) => {
+              setCreating(false);
+              setOpenId(created.id);
+            }}
+            onCancel={() => setCreating(false)}
+          />
+        ) : (
         <div className="flex min-w-0 items-center gap-1">
           <button
             type="button"
-            onClick={() => { setEditingTimer(null); setDialogOpen(true); }}
-            className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
+            onClick={() => { setOpenId(null); setCreating(true); }}
+            className={HIERARCHY_PRIMARY_ACTION_CLASS}
             data-testid="button-create"
           >
             <Plus className="h-3.5 w-3.5 shrink-0" />
@@ -1260,6 +1178,7 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+        )}
 
         {globalPaused && (
           <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-warning" data-testid="banner-global-paused">
@@ -1297,16 +1216,6 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
           </>
         )}
       </div>
-
-      <CreateEditDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        editingTimer={editingTimer}
-        skills={allSkills}
-        skillsLoading={skillsLoading}
-        skillSlugToId={skillSlugToId}
-        skillNameMap={skillNameMap}
-      />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
