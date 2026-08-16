@@ -1564,54 +1564,32 @@ function OpenAISubscriptionSection() {
   return (
     <div className="min-w-0" data-testid="card-openai-subscription">
       <IntegrationTreeSection label="OpenAI Subscription" initialOpen={!connected} icon={<Bot className="h-3.5 w-3.5" />}>
-        <ProfileTreeRow label="Status" icon={connected ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground" />} hasValue showEmpty><span className={connected ? "text-active" : "text-muted-foreground"}>{isLoading ? "Loading" : connected ? "Connected" : "Not connected"}</span></ProfileTreeRow>
         <ProfileTreeRow label="Account" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">{statusData?.email || statusData?.label || "Not connected"}</span></ProfileTreeRow>
-        {!canManageSystemIntegrations && <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">Admin only</span></ProfileTreeRow>}
-        <ProfileTreeRow label="Connection" icon={<Plug className="h-3.5 w-3.5" />} hasValue showEmpty>
-          {isLoading ? (
-            <Skeleton className="h-8 w-28" />
-          ) : connected ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => disconnectMutation.mutate()}
-              disabled={disconnectMutation.isPending || !canManageSystemIntegrations}
-              title={canManageSystemIntegrations ? undefined : "Admin only"}
-              data-testid="button-disconnect-openai-subscription"
-            >
-              {disconnectMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-              Disconnect
-            </Button>
-          ) : (
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleConnect}
-                disabled={isExchanging || !canManageSystemIntegrations}
-                title={canManageSystemIntegrations ? undefined : "Admin only"}
-                data-testid="button-connect-openai-subscription"
-              >
-                {isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3" />}
-                {isExchanging ? "Connecting..." : "Connect ChatGPT Account"}
+        <ProfileTreeRow label="Status" icon={connected ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground" />} hasValue showEmpty>
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            <span className={connected ? "text-active" : "text-muted-foreground"}>{isLoading ? "Loading" : connected ? "Connected" : "Not connected"}</span>
+            {isLoading ? (
+              <Skeleton className="h-5 w-16" />
+            ) : connected ? (
+              <Button variant="outline" size="sm" onClick={() => disconnectMutation.mutate()} disabled={disconnectMutation.isPending || !canManageSystemIntegrations} title={canManageSystemIntegrations ? undefined : "Admin only"} data-testid="button-disconnect-openai-subscription">
+                {disconnectMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                Disconnect
               </Button>
-              {showUrlPaste && (
-                <>
-                  <Input
-                    value={pasteUrl}
-                    onChange={(e) => setPasteUrl(e.target.value)}
-                    placeholder="Paste the callback URL here..."
-                    className="min-w-[14rem] flex-1 text-xs"
-                    data-testid="input-oauth-callback-url"
-                  />
-                  <Button size="sm" onClick={handlePasteSubmit} disabled={!pasteUrl.trim() || isExchanging} data-testid="button-submit-oauth-url">
-                    {isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit"}
-                  </Button>
-                </>
-              )}
-            </div>
-          )}
+            ) : (
+              <Button variant="outline" size="sm" onClick={handleConnect} disabled={isExchanging || !canManageSystemIntegrations} title={canManageSystemIntegrations ? undefined : "Admin only"} data-testid="button-connect-openai-subscription">
+                {isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3" />}
+                {isExchanging ? "Connecting..." : "Connect"}
+              </Button>
+            )}
+            {!connected && showUrlPaste && (
+              <>
+                <Input value={pasteUrl} onChange={(e) => setPasteUrl(e.target.value)} placeholder="Paste callback URL" className="min-w-[10rem] flex-1 text-xs" data-testid="input-oauth-callback-url" />
+                <Button size="sm" onClick={handlePasteSubmit} disabled={!pasteUrl.trim() || isExchanging} data-testid="button-submit-oauth-url">{isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit"}</Button>
+              </>
+            )}
+          </div>
         </ProfileTreeRow>
+        {!canManageSystemIntegrations && <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">Admin only</span></ProfileTreeRow>}
       </IntegrationTreeSection>
     </div>
   );
@@ -1726,91 +1704,33 @@ function GrokSubscriptionSection() {
   return (
     <div className="min-w-0" data-testid="card-grok-subscription">
       <IntegrationTreeSection label="Grok Subscription" initialOpen={!connected} icon={<Bot className="h-3.5 w-3.5" />}>
-        <ProfileTreeRow label="Status" icon={connected ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground" />} hasValue showEmpty><span className={connected ? "text-active" : "text-muted-foreground"}>{isLoading ? "Loading" : connected ? "Connected" : "Not connected"}</span></ProfileTreeRow>
         <ProfileTreeRow label="Account" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">{statusData?.email || statusData?.label || "Not connected"}</span></ProfileTreeRow>
-        {!canManageSystemIntegrations && <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">Admin only</span></ProfileTreeRow>}
-        <ProfileTreeRow label="Connection" icon={<Plug className="h-3.5 w-3.5" />} hasValue showEmpty>
-
-        {isLoading ? (
-          <Skeleton className="h-10 w-full" />
-        ) : connected ? (
-          <div className="flex items-center justify-between gap-3 p-3 rounded-md border border-primary/30 bg-primary/5">
-            <div className="flex items-center gap-2 min-w-0">
-              <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
-              <div className="min-w-0">
-                <p className="text-sm font-medium truncate" data-testid="text-grok-subscription-email">
-                  {statusData?.email || statusData?.label || "Grok Account"}
-                </p>
-                <p className="text-xs text-muted-foreground">Subscription models available in tier selectors</p>
-              </div>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => disconnectMutation.mutate()}
-              disabled={disconnectMutation.isPending || !canManageSystemIntegrations}
-              title={canManageSystemIntegrations ? undefined : "Admin only"}
-              data-testid="button-disconnect-grok-subscription"
-            >
-              {disconnectMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-              Disconnect
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <Button
-              variant="outline"
-              onClick={handleConnect}
-              disabled={isExchanging || !canManageSystemIntegrations}
-              title={canManageSystemIntegrations ? undefined : "Admin only"}
-              data-testid="button-connect-grok-subscription"
-            >
-              {isExchanging ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
-              {isExchanging ? "Connecting..." : "Connect Grok Account"}
-            </Button>
-            {showUrlPaste && (
-              <div className="space-y-2 p-3 rounded-md border bg-muted/30">
-                {authUrl && (
-                  <p className="text-xs text-muted-foreground">
-                    If the popup didn't open,{" "}
-                    <a
-                      href={authUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="underline font-medium text-foreground"
-                      data-testid="link-grok-oauth-authorize"
-                    >
-                      open the xAI authorization page
-                    </a>
-                    .
-                  </p>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  After you approve access, xAI shows an authorization code — paste it below. (If your browser instead lands on a 127.0.0.1 "can't be reached" page, paste that full URL; either works.)
-                </p>
-                <div className="flex gap-2">
-                  <Input
-                    value={pasteUrl}
-                    onChange={(e) => setPasteUrl(e.target.value)}
-                    placeholder="Paste the authorization code..."
-                    className="text-xs"
-                    data-testid="input-grok-oauth-callback-url"
-                  />
-                  <Button
-                    size="sm"
-                    onClick={handlePasteSubmit}
-                    disabled={!pasteUrl.trim() || isExchanging}
-                    data-testid="button-submit-grok-oauth-url"
-                  >
-                    {isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit"}
-                  </Button>
-                </div>
-              </div>
+        <ProfileTreeRow label="Status" icon={connected ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground" />} hasValue showEmpty>
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            <span className={connected ? "text-active" : "text-muted-foreground"}>{isLoading ? "Loading" : connected ? "Connected" : "Not connected"}</span>
+            {isLoading ? (
+              <Skeleton className="h-5 w-16" />
+            ) : connected ? (
+              <Button variant="outline" size="sm" onClick={() => disconnectMutation.mutate()} disabled={disconnectMutation.isPending || !canManageSystemIntegrations} title={canManageSystemIntegrations ? undefined : "Admin only"} data-testid="button-disconnect-grok-subscription">
+                {disconnectMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                Disconnect
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" onClick={handleConnect} disabled={isExchanging || !canManageSystemIntegrations} title={canManageSystemIntegrations ? undefined : "Admin only"} data-testid="button-connect-grok-subscription">
+                {isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3" />}
+                {isExchanging ? "Connecting..." : "Connect"}
+              </Button>
+            )}
+            {!connected && showUrlPaste && (
+              <>
+                <Input value={pasteUrl} onChange={(e) => setPasteUrl(e.target.value)} placeholder="Paste code" className="min-w-[10rem] flex-1 text-xs" data-testid="input-grok-oauth-callback-url" />
+                <Button size="sm" onClick={handlePasteSubmit} disabled={!pasteUrl.trim() || isExchanging} data-testid="button-submit-grok-oauth-url">{isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit"}</Button>
+                {authUrl && <a href={authUrl} target="_blank" rel="noreferrer" className="text-xs text-cta underline hover:text-active" data-testid="link-grok-oauth-authorize">Authorize</a>}
+              </>
             )}
           </div>
-        )}
-
         </ProfileTreeRow>
+        {!canManageSystemIntegrations && <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">Admin only</span></ProfileTreeRow>}
       </IntegrationTreeSection>
     </div>
   );
@@ -3292,7 +3212,7 @@ function IntegrationTreeSection({
         {actions}
       </div>
       <CollapsibleContent>
-        <div className="mt-0 space-y-0">{children}</div>
+        <div className="mt-0 space-y-1">{children}</div>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -5798,7 +5718,7 @@ function TierSettingSelect<T extends string>({
 }: {
   label: string; value: T | undefined; options: readonly T[]; disabled?: boolean; onChange: (value: T) => void;
 }) {
-  return <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+  return <div className="grid grid-cols-[8rem_1fr] items-center gap-2">
     <Label className="text-xs text-muted-foreground">{label}</Label>
     <Select value={value} disabled={disabled} onValueChange={(next) => onChange(next as T)}>
       <SelectTrigger className="h-8 font-mono text-xs"><SelectValue /></SelectTrigger>
@@ -5847,11 +5767,6 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
           const selectedLabel = model?.name ?? config.model;
           const supported = isOpenAI ? supportedOpenAISettings(model, connector.provider) : null;
           const supportsThinking = isClaude && model?.thinkingLevel !== "none" && model !== undefined;
-          const contextMeta = isClaude
-            ? `${formatTokenCount(model?.contextWindow)} · ${model?.thinkingDescription ?? "provider default"}`
-            : isGrok
-              ? `${formatTokenCount(model?.contextWindow)} · max ${formatTokenCount(model?.maxTokens)}`
-              : `in ${formatModelPrice(model?.cost?.input)} · out ${formatModelPrice(model?.cost?.output)} · ${formatTokenCount(model?.contextWindow)}`;
 
           return (
             <ProfileTreeRow
@@ -5895,9 +5810,6 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
                       }
                     }}
                   />
-                  <ProfileTreeRow label="Context" icon={<Activity className="h-3.5 w-3.5" />} hasValue showEmpty>
-                    <span className="truncate text-muted-foreground">{contextMeta}</span>
-                  </ProfileTreeRow>
                   {isClaude && (
                     <>
                       <TierSettingSelect
@@ -5914,7 +5826,7 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
                         disabled={mutation.isPending || !supportsThinking}
                         onChange={(value) => updateTier(tier, { thinkingMode: value === "activity-default" ? undefined : value, effort: value === "disabled" ? undefined : config.effort })}
                       />
-                      <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+                      <div className="grid grid-cols-[8rem_1fr] items-center gap-2">
                         <Label className="text-xs text-muted-foreground">Max turns</Label>
                         <Input
                           key={`${tier}-${config.maxTurns ?? "default"}`}
@@ -5933,7 +5845,7 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
                           className="h-8 font-mono text-xs"
                         />
                       </div>
-                      <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+                      <div className="grid grid-cols-[8rem_1fr] items-center gap-2">
                         <Label className="text-xs text-muted-foreground">Max output</Label>
                         <Input
                           key={`${tier}-${config.maxOutputTokens ?? "default"}`}
@@ -5969,7 +5881,7 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
                   {supported?.verbosity && <TierSettingSelect label="Verbosity" value={config.verbosity ?? "medium"} options={VERBOSITIES} disabled={mutation.isPending} onChange={(value) => updateTier(tier, { verbosity: value })} />}
                   {supported?.serviceTier && <TierSettingSelect label="Service tier" value={config.serviceTier ?? "auto"} options={supported.serviceTierOptions} disabled={mutation.isPending} onChange={(value) => updateTier(tier, { serviceTier: value })} />}
                   {supported?.maxOutputTokens && (
-                    <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+                    <div className="grid grid-cols-[8rem_1fr] items-center gap-2">
                       <Label className="text-xs text-muted-foreground">Max output</Label>
                       <Input type="number" min={1} max={model?.maxTokens} value={config.maxOutputTokens ?? ""} disabled={mutation.isPending} onChange={(event) => { const value = Number.parseInt(event.target.value, 10); if (Number.isFinite(value) && value > 0) updateTier(tier, { maxOutputTokens: model?.maxTokens ? Math.min(value, model.maxTokens) : value }); }} className="h-8 font-mono text-xs" />
                     </div>
