@@ -6,11 +6,9 @@ import { createAddressLink, listAddressLinks, listReferenceOccurrences, retireAd
 import { getVisibleProduct, getWritableProduct } from "./platforms/platform-access";
 import { getSessionsByArtifact } from "./session-artifacts";
 import { chatFileStorage } from "./chat-file-storage";
+import { FEATURE_STAGES, FEATURE_STATUSES, type FeatureStage, type FeatureStatus } from "@shared/feature-pipeline";
 
-export const FEATURE_STAGES = ["idea", "spec", "develop", "test", "calibrate", "maintain", "deprecate"] as const;
-export const FEATURE_STATUSES = ["ready", "in_progress", "needs_review"] as const;
-type FeatureStage = typeof FEATURE_STAGES[number];
-type FeatureStatus = typeof FEATURE_STATUSES[number];
+export { FEATURE_STAGES, FEATURE_STATUSES };
 
 const scopeColumns = { scope: sql`scope`, ownerUserId: sql`owner_user_id`, accountId: sql`account_id` };
 function principal() { return requireCurrentPrincipal(); }
