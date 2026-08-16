@@ -18,8 +18,8 @@
 //
 // Fail-closed: if the classification call or parse fails, a preselected
 // session persona is preserved; otherwise the session stays untitled and
-// unbound so the next turn retries. A title without a selectable persona
-// is not orientation.
+// unbound so the next turn retries. A conversation name without a
+// selectable persona is not orientation. Slack locators count as names.
 import { createLogger } from "./log";
 import { chatCompletion } from "./model-client";
 import { resolveModelCandidates, type ModelRoutingDecision } from "./model-routing";
