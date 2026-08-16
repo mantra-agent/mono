@@ -261,9 +261,27 @@ export class FileTimerStorage {
 
   async createManagedUser(input: InsertTimer, systemKey: string, principal: Principal): Promise<Timer> {
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) throw new Error("Managed user Timer creation requires an owning user principal");
-    const [row] = await db.insert(timers).values(this.valuesFromInput(input, userTimerOwnership(principal), systemKey)).returning();
+    // Replayable insert: concurrent reconciles (e.g. overlapping rolling-deploy
+    // processes) can both read-miss and insert the same managed Timer, colliding
+    // on the partial unique index idx_timers_system_key_user_unique. ON CONFLICT
+    // DO NOTHING makes the write a no-op on the second writer; we then adopt the
+    // existing row so running reconcile twice is indistinguishable from once.
+    const [row] = await db.insert(timers)
+      .values(this.valuesFromInput(input, userTimerOwnership(principal), systemKey))
+      .onConflictDoNothing({
+        target: [timers.ownerUserId, timers.systemKey],
+        targetWhere: sql`${timers.scope} = 'user' AND ${timers.systemKey} IS NOT NULL`,
+      })
+      .returning();
     this.invalidateCache();
-    return rowToTimer(row);
+    if (row) return rowToTimer(row);
+    const [existing] = await db.select().from(timers).where(and(
+      eq(timers.scope, "user"),
+      eq(timers.ownerUserId, principal.userId),
+      eq(timers.systemKey, systemKey),
+    )).limit(1);
+    if (!existing) throw new Error(`Managed user Timer create conflicted but no existing row for systemKey=${systemKey} owner=${principal.userId}`);
+    return rowToTimer(existing);
   }
 
   async createSystem(input: InsertTimer, systemKey: string): Promise<Timer> {

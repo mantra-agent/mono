@@ -554,21 +554,29 @@ export class SystemTimerRegistry {
   private async reconcileKnownManagedUserOwners(): Promise<void> {
     const owners = await timerStorage.getManagedUserOwners();
     for (const owner of owners) {
-      const user = await storage.getUser(owner.ownerUserId);
-      if (!user) {
-        log.warn(`Managed Timer owner missing userId=${owner.ownerUserId}`);
-        continue;
+      // Isolate each owner: one user's reconcile failure must degrade that user
+      // only, never propagate up to reconcile()/TimerScheduler.start() and take
+      // the scheduler down for everyone. Fail loudly per-owner, continue the loop.
+      try {
+        const user = await storage.getUser(owner.ownerUserId);
+        if (!user) {
+          log.warn(`Managed Timer owner missing userId=${owner.ownerUserId}`);
+          continue;
+        }
+        const foundation = await tryResolveUserIdentityFoundation(user.id);
+        const principal = createUserPrincipalFromUser(
+          user,
+          owner.accountId,
+          foundation?.accountId === owner.accountId ? foundation.instanceId : null,
+        );
+        principal.permissions = await getUserEffectivePermissions(user.id);
+        const { modLifecycleService } = await import("./mods/mod-lifecycle-service");
+        await runWithPrincipal(principal, () => modLifecycleService.ensureWellnessInstalled(principal));
+        await this.reconcileUserTimers(principal);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log.error(`Managed user Timer reconcile failed for owner=${owner.ownerUserId}; degrading and continuing`, message);
       }
-      const foundation = await tryResolveUserIdentityFoundation(user.id);
-      const principal = createUserPrincipalFromUser(
-        user,
-        owner.accountId,
-        foundation?.accountId === owner.accountId ? foundation.instanceId : null,
-      );
-      principal.permissions = await getUserEffectivePermissions(user.id);
-      const { modLifecycleService } = await import("./mods/mod-lifecycle-service");
-      await runWithPrincipal(principal, () => modLifecycleService.ensureWellnessInstalled(principal));
-      await this.reconcileUserTimers(principal);
     }
   }
 
