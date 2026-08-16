@@ -1952,7 +1952,6 @@ class PersonaStorageClass {
     const linkedOrphans = await this.linkOrphanUserCopiesToSeeds();
     this.invalidateCache();
     await this.updateSeedOverlays();
-    await this.syncSelectablePersonaPayloads();
     await this.initializeRevisionLineage();
     const advancedSeeds = await this.advanceSeedRevisions();
     const healedFollowers = await this.healLeftoverFollowers();
@@ -2034,34 +2033,6 @@ class PersonaStorageClass {
       .where(inArray(personas.id, defaultIds));
     await db.delete(personas).where(inArray(personas.id, defaultIds));
     log.log(`retireDefaultPersona: removed ${defaultIds.length} Default persona rows`);
-  }
-
-  /**
-   * Descriptions and group maps are the chooser surface. Write the locked
-   * Use-when sentences and PERSONA_CONTEXT_MAPS onto every same-name row,
-   * including live user copies, so Router and re-orient cannot classify from
-   * drifted leftovers.
-   */
-  private async syncSelectablePersonaPayloads(): Promise<void> {
-    let updated = 0;
-    for (const seed of SEED_PERSONAS) {
-      if ((seed as { isSystem?: boolean }).isSystem) continue;
-      const map = PERSONA_CONTEXT_MAPS[seed.name.toLowerCase()] ?? {};
-      const result = await db
-        .update(personas)
-        .set({
-          description: seed.description,
-          contextSections: { ...map },
-          updatedAt: new Date(),
-        })
-        .where(sql`LOWER(${personas.name}) = ${seed.name.toLowerCase()}`)
-        .returning({ id: personas.id });
-      updated += result.length;
-    }
-    if (updated > 0) {
-      this.invalidateCache();
-      log.log(`syncSelectablePersonaPayloads: updated ${updated} persona rows`);
-    }
   }
 
   /** Remove malformed scoped seed rows after canonical global rows exist. */
