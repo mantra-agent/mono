@@ -81,22 +81,8 @@ export function ProfileTreeRow({
         : trailingCount === 1
           ? "grid-cols-[minmax(0,1fr)_auto] gap-y-0"
           : "grid-cols-[minmax(0,1fr)] gap-y-0";
-  const stackedValueGrid =
-    trailingCount === 3
-      ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,max-content)_auto_auto_auto] sm:gap-y-1"
-      : trailingCount === 2
-        ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,max-content)_auto_auto] sm:gap-y-1"
-        : trailingCount === 1
-          ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,max-content)_auto] sm:gap-y-1"
-          : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,max-content)] sm:gap-y-1";
-  const stackedNoValueGrid =
-    trailingCount === 3
-      ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:gap-y-1"
-      : trailingCount === 2
-        ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:gap-y-1"
-        : trailingCount === 1
-          ? "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-y-1"
-          : "grid-cols-[minmax(0,1fr)] gap-y-1 sm:grid-cols-[minmax(0,1fr)] sm:gap-y-1";
+  const stackedValueGrid = inlineValueGrid;
+  const stackedNoValueGrid = inlineNoValueGrid;
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
@@ -145,9 +131,7 @@ export function ProfileTreeRow({
             <div
               className={cn(
                 "flex min-w-0 max-w-full items-center text-xs leading-relaxed",
-                mobileLayout === "inline"
-                  ? "col-span-1 justify-self-end justify-end overflow-hidden pl-0 text-right"
-                  : "col-span-2 justify-start pl-6 text-left",
+                "col-span-1 min-w-0 justify-self-end justify-end overflow-hidden pl-0 text-right",
                 valueLayout === "compact"
                   ? "sm:col-span-1 sm:w-auto sm:justify-end sm:overflow-visible sm:pl-0 sm:text-right"
                   : "sm:col-span-1 sm:w-auto sm:justify-end sm:overflow-visible sm:pl-0 sm:text-right",
@@ -157,7 +141,7 @@ export function ProfileTreeRow({
                 "[&_[role=combobox]]:h-5 [&_[role=combobox]]:w-auto [&_[role=combobox]]:min-w-0 [&_[role=combobox]]:max-w-full [&_[role=combobox]]:justify-end [&_[role=combobox]]:bg-muted/50 [&_[role=combobox]]:px-1.5 [&_[role=combobox]]:py-0 [&_[role=combobox]]:text-right [&_[role=combobox]]:text-xs [&_[role=combobox]>span]:text-right",
                 mobileLayout === "inline"
                   ? "[&_button]:min-h-5 [&_button]:px-1.5 [&_button]:text-xs"
-                  : "[&_button]:min-h-11 [&_button]:px-2 [&_button]:text-xs sm:[&_button]:min-h-5 sm:[&_button]:px-1.5",
+                  : "[&_button]:min-h-5 [&_button]:px-1.5 [&_button]:text-xs",
               )}
             >
               {children}
