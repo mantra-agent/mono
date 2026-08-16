@@ -1,4 +1,5 @@
 // Use createLogger for logging ONLY
+import { randomUUID } from "crypto";
 import { db } from "./db";
 import { pool } from "./db";
 import { eq, and, desc, asc, like, inArray } from "drizzle-orm";
@@ -160,7 +161,11 @@ export class StrategyStorage {
 
   async createStrategy(data: InsertStrategy): Promise<Strategy> {
     return autoHeal(async () => {
+      // Explicit id: live strategy_goals historically lacked a column DEFAULT, so
+      // Drizzle's DEFAULT insert path wrote null and failed 23502. Migration also
+      // converges the DB default to match the Drizzle schema.
       const [strategy] = await db.insert(strategies).values({
+        id: randomUUID(),
         ...data,
         ...ownedInsertValues(requireCurrentUserPrincipal(), strategyScopeColumns),
       }).returning();
@@ -879,6 +884,11 @@ export const strategyStorage = new StrategyStorage();
 
 export async function migrateStrategySchema(): Promise<void> {
   const migrations = [
+    // Converge defaults declared in shared/models/strategy.ts. The live table was
+    // created without them; Drizzle inserts DEFAULT and Postgres wrote null id.
+    `ALTER TABLE strategy_goals ALTER COLUMN id SET DEFAULT gen_random_uuid()`,
+    `ALTER TABLE strategy_goals ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP`,
+    `ALTER TABLE strategy_goals ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP`,
     `ALTER TABLE strategy_goals ADD COLUMN IF NOT EXISTS archived boolean NOT NULL DEFAULT false`,
     `ALTER TABLE strategy_goals ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'user'`,
     `ALTER TABLE strategy_goals ADD COLUMN IF NOT EXISTS owner_user_id text`,
