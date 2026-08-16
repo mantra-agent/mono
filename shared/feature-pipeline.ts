@@ -3,8 +3,9 @@
  *
  * Feature stages are the product lifecycle. Build workflow stages are the
  * software-delivery analog. This module is the single source for both the
- * Feature row launchers and the `feature-pipeline` Skill: stage identity,
- * seat, purpose, evidence, and pass standard. Call sites compose Feature
+ * Feature row launcher and the `feature-pipeline` Skill: stage identity,
+ * seat, purpose, evidence, and pass standard. The row exposes only the
+ * action for the Feature's current stage. Call sites compose Feature
  * *context*; they do not invent procedure.
  */
 
