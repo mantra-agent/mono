@@ -14,7 +14,6 @@ import {
   combineWithWritableScope,
   ownedInsertValues,
 } from "../scoped-storage";
-import { PERSONA_CONTEXT_MAPS } from "../../shared/persona-context";
 
 const log = createLogger("PersonaStorage");
 // Personas are Instance mind configuration (dual-write with owner_user_id created_by),
@@ -157,25 +156,6 @@ function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
   };
 }
 
-const PERSONA_SEMANTIC_TIERS: Record<string, SemanticTier> = {
-  Strategist: "max",
-  Architect: "max",
-  Executive: "high",
-  Engineer: "high",
-  Visionary: "high",
-  Coach: "high",
-  Companion: "fast",
-  Investigator: "high",
-  Advocate: "high",
-  Producer: "high",
-  Router: "fast",
-  Root: "balanced",
-};
-
-function semanticTierForPersona(name: string): SemanticTier {
-  return PERSONA_SEMANTIC_TIERS[name] ?? "balanced";
-}
-
 const SEED_PERSONAS = [
   {
     name: "Root",
@@ -204,6 +184,7 @@ const SEED_PERSONAS = [
     ].join("\n"),
     expressionTags: [] as string[],
     cognitiveOverrides: {},
+    semanticTier: "balanced" as SemanticTier,
     contextSections: {
       "world_model.people.self.persona": true,
       "world_model.people.self.chat_instructions": true,
@@ -247,6 +228,8 @@ const SEED_PERSONAS = [
     ].join("\n"),
     expressionTags: [] as string[],
     cognitiveOverrides: {},
+    semanticTier: "fast" as SemanticTier,
+    contextSections: {} as Record<string, boolean>,
     isDefault: false,
     isActive: false,
     isSystem: true,
@@ -312,6 +295,8 @@ const SEED_PERSONAS = [
     ].join("\n"),
     expressionTags: ["gravitas", "pause", "calm"],
     cognitiveOverrides: { memoryGraphTokenBudget: 6000 },
+    semanticTier: "max" as SemanticTier,
+    contextSections: { principles: true, schedule: true } as Record<string, boolean>,
     isDefault: false,
     isActive: false,
     sortOrder: 1,
@@ -375,6 +360,13 @@ const SEED_PERSONAS = [
     ].join("\n"),
     expressionTags: ["curious", "calm", "pause"],
     cognitiveOverrides: { memoryGraphTokenBudget: 4000 },
+    semanticTier: "high" as SemanticTier,
+    contextSections: {
+      emotions: true,
+      schedule: true,
+      people: true,
+      principles: true,
+    } as Record<string, boolean>,
     isDefault: false,
     isActive: false,
     sortOrder: 2,
@@ -453,6 +445,8 @@ const SEED_PERSONAS = [
     ].join("\n"),
     expressionTags: ["gravitas", "curious", "pause"],
     cognitiveOverrides: { memoryGraphTokenBudget: 6000 },
+    semanticTier: "max" as SemanticTier,
+    contextSections: { principles: true, development: true } as Record<string, boolean>,
     isDefault: false,
     isActive: false,
     sortOrder: 3,
@@ -513,6 +507,8 @@ const SEED_PERSONAS = [
     ].join("\n"),
     expressionTags: ["calm", "curious"],
     cognitiveOverrides: { memoryGraphTokenBudget: 5000 },
+    semanticTier: "high" as SemanticTier,
+    contextSections: { development: true } as Record<string, boolean>,
     isDefault: false,
     isActive: false,
     sortOrder: 4,
@@ -577,6 +573,8 @@ const SEED_PERSONAS = [
     ].join("\n"),
     expressionTags: ["gravitas", "calm", "pause"],
     cognitiveOverrides: { memoryGraphTokenBudget: 4000 },
+    semanticTier: "high" as SemanticTier,
+    contextSections: { schedule: true } as Record<string, boolean>,
     isDefault: false,
     isActive: false,
     sortOrder: 5,
@@ -636,6 +634,8 @@ const SEED_PERSONAS = [
     ].join("\n"),
     expressionTags: ["curious", "gravitas", "excited"],
     cognitiveOverrides: { memoryGraphTokenBudget: 8000 },
+    semanticTier: "high" as SemanticTier,
+    contextSections: {} as Record<string, boolean>,
     isDefault: false,
     isActive: false,
     sortOrder: 6,
@@ -701,6 +701,8 @@ const SEED_PERSONAS = [
     ].join("\n"),
     expressionTags: ["calm", "whispers", "sighs"],
     cognitiveOverrides: { memoryGraphTokenBudget: 5000 },
+    semanticTier: "fast" as SemanticTier,
+    contextSections: { emotions: true, schedule: true, people: true } as Record<string, boolean>,
     isDefault: false,
     isActive: false,
     sortOrder: 7,
@@ -763,6 +765,8 @@ const SEED_PERSONAS = [
     ].join("\n"),
     expressionTags: ["curious", "gravitas"],
     cognitiveOverrides: { memoryGraphTokenBudget: 6000 },
+    semanticTier: "high" as SemanticTier,
+    contextSections: { people: true, schedule: true } as Record<string, boolean>,
     isDefault: false,
     isActive: false,
     sortOrder: 8,
@@ -827,6 +831,8 @@ const SEED_PERSONAS = [
     ].join("\n"),
     expressionTags: ["curious", "gravitas"],
     cognitiveOverrides: { memoryGraphTokenBudget: 5000 },
+    semanticTier: "high" as SemanticTier,
+    contextSections: { people: true, emotions: true } as Record<string, boolean>,
     isDefault: false,
     isActive: false,
     sortOrder: 9,
@@ -902,6 +908,8 @@ const SEED_PERSONAS = [
     ].join("\n"),
     expressionTags: ["calm", "gravitas"],
     cognitiveOverrides: { memoryGraphTokenBudget: 4000 },
+    semanticTier: "high" as SemanticTier,
+    contextSections: { schedule: true } as Record<string, boolean>,
     isDefault: false,
     isActive: false,
     sortOrder: 10,
@@ -1936,8 +1944,8 @@ class PersonaStorageClass {
           promptOverlay: seed.promptOverlay,
           expressionTags: normalizeExpressionTags(seed.expressionTags),
           cognitiveOverrides: seed.cognitiveOverrides,
-          semanticTier: semanticTierForPersona(seed.name),
-          contextSections: {},
+          semanticTier: seed.semanticTier ?? "balanced",
+          contextSections: seed.contextSections ?? {},
           toolBundle: [],
           isDefault: seed.isDefault,
           isActive: seed.isActive,
@@ -1950,28 +1958,17 @@ class PersonaStorageClass {
         })
         .onConflictDoNothing();
     }
-    const rootSeed = SEED_PERSONAS.find((seed) => seed.name === "Root") as { contextSections?: Record<string, boolean> } | undefined;
-    if (rootSeed?.contextSections) {
-      await db
-        .update(personas)
-        .set({ contextSections: rootSeed.contextSections, updatedAt: new Date() })
-        .where(and(
-          eq(personas.scope, "global"),
-          eq(personas.source, "seed"),
-          eq(personas.isSystem, true),
-          sql`LOWER(${personas.name}) = 'root'`,
-        ));
-    }
     // Group IDs only. Root owns History/Memory/Current Session separately.
-    // Empty object = Root-only optional context. Shared map is the SSOT.
-    for (const [name, contextSections] of Object.entries(PERSONA_CONTEXT_MAPS)) {
+    // Empty object = Root-only optional context. The seed row is the SSOT.
+    for (const seed of SEED_PERSONAS) {
+      if (!seed.contextSections) continue;
       await db
         .update(personas)
-        .set({ contextSections: { ...contextSections }, updatedAt: new Date() })
+        .set({ contextSections: { ...seed.contextSections }, updatedAt: new Date() })
         .where(and(
           eq(personas.scope, "global"),
           eq(personas.source, "seed"),
-          sql`LOWER(${personas.name}) = ${name}`,
+          sql`LOWER(${personas.name}) = ${seed.name.toLowerCase()}`,
         ));
     }
     // onConflictDoNothing still advances the serial sequence on failed attempts
@@ -2377,7 +2374,7 @@ class PersonaStorageClass {
         seed.promptOverlay &&
         (!existing.promptOverlay ||
           existing.promptOverlay !== seed.promptOverlay);
-      const expectedTier = semanticTierForPersona(seed.name);
+      const expectedTier = seed.semanticTier ?? "balanced";
       const needsTierUpdate = existing.semanticTier !== expectedTier;
       const expectedIsSystem = (seed as { isSystem?: boolean }).isSystem ?? false;
       const needsSystemUpdate = existing.isSystem !== expectedIsSystem;
