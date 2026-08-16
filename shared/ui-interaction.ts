@@ -31,7 +31,6 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.agendas.open": { href: "/agendas", description: "Build reusable agendas for your sessions." },
   "navigation.skills.open": { href: "/skills", description: "Run and manage your reusable skills." },
   "navigation.plans.open": { href: "/brain?tab=plans", description: "Track your multi-step plans." },
-  "navigation.workflows.open": { href: "/workflows", description: "Run and manage your workflows." },
   "navigation.hooks.open": { href: "/system?tab=hooks", permission: "system:read", description: "Automate actions when events fire." },
   "navigation.timers.open": { href: "/system?tab=timers", permission: "system:read", description: "Schedule reminders and recurring runs." },
   "navigation.orientation.open": { href: "/orientation", description: "Shape how your agent understands your world." },

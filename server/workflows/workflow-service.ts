@@ -741,8 +741,8 @@ function acceptanceStageContext(detail: WorkflowRunDetail): Record<string, unkno
       requiredGates: ACCEPTANCE_GATE_KEYS,
       targetUrl: publicUrl,
       deploymentStatus: truth?.deployment?.latest ? String(truth.deployment.latest.status || "unknown") : null,
-      routePathDefault: "/workflows",
-      routePathSelection: "Prefer a route explicitly named in scope or changed files. Otherwise load /workflows because this workflow system is the product surface under acceptance.",
+      routePathDefault: "/home",
+      routePathSelection: "Prefer a route explicitly named in scope or changed files. Otherwise load /home. The Workflows screen is deprecated and is not a product surface.",
       logPolicy: "Check structured client and server logs after browser load. Treat relevant error-level entries as gate failures unless clearly unrelated.",
       smokePolicy: "Attempt the smallest safe feature path. If no non-destructive path exists, mark optional smoke attempted=false with reason rather than blocking.",
       failurePacketRequiredOnFail: ["failedGates", "targetUrl", "routePath", "deployment", "screenshot", "clientLogErrors", "serverLogErrors", "nextSuggestedFix"],
@@ -2473,7 +2473,7 @@ export async function captureAcceptanceEvidence(input: { workflowRunId: string; 
   const acceptanceConfig = lifecycleAcceptanceConfig(lifecycleSnapshot);
   const acceptanceTarget = lifecycleAcceptanceTarget(lifecycleSnapshot);
   const targetUrl = configuredTargetUrl(acceptanceTarget, truth);
-  const routePath = safeRoutePath(input.routePath || acceptanceTarget.routePath || acceptanceTarget.screenshotRoutePath, "/workflows");
+  const routePath = safeRoutePath(input.routePath || acceptanceTarget.routePath || acceptanceTarget.screenshotRoutePath, "/home");
   const healthCheckPath = safeRoutePath(acceptanceTarget.healthCheckPath, "/");
   const acceptanceExplicitRouteDisabled =
     process.env.WORKFLOW_ACCEPTANCE_EXPLICIT_ROUTE_DISABLED === "true" ||

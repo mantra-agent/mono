@@ -106,7 +106,6 @@ const FinancePage = lazyWithRetry(() => import("@/pages/finance"));
 const CreatePage = lazyWithRetry(() => import("@/pages/create-page"));
 const ProfilePage = lazyWithRetry(() => import("@/pages/profile"));
 const PipelinesPage = lazyWithRetry(() => import("@/pages/pipelines"));
-const WorkflowsPage = lazyWithRetry(() => import("@/pages/workflows"));
 const SkillsPage = lazyWithRetry(() => import("@/pages/skills"));
 const AgendasPage = lazyWithRetry(() => import("@/pages/agendas"));
 const ZeroPage = lazyWithRetry(() => import("@/pages/zero"));
@@ -374,8 +373,8 @@ function Router() {
         <Route path="/chat">{() => <Redirect to={preserveCurrentQuery("/session")} />}</Route>
         <Route path="/wellness">{() => <RequireComposedRoute routeId="wellness.route.wellness"><WellnessPage /></RequireComposedRoute>}</Route>
         <Route path="/profile" component={ProfilePage} />
-        <Route path="/workflows/:id" component={WorkflowsPage} />
-        <Route path="/workflows" component={WorkflowsPage} />
+        <Route path="/workflows/:id">{() => <Redirect to="/home" />}</Route>
+        <Route path="/workflows">{() => <Redirect to="/home" />}</Route>
         <Route path="/pipelines">{() => <RequireComposedRoute routeId="network.route.pipelines"><PipelinesPage /></RequireComposedRoute>}</Route>
         <Route path="/zero" component={ZeroPage} />
         <Route path="/interface-preview" component={InterfacePreviewPage} />

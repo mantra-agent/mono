@@ -1468,7 +1468,7 @@ function ConfigureLifecycleSheet({
 
 function WorkflowRunRow({ run, compact = false }: { run: WorkflowRunSummary; compact?: boolean }) {
   return (
-    <a href={`/workflows/${run.id}`} className={cn("block rounded-lg border border-border/50 bg-background/50 p-3 transition-colors hover:bg-accent/40", compact && "p-2")}>
+    <div className={cn("rounded-lg border border-border/50 bg-background/50 p-3", compact && "p-2")}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium text-foreground">{run.title}</div>
@@ -1479,7 +1479,7 @@ function WorkflowRunRow({ run, compact = false }: { run: WorkflowRunSummary; com
         </div>
         <Badge variant="outline" className={cn("shrink-0 text-xs", workflowBadgeClass(run.status))}>{humanize(run.status)}</Badge>
       </div>
-    </a>
+    </div>
   );
 }
 
@@ -1641,15 +1641,6 @@ function BuildLifecycleCard({ environmentId, details }: { environmentId: number;
             ) : null}
 
             <div className="flex flex-wrap items-center gap-2">
-              {active ? (
-                <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
-                  <a href={`/workflows/${active.id}`}><Waypoints className="h-3.5 w-3.5" />Open workflow</a>
-                </Button>
-              ) : latestCompleted ? (
-                <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
-                  <a href={`/workflows/${latestCompleted.id}`}><Waypoints className="h-3.5 w-3.5" />Open latest workflow</a>
-                </Button>
-              ) : null}
               {(data?.hosting?.publicUrl || data?.hosting?.staticUrl) ? (
                 <Button asChild variant="ghost" size="sm" className="h-8 gap-1.5">
                   <a href={(data.hosting.publicUrl || data.hosting.staticUrl || "").startsWith("http") ? (data.hosting.publicUrl || data.hosting.staticUrl || "") : `https://${data.hosting.publicUrl || data.hosting.staticUrl}`} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5" />Open app</a>

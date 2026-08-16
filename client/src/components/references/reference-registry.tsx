@@ -195,7 +195,6 @@ const registry: Record<string, RegistryEntry> = {
   workflow: {
     Icon: Workflow,
     fallbackLabel: ref => metadataString(ref, "label") || `Workflow ${ref.id}`,
-    href: ref => metadataString(ref, "href") || `/workflows/${encodeURIComponent(ref.id)}`,
   },
   principle: {
     Icon: Compass,
