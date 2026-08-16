@@ -169,7 +169,7 @@ A nightly maintenance cycle (runs ~2 AM CT), orchestrated by `server/sleep-cycle
 - Components: connectivity, link quality, orphan rate, cluster balance (degree entropy), decay health (confidence-distribution entropy)
 - Publishes `sleep:gsi_computed`; no legacy ingest
 
-The cycle report goes to the journal (`appendJournalEntry`) and `sleep:cycle_complete` — it is not written to `memory_entries`. The sleep skill (v5) files the dream and a sleep report to the Library.
+The cycle report goes to the journal (`appendJournalEntry`) and `sleep:cycle_complete` — it is not written to `memory_entries`. The sleep skill (v5.3+) files one night onto the single rolling Dreams Library page (purpose line + Dream + Memory); it does not write a Sleep Reports catalog.
 
 Legacy sleep phases (entry decay, reinforcement, NREM over `memory_entries`, budget enforcement, belief pass, targeted forgetting) are removed. `sleep-maintenance.ts` is deleted. Consolidate/Integrate timers are durably disabled, their skill rows are deprecated for rollback visibility, manual legacy maintenance routes fail closed, and the in-process threshold/timed-promotion loops are removed.
 
