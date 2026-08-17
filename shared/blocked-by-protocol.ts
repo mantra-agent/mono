@@ -19,6 +19,26 @@ export const BLOCKED_BY_PREDICATE = "blocked_by" as const;
 export type BlockedByPredicate = typeof BLOCKED_BY_PREDICATE;
 
 /**
+ * Closed work-noun set for blocked_by endpoints. Source and target must both
+ * be in this set. Provenance may be any supporting address.
+ */
+export const BLOCKED_BY_ENDPOINT_TYPES = [
+  "task",
+  "milestone",
+  "project",
+  "feature",
+  "goal",
+] as const;
+
+export type BlockedByEndpointType = (typeof BLOCKED_BY_ENDPOINT_TYPES)[number];
+
+const BLOCKED_BY_ENDPOINT_TYPE_SET = new Set<string>(BLOCKED_BY_ENDPOINT_TYPES);
+
+export function isBlockedByEndpointType(type: string): type is BlockedByEndpointType {
+  return BLOCKED_BY_ENDPOINT_TYPE_SET.has(type);
+}
+
+/**
  * Edge direction (durable graph):
  *   sourceAddress  — the blocked work item (cannot proceed)
  *   targetAddress  — the prerequisite that must clear first
@@ -60,6 +80,7 @@ export const BLOCKED_BY_INVARIANTS = [
   "retire_not_delete",
   "no_duplicate_dependency_fields",
   "goal_manager_separate",
+  "closed_endpoint_types",
 ] as const;
 
 export type BlockedByInvariant = (typeof BLOCKED_BY_INVARIANTS)[number];

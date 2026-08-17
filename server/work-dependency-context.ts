@@ -10,7 +10,7 @@
  * Mutation boundary: BlockingGraphService / shared/blocked-by-protocol.ts
  */
 import { and, eq, inArray, or } from "drizzle-orm";
-import { BLOCKED_BY_PREDICATE } from "@shared/blocked-by-protocol";
+import { BLOCKED_BY_PREDICATE, isBlockedByEndpointType } from "@shared/blocked-by-protocol";
 import { normalizeProtocolAddress } from "@shared/life-addressing";
 import {
   WORK_DEPENDENCY_CONTEXT_BOUNDS,
@@ -29,6 +29,9 @@ import {
   resolveAddressBatch,
   type AddressResolutionResult,
 } from "./address-resolver";
+import { db } from "./db";
+import { featureStorage } from "./feature-storage";
+import { goalStorage } from "./goal-storage";
 import { listAddressLinks } from "./life-addressing-storage";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
@@ -38,7 +41,6 @@ import {
   combineWithProjectDerivedWorkAccess,
   combineWithTaskAccess,
 } from "./project-vault-access";
-import { db } from "./db";
 
 const log = createLogger("WorkDependencyContext");
 
@@ -99,11 +101,10 @@ function satisfactionFor(
   if (resolution.outcome === "unauthorized") return "inaccessible";
   if (resolution.outcome === "invalid" || resolution.outcome === "unknown_type") return "unknown";
   if (resolution.outcome === "missing" || resolution.outcome === "error") return "unknown";
-  if (!type || !status) return "unresolved";
-  if (type === "task" && WORK_DEPENDENCY_SATISFIED_STATUSES.task.has(status)) return "satisfied";
-  if (type === "project" && WORK_DEPENDENCY_SATISFIED_STATUSES.project.has(status)) return "satisfied";
-  if (type === "milestone" && WORK_DEPENDENCY_SATISFIED_STATUSES.milestone.has(status)) return "satisfied";
-  return "unresolved";
+  if (!type || !isBlockedByEndpointType(type)) return "unknown";
+  if (!status) return "unresolved";
+  const satisfied = WORK_DEPENDENCY_SATISFIED_STATUSES[type];
+  return satisfied.has(status) ? "satisfied" : "unresolved";
 }
 
 async function loadDomainSnapshots(
@@ -114,6 +115,8 @@ async function loadDomainSnapshots(
   const taskIds: number[] = [];
   const projectIds: number[] = [];
   const milestoneKeys: Array<{ projectId: number; milestoneId: number; address: string }> = [];
+  const featureIds: string[] = [];
+  const goalIds: string[] = [];
 
   for (const address of addresses) {
     const ref = parseWorkRef(address);
@@ -129,6 +132,10 @@ async function loadDomainSnapshots(
       if (Number.isInteger(projectId) && Number.isInteger(milestoneId)) {
         milestoneKeys.push({ projectId, milestoneId, address });
       }
+    } else if (ref.type === "feature") {
+      featureIds.push(ref.id);
+    } else if (ref.type === "goal") {
+      goalIds.push(ref.id);
     }
   }
 
@@ -203,6 +210,34 @@ async function loadDomainSnapshots(
               });
             }
           })
+      : Promise.resolve(),
+    featureIds.length
+      ? Promise.all(
+          featureIds.map(async (id) => {
+            const row = await featureStorage.get(id) as
+              | { id?: string; summary?: string; stage?: string; owner_person_id?: string }
+              | undefined;
+            if (!row?.id) return;
+            out.set(`@feature:${row.id}`, {
+              label: row.summary,
+              status: row.stage,
+              owner: row.owner_person_id,
+            });
+          }),
+        )
+      : Promise.resolve(),
+    goalIds.length
+      ? Promise.all(
+          goalIds.map(async (id) => {
+            const goal = await goalStorage.getGoal(id);
+            if (!goal) return;
+            out.set(`@goal:${goal.id}`, {
+              label: goal.shortName,
+              status: goal.status,
+              owner: goal.owner,
+            });
+          }),
+        )
       : Promise.resolve(),
   ]);
 
