@@ -5,7 +5,7 @@ import { ObjectPermission } from "../../object_storage/objectAcl";
 import { WORKSPACE_DIR } from "../../paths";
 import { pathExists, resolveWorkspacePath } from "../../fs-utils";
 import { createLogger } from "../../log";
-import { scratchEditFailure, inputFailure, permissionFailure } from "../../tool-failure";
+import { scratchEditFailure, inputFailure } from "../../tool-failure";
 import type { ToolHandler } from "../contracts";
 
 const toolExec = createLogger("ToolExec");
@@ -65,7 +65,7 @@ export const workspaceTools: Record<string, ToolHandler> = {
     if (!filePath) return { result: "Missing file path", error: true };
 
     const resolved = resolveWorkspacePath(filePath);
-    if (!resolved) return { result: `Path escapes workspace: ${filePath}`, error: true, failure: permissionFailure("scratch_path_denied", "Path escapes workspace") };
+    if (!resolved) return { result: `Path escapes workspace: ${filePath}`, error: true, failure: inputFailure("scratch_path_denied", "Path escapes workspace") };
     if (!await pathExists(resolved)) return { result: `File not found: ${filePath}`, error: true, failure: inputFailure("scratch_not_found", "File not found") };
 
     try {
@@ -97,7 +97,7 @@ export const workspaceTools: Record<string, ToolHandler> = {
     if (content === undefined || content === null) return { result: "Missing file content", error: true };
 
     const resolved = await resolveScratchWritePath(filePath, args._sessionId);
-    if (!resolved) return { result: `Write path is outside the current session-owned workspace: ${filePath}`, error: true, failure: permissionFailure("scratch_path_denied", "Write path outside session workspace") };
+    if (!resolved) return { result: `Write path is outside the current session-owned workspace: ${filePath}`, error: true, failure: inputFailure("scratch_path_denied", "Write path outside session workspace") };
 
     try {
       const dir = dirname(resolved);
@@ -119,7 +119,7 @@ export const workspaceTools: Record<string, ToolHandler> = {
     if (newString === undefined) return { result: "Missing new_string", error: true };
 
     const resolved = await resolveScratchWritePath(filePath, args._sessionId);
-    if (!resolved) return { result: `Edit path is outside the current session-owned workspace: ${filePath}`, error: true, failure: permissionFailure("scratch_path_denied", "Edit path outside session workspace") };
+    if (!resolved) return { result: `Edit path is outside the current session-owned workspace: ${filePath}`, error: true, failure: inputFailure("scratch_path_denied", "Edit path outside session workspace") };
     if (!await pathExists(resolved)) return { result: `File not found: ${filePath}`, error: true, failure: inputFailure("scratch_not_found", "File not found") };
 
     try {
@@ -156,7 +156,7 @@ export const workspaceTools: Record<string, ToolHandler> = {
     const dirPath = args.path || ".";
 
     const resolved = resolveWorkspacePath(dirPath);
-    if (!resolved) return { result: `Path escapes workspace: ${dirPath}`, error: true, failure: permissionFailure("scratch_path_denied", "Path escapes workspace") };
+    if (!resolved) return { result: `Path escapes workspace: ${dirPath}`, error: true, failure: inputFailure("scratch_path_denied", "Path escapes workspace") };
     if (!await pathExists(resolved)) return { result: `Directory not found: ${dirPath}`, error: true, failure: inputFailure("scratch_not_found", "Directory not found") };
 
     try {
