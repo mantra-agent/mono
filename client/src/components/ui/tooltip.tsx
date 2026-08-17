@@ -6,9 +6,32 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip"
 import { GLASS_SURFACE_CLASS } from "@/components/ui/glass-surface"
 import { cn } from "@/lib/utils"
 
+/**
+ * App-level / subtree delay owner. Prefer one high in the tree for shared
+ * skip-delay behavior. `Tooltip` also mounts a same-module provider so a Root
+ * can never render without provider context (chunk split, unmount race, or a
+ * surface outside AppShell).
+ */
 const TooltipProvider = TooltipPrimitive.Provider
 
-const Tooltip = TooltipPrimitive.Root
+type TooltipProps = React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Root> & {
+  /** Provider delay when this Root carries its own provider (default 200ms). */
+  delayDuration?: number
+}
+
+/**
+ * Glass tooltip root. Always wraps Radix Root in the same-module Provider so
+ * "`Tooltip` must be used within `TooltipProvider`" is unrepresentable for
+ * callers that only mount `<Tooltip>`. Nested providers are valid in Radix;
+ * the nearest provider wins for delay / skip-delay.
+ */
+function Tooltip({ delayDuration = 200, ...props }: TooltipProps) {
+  return (
+    <TooltipPrimitive.Provider delayDuration={delayDuration} skipDelayDuration={0}>
+      <TooltipPrimitive.Root {...props} />
+    </TooltipPrimitive.Provider>
+  )
+}
 
 const TooltipTrigger = TooltipPrimitive.Trigger
 

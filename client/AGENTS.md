@@ -283,7 +283,7 @@ Hosting credentials and environment configuration belong to Platform Environment
 
 ### Glass Tooltips
 
-`client/src/components/ui/tooltip.tsx` is the only hover-label primitive. `TooltipContent` already paints `GLASS_SURFACE_CLASS` — the navbar glass is the default, not a special case. Do not invent a local tooltip, restyle a popover into a label, or use native `title=` as designed hover chrome. Children on glass use `text-white` / `text-white/70`, never canvas muted/foreground tokens. Width, `side`, and `align` only. Chart series popovers stay on `ChartTooltipContent`. The Design screen's **Glass tooltips** playground must stay aligned with `DESIGN.md` § Tooltips.
+`client/src/components/ui/tooltip.tsx` is the only hover-label primitive. `Tooltip` always mounts a same-module `TooltipProvider` around Radix Root so missing-provider crashes are unrepresentable; app-level `TooltipProvider` remains optional for shared skip-delay. `TooltipContent` already paints `GLASS_SURFACE_CLASS` — the navbar glass is the default, not a special case. Do not invent a local tooltip, restyle a popover into a label, or use native `title=` as designed hover chrome. Children on glass use `text-white` / `text-white/70`, never canvas muted/foreground tokens. Width, `side`, and `align` only. Chart series popovers stay on `ChartTooltipContent`. The Design screen's **Glass tooltips** playground must stay aligned with `DESIGN.md` § Tooltips.
 
 ### Universal Reference Picker
 
