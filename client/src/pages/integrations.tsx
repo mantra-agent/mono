@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueries, useQueryClient } from "@tanstack/rea
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Integrations");
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -2070,117 +2070,89 @@ function PlaidAccountsSection() {
     const envValue = diag?.details?.PLAID_ENV?.value;
 
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Landmark className="h-5 w-5" />
-            Financial Accounts
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground" data-testid="text-plaid-not-configured">
-            To connect bank accounts, set the following environment variables:
-          </p>
-          <ul className="space-y-1.5 text-sm" data-testid="list-plaid-config-status">
-            <li className="flex items-center gap-2" data-testid="status-plaid-client-id">
-              <span className={clientIdOk ? "text-success-foreground" : "text-error-foreground"}>
-                {clientIdOk ? "✓" : "✗"}
-              </span>
-              <code className="text-xs bg-muted px-1 py-0.5 rounded">PLAID_CLIENT_ID</code>
-              {clientIdOk ? (
-                <span className="text-muted-foreground">set</span>
-              ) : (
-                <span className="text-error-foreground">not set</span>
-              )}
-            </li>
-            <li className="flex items-center gap-2" data-testid="status-plaid-secret">
-              <span className={secretOk ? "text-success-foreground" : "text-error-foreground"}>
-                {secretOk ? "✓" : "✗"}
-              </span>
-              <code className="text-xs bg-muted px-1 py-0.5 rounded">PLAID_SECRET</code>
-              {secretOk ? (
-                <span className="text-muted-foreground">set</span>
-              ) : (
-                <span className="text-error-foreground">not set</span>
-              )}
-            </li>
-            <li className="flex items-center gap-2" data-testid="status-plaid-env">
-              <span className={envOk ? "text-success-foreground" : "text-error-foreground"}>
-                {envOk ? "✓" : "✗"}
-              </span>
-              <code className="text-xs bg-muted px-1 py-0.5 rounded">PLAID_ENV</code>
-              {envOk ? (
-                <span className="text-muted-foreground">{envValue}</span>
-              ) : !envSet ? (
-                <span className="text-error-foreground">not set — must be <code className="text-xs">sandbox</code>, <code className="text-xs">development</code>, or <code className="text-xs">production</code></span>
-              ) : (
-                <span className="text-error-foreground">invalid value &ldquo;{envValue}&rdquo; — must be <code className="text-xs">sandbox</code>, <code className="text-xs">development</code>, or <code className="text-xs">production</code></span>
-              )}
-            </li>
-          </ul>
-        </CardContent>
-      </Card>
+      <div className="min-w-0 space-y-2">
+        <IntegrationTreeSection label="Accounts" initialOpen icon={<Landmark className="h-3.5 w-3.5" />} testIdPrefix="plaid-accounts">
+          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-plaid-not-configured">
+            Credentials not set.
+          </div>
+          <div data-testid="list-plaid-config-status">
+            <ProfileTreeRow
+              label="PLAID_CLIENT_ID"
+              icon={<Landmark className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              mobileLayout="inline"
+              testId="status-plaid-client-id"
+            >
+              {clientIdOk ? "Set" : "Not set"}
+            </ProfileTreeRow>
+            <ProfileTreeRow
+              label="PLAID_SECRET"
+              icon={<Landmark className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              mobileLayout="inline"
+              testId="status-plaid-secret"
+            >
+              {secretOk ? "Set" : "Not set"}
+            </ProfileTreeRow>
+            <ProfileTreeRow
+              label="PLAID_ENV"
+              icon={<Landmark className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              mobileLayout="inline"
+              testId="status-plaid-env"
+            >
+              {envOk ? envValue : !envSet ? "Not set" : `Invalid: ${envValue}`}
+            </ProfileTreeRow>
+          </div>
+        </IntegrationTreeSection>
+      </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="flex items-center gap-2">
-          <Landmark className="h-5 w-5" />
-          Financial Accounts
-        </CardTitle>
-        <div className="flex items-center gap-2">
-          {accounts && accounts.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => refreshMutation.mutate()}
-              disabled={refreshMutation.isPending}
-              data-testid="button-refresh-finance"
-            >
-              <RefreshCw className={cn("h-4 w-4", refreshMutation.isPending && "animate-spin")} />
-            </Button>
-          )}
-          <PlaidLinkButton onSuccess={(token) => exchangeMutation.mutate(token)} />
-        </div>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="space-y-3">
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-          </div>
-        ) : !accounts || accounts.length === 0 ? (
-          <p className="text-sm text-muted-foreground" data-testid="text-no-plaid-accounts">
-            No financial accounts connected yet. Click "Connect Bank" to link your accounts.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {accounts.map((item) => (
-              <div
-                key={item.accountId}
-                className="flex items-center justify-between p-3 border rounded-lg"
-                data-testid={`card-plaid-item-${item.accountId}`}
+    <div className="min-w-0 space-y-2">
+      <IntegrationTreeSection
+        label="Accounts"
+        initialOpen
+        icon={<Landmark className="h-3.5 w-3.5" />}
+        testIdPrefix="plaid-accounts"
+        actions={(
+          <div className="flex items-center gap-2 pr-2">
+            {accounts && accounts.length > 0 ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => refreshMutation.mutate()}
+                disabled={refreshMutation.isPending}
+                data-testid="button-refresh-finance"
               >
-                <div className="flex items-center gap-3">
-                  <div className={cn(
-                    "w-2 h-2 rounded-full",
-                    item.healthy ? "bg-success" : "bg-error"
-                  )} />
-                  <div>
-                    <p className="text-sm font-medium" data-testid={`text-institution-${item.accountId}`}>
-                      {item.institutionName || "Unknown Institution"}
-                    </p>
-                    {item.accounts && item.accounts.length > 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        {item.accounts.length} account{item.accounts.length !== 1 ? "s" : ""} — {
-                          item.accounts.map(a => a.type).filter((v, i, arr) => arr.indexOf(v) === i).join(", ")
-                        }
-                      </p>
-                    )}
-                  </div>
-                </div>
+                <RefreshCw className={cn("h-4 w-4", refreshMutation.isPending && "animate-spin")} />
+              </Button>
+            ) : null}
+            <PlaidLinkButton onSuccess={(token) => exchangeMutation.mutate(token)} />
+          </div>
+        )}
+      >
+        {isLoading ? (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading…</div>
+        ) : !accounts || accounts.length === 0 ? (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-no-plaid-accounts">
+            No financial accounts yet.
+          </div>
+        ) : (
+          accounts.map((item) => (
+            <ProfileTreeRow
+              key={item.accountId}
+              label={item.institutionName || "Unknown Institution"}
+              icon={<Landmark className={cn("h-3.5 w-3.5", item.healthy ? "text-success" : "text-error")} />}
+              hasValue
+              showEmpty
+              mobileLayout="inline"
+              testId={`card-plaid-item-${item.accountId}`}
+              actionContent={(
                 <Button
                   variant="ghost"
                   size="sm"
@@ -2190,12 +2162,18 @@ function PlaidAccountsSection() {
                 >
                   <Trash2 className="h-4 w-4 text-muted-foreground" />
                 </Button>
-              </div>
-            ))}
-          </div>
+              )}
+            >
+              <span className="text-xs text-muted-foreground" data-testid={`text-institution-${item.accountId}`}>
+                {item.accounts && item.accounts.length > 0
+                  ? `${item.accounts.length} account${item.accounts.length !== 1 ? "s" : ""}`
+                  : item.healthy ? "Healthy" : "Unhealthy"}
+              </span>
+            </ProfileTreeRow>
+          ))
         )}
-      </CardContent>
-    </Card>
+      </IntegrationTreeSection>
+    </div>
   );
 }
 
@@ -3566,141 +3544,161 @@ function MetaDetail() {
   };
 
   const developerMode = draft.developerMode !== false;
-  const applicationStatus = data.applicationIdConfigured || !!draft.applicationId?.trim();
-  const mwdatStatus = data.mwdatConfigured || !!draft.mwdatPlistEntry?.trim();
 
   return (
-    <div className="space-y-4">
-      <Card data-testid="card-meta-wearables">
-        <CardHeader>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <CardTitle className="text-base font-semibold">Wearables / Device Access Toolkit</CardTitle>
-              <p className="text-xs text-muted-foreground mt-1">
-                Source of truth for Ray-Ban Display DAT registration used by the iOS Magic Demo build.
-              </p>
-            </div>
-            <Badge variant={data.enabled ? "default" : "secondary"} data-testid="badge-meta-wearables-status">
-              {data.enabled ? "Configured" : "Draft"}
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 @md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="input-meta-bundle-id">iOS Bundle ID</Label>
-              <Input
-                id="input-meta-bundle-id"
-                value={draft.bundleId ?? ""}
-                onChange={(e) => updateDraft("bundleId", e.target.value)}
-                className="font-mono text-xs"
-                data-testid="input-meta-bundle-id"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="input-meta-universal-link">Universal Link</Label>
-              <Input
-                id="input-meta-universal-link"
-                value={draft.universalLink ?? ""}
-                onChange={(e) => updateDraft("universalLink", e.target.value)}
-                className="font-mono text-xs"
-                data-testid="input-meta-universal-link"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="input-meta-release-channel">Release Channel</Label>
-              <Input
-                id="input-meta-release-channel"
-                value={draft.releaseChannel ?? ""}
-                onChange={(e) => updateDraft("releaseChannel", e.target.value)}
-                data-testid="input-meta-release-channel"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="input-meta-application-id">Application ID</Label>
-              <Input
-                id="input-meta-application-id"
-                type="password"
-                value={draft.applicationId ?? ""}
-                onChange={(e) => updateDraft("applicationId", e.target.value)}
-                placeholder={data.applicationIdConfigured ? `Already saved ••••${data.applicationIdLast4 ?? ""}` : "Paste Meta Application ID"}
-                className="font-mono text-xs"
-                data-testid="input-meta-application-id"
-              />
-              <p className="text-xs text-muted-foreground">
-                {applicationStatus ? "Application ID saved or staged." : "Required for registered-app mode."}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-col @sm:flex-row gap-4 border rounded-md p-3 bg-muted/20">
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={!!draft.enabled}
-                onCheckedChange={(checked) => updateDraft("enabled", checked === true)}
-                data-testid="checkbox-meta-enabled"
-              />
-              Enable Meta integration
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={developerMode}
-                onCheckedChange={(checked) => updateDraft("developerMode", checked === true)}
-                data-testid="checkbox-meta-developer-mode"
-              />
-              Developer Mode first
-            </label>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="textarea-meta-mwdat">MWDAT Info.plist entry</Label>
-            <Textarea
-              id="textarea-meta-mwdat"
-              value={draft.mwdatPlistEntry ?? ""}
-              onChange={(e) => updateDraft("mwdatPlistEntry", e.target.value)}
-              placeholder={data.mwdatConfigured ? "Already saved. Paste a new value only if rotating/updating." : "Paste the <key>MWDAT</key> plist block from Meta"}
-              className="min-h-28 font-mono text-xs"
-              data-testid="textarea-meta-mwdat"
-            />
-            <p className="text-xs text-muted-foreground">
-              {mwdatStatus ? "MWDAT plist config saved or staged." : "Leave empty for pure Developer Mode validation."}
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="textarea-meta-notes">Notes</Label>
-            <Textarea
-              id="textarea-meta-notes"
-              value={draft.notes ?? ""}
-              onChange={(e) => updateDraft("notes", e.target.value)}
-              placeholder="Camera access rationale, org/app notes, tester/channel details"
-              className="min-h-20"
-              data-testid="textarea-meta-notes"
-            />
-          </div>
-
-          <div className="rounded-md border p-3 space-y-2 text-xs text-muted-foreground">
-            <div className="font-medium text-foreground">iOS build consumption</div>
-            <ul className="list-disc pl-4 space-y-1">
-              <li>{developerMode ? "Developer Mode build uses the URL-scheme callback and should omit Associated Domains unless the Apple profile has that capability." : <>Enable associated domain entitlement for <span className="font-mono">applinks:{(draft.universalLink || data.universalLink).replace(/^https?:\/\//, "")}</span> after the Apple profile supports it.</>}</li>
-              <li>{developerMode ? "AASA hosting is optional for this first validation path." : <>Host <span className="font-mono">/.well-known/apple-app-site-association</span> on the universal-link domain.</>}</li>
-              <li>{developerMode ? "First build can use MWDAT MetaAppID=0 for Developer Mode validation." : "Registered-app build should inject the MWDAT plist entry."}</li>
-            </ul>
-          </div>
-
-          <div className="flex items-center gap-2">
+    <div className="min-w-0 space-y-2" data-testid="card-meta-wearables">
+      <IntegrationTreeSection label="Device Access" initialOpen icon={<Glasses className="h-3.5 w-3.5" />} testIdPrefix="meta-wearables">
+        <ProfileTreeRow
+          label="Status"
+          icon={<Glasses className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="badge-meta-wearables-status"
+          actionContent={(
             <Button
               type="button"
+              size="sm"
               onClick={() => saveMutation.mutate(draft)}
               disabled={saveMutation.isPending}
               data-testid="button-save-meta-wearables"
             >
-              {saveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
-              Save Wearables Config
+              {saveMutation.isPending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+              Save
             </Button>
-          </div>
-        </CardContent>
-      </Card>
+          )}
+        >
+          {data.enabled ? "Configured" : "Draft"}
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Enabled"
+          icon={<Glasses className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-meta-enabled"
+        >
+          <Checkbox
+            checked={!!draft.enabled}
+            onCheckedChange={(checked) => updateDraft("enabled", checked === true)}
+            data-testid="checkbox-meta-enabled"
+          />
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Developer Mode"
+          icon={<Glasses className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-meta-developer-mode"
+        >
+          <Checkbox
+            checked={developerMode}
+            onCheckedChange={(checked) => updateDraft("developerMode", checked === true)}
+            data-testid="checkbox-meta-developer-mode"
+          />
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Bundle ID"
+          icon={<Glasses className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-meta-bundle-id"
+        >
+          <Input
+            id="input-meta-bundle-id"
+            value={draft.bundleId ?? ""}
+            onChange={(e) => updateDraft("bundleId", e.target.value)}
+            className="h-7 font-mono text-xs"
+            data-testid="input-meta-bundle-id"
+          />
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Universal Link"
+          icon={<Glasses className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-meta-universal-link"
+        >
+          <Input
+            id="input-meta-universal-link"
+            value={draft.universalLink ?? ""}
+            onChange={(e) => updateDraft("universalLink", e.target.value)}
+            className="h-7 font-mono text-xs"
+            data-testid="input-meta-universal-link"
+          />
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Release Channel"
+          icon={<Glasses className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-meta-release-channel"
+        >
+          <Input
+            id="input-meta-release-channel"
+            value={draft.releaseChannel ?? ""}
+            onChange={(e) => updateDraft("releaseChannel", e.target.value)}
+            className="h-7 text-xs"
+            data-testid="input-meta-release-channel"
+          />
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Application ID"
+          icon={<Glasses className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-meta-application-id"
+        >
+          <Input
+            id="input-meta-application-id"
+            type="password"
+            value={draft.applicationId ?? ""}
+            onChange={(e) => updateDraft("applicationId", e.target.value)}
+            placeholder={data.applicationIdConfigured ? `Already saved ••••${data.applicationIdLast4 ?? ""}` : "Paste Meta Application ID"}
+            className="h-7 font-mono text-xs"
+            data-testid="input-meta-application-id"
+          />
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="MWDAT"
+          icon={<Glasses className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-meta-mwdat"
+        >
+          <Textarea
+            id="textarea-meta-mwdat"
+            value={draft.mwdatPlistEntry ?? ""}
+            onChange={(e) => updateDraft("mwdatPlistEntry", e.target.value)}
+            placeholder={data.mwdatConfigured ? "Already saved. Paste a new value only if rotating." : "Paste the MWDAT plist block from Meta"}
+            className="min-h-24 font-mono text-xs"
+            data-testid="textarea-meta-mwdat"
+          />
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Notes"
+          icon={<Glasses className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-meta-notes"
+        >
+          <Textarea
+            id="textarea-meta-notes"
+            value={draft.notes ?? ""}
+            onChange={(e) => updateDraft("notes", e.target.value)}
+            placeholder="Camera access rationale, org/app notes, tester/channel details"
+            className="min-h-16 text-xs"
+            data-testid="textarea-meta-notes"
+          />
+        </ProfileTreeRow>
+      </IntegrationTreeSection>
     </div>
   );
 }
@@ -4610,24 +4608,30 @@ function AutomationAuthSection() {
     },
   });
 
-  if (isLoading) return <Skeleton className="h-32 w-full" />;
+  if (isLoading) return <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading…</div>;
 
   return (
-    <Card data-testid="card-automation-auth">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base font-semibold">Automation Auth Token</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="text-xs text-muted-foreground">
-          Shared bearer token for cross-instance automation authentication. Used by test runners, Playwright, and agent calls. Set the same token on both Dev and Prod.
-        </p>
-
+    <div className="min-w-0 space-y-2" data-testid="card-automation-auth">
+      <IntegrationTreeSection label="Token" initialOpen icon={<Shield className="h-3.5 w-3.5" />} testIdPrefix="automation-auth">
+        <ProfileTreeRow
+          label="Status"
+          icon={<Shield className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-automation-auth-status"
+        >
+          {data?.configured ? "Configured" : "Not set"}
+        </ProfileTreeRow>
         {data?.configured ? (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-mono">
-                {showToken ? `••••••••••••••••••••••••${data.lastChars}` : "••••••••••••••••••••••••••••••••"}
-              </span>
+          <ProfileTreeRow
+            label="Token"
+            icon={<Shield className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            mobileLayout="inline"
+            testId="row-automation-auth-token"
+            actionContent={(
               <Button
                 size="icon"
                 variant="ghost"
@@ -4637,71 +4641,72 @@ function AutomationAuthSection() {
               >
                 {showToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
               </Button>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => saveMutation.mutate({ generate: true })}
-                disabled={saveMutation.isPending}
-                data-testid="button-regenerate-token"
-              >
-                {saveMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
-                Regenerate
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setManualMode(!manualMode)}
-                data-testid="button-manual-token"
-              >
-                Set manually
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2">
+            )}
+          >
+            <span className="font-mono text-xs">
+              {showToken ? `••••••••••••••••••••••••${data.lastChars}` : "••••••••••••••••••••••••••••••••"}
+            </span>
+          </ProfileTreeRow>
+        ) : null}
+        <ProfileTreeRow
+          label="Actions"
+          icon={<Shield className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-automation-auth-actions"
+        >
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               size="sm"
+              variant="outline"
               onClick={() => saveMutation.mutate({ generate: true })}
               disabled={saveMutation.isPending}
-              data-testid="button-generate-token"
+              data-testid={data?.configured ? "button-regenerate-token" : "button-generate-token"}
             >
-              {saveMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
-              Generate Token
+              {saveMutation.isPending ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : data?.configured ? <RefreshCw className="mr-1 h-3 w-3" /> : null}
+              {data?.configured ? "Regenerate" : "Generate Token"}
             </Button>
             <Button
               size="sm"
               variant="ghost"
               onClick={() => setManualMode(!manualMode)}
-              data-testid="button-set-manual-token"
+              data-testid={data?.configured ? "button-manual-token" : "button-set-manual-token"}
             >
               Set manually
             </Button>
           </div>
-        )}
-
-        {manualMode && (
-          <div className="flex items-center gap-2 pt-1">
+        </ProfileTreeRow>
+        {manualMode ? (
+          <ProfileTreeRow
+            label="Manual"
+            icon={<Shield className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            mobileLayout="inline"
+            testId="row-automation-auth-manual"
+            actionContent={(
+              <Button
+                size="sm"
+                onClick={() => saveMutation.mutate({ token: draft })}
+                disabled={!draft || draft.length < 32 || saveMutation.isPending}
+                data-testid="button-save-manual-token"
+              >
+                Save
+              </Button>
+            )}
+          >
             <Input
               placeholder="Paste token (min 32 chars)"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              className="flex-1 h-8 text-sm font-mono"
+              className="h-7 font-mono text-xs"
               data-testid="input-manual-token"
             />
-            <Button
-              size="sm"
-              onClick={() => saveMutation.mutate({ token: draft })}
-              disabled={!draft || draft.length < 32 || saveMutation.isPending}
-              data-testid="button-save-manual-token"
-            >
-              Save
-            </Button>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          </ProfileTreeRow>
+        ) : null}
+      </IntegrationTreeSection>
+    </div>
   );
 }
 
@@ -4749,87 +4754,121 @@ function SendGridDetail() {
   const canSend = configured && to.trim().length > 0 && (body.trim().length > 0) && !sendMutation.isPending;
 
   return (
-    <div className="space-y-4">
-      <Card data-testid="card-sendgrid-status">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">SendGrid Email</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+    <div className="min-w-0 space-y-2">
+      <div data-testid="card-sendgrid-status">
+        <IntegrationTreeSection label="Email" initialOpen icon={<Mail className="h-3.5 w-3.5" />} testIdPrefix="sendgrid">
           {isLoading || !status ? (
-            <Skeleton className="h-20 w-full" />
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading…</div>
           ) : (
             <>
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant={configured ? "default" : "secondary"} data-testid="badge-sendgrid-configured">
-                  {configured ? "Configured" : "Not configured"}
-                </Badge>
-                <Badge variant={status.hasApiKey ? "default" : "outline"} data-testid="badge-sendgrid-api-key">
-                  API key {status.hasApiKey ? "set" : "missing"}
-                </Badge>
-                <Badge variant={status.hasFromEmail ? "default" : "outline"} data-testid="badge-sendgrid-from-email">
-                  From email {status.hasFromEmail ? "set" : "missing"}
-                </Badge>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                Configure Twilio SendGrid for Mantra outbound email. The API key stays server-side;
-                the browser can only trigger authenticated sends through Mantra.
-              </p>
+              <ProfileTreeRow
+                label="Status"
+                icon={<Mail className="h-3.5 w-3.5" />}
+                hasValue
+                showEmpty
+                mobileLayout="inline"
+                testId="badge-sendgrid-configured"
+              >
+                {configured ? "Configured" : "Not configured"}
+              </ProfileTreeRow>
+              <ProfileTreeRow
+                label="API key"
+                icon={<Mail className="h-3.5 w-3.5" />}
+                hasValue
+                showEmpty
+                mobileLayout="inline"
+                testId="badge-sendgrid-api-key"
+              >
+                {status.hasApiKey ? "Set" : "Missing"}
+              </ProfileTreeRow>
+              <ProfileTreeRow
+                label="From email"
+                icon={<Mail className="h-3.5 w-3.5" />}
+                hasValue
+                showEmpty
+                mobileLayout="inline"
+                testId="badge-sendgrid-from-email"
+              >
+                {status.hasFromEmail ? "Set" : "Missing"}
+              </ProfileTreeRow>
             </>
           )}
-          <p className="text-sm text-muted-foreground">Manage the SendGrid API key and sender on the Secrets page.</p>
-        </CardContent>
-      </Card>
-
-      <Card data-testid="card-sendgrid-test-email">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">Send test email</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="space-y-2">
-            <Label htmlFor="input-sendgrid-test-to">To</Label>
+          <div className="min-w-0 px-2 py-1.5">
+            <SecretsForSection section="sendgrid" />
+          </div>
+        </IntegrationTreeSection>
+      </div>
+      <div data-testid="card-sendgrid-test-email">
+        <IntegrationTreeSection label="Send test" initialOpen icon={<Mail className="h-3.5 w-3.5" />} testIdPrefix="sendgrid-test">
+          <ProfileTreeRow
+            label="To"
+            icon={<Mail className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            mobileLayout="inline"
+            testId="row-sendgrid-test-to"
+          >
             <Input
               id="input-sendgrid-test-to"
               type="email"
               placeholder="ray@example.com"
               value={to}
               onChange={(e) => setTo(e.target.value)}
+              className="h-7 text-right text-xs"
               data-testid="input-sendgrid-test-to"
             />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="input-sendgrid-test-subject">Subject</Label>
+          </ProfileTreeRow>
+          <ProfileTreeRow
+            label="Subject"
+            icon={<Mail className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            mobileLayout="inline"
+            testId="row-sendgrid-test-subject"
+          >
             <Input
               id="input-sendgrid-test-subject"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
+              className="h-7 text-right text-xs"
               data-testid="input-sendgrid-test-subject"
             />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="textarea-sendgrid-test-body">Body</Label>
+          </ProfileTreeRow>
+          <ProfileTreeRow
+            label="Body"
+            icon={<Mail className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            mobileLayout="inline"
+            testId="row-sendgrid-test-body"
+            actionContent={(
+              <Button
+                size="sm"
+                onClick={() => sendMutation.mutate()}
+                disabled={!canSend}
+                data-testid="button-sendgrid-send-test"
+              >
+                {sendMutation.isPending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+                Send
+              </Button>
+            )}
+          >
             <Textarea
               id="textarea-sendgrid-test-body"
               value={body}
               onChange={(e) => setBody(e.target.value)}
-              rows={4}
+              rows={3}
+              className="min-h-[72px] text-xs"
               data-testid="textarea-sendgrid-test-body"
             />
-          </div>
-          {!configured && (
-            <p className="text-xs text-muted-foreground" data-testid="text-sendgrid-test-disabled">
-              Set `SENDGRID_API_KEY` and `SENDGRID_FROM_EMAIL` before sending a test email.
-            </p>
-          )}
-          <Button
-            onClick={() => sendMutation.mutate()}
-            disabled={!canSend}
-            data-testid="button-sendgrid-send-test"
-          >
-            {sendMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Mail className="h-4 w-4 mr-2" />}
-            Send test email
-          </Button>
-        </CardContent>
-      </Card>
+          </ProfileTreeRow>
+          {!configured ? (
+            <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-sendgrid-test-disabled">
+              Set SENDGRID_API_KEY and SENDGRID_FROM_EMAIL first.
+            </div>
+          ) : null}
+        </IntegrationTreeSection>
+      </div>
     </div>
   );
 }
@@ -4910,29 +4949,25 @@ function IntegrationDetail({ provider }: { provider: string }) {
       {provider === "quickbooks" && <QuickBooksDetail />}
 
       {provider === "plaid" && (
-        <div className="space-y-4">
-          <Card data-testid="card-secret-plaid">
-            <CardHeader>
-              <CardTitle className="text-base font-semibold">Plaid</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <SecretsForSection section="plaid" />
-            </CardContent>
-          </Card>
+        <div className="min-w-0 space-y-2">
+          <div data-testid="card-secret-plaid">
+            <IntegrationTreeSection label="Credentials" initialOpen icon={<Landmark className="h-3.5 w-3.5" />} testIdPrefix="plaid">
+              <div className="min-w-0 px-2 py-1.5">
+                <SecretsForSection section="plaid" />
+              </div>
+            </IntegrationTreeSection>
+          </div>
           <PlaidAccountsSection />
         </div>
       )}
 
       {provider === "brave" && (
-        <div className="space-y-4">
-          <Card data-testid="card-secret-brave">
-            <CardHeader>
-              <CardTitle className="text-base font-semibold">Brave Search</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">Manage the Brave Search API key on the Secrets page.</p>
-            </CardContent>
-          </Card>
+        <div className="min-w-0 space-y-2" data-testid="card-secret-brave">
+          <IntegrationTreeSection label="API" initialOpen icon={<Globe className="h-3.5 w-3.5" />} testIdPrefix="brave">
+            <div className="min-w-0 px-2 py-1.5">
+              <SecretsForSection section="brave" />
+            </div>
+          </IntegrationTreeSection>
         </div>
       )}
 
