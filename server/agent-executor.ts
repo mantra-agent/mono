@@ -479,6 +479,24 @@ function normalizeToolFailureSignature(call: { name: string; args: Record<string
   return `${call.name}::${args}::${call.result}`;
 }
 
+/** Identical non-transient failures trip quickly — the model is stuck on bad args/authority. */
+const CIRCUIT_BREAKER_THRESHOLD_DEFAULT = 2;
+/**
+ * Pure-transient batches (every failed call is `failureKind: "transient"`) get more room.
+ * GitHub 503 / rate-limit blips must not kill a shipping turn after two identical retries.
+ * Still bounded so a sustained outage cannot spin forever.
+ */
+const CIRCUIT_BREAKER_THRESHOLD_TRANSIENT = 5;
+
+function circuitBreakerThresholdForFailures(
+  failedCalls: Array<{ failureKind?: ToolFailureKind }>,
+): number {
+  if (failedCalls.length > 0 && failedCalls.every((fc) => fc.failureKind === "transient")) {
+    return CIRCUIT_BREAKER_THRESHOLD_TRANSIENT;
+  }
+  return CIRCUIT_BREAKER_THRESHOLD_DEFAULT;
+}
+
 export function formatAbortDetails(details?: AbortDetails): string | undefined {
   if (!details) return undefined;
 
@@ -4631,8 +4649,8 @@ export class AgentExecutor extends EventEmitter {
           ctx.lastIterationFailureKey = iterationFailKey;
           ctx.consecutiveFailureIterations = 1;
         }
-        const CIRCUIT_BREAKER_THRESHOLD = 2;
-        if (ctx.consecutiveFailureIterations >= CIRCUIT_BREAKER_THRESHOLD) {
+        const circuitBreakerThreshold = circuitBreakerThresholdForFailures(failedCalls);
+        if (ctx.consecutiveFailureIterations >= circuitBreakerThreshold) {
           const toolNames = [...new Set(failedCalls.map(fc => fc.name))];
           const details: RepeatedToolFailureDetails = {
             type: "repeated_tool_failure",
@@ -4652,6 +4670,8 @@ export class AgentExecutor extends EventEmitter {
               runId: ctx.runId,
               toolNames,
               consecutiveFailures: ctx.consecutiveFailureIterations,
+              circuitBreakerThreshold,
+              pureTransientBatch: failedCalls.every((fc) => fc.failureKind === "transient"),
               details: safeStringify(details, {
                 maxBytes: 8 * 1024,
                 label: "agent-executor.repeatedToolFailure.log",
