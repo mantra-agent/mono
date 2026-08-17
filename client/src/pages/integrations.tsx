@@ -43,7 +43,6 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Shield,
@@ -72,12 +71,10 @@ import {
   Pencil,
   Landmark,
   SlidersHorizontal,
-  Github,
   Globe,
   Circle,
   CircleCheck,
   ExternalLink,
-  Train,
   Smartphone,
   Phone,
   Save,
@@ -109,69 +106,49 @@ import { vaultTitleColor } from "@/lib/vault-title-color";
 import { IntegrationTreeSection } from "@/components/integrations/integration-tree-section";
 import { ProviderConnectorPackage } from "@/components/integrations/provider-connector-package";
 import { usePlaidLink } from "react-plaid-link";
-import { Redirect, useLocation } from "wouter";
+import { useLocation } from "wouter";
+import { useProductComposition } from "@/hooks/use-product-composition";
+import type { ResolvedIntegrationCard } from "@shared/models/product-composition";
 
+const INTEGRATION_ICONS = {
+  Activity,
+  Bot,
+  Box,
+  Glasses,
+  Globe,
+  GitBranch,
+  Landmark,
+  Mail,
+  MessageSquare,
+  Mic,
+  Phone,
+  Radio,
+  Settings,
+  Share2,
+  Shield,
+  Smartphone,
+  Volume2,
+} as const;
 
+type IntegrationIconKey = keyof typeof INTEGRATION_ICONS;
 
-
-
-
-
-
-
-
-
-// ---------------------------------------------------------------------------
-// Integration grid config
-// ---------------------------------------------------------------------------
-
-interface IntegrationDef {
-  id: string;
-  name: string;
-  icon: React.ComponentType<{ className?: string }>;
-  statusFields: string[];
-  healthField?: string;
-  route: string;
+function integrationIcon(iconKey: string) {
+  return INTEGRATION_ICONS[iconKey as IntegrationIconKey] ?? Plug;
 }
 
-const INTEGRATIONS: IntegrationDef[] = [
-  { id: "google", name: "Google", icon: Mail, statusFields: ["google"], healthField: "gmailHealthy", route: "google" },
-  { id: "box", name: "Box", icon: Box, statusFields: ["box"], route: "box" },
-  { id: "elevenlabs", name: "ElevenLabs", icon: Volume2, statusFields: ["elevenlabs"], route: "elevenlabs" },
-  { id: "twilio", name: "Twilio Phone", icon: Phone, statusFields: ["twilio"], route: "twilio" },
-  { id: "deepgram", name: "Deepgram", icon: Mic, statusFields: ["deepgram"], route: "deepgram" },
-  { id: "anthropic", name: "Anthropic", icon: Bot, statusFields: ["anthropic"], route: "anthropic" },
-  { id: "openai", name: "OpenAI", icon: Bot, statusFields: ["openai", "openaiSubscription"], route: "openai" },
-  { id: "claude-cli", name: "Claude Code CLI", icon: Settings, statusFields: ["claudeCli"], route: "claude-cli" },
-  { id: "grok", name: "Grok", icon: Bot, statusFields: ["grokSubscription"], route: "grok" },
-  { id: "twitter", name: "X (Twitter)", icon: ({ className }) => <SiX className={className} />, statusFields: ["twitter"], route: "twitter" },
-  { id: "plaid", name: "Plaid", icon: Landmark, statusFields: ["plaid"], route: "plaid" },
-  { id: "quickbooks", name: "QuickBooks", icon: Landmark, statusFields: ["quickbooks"], healthField: "quickbooksHealthy", route: "quickbooks" },
-  { id: "brave", name: "Brave Search", icon: Globe, statusFields: ["brave"], route: "brave" },
-  { id: "github", name: "GitHub", icon: Github, statusFields: ["github"], route: "github" },
-  { id: "automation-auth", name: "Automation Auth", icon: Shield, statusFields: ["automationAuth"], route: "automation-auth" },
-  { id: "expo", name: "Expo Mobile", icon: Smartphone, statusFields: ["expo"], route: "expo" },
-  { id: "sentry", name: "Sentry", icon: Shield, statusFields: ["sentry"], route: "sentry" },
-  { id: "sendgrid", name: "SendGrid", icon: Mail, statusFields: ["sendgrid"], route: "sendgrid" },
-  { id: "meta", name: "Meta", icon: Glasses, statusFields: ["meta"], route: "meta" },
-  { id: "oura", name: "Oura Ring", icon: Activity, statusFields: ["oura"], route: "oura" },
-  { id: "recall", name: "Recall", icon: Radio, statusFields: ["recall"], route: "recall" },
-  { id: "slack", name: "Slack", icon: MessageSquare, statusFields: ["slack"], route: "slack" },
-];
-
-// User-owned connections every account manages directly. Everything else is
-// system infrastructure and is only shown to admins.
-const USER_INTEGRATION_IDS = new Set(["google", "box", "twitter", "oura"]);
-
 function resolveStatus(
-  integration: IntegrationDef,
+  integration: Pick<ResolvedIntegrationCard, "statusFields" | "healthField" | "readiness">,
   status: Record<string, any> | undefined,
 ): "ready" | "error" | "connect" {
-  if (!status) return "connect";
-  const anySet = integration.statusFields.some((f) => status[f]);
-  if (!anySet) return "connect";
-  if (integration.healthField && status[integration.healthField] === false) return "error";
-  return "ready";
+  const fields = integration.statusFields ?? [];
+  if (fields.length > 0) {
+    if (!status) return "connect";
+    const anySet = fields.some((field) => status[field]);
+    if (!anySet) return "connect";
+    if (integration.healthField && status[integration.healthField] === false) return "error";
+    return "ready";
+  }
+  return integration.readiness === "ready" ? "ready" : "connect";
 }
 
 // ---------------------------------------------------------------------------
@@ -3346,7 +3323,7 @@ interface IntegrationTreeProps {
 
 interface IntegrationSectionProps {
   title: string;
-  integrations: IntegrationDef[];
+  integrations: ResolvedIntegrationCard[];
   status: Record<string, any> | undefined;
   hasQuery: boolean;
   onOpen: (route: string) => void;
@@ -3393,8 +3370,9 @@ function IntegrationSection({
           integrations.map((integration) => {
             const integrationStatus = resolveStatus(integration, status);
             const statusPresentation = INTEGRATION_STATUS_PRESENTATION[integrationStatus];
-            const Icon = integration.icon;
+            const Icon = integrationIcon(integration.iconKey);
             const StatusIcon = statusPresentation.icon;
+            const route = integration.route ?? integration.connectorKey;
 
             return (
               <button
@@ -3404,11 +3382,11 @@ function IntegrationSection({
                   HIERARCHY_SESSION_ROW_CLASS,
                   "min-h-11 hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:min-h-0",
                 )}
-                onClick={() => onOpen(integration.route)}
-                data-testid={`row-integration-${integration.id}`}
+                onClick={() => onOpen(route)}
+                data-testid={`row-integration-${integration.connectorKey}`}
               >
                 <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate">{integration.name}</span>
+                <span className="min-w-0 flex-1 truncate">{integration.label}</span>
                 <span className={cn("ml-auto flex shrink-0 items-center gap-1 text-xs", statusPresentation.className)}>
                   <StatusIcon className="h-3.5 w-3.5" aria-hidden="true" />
                   {statusPresentation.label}
@@ -3424,21 +3402,22 @@ function IntegrationSection({
 
 function IntegrationTree({ status }: IntegrationTreeProps) {
   const [, setLocation] = useLocation();
-  const { hasPermission } = useAuth();
-  const canSeeSystem = hasPermission("system:read");
+  const { data: composition } = useProductComposition();
   const [search, setSearch] = useState("");
   const normalizedSearch = search.trim().toLowerCase();
   const hasQuery = normalizedSearch.length > 0;
 
-  const { userIntegrations, systemIntegrations } = useMemo(() => {
-    const matches = INTEGRATIONS.filter((integration) =>
-      integration.name.toLowerCase().includes(normalizedSearch),
+  const { userIntegrations, systemIntegrations, hasSystem } = useMemo(() => {
+    const listed = (composition?.integrations ?? []).filter((integration) => integration.route);
+    const matches = listed.filter((integration) =>
+      integration.label.toLowerCase().includes(normalizedSearch),
     );
     return {
-      userIntegrations: matches.filter((integration) => USER_INTEGRATION_IDS.has(integration.id)),
-      systemIntegrations: matches.filter((integration) => !USER_INTEGRATION_IDS.has(integration.id)),
+      userIntegrations: matches.filter((integration) => integration.audience === "primary"),
+      systemIntegrations: matches.filter((integration) => integration.audience !== "primary"),
+      hasSystem: listed.some((integration) => integration.audience !== "primary"),
     };
-  }, [normalizedSearch]);
+  }, [composition?.integrations, normalizedSearch]);
 
   const openIntegration = (route: string) => setLocation(`/integrations/${route}`);
 
@@ -3464,7 +3443,7 @@ function IntegrationTree({ status }: IntegrationTreeProps) {
           sectionTestId="button-integrations-section-connectors"
         />
 
-        {canSeeSystem && (
+        {hasSystem && (
           <IntegrationSection
             title="System"
             integrations={systemIntegrations}
@@ -4043,212 +4022,6 @@ interface PlatformEnvironmentDetails {
   } | null;
 }
 
-
-interface HostingConnectorUsage {
-  id: number;
-  platformName: string;
-  productName: string;
-  environmentName: string;
-}
-
-function HostingConnectorsDetail({ provider }: { provider: "railway" | "cloudflare" }) {
-  const { toast } = useToast();
-  const providerName = provider === "railway" ? "Railway" : "Cloudflare";
-  const ProviderIcon = provider === "railway" ? Train : Globe;
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState<ProviderConnection | null>(null);
-  const [label, setLabel] = useState("");
-  const [credential, setCredential] = useState("");
-  const [accountType, setAccountType] = useState("hosting");
-  const [pendingDelete, setPendingDelete] = useState<ProviderConnection | null>(null);
-
-  const { data: connections = [], isLoading, refetch } = useQuery<ProviderConnection[]>({
-    queryKey: ["/api/provider-connections"],
-  });
-  const hostingConnectors = connections.filter((connection) => connection.provider === provider);
-  const { data: platformsData = [] } = useQuery<PlatformListItem[]>({ queryKey: ["/api/platforms"] });
-  const environmentIds = useMemo(() => platformsData.flatMap((platform) =>
-    (platform.products || []).flatMap((product) =>
-      (product.environments || []).map((environment) => environment.id),
-    ),
-  ), [platformsData]);
-  const environmentQueries = useQueries({
-    queries: environmentIds.map((environmentId) => ({
-      queryKey: [`/api/platforms/environments/${environmentId}/details`],
-      enabled: Number.isFinite(environmentId),
-    })),
-  });
-  const usageByConnectionId = useMemo(() => {
-    const usage = new Map<number, HostingConnectorUsage[]>();
-    for (const query of environmentQueries) {
-      const details = query.data as (PlatformEnvironmentDetails & { hosting?: { connectionId?: number | null } | null }) | undefined;
-      const connectionId = details?.hosting?.connectionId;
-      if (!details || !connectionId) continue;
-      const list = usage.get(connectionId) || [];
-      list.push({
-        id: details.environment.id,
-        platformName: details.platform.name,
-        productName: details.product.name,
-        environmentName: details.environment.name,
-      });
-      usage.set(connectionId, list);
-    }
-    return usage;
-  }, [environmentQueries.map((query) => query.dataUpdatedAt).join(":")]);
-
-  const resetDialog = () => {
-    setDialogOpen(false);
-    setEditing(null);
-    setLabel("");
-    setCredential("");
-    setAccountType("hosting");
-  };
-  const openDialog = (connection?: ProviderConnection) => {
-    setEditing(connection || null);
-    setLabel(connection?.label || "");
-    setCredential("");
-    setAccountType(connection?.accountType || "hosting");
-    setDialogOpen(true);
-  };
-  const refresh = () => {
-    queryClient.invalidateQueries({ queryKey: ["/api/provider-connections"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/platforms"] });
-    refetch();
-  };
-  const save = useMutation({
-    mutationFn: async () => {
-      const body: Record<string, string> = {
-        provider,
-        label: label.trim(),
-        accountType: accountType.trim() || "hosting",
-      };
-      if (credential.trim()) body.credential = credential.trim();
-      if (!body.label) throw new Error("Label required");
-      if (!editing && !credential.trim()) throw new Error("Credential required");
-      const response = editing
-        ? await apiRequest("PUT", `/api/provider-connections/${editing.id}`, body)
-        : await apiRequest("POST", "/api/provider-connections", body);
-      return response.json() as Promise<ProviderConnection>;
-    },
-    onSuccess: () => {
-      toast({ title: editing ? "Hosting connector updated" : "Hosting connector created" });
-      resetDialog();
-      refresh();
-    },
-    onError: (error: Error) => toast({ title: "Connector save failed", description: error.message, variant: "destructive" }),
-  });
-  const test = useMutation({
-    mutationFn: async (connection: ProviderConnection) => {
-      const response = await apiRequest("POST", `/api/provider-connections/${connection.id}/test`, {});
-      return response.json() as Promise<{ ok: boolean; message: string }>;
-    },
-    onSuccess: (result) => {
-      toast({ title: result.ok ? "Hosting connector healthy" : "Connector test failed", description: result.message, variant: result.ok ? "default" : "destructive" });
-      refresh();
-    },
-    onError: (error: Error) => toast({ title: "Connector test failed", description: error.message, variant: "destructive" }),
-  });
-  const remove = useMutation({
-    mutationFn: async (connection: ProviderConnection) => {
-      const response = await apiRequest("DELETE", `/api/provider-connections/${connection.id}`);
-      return response.json() as Promise<{ success: boolean }>;
-    },
-    onSuccess: () => { setPendingDelete(null); toast({ title: "Hosting connector deleted" }); refresh(); },
-    onError: (error: Error) => toast({ title: "Delete blocked", description: error.message, variant: "destructive" }),
-  });
-
-  return (
-    <div className="min-w-0 space-y-2" data-testid={`${provider}-hosting-connectors`}>
-      <button
-        type="button"
-        className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-cta transition-colors hover:bg-accent/70"
-        onClick={() => openDialog()}
-        data-testid={`button-${provider}-new-hosting-connector`}
-      >
-        <Plus className="h-3.5 w-3.5" /> New Connector
-      </button>
-      <IntegrationTreeSection label="Connectors" initialOpen testIdPrefix={provider}>
-        {isLoading ? <Skeleton className="mx-2 h-8" /> : hostingConnectors.length === 0 ? (
-          <p className="px-2 py-1.5 text-sm text-muted-foreground">No {providerName} hosting connectors.</p>
-        ) : hostingConnectors.map((connection) => {
-          const usage = usageByConnectionId.get(connection.id) || [];
-          return (
-            <ProfileTreeRow
-              key={connection.id}
-              label={connection.label}
-              icon={<ProviderIcon className={cn("h-3.5 w-3.5", usage.length > 0 ? "text-foreground" : "text-muted-foreground")} />}
-              hasValue
-              showEmpty
-              testId={`${provider}-hosting-connector-${connection.id}`}
-              expandedContentClassName="space-y-2"
-              expandedContent={
-                <>
-                  <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
-                    <span>ID {connection.id}</span>
-                    <span>·</span>
-                    <span>{connection.lastVerifiedAt ? `verified ${new Date(connection.lastVerifiedAt).toLocaleString()}` : "not verified"}</span>
-                  </div>
-                  {usage.length > 0 ? usage.map((item) => (
-                    <a key={item.id} href={`/platforms/environments/${item.id}`} className="block text-cta hover:text-active">
-                      {item.platformName} / {item.productName} / {item.environmentName}
-                    </a>
-                  )) : <p className="text-muted-foreground">Not used by an environment.</p>}
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" size="sm" onClick={() => test.mutate(connection)} disabled={test.isPending}>Test</Button>
-                    <Button variant="ghost" size="sm" onClick={() => openDialog(connection)}>Edit</Button>
-                    <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={() => setPendingDelete(connection)} disabled={remove.isPending || usage.length > 0}>Delete</Button>
-                  </div>
-                </>
-              }
-            >
-              <span className={usage.length > 0 ? "text-foreground" : "text-muted-foreground"}>{usage.length > 0 ? "In use" : "Not in use"}</span>
-            </ProfileTreeRow>
-          );
-        })}
-      </IntegrationTreeSection>
-
-      <AlertDialog open={Boolean(pendingDelete)} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete connector?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingDelete ? `Delete ${pendingDelete.label}? This permanently removes its stored credential.` : "This permanently removes the stored credential."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => { if (pendingDelete) remove.mutate(pendingDelete); }}
-              disabled={remove.isPending}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) resetDialog(); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editing ? "Edit" : "New"} {providerName} Hosting Connector</DialogTitle>
-            <DialogDescription>Credentials are encrypted and reused by Platform Environment hosting bindings.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2"><Label htmlFor={`${provider}-connector-label`}>Label</Label><Input id={`${provider}-connector-label`} value={label} onChange={(event) => setLabel(event.target.value)} placeholder={`${providerName} account`} /></div>
-            <div className="space-y-2"><Label htmlFor={`${provider}-connector-type`}>Credential type</Label><Input id={`${provider}-connector-type`} value={accountType} onChange={(event) => setAccountType(event.target.value)} placeholder="hosting" /></div>
-            <div className="space-y-2"><Label htmlFor={`${provider}-connector-credential`}>{editing ? "Replacement credential" : "Credential"}</Label><Input id={`${provider}-connector-credential`} type="password" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder={editing ? "Leave blank to keep current credential" : "Required"} autoComplete="new-password" /></div>
-          </div>
-          <DialogFooter><Button variant="ghost" onClick={resetDialog}>Cancel</Button><Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}Save</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-function CloudflareDetail() {
-  return <HostingConnectorsDetail provider="cloudflare" />;
-}
 
 function GitHubDetail() {
   const { toast } = useToast();
@@ -4873,126 +4646,87 @@ function SendGridDetail() {
   );
 }
 
-function IntegrationDetail({ provider }: { provider: string }) {
-  const [, setLocation] = useLocation();
-
-  const integration = INTEGRATIONS.find((i) => i.route === provider);
-
-  if (!integration) {
-    return (
-      <div className="space-y-4">
-        <Card>
-          <CardContent className="py-8 text-center">
-            <p className="text-muted-foreground" data-testid="text-integration-not-found">
-              Integration not found.{" "}
-              <button className="underline text-primary" onClick={() => setLocation("/integrations")}>
-                Back to integrations
-              </button>
-            </p>
-          </CardContent>
-        </Card>
+const INTEGRATION_DETAIL_SURFACES: Record<string, () => React.ReactNode> = {
+  google: () => <GoogleDetail />,
+  box: () => <BoxDetail />,
+  elevenlabs: () => (
+    <div className="space-y-4">
+      <WebhookBaseUrlSection />
+      <InstantVoiceCloneWizard />
+      <VoiceBrowserSection />
+      <ExpressivenessSection />
+      <VoiceTuningSection />
+      <PronunciationSection />
+    </div>
+  ),
+  anthropic: () => <ProviderConnectorPackage provider="anthropic" />,
+  openai: () => (
+    <div className="space-y-4">
+      <ProviderConnectorPackage provider="openai-subscription" />
+      <ProviderConnectorPackage provider="openai" />
+    </div>
+  ),
+  "claude-cli": () => <ProviderConnectorPackage provider="claude-cli" />,
+  grok: () => <ProviderConnectorPackage provider="grok-subscription" />,
+  twitter: () => (
+    <div className="space-y-4">
+      <TwitterAccountsSection />
+    </div>
+  ),
+  quickbooks: () => <QuickBooksDetail />,
+  plaid: () => (
+    <div className="min-w-0 space-y-2">
+      <div data-testid="card-secret-plaid">
+        <IntegrationTreeSection label="Credentials" initialOpen icon={<Landmark className="h-3.5 w-3.5" />} testIdPrefix="plaid">
+          <div className="min-w-0 px-2 py-1.5">
+            <SecretsForSection section="plaid" />
+          </div>
+        </IntegrationTreeSection>
       </div>
-    );
-  }
+      <PlaidAccountsSection />
+    </div>
+  ),
+  brave: () => (
+    <div className="min-w-0 space-y-2" data-testid="card-secret-brave">
+      <IntegrationTreeSection label="API" initialOpen icon={<Globe className="h-3.5 w-3.5" />} testIdPrefix="brave">
+        <div className="min-w-0 px-2 py-1.5">
+          <SecretsForSection section="brave" />
+        </div>
+      </IntegrationTreeSection>
+    </div>
+  ),
+  github: () => <GitHubDetail />,
+  "automation-auth": () => (
+    <div className="space-y-4">
+      <AutomationAuthSection />
+    </div>
+  ),
+  expo: () => <ExpoDetail />,
+  sentry: () => <SentryDetail />,
+  recall: () => <RecallDetail />,
+  twilio: () => <TwilioDetail />,
+  deepgram: () => <DeepgramDetail />,
+  sendgrid: () => <SendGridDetail />,
+  meta: () => <MetaDetail />,
+  oura: () => <OuraDetail />,
+  slack: () => <SlackDetail />,
+};
 
-  const Icon = integration.icon;
+function IntegrationDetail({ integration }: { integration: ResolvedIntegrationCard }) {
+  const surface = integration.detailSurface
+    ? INTEGRATION_DETAIL_SURFACES[integration.detailSurface]
+    : undefined;
+  const Icon = integrationIcon(integration.iconKey);
 
   return (
     <div className="space-y-4">
-      {provider !== "google" && provider !== "recall" && provider !== "railway" && provider !== "github" && provider !== "slack" && (
+      {!integration.ownsTitle && (
         <div className="flex items-center gap-3">
           <Icon className="h-6 w-6" />
-          <h2 className="text-lg font-semibold">{integration.name}</h2>
+          <h2 className="text-lg font-semibold">{integration.label}</h2>
         </div>
       )}
-
-      {provider === "google" && <GoogleDetail />}
-      {provider === "box" && <BoxDetail />}
-
-      {provider === "elevenlabs" && (
-        <div className="space-y-4">
-          <WebhookBaseUrlSection />
-          <InstantVoiceCloneWizard />
-          <VoiceBrowserSection />
-          {/* Voice engine selector removed — single engine */}
-          <ExpressivenessSection />
-          <VoiceTuningSection />
-          <PronunciationSection />
-        </div>
-      )}
-
-      {provider === "anthropic" && (
-        <ProviderConnectorPackage provider="anthropic" />
-      )}
-
-      {provider === "openai" && (
-        <div className="space-y-4">
-          <ProviderConnectorPackage provider="openai-subscription" />
-          <ProviderConnectorPackage provider="openai" />
-        </div>
-      )}
-
-      {provider === "claude-cli" && (
-        <ProviderConnectorPackage provider="claude-cli" />
-      )}
-
-      {provider === "grok" && (
-        <ProviderConnectorPackage provider="grok-subscription" />
-      )}
-
-      {provider === "twitter" && (
-        <div className="space-y-4">
-          <TwitterAccountsSection />
-        </div>
-      )}
-
-      {provider === "quickbooks" && <QuickBooksDetail />}
-
-      {provider === "plaid" && (
-        <div className="min-w-0 space-y-2">
-          <div data-testid="card-secret-plaid">
-            <IntegrationTreeSection label="Credentials" initialOpen icon={<Landmark className="h-3.5 w-3.5" />} testIdPrefix="plaid">
-              <div className="min-w-0 px-2 py-1.5">
-                <SecretsForSection section="plaid" />
-              </div>
-            </IntegrationTreeSection>
-          </div>
-          <PlaidAccountsSection />
-        </div>
-      )}
-
-      {provider === "brave" && (
-        <div className="min-w-0 space-y-2" data-testid="card-secret-brave">
-          <IntegrationTreeSection label="API" initialOpen icon={<Globe className="h-3.5 w-3.5" />} testIdPrefix="brave">
-            <div className="min-w-0 px-2 py-1.5">
-              <SecretsForSection section="brave" />
-            </div>
-          </IntegrationTreeSection>
-        </div>
-      )}
-
-      {provider === "github" && <GitHubDetail />}
-
-      {provider === "railway" && <HostingConnectorsDetail provider="railway" />}
-
-      {provider === "cloudflare" && <CloudflareDetail />}
-
-      {provider === "automation-auth" && (
-        <div className="space-y-4">
-          <AutomationAuthSection />
-        </div>
-      )}
-
-      {provider === "expo" && <ExpoDetail />}
-      {provider === "sentry" && <SentryDetail />}
-      {provider === "recall" && <RecallDetail />}
-      {provider === "twilio" && <TwilioDetail />}
-      {provider === "deepgram" && <DeepgramDetail />}
-      {provider === "sendgrid" && <SendGridDetail />}
-      {provider === "meta" && <MetaDetail />}
-
-      {provider === "oura" && <OuraDetail />}
-      {provider === "slack" && <SlackDetail />}
+      {surface?.()}
     </div>
   );
 }
@@ -5006,20 +4740,36 @@ export default function IntegrationsPage() {
     queryKey: ["/api/setup/secrets-status"],
     refetchInterval: 15000,
   });
-
-  const [location] = useLocation();
+  const { data: composition, isLoading: compositionLoading } = useProductComposition();
+  const [location, setLocation] = useLocation();
   const providerMatch = /^\/integrations\/([^/]+)\/?$/.exec(location);
   const provider = providerMatch ? decodeURIComponent(providerMatch[1]) : null;
-  const integration = provider && provider !== "cartesia"
-    ? INTEGRATIONS.find((item) => item.route === provider)
-    : null;
+  const integration = provider
+    ? (composition?.integrations ?? []).find((item) => item.route === provider)
+    : undefined;
 
-  usePageHeader({ title: integration?.name || "Integrations", titleHref: "/integrations" });
-  if (provider === "cartesia") return <Redirect to="/system?tab=secrets" />;
+  usePageHeader({ title: integration?.label || "Integrations", titleHref: "/integrations" });
 
-  return provider ? (
+  if (provider && compositionLoading) {
+    return <div className="flex justify-center p-6"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+  }
+
+  if (provider && !integration) {
+    return (
+      <div className="flex flex-col gap-6 p-6">
+        <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-integration-not-found">
+          Integration not found.{" "}
+          <button className="underline text-cta" onClick={() => setLocation("/integrations")}>
+            Back to integrations
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return integration ? (
     <div className="flex flex-col gap-6 p-6">
-      <IntegrationDetail provider={provider} />
+      <IntegrationDetail integration={integration} />
     </div>
   ) : (
     <IntegrationTree status={status} />

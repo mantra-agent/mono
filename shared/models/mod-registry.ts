@@ -182,6 +182,26 @@ export interface IntegrationContribution extends ContributionBase {
   relationship: "required" | "recommended" | "available";
   capabilities: string[];
   onboardingStepId?: string;
+  /** Display name on the Integrations index. */
+  label: string;
+  /** Registered icon key. Generic UI looks this up; do not ship a connector-name icon map. */
+  iconKey: string;
+  /**
+   * Integrations URL slug. Absent = no product page row (readiness-only leftover).
+   * Generic list/detail consult this field, never a leftover name map.
+   */
+  route?: string;
+  /**
+   * Code-owned detail surface. Generic detail dispatches through a handler
+   * table keyed by this contract. Absent = no detail page.
+   */
+  detailSurface?: string;
+  /** Optional secrets-status health boolean; false renders Error when configured. */
+  healthField?: string;
+  /** secrets-status keys that mean this connector is configured. */
+  statusFields?: string[];
+  /** True when the detail surface already paints the connector title. */
+  ownsTitle?: boolean;
   /** How cheap synchronous readiness is derived. Absent = no cheap signal. */
   readinessKind?: ConnectorReadinessKind;
   /** All of these secrets must be present when readinessKind is `secret`. */

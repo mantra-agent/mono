@@ -7,6 +7,7 @@
 // Client and server both import this file; it intentionally carries no drizzle
 // / db imports so it stays client-safe (mirrors shared/models/mod-registry.ts).
 
+import type { ContributionAudience } from "./mod-registry";
 import type { ModKey } from "./mods";
 import type { UiInteractionTarget } from "../ui-interaction";
 
@@ -86,6 +87,16 @@ export interface ResolvedIntegrationCard {
   /** Whether the underlying connector capability is currently usable. */
   readiness: "ready" | "setup-required";
   sourceMod: "core" | ModKey;
+  label: string;
+  iconKey: string;
+  audience?: ContributionAudience;
+  /** Absent = readiness-only; the Integrations page must not invent a row. */
+  route?: string;
+  /** Code-owned detail surface; generic detail looks this up. */
+  detailSurface?: string;
+  healthField?: string;
+  statusFields?: string[];
+  ownsTitle?: boolean;
 }
 
 /** One resolved onboarding step. */

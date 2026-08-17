@@ -3,7 +3,7 @@
 // reference. They mirror the CURRENT product exactly:
 //   surfaces   → one key per route-level page component in client/src/App.tsx
 //   icons      → the lucide icon names used by app-sidebar navSections
-//   connectors → the ids in client/src/pages/integrations.tsx INTEGRATIONS[]
+//   connectors → IntegrationContribution.connectorKey values in Core/Mod definitions
 //   widgets    → the SimpleWidgetType renderers in home-widget-renderer.tsx
 //   collectors → the server/simple/collectors.ts fan-out sources
 //   workflows  → canonical workflow_templates keys (currently build-v1)
@@ -127,6 +127,16 @@ export const REGISTERED_ICON_KEYS = [
   "Vault",
   "Plug",
   "Settings",
+  "Box",
+  "Volume2",
+  "Phone",
+  "Mic",
+  "Shield",
+  "Glasses",
+  "Radio",
+  "Smartphone",
+  "Landmark",
+  "MessageSquare",
 ] as const;
 export type RegisteredIconKey = (typeof REGISTERED_ICON_KEYS)[number];
 
@@ -140,6 +150,7 @@ export const REGISTERED_CONNECTOR_KEYS = [
   "anthropic",
   "openai",
   "claude-cli",
+  "grok",
   "twitter",
   "plaid",
   "quickbooks",

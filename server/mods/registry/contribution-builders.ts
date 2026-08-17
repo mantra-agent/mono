@@ -124,18 +124,51 @@ export function integration(
   connectorKey: RegisteredConnectorKey,
   relationship: IntegrationContribution["relationship"],
   capabilities: string[],
-  readiness: Pick<
+  presentation: Pick<
     IntegrationContribution,
-    "readinessKind" | "requiredSecrets" | "requiredAnySecrets" | "oauthProvider" | "connectionProvider"
-  > = {},
+    | "label"
+    | "iconKey"
+    | "route"
+    | "detailSurface"
+    | "healthField"
+    | "statusFields"
+    | "ownsTitle"
+    | "audience"
+    | "requiredPermissions"
+    | "readinessKind"
+    | "requiredSecrets"
+    | "requiredAnySecrets"
+    | "oauthProvider"
+    | "connectionProvider"
+  >,
 ): IntegrationContribution {
+  const {
+    label,
+    iconKey,
+    route,
+    detailSurface,
+    healthField,
+    statusFields,
+    ownsTitle,
+    audience,
+    requiredPermissions,
+    ...readiness
+  } = presentation;
   return {
     kind: "integration",
     id,
     connectorKey,
     relationship,
     capabilities,
-    audience: "settings",
+    label,
+    iconKey,
+    audience: audience ?? "settings",
+    ...(route ? { route } : {}),
+    ...(detailSurface ? { detailSurface } : {}),
+    ...(healthField ? { healthField } : {}),
+    ...(statusFields?.length ? { statusFields } : {}),
+    ...(ownsTitle ? { ownsTitle } : {}),
+    ...(requiredPermissions?.length ? { requiredPermissions } : {}),
     ...readiness,
   };
 }
