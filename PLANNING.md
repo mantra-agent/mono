@@ -28,7 +28,7 @@ Durable work prerequisites live in one Core graph: `address_links` rows with pre
 
 - **One relationship.** `blocked_by` is the only prerequisite predicate.
 - **Direction.** `sourceAddress` is the blocked item; `targetAddress` is the prerequisite that must clear first. Reading “source blocked_by target” means source waits on target.
-- **Typed canonical addresses.** Endpoints are `@type:id` protocol addresses (for example `@task:123`, `@project:33`, `@milestone:33~12`, `@page:…`). Normalize and validate before write; unknown or invisible endpoints fail closed at the boundary.
+- **Typed canonical addresses.** Endpoints are `@type:id` protocol addresses from the closed work-noun set in `BLOCKED_BY_ENDPOINT_TYPES` (`task`, `milestone`, `project`, `feature`, `goal`). Examples: `@task:123`, `@project:33`, `@milestone:33~12`, `@feature:…`, `@goal:…`. Normalize and validate before write; unknown types, out-of-set types, and invisible endpoints fail closed at the mutation boundary. Provenance may be any supporting address. Existing out-of-set edges stay until retired and read as stale/invalid.
 - **Not task status.** Graph edges are prerequisite truth. Task/project status (`ready`, `active`, `blocked`, `done`, …) remains a separate domain field. An active edge may justify reporting work as blocked; status must not invent or replace edges.
 - **Not plan step order.** Plan step sequence is execution order inside one Plan run. It is not durable cross-object prerequisite truth and must not be treated as a `blocked_by` substitute.
 
@@ -49,7 +49,7 @@ Durable work prerequisites live in one Core graph: `address_links` rows with pre
 | State | Meaning |
 |-------|---------|
 | `ready` | No active `blocked_by` edges in scope |
-| `blocked` | At least one active edge whose target is unresolved (not done/completed) |
+| `blocked` | At least one active edge whose target is unresolved (not done/completed/achieved/maintain) |
 | `stale` | Edges exist but every target is satisfied, inaccessible, or invalid — review/retire |
 | `unavailable` | Address invalid, unauthorized, resolution error, or bound exceeded |
 

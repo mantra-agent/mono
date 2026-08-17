@@ -1,10 +1,11 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Network, X } from "lucide-react";
+import { BLOCKED_BY_ENDPOINT_TYPES } from "@shared/blocked-by-protocol";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
-import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 interface BlockingEdge {
   linkId: string;
@@ -15,8 +16,6 @@ interface BlockingEdge {
 interface BlockingPage {
   edges?: BlockingEdge[];
 }
-
-const WORK_REFERENCE_TYPES = ["goal", "project", "milestone", "task"] as const;
 
 export function BlockedByRow({ sourceAddress, testId }: { sourceAddress: string; testId?: string }) {
   const { toast } = useToast();
@@ -74,7 +73,7 @@ export function BlockedByRow({ sourceAddress, testId }: { sourceAddress: string;
           </div>
           <ReferencePicker
             value={[]}
-            types={[...WORK_REFERENCE_TYPES]}
+            types={[...BLOCKED_BY_ENDPOINT_TYPES]}
             mode="single"
             variant="inline"
             dense

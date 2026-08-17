@@ -12,7 +12,11 @@
  * target) tuple. Fresh idempotency keys allow retire-then-readd.
  */
 import { randomBytes } from "crypto";
-import { BLOCKED_BY_PREDICATE } from "@shared/blocked-by-protocol";
+import {
+  BLOCKED_BY_ENDPOINT_TYPES,
+  BLOCKED_BY_PREDICATE,
+  isBlockedByEndpointType,
+} from "@shared/blocked-by-protocol";
 import type { AddressLink, AddressReplayPage } from "@shared/life-addressing";
 import { normalizeProtocolAddress } from "@shared/life-addressing";
 import {
@@ -59,6 +63,20 @@ function requireAddress(value: string, label: string): string {
   const normalized = normalizeProtocolAddress(value);
   if (normalized.outcome !== "valid") {
     throw Object.assign(new Error(`${label} must be a syntactically valid canonical address`), { status: 400 });
+  }
+  return normalized.address;
+}
+
+function requireEndpointAddress(value: string, label: string): string {
+  const normalized = normalizeProtocolAddress(value);
+  if (normalized.outcome !== "valid") {
+    throw Object.assign(new Error(`${label} must be a syntactically valid canonical address`), { status: 400 });
+  }
+  if (!isBlockedByEndpointType(normalized.type)) {
+    throw Object.assign(
+      new Error(`${label} type must be one of: ${BLOCKED_BY_ENDPOINT_TYPES.join(", ")}`),
+      { status: 400 },
+    );
   }
   return normalized.address;
 }
@@ -156,8 +174,8 @@ async function wouldCreateCycle(
 export class BlockingGraphService {
   async createBlockedBy(input: CreateBlockedByInput): Promise<BlockingEdge> {
     const principal = requireCurrentUserPrincipal();
-    const sourceAddress = requireAddress(input.sourceAddress, "sourceAddress");
-    const targetAddress = requireAddress(input.targetAddress, "targetAddress");
+    const sourceAddress = requireEndpointAddress(input.sourceAddress, "sourceAddress");
+    const targetAddress = requireEndpointAddress(input.targetAddress, "targetAddress");
     const provenanceAddress = input.provenanceAddress
       ? requireAddress(input.provenanceAddress, "provenanceAddress")
       : undefined;

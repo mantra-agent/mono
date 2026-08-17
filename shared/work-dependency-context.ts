@@ -10,7 +10,7 @@
  * Server implementation: server/work-dependency-context.ts.
  */
 
-import type { BlockedByPredicate } from "./blocked-by-protocol";
+import type { BlockedByEndpointType, BlockedByPredicate } from "./blocked-by-protocol";
 import { BLOCKED_BY_PREDICATE } from "./blocked-by-protocol";
 
 /** Purposes that may load dependency context. All other contexts stay dark. */
@@ -71,7 +71,7 @@ export interface WorkDependencyBlocker {
   provenanceAddress?: string;
   /** Compact label when the target is visible to the principal. */
   label?: string;
-  /** Domain status when authorized and known (task/project/milestone). */
+  /** Domain status when authorized and known (task/project/milestone/goal, or Feature stage). */
   status?: string;
   /** Execution owner when authorized and known (task/project). */
   owner?: string;
@@ -147,9 +147,17 @@ export interface WorkDependencyContextResult {
   resolvedAt: string;
 }
 
-/** Domain statuses that clear a work prerequisite without retiring the edge. */
-export const WORK_DEPENDENCY_SATISFIED_STATUSES = {
+/**
+ * Domain statuses that clear a work prerequisite without retiring the edge.
+ * Feature uses pipeline stage, not Feature status. `deprecate` is not done.
+ */
+export const WORK_DEPENDENCY_SATISFIED_STATUSES: Record<
+  BlockedByEndpointType,
+  ReadonlySet<string>
+> = {
   task: new Set(["done"]),
   project: new Set(["completed"]),
   milestone: new Set(["completed"]),
-} as const;
+  goal: new Set(["achieved"]),
+  feature: new Set(["maintain"]),
+};
