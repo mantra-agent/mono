@@ -7426,8 +7426,16 @@ ${refs}` : ""),
     } catch (err: unknown) {
       if (err instanceof SentryApiError) {
         const failure = toolFailureFromError(err);
+        // Invalid search queries are caller input — keep the message actionable
+        // and omit raw provider body noise when we already classified it.
+        const detailSuffix =
+          failure?.code === "system_input_invalid"
+            ? ""
+            : err.details
+              ? ` — ${JSON.stringify(err.details)}`
+              : "";
         return {
-          result: `Sentry ${action} failed: ${err.message} (status=${err.status})${err.details ? ` — ${JSON.stringify(err.details)}` : ""}`,
+          result: `Sentry ${action} failed: ${err.message} (status=${err.status})${detailSuffix}`,
           error: true,
           ...(failure ? { failure } : {}),
         };
