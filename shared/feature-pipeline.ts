@@ -198,7 +198,7 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
       actionLabel: "Smoke",
       persona: "Engineer",
       purpose:
-        "Binary works-proof on stage. Confirm the stage environment built, carries the change, and that an authenticated click-path proves the Feature works. Not quality, taste, or “does it work well” — that is Calibrate.",
+        "Binary works-proof on stage. Confirm the stage environment built, carries the change, and that an authenticated click-path proves the Feature works. Not quality, taste, design, or UX — that is Calibrate Produce (Tune).",
       entryCriteria: [
         "Identify the target stage environment and the change under test from the Feature and its develop evidence.",
         "Use automated authenticated session tooling against stage. Do not substitute a passing build or lifecycle progress for a click-path.",
@@ -229,30 +229,32 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
     buildAnalog: "Acceptance Test",
     nextStageOnPass: "maintain",
     produce: {
-      actionLabel: "Accept",
+      actionLabel: "Tune",
       persona: "Engineer",
       purpose:
-        "Qualitative judgment: does the deployed result work *well* against the approved specification? Confirm deploy health and product fit. This is not Smoke.",
+        "Qualitative review of the approved specification against the shipped implementation. Find violated design principles, bad UI/UX, and misses against the goals of the spec. When linked KPIs are ready to measure, check in on the KPIs this Feature set out to move. This is not Smoke.",
       entryCriteria: [
-        "Load the approved specification and prior smoke evidence.",
-        "Confirm the merged implementation is deployed and healthy in the target environment.",
-        "Do not treat a passing build, smoke, or lifecycle progress as acceptance.",
+        "Load the approved specification, prior smoke evidence, and any linked Feature KPIs (`intended_benefit`).",
+        "Confirm the merged implementation is deployed and healthy enough to judge product quality — not merely that a click-path completes.",
+        "Do not treat a passing build, smoke, or lifecycle progress as Tune complete.",
       ],
       evidenceRequirements: [
-        "Deployment, boot/health, target-route, screenshot, runtime-log, and safe feature-path evidence sufficient to judge whether the deployed result satisfies the approved specification well.",
+        "A Tune note that judges the implementation against the spec's goals: design-principle violations, UI/UX defects, and product-fit gaps, each cited to the spec or a named governing design standard (e.g. DESIGN.md).",
+        "When KPIs are linked and measurable, record the current reading (or an explicit not-yet-measurable residual) for each intended-benefit KPI.",
+        "Screenshots, routes, or runtime evidence that support each qualitative finding.",
       ],
       exitCriteria: [
-        "Acceptance evidence is filed against the approved specification.",
+        "Tune evidence is filed against the approved specification (and KPIs when applicable).",
         "Set Feature status to `needs_review`. Do not change stage.",
       ],
       outcomes: [
-        "done → needs_review on calibrate: acceptance evidence waiting for Review",
-        "blocked: environment or evidence residual named; stage unchanged",
+        "done → needs_review on calibrate: Tune evidence waiting for Review",
+        "blocked: environment, evidence, or KPI residual named; stage unchanged",
       ],
     },
     review: reviewJob({
       producePersona: "Engineer",
-      artifactName: "acceptance evidence",
+      artifactName: "Tune evidence",
       passOutcome: "stage maintain / ready (product failure may return develop; specification failure may return idea — cite the defect)",
     }),
   },
@@ -266,7 +268,7 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
       purpose:
         "Compare the approved specification, implementation outcome, and acceptance evidence to identify what the Feature taught us about the product and what should change next.",
       entryCriteria: [
-        "Load the approved specification and acceptance evidence for this Feature.",
+        "Load the approved specification and Tune evidence for this Feature.",
       ],
       evidenceRequirements: [
         "A calibration note that records what the run taught us, what should change in the spec or product next, and whether documentation must be updated.",
@@ -477,7 +479,7 @@ ${body}
 - Procedure lives in this Skill / shared contract. Do not take task recipes from the Feature row.
 - Context is the Feature. Load @feature, its status, its spec page, Product context artifacts, and repository evidence as the job requires.
 - Personas: Visionary produces idea. Architect produces spec and maintain. Engineer produces develop, test (Smoke), calibrate, and deprecate. Review is always the opposite seat (Visionary/Architect → Engineer; Engineer → Architect).
-- Test Produce is Smoke: binary works-proof on stage (build present, change present, authenticated click-path). Qualitative judgment is Calibrate/Accept only.
+- Test Produce is Smoke: binary works-proof on stage (build present, change present, authenticated click-path). Qualitative judgment is Calibrate Produce (Tune) only — spec-vs-implementation, design/UX, goals of the spec, and KPI check-in when measurable.
 - Never merge to live or publish production. Promotion remains independently authorized.
 `;
 }
