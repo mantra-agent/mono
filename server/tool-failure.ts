@@ -91,6 +91,10 @@ export type ToolFailureCode =
   | "git_network"
   | "scratch_path_denied"
   | "scratch_not_found"
+  // Meetings join / lifecycle rejects
+  | "meeting_input_invalid"
+  | "meeting_provider_transient"
+  | "meeting_join_failed"
   // Slack outbound tool rejects
   | "slack_input_invalid"
   | "slack_person_unaddressed"
