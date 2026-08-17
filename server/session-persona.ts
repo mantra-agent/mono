@@ -23,6 +23,48 @@ function revisionBelongsToSelectedPersona(
   );
 }
 
+/**
+ * Lattice heal/rebase/legacy-seed remap can leave a session pin pointing at a
+ * missing or foreign revision while personaId still names a live seat. Heal to
+ * that persona's current belonging revision (or unpinned live projection) so
+ * SkillChat/ChatStream keep running. Never apply a foreign revision payload.
+ */
+async function healDetachedSelectedPersonaPin(
+  sessionId: string,
+  persona: PersonaEntry,
+  detachedRevisionId: string,
+): Promise<PersonaEntry> {
+  const currentId = persona.currentRevisionId;
+  if (currentId && currentId !== detachedRevisionId) {
+    const current = await personaStorage.getRevision(currentId);
+    if (current && revisionBelongsToSelectedPersona(persona, current)) {
+      try {
+        await chatFileStorage.updateSessionPersona(sessionId, persona.id);
+      } catch (err) {
+        log.warn(
+          `session=${sessionId} failed to rewrite detached selectedPersonaRevisionId=${detachedRevisionId} → ${current.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      log.warn(
+        `session=${sessionId} healed detached selectedPersonaRevisionId=${detachedRevisionId} to persona=${persona.id} currentRevisionId=${current.id}`,
+      );
+      return { ...persona, ...(current.payload as PersonaRevisionPayload), currentRevisionId: current.id };
+    }
+  }
+
+  try {
+    await chatFileStorage.updateSessionPersona(sessionId, persona.id);
+  } catch (err) {
+    log.warn(
+      `session=${sessionId} failed to clear/rewrite detached selectedPersonaRevisionId=${detachedRevisionId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  log.warn(
+    `session=${sessionId} detached selectedPersonaRevisionId=${detachedRevisionId} for persona=${persona.id}; using live persona projection`,
+  );
+  return persona;
+}
+
 /** Resolve the persona that governs one session. Missing persona stays unset. */
 export async function resolveSessionPersona(
   sessionId?: string | null,
@@ -34,10 +76,10 @@ export async function resolveSessionPersona(
       const persona = await personaStorage.get(session.personaId);
       if (persona && session.selectedPersonaRevisionId) {
         const revision = await personaStorage.getRevision(session.selectedPersonaRevisionId);
-        if (!revision || !revisionBelongsToSelectedPersona(persona, revision)) {
-          throw new Error(`Session ${sessionId} has invalid selected Persona revision provenance`);
+        if (revision && revisionBelongsToSelectedPersona(persona, revision)) {
+          return { ...persona, ...(revision.payload as PersonaRevisionPayload), currentRevisionId: revision.id };
         }
-        return { ...persona, ...(revision.payload as PersonaRevisionPayload), currentRevisionId: revision.id };
+        return healDetachedSelectedPersonaPin(sessionId, persona, session.selectedPersonaRevisionId);
       }
       if (persona) return persona;
       log.warn(`session=${sessionId} references missing personaId=${session.personaId}; leaving session unbound so orientation can retry`);
