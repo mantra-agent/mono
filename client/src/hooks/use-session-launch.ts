@@ -7,9 +7,11 @@ import { useToast } from "@/hooks/use-toast";
  * Canonical interactive session-launch path.
  *
  * Creates a session, optionally seats a persona, optionally instantiates an
- * agenda, posts an optional first message, and opens Focus. Discuss call sites
- * compose context only. Deliverable-producing buttons compose context plus a
- * Skill/contract body — never a bespoke prompt string invented at the row.
+ * agenda, posts an optional first message, and by default opens Focus. Pass
+ * `openFocus: false` when the host surfaces the session in place (Features).
+ * Discuss call sites compose context only. Deliverable-producing buttons
+ * compose context plus a Skill/contract body — never a bespoke prompt string
+ * invented at the row.
  */
 
 export interface SessionLaunch {
@@ -29,6 +31,12 @@ export interface SessionLaunch {
   personaName?: string;
   /** Toast title on failure. */
   errorTitle?: string;
+  /**
+   * Open the Focus session surface after create. Default true.
+   * Set false when the host already surfaces the session in place
+   * (e.g. Features under-row block) so mobile does not leave the page.
+   */
+  openFocus?: boolean;
 }
 
 type CreatedSession = { id: string };
@@ -65,8 +73,11 @@ export function useSessionLaunch() {
       }
       return session;
     },
-    onSuccess: (session) => {
+    onSuccess: (session, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      // Hosts that keep the user on-page (Features under-row session) skip Focus.
+      // On mobile, setWidgetOpen(true) is a full-screen leave of the current route.
+      if (variables.openFocus === false) return;
       setSessionForRoute(route, session.id);
       setWidgetOpen(true);
     },

@@ -718,6 +718,8 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
                       }, job),
                       clientTurnSuffix: pendingKey,
                       errorTitle: `Could not start ${contract.actionLabel.toLowerCase()} session`,
+                      // Stay on Features; session mounts under the row (mobile Focus would leave).
+                      openFocus: false,
                     },
                     {
                       onSuccess: (session) => {
