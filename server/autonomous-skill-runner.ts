@@ -275,149 +275,6 @@ function parseEstimatedDurationMs(duration: string | null | undefined): number |
   return null;
 }
 
-/**
- * Leftover name map. Stamped SkillDefault rows win first.
- * sentry/guard stay here until those seeds carry the same fields.
- * Do not delete this map until every named skill is populated.
- */
-const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
-  "sleep": {
-    skillId: "sleep",
-    label: "Sleep",
-    callType: "internal",
-    activity: ACTIVITY_MEMORY,
-    temperature: 0.5,
-    timeoutMs: 10 * 60 * 1000,
-  },
-  "reflect": {
-    skillId: "reflect",
-    label: "Reflect",
-    callType: "internal",
-    includeSections: ["world_model.people.self.principles", "world_model.calendar", "world_model.active_work.tasks", "world_model.active_work.projects"],
-    activity: ACTIVITY_THINKING,
-    temperature: 0.6,
-    timeoutMs: 10 * 60 * 1000,
-  },
-  // Build-owned skills: authoritative runtime config lives here so timer/manual
-  // paths never depend on principal-scoped DB lookup for admission.
-  "sentry": {
-    skillId: "sentry",
-    label: "Sentry",
-    callType: "full",
-    activity: ACTIVITY_WORK,
-    temperature: 0.2,
-    timeoutMs: 15 * 60 * 1000,
-    sessionType: "autonomous",
-    admissionTier: "background",
-    estimatedDuration: "10min",
-  },
-  "guard": {
-    skillId: "guard",
-    label: "Guard",
-    callType: "full",
-    activity: ACTIVITY_WORK,
-    temperature: 0.2,
-    timeoutMs: 20 * 60 * 1000,
-    sessionType: "autonomous",
-    admissionTier: "background",
-    estimatedDuration: "15min",
-  },
-  "regression": {
-    skillId: "regression",
-    label: "Regression",
-    callType: "full",
-    activity: ACTIVITY_WORK,
-    temperature: 0.2,
-    timeoutMs: 3 * 60 * 60 * 1000,
-    sessionType: "autonomous",
-    admissionTier: "background",
-  },
-  "self-heal": {
-    skillId: "self-heal",
-    label: "Self Heal",
-    callType: "full",
-    activity: ACTIVITY_WORK,
-    temperature: 0.2,
-    timeoutMs: 3 * 60 * 60 * 1000,
-    // Orchestrator files under SYSTEM. Canonical Plan children still receive
-    // trusted engineering provenance and build:write through plan.execute.
-    sessionType: "autonomous",
-    admissionTier: "background",
-  },
-  "enrich-email": {
-    skillId: "enrich-email",
-    label: "Enrich Email",
-    callType: "full",
-    activity: ACTIVITY_WORK,
-    temperature: 0.3,
-    timeoutMs: 8 * 60 * 1000,
-    sessionType: "autonomous",
-    // Email enrichment is part of the user-facing inbound communications
-    // pipeline. It must not be deferred merely because the user is active.
-    admissionTier: "realtime",
-  },
-  // News pipeline child: landscape scan invokes curate for batch decisions.
-  // Runtime config is code-owned so Scan News never depends on dynamic DB
-  // config-resolve for admission/timeout/activity (process text remains DB-owned).
-  "curate": {
-    skillId: "curate",
-    label: "Curate",
-    callType: "full",
-    activity: ACTIVITY_WORK,
-    temperature: 0.3,
-    timeoutMs: 10 * 60 * 1000,
-    sessionType: "autonomous",
-    // Nested under an in-progress scan; must not yield solely because the user is active.
-    admissionTier: "realtime",
-  },
-  "brief-daily": {
-    skillId: "brief-daily",
-    label: "Daily Brief",
-    callType: "internal",
-    activity: ACTIVITY_WORK,
-    temperature: 0.4,
-    timeoutMs: 3 * 60 * 1000,
-    sessionType: "agent",
-  },
-  "goal-manager": {
-    skillId: "goal-manager",
-    label: "Goal Manager",
-    callType: "full",
-    activity: ACTIVITY_WORK,
-    temperature: 0.3,
-    timeoutMs: 15 * 60 * 1000,
-    sessionType: "autonomous",
-    // Nightly graph maintenance is non-urgent and must yield to foreground work.
-    admissionTier: "background",
-  },
-  // Work-dependency consumers. `world_model.active_work.dependencies` is a
-  // world-only spine section, so these full-context skills must inject it
-  // explicitly to receive the shared blocked_by resolver projection
-  // (resolveWorkDependencyContext) rather than reconstruct dependency state.
-  "autonomy": {
-    skillId: "autonomy",
-    label: "Autonomy",
-    callType: "full",
-    includeSections: ["world_model.active_work.dependencies"],
-    activity: ACTIVITY_WORK,
-    temperature: 0.3,
-    timeoutMs: 20 * 60 * 1000,
-    sessionType: "autonomous",
-    admissionTier: "background",
-  },
-  "streamline": {
-    skillId: "streamline",
-    label: "Streamline",
-    callType: "full",
-    includeSections: ["world_model.active_work.dependencies"],
-    activity: ACTIVITY_THINKING,
-    temperature: 0.4,
-    timeoutMs: 15 * 60 * 1000,
-    sessionType: "autonomous",
-    admissionTier: "background",
-  },
-};
-
 export interface AutonomousRunResult {
   sessionId: string;
   status: "succeeded" | "degraded" | "failed" | "yielded";
@@ -498,10 +355,6 @@ export function tryClaimSkillRun(skillId: string, intentionId?: string): boolean
 
 export function releaseSkillRun(skillId: string, intentionId?: string): void {
   activeSkillRuns.delete(getSkillRunKey(skillId, intentionId));
-}
-
-export function getRegisteredSkillIds(): string[] {
-  return Object.keys(SKILL_RUN_CONFIGS);
 }
 
 function skillDefaultRunConfig(skillName: string): SkillRunConfig | undefined {
@@ -656,7 +509,7 @@ export async function executeAutonomousSkillRun(
   // ── Skillless execution path ────────────────────────────────────────
   // When no skillId is provided but preContext exists, run the session
   // using preContext as the full instruction set. No skill DB lookup,
-  // no SKILL_RUN_CONFIGS entry needed. Used by the plan executor to
+  // no SkillDefault entry needed. Used by the plan executor to
   // run plan steps without a dedicated skill.
   const isSkillless = !skillId;
   if (isSkillless && !options.preContext) {
@@ -677,15 +530,12 @@ export async function executeAutonomousSkillRun(
     };
     logger.log(`[skillless] Using inline config — label="${label}" timeoutMs=${config.timeoutMs}`);
   } else {
-    // Instance first: stamped SkillDefault, leftover SKILL_RUN_CONFIGS
-    // (sentry/guard), then DB dynamic fallback. Do not delete the leftover
-    // map until every named skill is populated.
+    // Instance first: stamped SkillDefault, then DB dynamic fallback for
+    // user-created skills.
     const requestedId = skillId;
     const canonicalName = resolveSkillRunName(requestedId);
     config = skillDefaultRunConfig(canonicalName)
-      ?? skillDefaultRunConfig(requestedId)
-      ?? SKILL_RUN_CONFIGS[canonicalName]
-      ?? (canonicalName !== requestedId ? SKILL_RUN_CONFIGS[requestedId] : undefined)!;
+      ?? skillDefaultRunConfig(requestedId)!;
     if (!config) {
       try {
         let dbSkill = await storage.getSkillByName(requestedId);
@@ -702,13 +552,9 @@ export async function executeAutonomousSkillRun(
 
         const resolvedName = resolveSkillRunName(dbSkill.name);
         const instanceByName = skillDefaultRunConfig(resolvedName) ?? skillDefaultRunConfig(dbSkill.name);
-        const leftoverByName = SKILL_RUN_CONFIGS[resolvedName] ?? SKILL_RUN_CONFIGS[dbSkill.name];
         if (instanceByName) {
           config = instanceByName;
           logger.log(`[skill:${requestedId}] Resolved UUID to SkillDefault config via db name="${dbSkill.name}" — timeout=${config.timeoutMs}ms`);
-        } else if (leftoverByName) {
-          config = leftoverByName;
-          logger.log(`[skill:${requestedId}] Resolved UUID to leftover SKILL_RUN_CONFIGS via db name="${dbSkill.name}" — timeout=${config.timeoutMs}ms`);
         } else {
           const resolvedActivity = resolveActivityId(dbSkill.activity || "");
           const activity: ActivityId = BUILTIN_ACTIVITY_IDS.includes(resolvedActivity) ? resolvedActivity : ACTIVITY_WORK;
@@ -743,7 +589,7 @@ export async function executeAutonomousSkillRun(
         throw resolveError;
       }
     } else if (canonicalName !== requestedId) {
-      logger.log(`[skill:${requestedId}] Resolved alias to hardcoded config "${canonicalName}" — timeout=${config.timeoutMs}ms`);
+      logger.log(`[skill:${requestedId}] Resolved alias to SkillDefault config "${canonicalName}" — timeout=${config.timeoutMs}ms`);
     }
   } // end skill-based config resolution
 
