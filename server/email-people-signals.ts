@@ -244,6 +244,7 @@ export async function processEmailPeopleSignals(messages: EmailSignalMessage[], 
   let processed = 0;
   let importQueued = 0;
   let interactionsLogged = 0;
+  const stagedEmails: string[] = [];
 
   for (const message of messages) {
     if (!message.providerMessageId || !message.accountId) continue;
@@ -257,8 +258,24 @@ export async function processEmailPeopleSignals(messages: EmailSignalMessage[], 
       if (match) {
         if (await logKnownContactInteraction(match.id, message, participant, key, triage?.tier, triage?.reason)) interactionsLogged++;
       } else {
-        if (await queueUnknownParticipant(message, participant, key, opts.source || "email_sync")) importQueued++;
+        if (await queueUnknownParticipant(message, participant, key, opts.source || "email_sync")) {
+          importQueued++;
+          stagedEmails.push(participant.email);
+        }
       }
+    }
+  }
+
+  // High-confidence auto decisions close discovery → eligibility without failing sync.
+  if (stagedEmails.length > 0) {
+    try {
+      const { maybeAutoImportAfterEmailStaging } = await import("./people-import-auto");
+      await maybeAutoImportAfterEmailStaging(stagedEmails);
+    } catch (error) {
+      log.warn("auto-import after email staging failed; candidates remain pending", {
+        staged: stagedEmails.length,
+        errorName: error instanceof Error ? error.name : "unknown",
+      });
     }
   }
 

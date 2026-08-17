@@ -736,6 +736,7 @@ async function scanInBackground(
           decision: "pending",
           scannedAt: new Date().toISOString(),
           accountId: acctId,
+          source: c.source || "gmail_scan",
         });
         alreadyQueued.add(emailLower);
       }
@@ -743,6 +744,20 @@ async function scanInBackground(
       if (upserts.length > 0) {
         await upsertCandidates(upserts);
         for (const c of upserts) state.candidates[c.email] = c;
+        const pendingEmails = upserts
+          .filter((candidate) => candidate.decision === "pending")
+          .map((candidate) => candidate.email);
+        if (pendingEmails.length > 0) {
+          try {
+            const { maybeAutoImportAfterEmailStaging } = await import("./people-import-auto");
+            await maybeAutoImportAfterEmailStaging(pendingEmails);
+          } catch (error) {
+            log.warn("auto-import after gmail scan staging failed; candidates remain pending", {
+              staged: pendingEmails.length,
+              errorName: error instanceof Error ? error.name : "unknown",
+            });
+          }
+        }
       }
 
       state.scan.contactsFound = Object.values((await loadCandidates())).filter(c => c.decision === "pending").length;
