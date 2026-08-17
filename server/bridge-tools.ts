@@ -12758,7 +12758,7 @@ const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   observe: new Set(["pattern", "gap", "change", "connection", "opportunity"]),
   cognition: new Set(["set_emotion", "create_persona", "update_persona", "update_global_persona_template"]),
   pronunciation: new Set(["add", "update", "remove"]),
-  decisions: new Set(["create", "update", "delete", "lock", "reopen", "add_update", "edit_update", "delete_update", "add_link", "remove_link"]),
+  decisions: new Set(["create", "update", "append", "delete", "lock", "reopen", "add_update", "edit_update", "delete_update", "add_link", "remove_link", "record_judgment"]),
   plan: new Set(["update_step", "add_steps", "pause", "unlink_session"]),
   routers: new Set(["create", "move_connector", "set_account_router"]),
   blocking_graph: new Set(["add_blocker", "remove_blocker"]),

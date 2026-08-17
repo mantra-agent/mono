@@ -97,7 +97,7 @@ const SIDE_EFFECT_TIERS: Record<string, ToolSideEffectEntry> = {
       get_opportunity_artifacts: 0,
     },
   },
-  decisions: { default: 1, actions: { list: 0, get: 0 } },
+  decisions: { default: 1, actions: { list: 0, get: 0, search: 0, list_for_target: 0 } },
   scenarios: { default: 1, actions: {
     list_scenarios: 0, get_scenario: 0, get_move_tree: 0, get_move: 0, get_move_path: 0,
     list_actors: 0, get_actor: 0, list_child_moves: 0, list_assumptions: 0,

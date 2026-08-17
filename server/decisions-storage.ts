@@ -1,6 +1,6 @@
 // Use createLogger for logging ONLY
 import { db, pool, runWithDatabaseTransaction } from "./db";
-import { eq, and, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc, or, ilike, sql } from "drizzle-orm";
 import { filePrincipleStorage } from "./file-storage/principles";
 import { peopleStorage } from "./people-storage";
 import {
@@ -22,6 +22,7 @@ import type { Principal } from "./principal";
 import { createAddressLink, listAddressLinks, retireAddressLink } from "./life-addressing-storage";
 import { normalizeProtocolAddress, type AddressLink } from "@shared/life-addressing";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
+import { markdownToTiptap } from "@shared/markdown-tiptap";
 
 const log = createLogger("DecisionsStorage");
 
@@ -101,6 +102,37 @@ export interface RecordJudgmentResult {
   outcome: "created" | "replayed";
 }
 
+/** Optional judgment fields applied when locking an existing open Decision. Bare lock stays valid. */
+export interface LockDecisionInput {
+  trafficLight?: DecisionTrafficLight;
+  description?: string;
+  reasoning?: string;
+  answerPayload?: Record<string, unknown>;
+  ownerPersonRole?: "self" | "partner";
+  principleRevisionIds?: string[];
+  sourceSessionId?: string;
+  sourceToolCallId?: string;
+  triggeredByAddress?: string;
+}
+
+export interface AppendDecisionSectionsInput {
+  dataContent?: string;
+  scenariosContent?: string;
+  planContent?: string;
+}
+
+export interface SearchDecisionsInput {
+  query: string;
+  status?: DecisionStatus;
+  limit?: number;
+}
+
+export interface ListLinksForTargetInput {
+  targetAddress?: string;
+  targetType?: string;
+  targetId?: string;
+}
+
 function decisionLinkCompatibilityEnabled(): boolean {
   return process.env.DECISION_LINKS_COMPATIBILITY_ENABLED !== "false";
 }
@@ -130,6 +162,102 @@ function decisionAddressLink(decisionId: string, link: AddressLink): DecisionAdd
 async function indexDecision(principal: Principal, decision: Decision): Promise<void> {
   const { indexDecisionReferences } = await import("./decision-reference-index");
   await indexDecisionReferences(principal, decision);
+}
+
+function appendSectionPlainText(current: string | null | undefined, fragment: string): string {
+  const next = fragment.trim();
+  if (!next) return current ?? "";
+  const existing = (current ?? "").trimEnd();
+  return existing ? `${existing}\n\n${next}` : next;
+}
+
+function escapeIlikePattern(raw: string): string {
+  return raw.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+/** Resolve principleRevisionIds to visible current principles (same rules as recordJudgment). */
+async function resolveSelectedPrinciples(principleRevisionIds: string[] | undefined) {
+  const principles = await filePrincipleStorage.getPrinciples();
+  const byCurrentRevisionId = new Map(principles.map((p) => [p.currentRevisionId, p]));
+  const byPrincipleId = new Map(principles.map((p) => [p.id, p]));
+  const selectedPrinciples: typeof principles = [];
+  const seenPrincipleIds = new Set<string>();
+  for (const rawId of [...new Set(principleRevisionIds ?? [])]) {
+    const trimmedId = typeof rawId === "string" ? rawId.trim() : "";
+    if (!trimmedId || trimmedId === "undefined" || trimmedId === "null") continue;
+    let principle = byCurrentRevisionId.get(trimmedId) ?? byPrincipleId.get(trimmedId) ?? null;
+    if (!principle) {
+      principle = await filePrincipleStorage.resolvePrincipleFromAnyId(trimmedId);
+    }
+    if (!principle) {
+      throw Object.assign(
+        new Error(`Principle revision is not current or visible: ${trimmedId}`),
+        { status: 400 },
+      );
+    }
+    if (seenPrincipleIds.has(principle.id)) continue;
+    seenPrincipleIds.add(principle.id);
+    selectedPrinciples.push(principle);
+  }
+  return selectedPrinciples;
+}
+
+async function resolveOwnerPersonId(ownerPersonRole: "self" | "partner" | undefined): Promise<string | null> {
+  if (!ownerPersonRole) return null;
+  const people = await peopleStorage.listPeople();
+  const targetCabinetLevel = ownerPersonRole === "self" ? "agent" : "user";
+  return people.find((person) => person.cabinetLevel === targetCabinetLevel)?.id ?? null;
+}
+
+/**
+ * One provenance writer for mint (recordJudgment) and close-existing (lockDecision).
+ * Writes decided_by / governed_by / triggered_by address_links for the decision row.
+ */
+async function writeJudgmentProvenanceLinks(
+  principal: Principal,
+  decisionId: string,
+  opts: {
+    ownerPersonId?: string | null;
+    selectedPrinciples?: Awaited<ReturnType<typeof resolveSelectedPrinciples>>;
+    triggeredByAddress?: string;
+    sourceSessionId?: string | null;
+  },
+): Promise<void> {
+  const sourceAddress = `@decision:${decisionId}`;
+  const sessionProvenance = opts.sourceSessionId ? `@session:${opts.sourceSessionId}` : undefined;
+
+  if (opts.ownerPersonId) {
+    const targetAddress = `@person:${opts.ownerPersonId}`;
+    await createAddressLink(principal, {
+      sourceAddress,
+      targetAddress,
+      predicate: "decided_by",
+      provenanceAddress: sessionProvenance,
+      createdBy: "decision.judgment",
+      idempotencyKey: `decision:${decisionId}:decided_by:${targetAddress}`,
+    });
+  }
+  for (const principle of opts.selectedPrinciples ?? []) {
+    const targetAddress = `@principle:${principle.currentRevisionId}`;
+    await createAddressLink(principal, {
+      sourceAddress,
+      targetAddress,
+      predicate: "governed_by",
+      provenanceAddress: `@principle:${principle.id}`,
+      createdBy: "decision.judgment",
+      idempotencyKey: `decision:${decisionId}:governed_by:${targetAddress}`,
+    });
+  }
+  if (opts.triggeredByAddress) {
+    await createAddressLink(principal, {
+      sourceAddress,
+      targetAddress: opts.triggeredByAddress,
+      predicate: "triggered_by",
+      provenanceAddress: sessionProvenance,
+      createdBy: "decision.judgment",
+      idempotencyKey: `decision:${decisionId}:triggered_by:${opts.triggeredByAddress}`,
+    });
+  }
 }
 
 export class DecisionsStorage {
@@ -184,38 +312,8 @@ export class DecisionsStorage {
           if (existing) return { decision: existing, outcome: "replayed" as const };
         }
 
-        const principles = await filePrincipleStorage.getPrinciples();
-        const byCurrentRevisionId = new Map(principles.map((p) => [p.currentRevisionId, p]));
-        const byPrincipleId = new Map(principles.map((p) => [p.id, p]));
-        // Callers may pass current revision ids, principle ids (from context chips /
-        // "principle id:" labels), or historical revision ids. Resolve all three to
-        // the visible current principle so governed_by always pins the live revision.
-        const selectedPrinciples: typeof principles = [];
-        const seenPrincipleIds = new Set<string>();
-        for (const rawId of [...new Set(input.principleRevisionIds ?? [])]) {
-          const trimmedId = typeof rawId === "string" ? rawId.trim() : "";
-          // Context once emitted @principle:undefined when Layer1 omitted currentRevisionId.
-          // Skip those inert tokens rather than failing the whole judgment.
-          if (!trimmedId || trimmedId === "undefined" || trimmedId === "null") continue;
-          let principle = byCurrentRevisionId.get(trimmedId) ?? byPrincipleId.get(trimmedId) ?? null;
-          if (!principle) {
-            principle = await filePrincipleStorage.resolvePrincipleFromAnyId(trimmedId);
-          }
-          if (!principle) {
-            throw Object.assign(
-              new Error(`Principle revision is not current or visible: ${trimmedId}`),
-              { status: 400 },
-            );
-          }
-          if (seenPrincipleIds.has(principle.id)) continue;
-          seenPrincipleIds.add(principle.id);
-          selectedPrinciples.push(principle);
-        }
-        const people = input.ownerPersonRole ? await peopleStorage.listPeople() : [];
-        const targetCabinetLevel = input.ownerPersonRole === "self" ? "agent" : "user";
-        const ownerPerson = input.ownerPersonRole
-          ? people.find((person) => person.cabinetLevel === targetCabinetLevel)
-          : undefined;
+        const selectedPrinciples = await resolveSelectedPrinciples(input.principleRevisionIds);
+        const ownerPersonId = await resolveOwnerPersonId(input.ownerPersonRole);
         const resolvedAt = input.resolvedAt ?? new Date();
         const status = input.status ?? "closed";
         // Insert in the ambient transaction — do not call createDecision (nested autoHeal/tx).
@@ -225,7 +323,7 @@ export class DecisionsStorage {
           status,
           closedAt: status === "closed" ? resolvedAt : null,
           resolvedAt,
-          ownerPersonId: ownerPerson?.id ?? null,
+          ownerPersonId,
           sourceSessionId: input.sourceSessionId ?? null,
           sourceToolCallId: input.sourceToolCallId ?? null,
           answerPayload: input.answerPayload ?? null,
@@ -238,47 +336,17 @@ export class DecisionsStorage {
           decisionId: decision.id,
           sourceSessionId: input.sourceSessionId ?? null,
           sourceToolCallId: input.sourceToolCallId ?? null,
-          ownerPersonId: ownerPerson?.id ?? null,
+          ownerPersonId,
           principleCount: selectedPrinciples.length,
           hasTriggeredBy: Boolean(input.triggeredByAddress),
         }));
 
-        const sourceAddress = `@decision:${decision.id}`;
-        const sessionProvenance = input.sourceSessionId ? `@session:${input.sourceSessionId}` : undefined;
-
-        if (ownerPerson) {
-          const targetAddress = `@person:${ownerPerson.id}`;
-          await createAddressLink(principal, {
-            sourceAddress,
-            targetAddress,
-            predicate: "decided_by",
-            provenanceAddress: sessionProvenance,
-            createdBy: "decision.judgment",
-            idempotencyKey: `decision:${decision.id}:decided_by:${targetAddress}`,
-          });
-        }
-        for (const principle of selectedPrinciples) {
-          // Address the governing revision directly; principle adapter resolves revision IDs.
-          const targetAddress = `@principle:${principle.currentRevisionId}`;
-          await createAddressLink(principal, {
-            sourceAddress,
-            targetAddress,
-            predicate: "governed_by",
-            provenanceAddress: `@principle:${principle.id}`,
-            createdBy: "decision.judgment",
-            idempotencyKey: `decision:${decision.id}:governed_by:${targetAddress}`,
-          });
-        }
-        if (input.triggeredByAddress) {
-          await createAddressLink(principal, {
-            sourceAddress,
-            targetAddress: input.triggeredByAddress,
-            predicate: "triggered_by",
-            provenanceAddress: sessionProvenance,
-            createdBy: "decision.judgment",
-            idempotencyKey: `decision:${decision.id}:triggered_by:${input.triggeredByAddress}`,
-          });
-        }
+        await writeJudgmentProvenanceLinks(principal, decision.id, {
+          ownerPersonId,
+          selectedPrinciples,
+          triggeredByAddress: input.triggeredByAddress,
+          sourceSessionId: input.sourceSessionId,
+        });
         return { decision, outcome: "created" as const };
       }));
     });
@@ -297,17 +365,267 @@ export class DecisionsStorage {
     });
   }
 
-  async lockDecision(id: string): Promise<Decision | undefined> {
+  /**
+ * Close an open Decision on the same row. Optional judgment fields mirror recordJudgment
+ * column names; bare lock (no input) still closes with existing-or-green traffic light.
+ * Already-closed decisions fail 400 — never silent overwrite.
+ */
+  async lockDecision(id: string, input?: LockDecisionInput): Promise<Decision | undefined> {
     return autoHeal(async () => {
-      const existing = await this.getDecision(id);
-      if (!existing) return undefined;
-      const [row] = await db.update(decisions).set({
-        status: "closed",
-        closedAt: existing.closedAt ?? new Date(),
-        trafficLight: existing.trafficLight ?? "green",
-        updatedAt: new Date(),
-      }).where(combineWithWritableScope(requireCurrentUserPrincipal(), decisionScopeColumns, eq(decisions.id, id))).returning();
-      return row;
+      const principal = requireCurrentUserPrincipal();
+      return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+        const [existing] = await tx.select().from(decisions)
+          .where(combineWithWritableScope(principal, decisionScopeColumns, eq(decisions.id, id)))
+          .limit(1);
+        if (!existing) return undefined;
+        if (existing.status === "closed") {
+          throw Object.assign(
+            new Error(`Decision ${id} is already closed. Reopen to change the verdict, or add_update for post-lock notes.`),
+            { status: 400 },
+          );
+        }
+
+        const sourceSessionId = input?.sourceSessionId?.trim() || undefined;
+        const sourceToolCallId = input?.sourceToolCallId?.trim() || undefined;
+        if (sourceSessionId && sourceToolCallId && principal.accountId) {
+          // Replay: this row already carries the pair → return without rewrite.
+          if (
+            existing.sourceSessionId === sourceSessionId
+            && existing.sourceToolCallId === sourceToolCallId
+          ) {
+            return existing;
+          }
+          const [other] = await tx.select({ id: decisions.id }).from(decisions).where(and(
+            eq(decisions.accountId, principal.accountId),
+            eq(decisions.sourceSessionId, sourceSessionId),
+            eq(decisions.sourceToolCallId, sourceToolCallId),
+            combineWithVisibleScope(principal, decisionScopeColumns),
+          )).limit(1);
+          if (other && other.id !== id) {
+            throw Object.assign(
+              new Error(`sourceSessionId/sourceToolCallId already used by decision ${other.id}`),
+              { status: 400 },
+            );
+          }
+        }
+
+        const selectedPrinciples = await resolveSelectedPrinciples(input?.principleRevisionIds);
+        const ownerPersonId = input?.ownerPersonRole
+          ? await resolveOwnerPersonId(input.ownerPersonRole)
+          : existing.ownerPersonId;
+        const now = new Date();
+        const trafficLight: DecisionTrafficLight =
+          input?.trafficLight
+          ?? existing.trafficLight
+          ?? "green";
+
+        const patch: Record<string, unknown> = {
+          status: "closed",
+          closedAt: existing.closedAt ?? now,
+          resolvedAt: existing.resolvedAt ?? now,
+          trafficLight,
+          updatedAt: now,
+        };
+        if (typeof input?.description === "string" && input.description.trim()) {
+          patch.description = input.description.trim();
+        }
+        if (typeof input?.reasoning === "string" && input.reasoning.trim()) {
+          patch.reasoning = input.reasoning.trim();
+        }
+        if (input?.answerPayload && typeof input.answerPayload === "object" && !Array.isArray(input.answerPayload)) {
+          patch.answerPayload = input.answerPayload;
+        }
+        if (ownerPersonId) patch.ownerPersonId = ownerPersonId;
+        if (sourceSessionId) patch.sourceSessionId = sourceSessionId;
+        if (sourceToolCallId) patch.sourceToolCallId = sourceToolCallId;
+
+        const [row] = await tx.update(decisions).set(patch)
+          .where(combineWithWritableScope(principal, decisionScopeColumns, eq(decisions.id, id)))
+          .returning();
+        if (!row) return undefined;
+
+        await writeJudgmentProvenanceLinks(principal, row.id, {
+          ownerPersonId: row.ownerPersonId,
+          selectedPrinciples,
+          triggeredByAddress: input?.triggeredByAddress,
+          sourceSessionId: row.sourceSessionId,
+        });
+        await indexDecision(principal, row);
+        log.info(JSON.stringify({
+          event: "decision.lock",
+          decisionId: row.id,
+          trafficLight: row.trafficLight,
+          hasReasoning: Boolean(row.reasoning),
+          principleCount: selectedPrinciples.length,
+        }));
+        return row;
+      }));
+    });
+  }
+
+  /**
+   * Open-only incremental capture into Data / Scenarios / Plan.
+   * Concatenates non-empty markdown fragments; does not touch decision_updates.
+   */
+  async appendDecisionSections(id: string, fragments: AppendDecisionSectionsInput): Promise<Decision> {
+    return autoHeal(async () => {
+      const principal = requireCurrentUserPrincipal();
+      return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+        const [existing] = await tx.select().from(decisions)
+          .where(combineWithWritableScope(principal, decisionScopeColumns, eq(decisions.id, id)))
+          .limit(1);
+        if (!existing) {
+          throw Object.assign(new Error(`Decision ${id} not found or not writable`), { status: 404 });
+        }
+        if (existing.status !== "open") {
+          throw Object.assign(
+            new Error(`Decision ${id} is closed. Use add_update for post-lock notes, or reopen to keep deliberating.`),
+            { status: 400 },
+          );
+        }
+
+        const dataFrag = typeof fragments.dataContent === "string" ? fragments.dataContent.trim() : "";
+        const scenariosFrag = typeof fragments.scenariosContent === "string" ? fragments.scenariosContent.trim() : "";
+        const planFrag = typeof fragments.planContent === "string" ? fragments.planContent.trim() : "";
+        if (!dataFrag && !scenariosFrag && !planFrag) {
+          throw Object.assign(
+            new Error("append requires at least one non-empty dataContent, scenariosContent, or planContent fragment"),
+            { status: 400 },
+          );
+        }
+
+        const patch: Record<string, unknown> = { updatedAt: new Date() };
+        if (dataFrag) {
+          const plain = appendSectionPlainText(existing.dataPlainText, dataFrag);
+          patch.dataPlainText = plain;
+          patch.dataContent = markdownToTiptap(plain);
+        }
+        if (scenariosFrag) {
+          const plain = appendSectionPlainText(existing.scenariosPlainText, scenariosFrag);
+          patch.scenariosPlainText = plain;
+          patch.scenariosContent = markdownToTiptap(plain);
+        }
+        if (planFrag) {
+          const plain = appendSectionPlainText(existing.planPlainText, planFrag);
+          patch.planPlainText = plain;
+          patch.planContent = markdownToTiptap(plain);
+        }
+
+        const [row] = await tx.update(decisions).set(patch)
+          .where(combineWithWritableScope(principal, decisionScopeColumns, eq(decisions.id, id)))
+          .returning();
+        if (!row) {
+          throw Object.assign(new Error(`Decision ${id} not found or not writable`), { status: 404 });
+        }
+        await indexDecision(principal, row);
+        log.debug(`appendDecisionSections id=${id} fields=${Object.keys(patch).filter((k) => k !== "updatedAt").join(",")}`);
+        return row;
+      }));
+    });
+  }
+
+  /** Principal-visible ILIKE over title, description, section plain text, and reasoning. */
+  async searchDecisions(input: SearchDecisionsInput): Promise<Decision[]> {
+    return autoHeal(async () => {
+      const query = input.query?.trim() ?? "";
+      if (!query) {
+        throw Object.assign(new Error("search requires a non-empty query"), { status: 400 });
+      }
+      const limitRaw = input.limit ?? 20;
+      const limit = Math.max(1, Math.min(50, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 20));
+      const pattern = `%${escapeIlikePattern(query)}%`;
+      const textMatch = or(
+        ilike(decisions.title, pattern),
+        ilike(decisions.description, pattern),
+        ilike(decisions.dataPlainText, pattern),
+        ilike(decisions.scenariosPlainText, pattern),
+        ilike(decisions.planPlainText, pattern),
+        sql`coalesce(${decisions.reasoning}, '') ilike ${pattern}`,
+      );
+      const predicates = [textMatch!];
+      if (input.status) predicates.push(eq(decisions.status, input.status));
+      const rows = await db.select().from(decisions)
+        .where(combineWithVisibleScope(requireCurrentUserPrincipal(), decisionScopeColumns, and(...predicates)))
+        .orderBy(desc(decisions.updatedAt))
+        .limit(limit);
+      log.debug(`searchDecisions qLen=${query.length} status=${input.status ?? "all"} count=${rows.length}`);
+      return rows;
+    });
+  }
+
+  /**
+   * Reverse lookup: decisions linked to a target address (any address add_link accepts).
+   * Prefer targetAddress; targetType+targetId remain compatibility.
+   */
+  async listDecisionsForTarget(input: ListLinksForTargetInput): Promise<Decision[]> {
+    return autoHeal(async () => {
+      const links = await this.listLinksForTargetAddress(input);
+      const uniqueIds: string[] = [];
+      const seen = new Set<string>();
+      for (const link of links) {
+        if (seen.has(link.decisionId)) continue;
+        seen.add(link.decisionId);
+        uniqueIds.push(link.decisionId);
+      }
+      const out: Decision[] = [];
+      for (const decisionId of uniqueIds) {
+        const d = await this.getDecision(decisionId);
+        if (d) out.push(d);
+      }
+      return out;
+    });
+  }
+
+  /** listLinksForTarget accepting any canonical address (not just strategy|project enum). */
+  async listLinksForTargetAddress(input: ListLinksForTargetInput): Promise<DecisionAddressLink[]> {
+    return autoHeal(async () => {
+      const targetAddress = decisionTargetAddress({
+        decisionId: "lookup",
+        targetAddress: input.targetAddress,
+        targetType: input.targetType,
+        targetId: input.targetId,
+      });
+      const target = normalizeProtocolAddress(targetAddress);
+      if (target.outcome !== "valid") {
+        throw Object.assign(new Error("Decision link target must be a canonical address"), { status: 400 });
+      }
+
+      const canonicalPage = await listAddressLinks(requireCurrentUserPrincipal(), {
+        targetAddress: target.address,
+        lifecycle: "active",
+        limit: 500,
+      });
+      const canonical: DecisionAddressLink[] = [];
+      for (const link of canonicalPage.items) {
+        const source = normalizeProtocolAddress(link.sourceAddress);
+        if (source.outcome !== "valid" || source.type !== "decision") continue;
+        const projected = decisionAddressLink(source.id, link);
+        if (projected) canonical.push(projected);
+      }
+      if (!decisionLinkCompatibilityEnabled()) return canonical;
+
+      // Compatibility legacy rows only when target type is in the old enum.
+      if (!(decisionLinkTargetTypes as readonly string[]).includes(target.type)) return canonical;
+      const seen = new Set(canonical.map((link) => link.decisionId));
+      const legacy = await db.select().from(decisionLinks)
+        .where(and(
+          eq(decisionLinks.targetType, target.type as DecisionLinkTargetType),
+          eq(decisionLinks.targetId, target.id),
+        ));
+      for (const link of legacy) {
+        if (seen.has(link.decisionId) || !(await this.getDecision(link.decisionId))) continue;
+        canonical.push({
+          id: link.id,
+          decisionId: link.decisionId,
+          targetType: target.type,
+          targetId: target.id,
+          targetAddress: target.address,
+          predicate: "relates_to",
+          createdAt: link.createdAt,
+          source: "compatibility",
+        });
+      }
+      return canonical;
     });
   }
 
