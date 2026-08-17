@@ -112,6 +112,10 @@ function userTimerPredicate(principal: Principal) {
  * Suspended/archived owners must not enter the wall-clock schedule set.
  * Without this producer filter, Skill enqueue authorizes under a broken
  * principal and floods TIMER_HANDLER_FAILED every cadence.
+ *
+ * Every query that uses this predicate MUST leftJoin accounts on
+ * timers.accountId. The accounts.status reference is otherwise invalid SQL
+ * (42P01 missing FROM-clause) and aborts scheduler start.
  */
 function validSchedulerTimerPredicate() {
   return or(
@@ -548,6 +552,7 @@ export class FileTimerStorage {
       })
       .from(responsibilityRuns)
       .innerJoin(timers, eq(timers.id, responsibilityRuns.responsibilityId))
+      .leftJoin(accounts, eq(accounts.id, timers.accountId))
       .where(and(
         eq(responsibilityRuns.status, "deferred"),
         eq(responsibilityRuns.trigger, "scheduled"),
@@ -598,6 +603,7 @@ export class FileTimerStorage {
       metadata: responsibilityRuns.metadata,
     }).from(responsibilityRuns)
       .innerJoin(timers, eq(timers.id, responsibilityRuns.responsibilityId))
+      .leftJoin(accounts, eq(accounts.id, timers.accountId))
       .innerJoin(modInstallationResources, and(
         eq(modInstallationResources.resourceId, timers.id),
         eq(modInstallationResources.contributionId, "build.timer.post-acceptance-regression"),
