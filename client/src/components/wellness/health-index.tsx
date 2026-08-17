@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ChevronRight, Heart, Loader2, Moon, Zap } from "lucide-react";
+import { Activity, ChevronRight, Heart, Moon, Zap } from "lucide-react";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -280,19 +280,22 @@ export function HealthIndex() {
             ariaLabel="Search health metrics"
           />
           {metrics.isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-label="Loading health metrics" />
-            </div>
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading…</div>
           ) : metrics.error ? (
             <div className="px-2 py-1.5 text-sm text-muted-foreground">Could not load health metrics</div>
-          ) : groups.length === 0 ? (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">No health metrics</div>
+          ) : search.trim() && filtered.length === 0 && groups.length > 0 ? (
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">No matching health metrics.</div>
           ) : (
             SECTIONS.map((section) => {
               const rows = filtered.filter((group) => group.section === section);
-              if (rows.length === 0) return null;
+              if (section === "Other" && rows.length === 0) return null;
               return (
-                <CollapsibleSection key={section} label={section} count={rows.length}>
+                <CollapsibleSection
+                  key={section}
+                  label={section}
+                  count={rows.length}
+                  emptyLabel={`No ${section.toLowerCase()} yet.`}
+                >
                   {rows.map((group, index) => (
                     <HierarchyTreeRow
                       key={group.type}
@@ -315,10 +318,12 @@ export function HealthIndex() {
 function CollapsibleSection({
   label,
   count,
+  emptyLabel,
   children,
 }: {
   label: string;
   count: number;
+  emptyLabel: string;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(true);
@@ -328,7 +333,13 @@ function CollapsibleSection({
         <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
         {label} · {count}
       </CollapsibleTrigger>
-      <CollapsibleContent>{children}</CollapsibleContent>
+      <CollapsibleContent>
+        {count === 0 ? (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">{emptyLabel}</div>
+        ) : (
+          children
+        )}
+      </CollapsibleContent>
     </Collapsible>
   );
 }

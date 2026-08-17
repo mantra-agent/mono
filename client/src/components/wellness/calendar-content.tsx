@@ -974,8 +974,6 @@ function CategorySection({
   bucket?: BucketPulseRollup;
   onOpenDetails: (activity: ActivityWithStatus) => void;
 }) {
-  if (activities.length === 0) return null;
-
   const label = CATEGORY_LABELS[category] ?? category;
   // Default: daily/weekly open, others collapsed
   const defaultOpen = category === "daily_practice" || category === "weekly_ritual";
@@ -991,16 +989,22 @@ function CategorySection({
         {label}
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="space-y-0 mt-0">
-          {activities.map((a) => (
-            <ActivityRow
-              key={a.id}
-              activity={a}
-              logs={logsByActivityId.get(a.id) ?? []}
-              onOpenDetails={onOpenDetails}
-            />
-          ))}
-        </div>
+        {activities.length === 0 ? (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+            No {label.toLowerCase()} habits yet.
+          </div>
+        ) : (
+          <div className="space-y-0 mt-0">
+            {activities.map((a) => (
+              <ActivityRow
+                key={a.id}
+                activity={a}
+                logs={logsByActivityId.get(a.id) ?? []}
+                onOpenDetails={onOpenDetails}
+              />
+            ))}
+          </div>
+        )}
       </CollapsibleContent>
     </Collapsible>
   );
@@ -1223,42 +1227,7 @@ export function CalendarContent() {
     );
   }
 
-  if (!activities || activities.length === 0) {
-    return (
-      <div className="flex flex-col h-full overflow-hidden">
-        <div className="flex-1 overflow-y-auto px-3 @sm:px-4 py-3">
-          <div className="flex flex-wrap gap-2 px-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => loadDefaultsMutation.mutate()}
-              disabled={loadDefaultsMutation.isPending}
-              data-testid="button-load-defaults"
-            >
-              {loadDefaultsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-              Load Defaults
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)} data-testid="button-add-first-activity">
-              <Plus className="h-4 w-4 mr-1" /> New Activity
-            </Button>
-          </div>
-          <div className="px-2 py-1.5 text-sm text-muted-foreground">No habits yet.</div>
-        </div>
-        <Dialog open={!!detailActivity} onOpenChange={(open) => { if (!open) setDetailActivity(null); }}>
-          <DialogContent className="h-[min(82vh,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-3xl overflow-hidden p-0">
-            {detailActivity && (
-              <ActivityDetailView
-                activity={detailActivity}
-                onBack={() => setDetailActivity(null)}
-                onDelete={() => setDetailActivity(null)}
-              />
-            )}
-          </DialogContent>
-        </Dialog>
-        <AddActivityDialog open={showCreate} onOpenChange={setShowCreate} />
-      </div>
-    );
-  }
+  const isEmpty = !activities || activities.length === 0;
 
   return (
     <TimezoneContext.Provider value={timezone}>
@@ -1281,6 +1250,23 @@ export function CalendarContent() {
 
         {/* Activity hierarchy list */}
         <div className="flex-1 overflow-y-auto px-3 @sm:px-4 py-3">
+          {isEmpty ? (
+            <div className="mb-2 flex flex-wrap gap-2 px-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => loadDefaultsMutation.mutate()}
+                disabled={loadDefaultsMutation.isPending}
+                data-testid="button-load-defaults"
+              >
+                {loadDefaultsMutation.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+                Load Defaults
+              </Button>
+              <Button size="sm" onClick={() => setShowCreate(true)} data-testid="button-add-first-activity">
+                <Plus className="mr-1 h-4 w-4" /> New Activity
+              </Button>
+            </div>
+          ) : null}
           <div className="space-y-1">
             {CATEGORY_ORDER.map((cat) => (
               <CategorySection
@@ -1293,18 +1279,20 @@ export function CalendarContent() {
               />
             ))}
           </div>
-          <div className="mt-3 px-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowCreate(true)}
-              className="w-full"
-              data-testid="button-add-activity-bottom"
-            >
-              <Plus className="h-3 w-3 mr-1.5" />
-              New Activity
-            </Button>
-          </div>
+          {isEmpty ? null : (
+            <div className="mt-3 px-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowCreate(true)}
+                className="w-full"
+                data-testid="button-add-activity-bottom"
+              >
+                <Plus className="h-3 w-3 mr-1.5" />
+                New Activity
+              </Button>
+            </div>
+          )}
         </div>
 
         <Dialog open={!!detailActivity} onOpenChange={(open) => { if (!open) setDetailActivity(null); }}>
