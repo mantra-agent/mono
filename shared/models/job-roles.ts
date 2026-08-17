@@ -19,6 +19,7 @@ const descriptionSchema = z.string().trim().max(20_000);
 const salarySchema = z.number().int().min(0).max(10_000_000);
 const bonusSchema = z.number().min(0).max(1_000);
 const equitySchema = z.number().int().min(0).max(1_000_000_000);
+const pageIdSchema = z.string().trim().min(1).max(200);
 
 export const jobRoleCreateSchema = z.object({
   title: titleSchema,
@@ -28,6 +29,7 @@ export const jobRoleCreateSchema = z.object({
   annualSalaryMax: salarySchema.default(0),
   targetBonusPercent: bonusSchema.default(0),
   equityShareCount: equitySchema.default(0),
+  scorecardPageId: pageIdSchema.nullable().optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.annualSalaryMax < value.annualSalaryMin) {
     ctx.addIssue({
@@ -46,8 +48,15 @@ export const jobRoleUpdateSchema = z.object({
   annualSalaryMax: salarySchema.optional(),
   targetBonusPercent: bonusSchema.optional(),
   equityShareCount: equitySchema.optional(),
-  clearFields: z.array(z.literal("description")).max(1).optional(),
+  scorecardPageId: pageIdSchema.nullable().optional(),
+  clearFields: z.array(z.enum(["description", "scorecardPageId"])).max(2).optional(),
 }).strict();
+
+export interface JobRoleScorecardPage {
+  id: string;
+  title: string;
+  slug: string;
+}
 
 export interface JobRole {
   id: string;
@@ -58,6 +67,8 @@ export interface JobRole {
   annualSalaryMax: number;
   targetBonusPercent: number;
   equityShareCount: number;
+  scorecardPageId: string | null;
+  scorecardPage: JobRoleScorecardPage | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -6825,6 +6825,7 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_roles_scope_owner ON job_roles(scope, owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_roles_account_team_title ON job_roles(account_id, team, normalized_title)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_job_roles_account_title ON job_roles(account_id, normalized_title) WHERE account_id IS NOT NULL`);
+    await pool.query(`ALTER TABLE job_roles ADD COLUMN IF NOT EXISTS scorecard_page_id TEXT`);
   });
 
   await heal("business hiring slots domain", async () => {

@@ -1,7 +1,9 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { createReferenceRef } from "@shared/references";
 import {
   BadgeDollarSign,
+  BookOpen,
   BriefcaseBusiness,
   Building2,
   FileText,
@@ -10,16 +12,22 @@ import {
   Plus,
   Save,
   Trash2,
+  X,
 } from "lucide-react";
-import { JOB_TEAMS, type JobRole, type JobRoleCreate, type JobRoleUpdate, type JobTeam } from "@shared/models/job-roles";
+import { JOB_TEAMS, type JobRole, type JobRoleCreate, type JobRoleScorecardPage, type JobRoleUpdate, type JobTeam } from "@shared/models/job-roles";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
-import { HierarchySectionHeader } from "@/components/hierarchy-section-header";
+import { HIERARCHY_PRIMARY_ACTION_CLASS, HierarchySectionHeader } from "@/components/hierarchy-section-header";
+import { SimpleTextFrame } from "@/components/home/simple-text-frame";
+import { ReferencePicker } from "@/components/references/reference-picker";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { Button } from "@/components/ui/button";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import type { LibraryPageFull } from "@/pages/library/types";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
@@ -63,9 +71,67 @@ function NumberEditor({ value, onCommit, prefix, suffix, testId }: { value: numb
   );
 }
 
+function ScorecardPagePicker({
+  current,
+  onAssign,
+  onCancel,
+  testId,
+}: {
+  current?: JobRoleScorecardPage | null;
+  onAssign: (pageId: string) => void;
+  onCancel?: () => void;
+  testId: string;
+}) {
+  return (
+    <div className="flex w-full items-center gap-1" onClick={(event) => event.stopPropagation()}>
+      <ReferencePicker
+        value={current ? [{ type: "page", id: current.id, label: current.title }] : []}
+        onChange={(next) => {
+          const selected = next[0];
+          if (selected) onAssign(selected.id);
+        }}
+        types={["page"]}
+        mode="single"
+        variant="compact"
+        placeholder="Choose Scorecard page"
+        showToken={false}
+        className={HIERARCHY_PRIMARY_ACTION_CLASS}
+        testId={testId}
+      />
+      {onCancel ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 shrink-0 text-muted-foreground/70"
+          onClick={onCancel}
+          aria-label="Cancel"
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+function RoleScorecardBody({ page }: { page: JobRoleScorecardPage }) {
+  const { data, isLoading, isError } = useQuery<LibraryPageFull>({
+    queryKey: ["/api/info/library", page.id],
+  });
+  return (
+    <div onClick={(event) => event.stopPropagation()}>
+      <SimpleTextFrame
+        content={data?.plainTextContent}
+        loading={isLoading}
+        error={isError ? "This page could not be loaded." : null}
+      />
+    </div>
+  );
+}
+
 function RoleEditor({ role, onDeleted }: { role: JobRole; onDeleted: () => void }) {
   const { toast } = useToast();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editingScorecard, setEditingScorecard] = useState(false);
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/business/roles"] });
   const update = useMutation({
     mutationFn: async (patch: JobRoleUpdate) => (await apiRequest("PATCH", `/api/business/roles/${role.id}`, patch)).json() as Promise<JobRole>,
@@ -77,6 +143,17 @@ function RoleEditor({ role, onDeleted }: { role: JobRole; onDeleted: () => void 
     onSuccess: () => { invalidate(); onDeleted(); },
     onError: (error: Error) => toast({ title: "Failed to delete role", description: error.message, variant: "destructive" }),
   });
+  const scorecardPage = role.scorecardPage;
+  const scorecardRef = scorecardPage
+    ? createReferenceRef({
+        type: "page",
+        id: scorecardPage.id,
+        metadata: {
+          label: scorecardPage.title,
+          href: `/info#library?page=${encodeURIComponent(scorecardPage.slug || scorecardPage.id)}`,
+        },
+      })
+    : null;
 
   return (
     <div className="overflow-hidden rounded-md border border-border/20" data-testid={`role-editor-${role.id}`}>
@@ -103,6 +180,53 @@ function RoleEditor({ role, onDeleted }: { role: JobRole; onDeleted: () => void 
         />
       )} mobileLayout="inline">
         <span className="truncate text-muted-foreground">{role.description || "Add description"}</span>
+      </ProfileTreeRow>
+      <ProfileTreeRow
+        label="Scorecard"
+        icon={<BookOpen className="h-3.5 w-3.5" />}
+        hasValue={Boolean(scorecardPage)}
+        showEmpty
+        mobileLayout="inline"
+        menuVisibility="hover"
+        testId={`role-scorecard-${role.id}`}
+        expandedContent={scorecardPage ? <RoleScorecardBody page={scorecardPage} /> : undefined}
+        menuContent={
+          scorecardPage ? (
+            <>
+              <DropdownMenuItem
+                disabled={update.isPending}
+                onSelect={() => setEditingScorecard(true)}
+                data-testid={`menu-role-scorecard-change-${role.id}`}
+              >
+                Change page
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                disabled={update.isPending}
+                onSelect={() => update.mutate({ clearFields: ["scorecardPageId"] })}
+                data-testid={`menu-role-scorecard-clear-${role.id}`}
+              >
+                Clear
+              </DropdownMenuItem>
+            </>
+          ) : undefined
+        }
+      >
+        {scorecardPage && scorecardRef && !editingScorecard ? (
+          <span className="inline-flex max-w-full" onClick={(event) => event.stopPropagation()}>
+            <ReferenceRenderer refValue={scorecardRef} surface="simple-row" />
+          </span>
+        ) : (
+          <ScorecardPagePicker
+            current={scorecardPage}
+            testId={`picker-role-scorecard-${role.id}`}
+            onAssign={(pageId) => {
+              update.mutate({ scorecardPageId: pageId });
+              setEditingScorecard(false);
+            }}
+            onCancel={scorecardPage ? () => setEditingScorecard(false) : undefined}
+          />
+        )}
       </ProfileTreeRow>
       <ProfileTreeRow label="Team" icon={<Building2 className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
         <Select value={role.team} onValueChange={(team) => update.mutate({ team: team as JobTeam })}>
