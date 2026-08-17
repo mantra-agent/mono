@@ -396,64 +396,67 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
     update.mutate({ summary: next }, { onSettled: () => setEditingTitle(false) });
   };
 
+  // Session block lives outside ProfileTreeRow expand so it stays visible
+  // under contracted Feature rows while a pipeline session is in progress.
   return (
-    <ProfileTreeRow
-      label={(
-        editingTitle ? (
-          <Input
-            autoFocus
-            value={titleDraft}
-            onChange={(event) => setTitleDraft(event.target.value)}
-            onClick={(event) => event.stopPropagation()}
-            onKeyDown={(event) => {
-              event.stopPropagation();
-              if (event.key === "Enter") {
-                event.preventDefault();
-                commitTitle();
-              }
-              if (event.key === "Escape") {
-                event.preventDefault();
+    <div className="min-w-0">
+      <ProfileTreeRow
+        label={(
+          editingTitle ? (
+            <Input
+              autoFocus
+              value={titleDraft}
+              onChange={(event) => setTitleDraft(event.target.value)}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitTitle();
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setTitleDraft(feature.summary);
+                  setEditingTitle(false);
+                }
+              }}
+              onBlur={commitTitle}
+              className="h-6 max-w-[min(100%,28rem)] border-0 bg-muted/40 px-1.5 text-sm shadow-none focus-visible:ring-1"
+              data-testid={`input-feature-title-${feature.id}`}
+            />
+          ) : (
+            <button
+              type="button"
+              className={cn(
+                "max-w-full truncate text-left text-sm",
+                isSessionInProgress && "text-active font-medium motion-safe:animate-pulse",
+                !isSessionInProgress && needsReview && "font-medium text-foreground",
+                !isSessionInProgress && !needsReview && "text-muted-foreground",
+              )}
+              onClick={(event) => {
+                event.stopPropagation();
                 setTitleDraft(feature.summary);
-                setEditingTitle(false);
-              }
-            }}
-            onBlur={commitTitle}
-            className="h-6 max-w-[min(100%,28rem)] border-0 bg-muted/40 px-1.5 text-sm shadow-none focus-visible:ring-1"
-            data-testid={`input-feature-title-${feature.id}`}
-          />
-        ) : (
-          <button
-            type="button"
-            className={cn(
-              "max-w-full truncate text-left text-sm",
-              isSessionInProgress && "text-active font-medium motion-safe:animate-pulse",
-              !isSessionInProgress && needsReview && "font-medium text-foreground",
-              !isSessionInProgress && !needsReview && "text-muted-foreground",
-            )}
-            onClick={(event) => {
-              event.stopPropagation();
-              setTitleDraft(feature.summary);
-              setEditingTitle(true);
-            }}
-            data-testid={`text-feature-title-${feature.id}`}
-          >
-            {feature.summary}
-          </button>
-        )
-      )}
-      icon={
-        isSessionInProgress
-          ? <ActiveStatusSpinner className="h-3.5 w-3.5" />
-          : STAGE_ICONS[feature.stage]
-      }
-      hasValue
-      showEmpty
-      mobileLayout="inline"
-      valueLayout="compact"
-      testId={`feature-row-${feature.id}`}
-      expandedContentClassName="px-2 pb-2 pl-2"
-      expandedContent={(
-        <div className="space-y-0.5">
+                setEditingTitle(true);
+              }}
+              data-testid={`text-feature-title-${feature.id}`}
+            >
+              {feature.summary}
+            </button>
+          )
+        )}
+        icon={
+          isSessionInProgress
+            ? <ActiveStatusSpinner className="h-3.5 w-3.5" />
+            : STAGE_ICONS[feature.stage]
+        }
+        hasValue
+        showEmpty
+        mobileLayout="inline"
+        valueLayout="compact"
+        testId={`feature-row-${feature.id}`}
+        expandedContentClassName="px-2 pb-2 pl-2"
+        expandedContent={(
+          <div className="space-y-0.5">
           <div
             className={cn(FEATURE_DESCRIPTION_FRAME_CLASS, "mb-1.5")}
             data-testid={`feature-description-${feature.id}`}
@@ -648,15 +651,6 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
             )}
           </div>
 
-          {activeSessionMeta ? (
-            <div className="pt-1.5" data-testid={`feature-active-session-${feature.id}`}>
-              <ChildSessionBlock
-                meta={activeSessionMeta}
-                defaultExpanded={false}
-              />
-            </div>
-          ) : null}
-
           <div className="pt-2" data-testid={`feature-history-${feature.id}`}>
             <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
               <History className="h-3 w-3" />
@@ -789,7 +783,16 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
           </DropdownMenuItem>
         </>
       )}
-    />
+      />
+      {activeSessionMeta ? (
+        <div className="px-2 pb-1.5 pl-8" data-testid={`feature-active-session-${feature.id}`}>
+          <ChildSessionBlock
+            meta={activeSessionMeta}
+            defaultExpanded={false}
+          />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
