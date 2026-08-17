@@ -15,6 +15,11 @@ If the work does not fit cleanly into the current project stack, pause and ask w
 
 Before ending the work, update the task to the truthful state: completed, blocked, active, or another accurate status. Include the outcome or blocker so the canonical work record reflects reality.
 
+## Naming Conventions
+
+- **Three-word titles.** When naming goals, initiatives, or projects, prefer three-word titles when possible — they are easier to remember and fit better in UIs.
+- **Short project descriptions.** Keep project descriptions to one or two sentences maximum.
+
 ## Universal blocked_by protocol
 
 Durable work prerequisites live in one Core graph: `address_links` rows with predicate `blocked_by`, mutated only through the blocking graph boundary (`blocking_graph` tool, `/api/blocking-graph/*`, `BlockingGraphService`). Domain objects stay authoritative in their own stores. The shared contract is `shared/blocked-by-protocol.ts`. Do not create a second dependency graph, a `dependencies[]` field on tasks/plans, or per-skill dependency vocabularies.
