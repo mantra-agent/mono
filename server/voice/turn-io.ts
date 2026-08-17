@@ -19,6 +19,27 @@ export const COALESCE_BUFFER_MAX_BYTES = 4096;
 
 const AUDIBLE_KEEPALIVE_THRESHOLD_MS = 6_500;
 
+/**
+ * Split completed speakable prose from an unstable trailing fragment.
+ * ElevenLabs only forces TTS when delta.flush=true; incomplete clauses must stay
+ * buffered so mid-tool progress is voiced as finished sentences, not one delayed block.
+ */
+export function takeCompletedSpeakable(buffer: string): { speakable: string; remainder: string } {
+  if (!buffer) return { speakable: "", remainder: "" };
+  const boundary = /[.!?]["')\]]*(?=\s|$)/g;
+  let lastEnd = -1;
+  let match: RegExpExecArray | null;
+  while ((match = boundary.exec(buffer)) !== null) {
+    lastEnd = match.index + match[0].length;
+    while (lastEnd < buffer.length && /\s/.test(buffer[lastEnd]!)) lastEnd++;
+  }
+  if (lastEnd <= 0) return { speakable: "", remainder: buffer };
+  return {
+    speakable: buffer.slice(0, lastEnd),
+    remainder: buffer.slice(lastEnd),
+  };
+}
+
 export function getCascadeTimeoutMs(): number {
   return getVerifiedCascadeTimeoutSeconds() * 1000;
 }
@@ -104,8 +125,23 @@ export function createTurnIOHandlers(
       }
       return;
     }
-    const content = ctx.coalesceBuf.value;
-    ctx.coalesceBuf.value = "";
+
+    // Soft flushes (timer / first content) emit only completed sentences and always
+    // set delta.flush so ElevenLabs speaks them during tool work. Forced flushes
+    // (pre_tool_call, turn_end, overflow, guide) empty the buffer entirely.
+    let content: string;
+    let forceTtsFlush = flush;
+    if (flush) {
+      content = ctx.coalesceBuf.value;
+      ctx.coalesceBuf.value = "";
+    } else {
+      const split = takeCompletedSpeakable(ctx.coalesceBuf.value);
+      if (!split.speakable) return;
+      content = split.speakable;
+      ctx.coalesceBuf.value = split.remainder;
+      forceTtsFlush = true;
+    }
+
     ctx.coalesceFlushCount++;
     ctx.chunkCounter.count++;
     ctx.responseSize.total += content.length;
@@ -124,7 +160,10 @@ export function createTurnIOHandlers(
     } else {
       ctx.segmentChronology.push({ s: "content", c: content });
     }
-    trackedWrite(buildSSEChunk(ctx.chatId, ctx.created, content, null, flush), `coalesced_${ctx.coalesceFlushCount}`);
+    log.debug(
+      `turn ${currentTurn} COALESCE_FLUSH trigger=${trigger || "unspecified"} forceTts=${forceTtsFlush} chars=${content.length} remainder=${ctx.coalesceBuf.value.length} session=${session.id}`,
+    );
+    trackedWrite(buildSSEChunk(ctx.chatId, ctx.created, content, null, forceTtsFlush), `coalesced_${ctx.coalesceFlushCount}`);
   };
 
   const sendCascadeKeepalive = (): void => {
@@ -266,7 +305,11 @@ export function createStreamChunkHandler(
       if (!ctx.bp.active) flushCoalesceBuffer("first_real_content");
       return;
     }
-    if (ctx.coalesceBuf.value.length > COALESCE_BUFFER_MAX_BYTES && !ctx.bp.active) flushCoalesceBuffer("overflow");
+    // Overflow must force-empty: holding >4KiB of unfinished prose is worse than
+    // speaking a non-sentence boundary once under backpressure-free delivery.
+    if (ctx.coalesceBuf.value.length > COALESCE_BUFFER_MAX_BYTES && !ctx.bp.active) {
+      flushCoalesceBuffer("overflow", true);
+    }
   }) as VoiceStreamChunkHandler;
   handler.close = close;
   return handler;

@@ -190,7 +190,8 @@ export async function runExecutorPhase(
       }
       return;
     }
-    if (ctx.currentToolName && ctx.coalesceBuf.value && /[.!?]$/.test(ctx.coalesceBuf.value)) ctx.coalesceBuf.value += " ";
+    // Soft flush: only completed sentences leave the buffer, each with delta.flush
+    // so ElevenLabs voices progress during long tool work instead of one end block.
     flushCoalesceBuffer("timer");
   }, COALESCE_INTERVAL_MS);
 
