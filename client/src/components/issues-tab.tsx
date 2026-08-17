@@ -216,6 +216,8 @@ function IssueTreeRow({
   isLaunching,
   onOpen,
   isOpening,
+  /** Open section only: "Fix" starts work and moves the issue In Progress. */
+  primaryActionLabel = "Discuss",
 }: {
   issue: Issue;
   onCycleStatus: (id: number, nextStatus: IssueStatus) => void;
@@ -225,11 +227,13 @@ function IssueTreeRow({
   isLaunching?: boolean;
   onOpen?: () => void;
   isOpening?: boolean;
+  primaryActionLabel?: "Discuss" | "Fix";
 }) {
   const { timezone } = useTimezone();
   const status = issue.status as IssueStatus;
   const nextStatus = STATUS_CYCLE[(STATUS_CYCLE.indexOf(status) + 1) % STATUS_CYCLE.length];
   const timestamp = formatStackedTimestamp(issue.createdAt, timezone);
+  const isFixAction = primaryActionLabel === "Fix";
 
   return (
     <TreeRow
@@ -298,10 +302,16 @@ function IssueTreeRow({
               event.preventDefault();
               onDiscuss();
             }}
-            data-testid={`menu-discuss-issue-${issue.id}`}
+            data-testid={
+              isFixAction ? `menu-fix-issue-${issue.id}` : `menu-discuss-issue-${issue.id}`
+            }
           >
-            <MessageSquare className="mr-2 h-4 w-4" />
-            Discuss
+            {isFixAction ? (
+              <Wrench className="mr-2 h-4 w-4" />
+            ) : (
+              <MessageSquare className="mr-2 h-4 w-4" />
+            )}
+            {primaryActionLabel}
           </DropdownMenuItem>
         </>
       }
@@ -803,6 +813,14 @@ export function IssuesTab() {
     });
   };
 
+  /** Open → Fix: mark In Progress then start the Engineer repair session. */
+  const fixOpenIssue = (issue: Issue) => {
+    if (issue.status === "open") {
+      updateMutation.mutate({ id: issue.id, updates: { status: "in_progress" } });
+    }
+    discussIssue(issue);
+  };
+
   const launchIssueFeature = (issue: Issue) => {
     launch.mutate({
       pendingKey: `issue-launch-${issue.id}`,
@@ -857,17 +875,25 @@ export function IssuesTab() {
     });
   };
 
-  const renderIssue = (issue: Issue, options?: { canOpen?: boolean }) => (
+  const renderIssue = (
+    issue: Issue,
+    options?: { canOpen?: boolean; primaryActionLabel?: "Discuss" | "Fix" },
+  ) => (
     <IssueTreeRow
       key={issue.id}
       issue={issue}
       onCycleStatus={(id, nextStatus) => updateMutation.mutate({ id, updates: { status: nextStatus } })}
       isUpdating={updatingId === issue.id}
-      onDiscuss={() => discussIssue(issue)}
+      onDiscuss={
+        options?.primaryActionLabel === "Fix"
+          ? () => fixOpenIssue(issue)
+          : () => discussIssue(issue)
+      }
       onLaunch={() => launchIssueFeature(issue)}
       isLaunching={launch.isPending && launch.variables?.pendingKey === `issue-launch-${issue.id}`}
       onOpen={options?.canOpen ? () => openReportedIssue(issue) : undefined}
       isOpening={options?.canOpen ? updatingId === issue.id && updateMutation.isPending : false}
+      primaryActionLabel={options?.primaryActionLabel}
     />
   );
 
@@ -974,7 +1000,7 @@ export function IssuesTab() {
               </DropdownMenuItem>
             ) : undefined
           }
-          renderIssue={(issue) => renderIssue(issue)}
+          renderIssue={(issue) => renderIssue(issue, { primaryActionLabel: "Fix" })}
         />
 
         <IssueTreeSection
