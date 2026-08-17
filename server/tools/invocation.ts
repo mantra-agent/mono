@@ -45,6 +45,12 @@ export function prepareToolInvocation(
   const droppedEmptyKeys: string[] = [];
 
   for (const [key, value] of Object.entries(rawArgs ?? {})) {
+    // Retired question flag: Other is structural. Ignore on write so callers that
+    // still pass allowOther cannot reintroduce a closed option set or trip unknown-key.
+    if (toolName === "question" && key === "allowOther") {
+      droppedEmptyKeys.push(key);
+      continue;
+    }
     if (required.has(key) || preservesExplicitEmptyString(toolName, rawArgs, key, value)) {
       args[key] = value;
     } else if (isEmptyOptionalValue(value)) {
