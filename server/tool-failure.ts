@@ -12,6 +12,9 @@ export type ToolFailureCode =
   | "task_update_patch_rejected"
   | "task_update_internal"
   | "task_missing_title"
+  | "task_milestone_required"
+  // Tasks contract rejects (caller-correctable input)
+  | "task_input_invalid"
   | "business_plan_internal"
   | "business_input_invalid"
   | "business_internal"
