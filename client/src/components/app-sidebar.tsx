@@ -483,37 +483,41 @@ function NavigationOrb({
   const hold = useOrbReportHold(onLongPress);
 
   return (
-    <button
-      ref={targetRef}
-      type="button"
-      onPointerDown={hold.onPointerDown}
-      onPointerUp={hold.onPointerUp}
-      onPointerCancel={hold.onPointerCancel}
-      onPointerLeave={hold.onPointerLeave}
-      onContextMenu={hold.onContextMenu}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (hold.consumeHoldClick()) {
-          e.preventDefault();
-          return;
-        }
-        onClick?.();
-      }}
-      className={cn(
-        "relative ml-1 flex h-7 w-7 shrink-0 cursor-pointer select-none items-center justify-center overflow-hidden rounded-md border border-transparent bg-background p-0 transition-colors hover:border-active",
-        statusRingColors[status] && `ring-1 ${statusRingColors[status]}`,
-      )}
-      aria-label="Open main navigation. Hold to report an issue."
-      title="Hold to report an issue"
-      data-testid="button-sidebar-toggle"
-      data-voice-state={visualState}
-    >
-      {voiceSession ? (
-        <VoiceEntranceOrb voiceSession={voiceSession} {...orbProps} />
-      ) : (
-        <AgentOrb {...orbProps} />
-      )}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          ref={targetRef}
+          type="button"
+          onPointerDown={hold.onPointerDown}
+          onPointerUp={hold.onPointerUp}
+          onPointerCancel={hold.onPointerCancel}
+          onPointerLeave={hold.onPointerLeave}
+          onContextMenu={hold.onContextMenu}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (hold.consumeHoldClick()) {
+              e.preventDefault();
+              return;
+            }
+            onClick?.();
+          }}
+          className={cn(
+            "relative ml-1 flex h-7 w-7 shrink-0 cursor-pointer select-none items-center justify-center overflow-hidden rounded-md border border-transparent bg-background p-0 transition-colors hover:border-active",
+            statusRingColors[status] && `ring-1 ${statusRingColors[status]}`,
+          )}
+          aria-label="Open main navigation. Hold to report an issue."
+          data-testid="button-sidebar-toggle"
+          data-voice-state={visualState}
+        >
+          {voiceSession ? (
+            <VoiceEntranceOrb voiceSession={voiceSession} {...orbProps} />
+          ) : (
+            <AgentOrb {...orbProps} />
+          )}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>Hold to report an issue</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -578,33 +582,37 @@ export function NavigationOrbButton() {
 
   if (isPageActive) {
     return (
-      <button
-        type="button"
-        ref={targetRef}
-        onPointerDown={hold.onPointerDown}
-        onPointerUp={hold.onPointerUp}
-        onPointerCancel={hold.onPointerCancel}
-        onPointerLeave={hold.onPointerLeave}
-        onContextMenu={hold.onContextMenu}
-        onClick={(event) => {
-          if (hold.consumeHoldClick()) {
-            event.preventDefault();
-            return;
-          }
-          handleClick();
-        }}
-        aria-label={
-          openMobile
-            ? "Close navigation. Hold to report an issue."
-            : "Open navigation. Hold to report an issue."
-        }
-        title="Hold to report an issue"
-        className="relative ml-1 flex h-7 w-7 shrink-0 cursor-pointer select-none items-center justify-center rounded-md text-active hover:bg-white/5"
-        data-testid="nav-orb"
-        data-page-active="true"
-      >
-        <ActiveStatusSpinner className="h-4 w-4" />
-      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            ref={targetRef}
+            onPointerDown={hold.onPointerDown}
+            onPointerUp={hold.onPointerUp}
+            onPointerCancel={hold.onPointerCancel}
+            onPointerLeave={hold.onPointerLeave}
+            onContextMenu={hold.onContextMenu}
+            onClick={(event) => {
+              if (hold.consumeHoldClick()) {
+                event.preventDefault();
+                return;
+              }
+              handleClick();
+            }}
+            aria-label={
+              openMobile
+                ? "Close navigation. Hold to report an issue."
+                : "Open navigation. Hold to report an issue."
+            }
+            className="relative ml-1 flex h-7 w-7 shrink-0 cursor-pointer select-none items-center justify-center rounded-md text-active hover:bg-white/5"
+            data-testid="nav-orb"
+            data-page-active="true"
+          >
+            <ActiveStatusSpinner className="h-4 w-4" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Hold to report an issue</TooltipContent>
+      </Tooltip>
     );
   }
 
