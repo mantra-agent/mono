@@ -119,6 +119,22 @@ export type EnvironmentBuildStatus = {
 export async function getEnvironmentBuildLifecycleConfig(environmentId: number, options: { includeDisabled?: boolean } = {}): Promise<EnvironmentBuildLifecycleContext | null> {
   const env = await getVisibleEnvironment(environmentId);
   if (!env) return null;
+  const config = await getInfrastructureBuildLifecycleConfig(environmentId, options);
+  return { ...env, config };
+}
+
+/**
+ * Principal-free lifecycle config read for infrastructure paths (Railway publish
+ * resume/boot recovery, warm-stage peers). UI/tool paths must keep using
+ * getEnvironmentBuildLifecycleConfig, which enforces Platform vault visibility.
+ * Publish already resolves hosting/source bindings without a user principal;
+ * lifecycle contract checks must share that same identity boundary so a process
+ * restart mid-publish cannot invent "no enabled lifecycle" from missing ALS.
+ */
+export async function getInfrastructureBuildLifecycleConfig(
+  environmentId: number,
+  options: { includeDisabled?: boolean } = {},
+): Promise<EnvironmentBuildLifecycleConfig | null> {
   const clauses: SQL[] = [eq(environmentBuildLifecycleConfigs.environmentId, environmentId)];
   if (!options.includeDisabled) clauses.push(eq(environmentBuildLifecycleConfigs.enabled, true));
   const [config] = await db
@@ -127,7 +143,7 @@ export async function getEnvironmentBuildLifecycleConfig(environmentId: number, 
     .where(and(...clauses))
     .orderBy(desc(environmentBuildLifecycleConfigs.enabled), desc(environmentBuildLifecycleConfigs.updatedAt))
     .limit(1);
-  return { ...env, config: config || null };
+  return config || null;
 }
 
 export async function createEnvironmentBuildLifecycleConfig(environmentId: number, input: UpsertBuildLifecycleConfig): Promise<EnvironmentBuildLifecycleConfig> {
