@@ -1386,7 +1386,7 @@ function buildProviderUserMessage(failure: Omit<ModelProviderFailure, "userMessa
   const referenceSuffix = reference ? ` Reference: ${reference}.` : "";
   const providerMessage = sanitizeProviderDiagnostic(failure.providerMessage);
   const reportedSuffix = providerMessage && providerMessage !== "response.failed"
-    ? ` OpenAI reported: ${providerMessage}`
+    ? ` ${providerName} reported: ${providerMessage}`
     : "";
 
   if (failure.kind === "rate_limited" || failure.status === 429) {
@@ -3555,9 +3555,9 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
     return;
   }
 
+  const providerLabel = transport?.providerLabel ?? "openai";
   const client = transport?.client ?? getOpenAIClient(options.routingDecision?.credential);
   const buildStart = Date.now();
-  const clientRequestId = randomUUID();
 
   const messages: Array<any> = options.messages.flatMap(m => {
     if (m.role === "tool" || m.role === "tool_result") {
@@ -3612,12 +3612,35 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
   if (options.tools && options.tools.length > 0) {
     params.tools = convertToolsToOpenAI(options.tools);
   }
-  if (transport?.providerLabel === "grok-subscription") applyGrokConnectorConfig(params, model, options);
+  if (providerLabel === "grok-subscription") applyGrokConnectorConfig(params, model, options);
 
-  try {
-    // HTTP dispatch boundary: request build complete, dispatching to OpenAI.
-    await captureProviderDispatch(transport?.providerLabel ?? "openai", model, "openai.chat.completions.create stream", params, options);
-    yield { type: "request_sent", metadata: { buildMs: Date.now() - buildStart } };
+  // Bounded pre-content retries for transient transport blips. SDK maxRetries is 0 so
+  // this boundary owns retry; once any user-visible stream event is yielded, replay is unsafe.
+  let recoveredRetryAttempts = 0;
+  let lastEarlyReason = "";
+  streamRetryLoop: for (let attempt = 0; attempt < CODEX_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      log.debug(
+        `openai-compatible stream retry attempt=${attempt + 1}/${CODEX_MAX_ATTEMPTS} provider=${providerLabel} model=${model} ` +
+        `reason=${lastEarlyReason || "early-failure"} delay=${CODEX_RETRY_DELAYS_MS[attempt - 1]}ms`,
+      );
+      try {
+        await codexBackoffSleep(attempt, options.signal);
+      } catch {
+        log.debug(`${providerLabel} stream aborted during early-failure backoff model=${model}`);
+        yield { type: "usage", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, stopReason: "end_turn" };
+        return;
+      }
+    }
+
+    const clientRequestId = randomUUID();
+    let yieldedReplayUnsafeEvent = false;
+    try {
+    // HTTP dispatch boundary: request build complete, dispatching to provider.
+    await captureProviderDispatch(providerLabel, model, `${providerLabel}.chat.completions.create stream`, params, options);
+    if (attempt === 0) {
+      yield { type: "request_sent", metadata: { buildMs: Date.now() - buildStart } };
+    }
     const dispatchAt = Date.now();
     const responsePromise = client.chat.completions.create(params, {
       signal: options.signal,
@@ -3632,6 +3655,7 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
         headersMs: Date.now() - dispatchAt,
         clientRequestId,
         providerRequestId: providerRequestId || undefined,
+        attempt: attempt + 1,
       },
     };
 
@@ -3646,6 +3670,7 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
     for await (const chunk of stream as any) {
       if (!connectedEmitted) {
         connectedEmitted = true;
+        // connected is milestone telemetry only; still replay-safe until content/tools emit.
         yield { type: "connected" };
       }
       if (chunk.usage) {
@@ -3667,6 +3692,7 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
       }
 
       if (delta?.tool_calls) {
+        yieldedReplayUnsafeEvent = true;
         for (const tc of delta.tool_calls) {
           const idx = tc.index ?? 0;
           if (tc.id) {
@@ -3684,6 +3710,7 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
       }
 
       if (delta?.content) {
+        yieldedReplayUnsafeEvent = true;
         const text = delta.content;
 
         const thinkOpenIdx = text.indexOf("<thinking>");
@@ -3745,13 +3772,14 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
       try {
         input = JSON.parse(tc.argsAccumulator || "{}");
       } catch (err) { log.warn(`openai tool args parse failed`, tc.name, err); }
+      yieldedReplayUnsafeEvent = true;
       yield { type: "tool_use", toolCallId: tc.id, toolName: tc.name, arguments: input };
     }
 
     log.debug(
-      `openai stream done model=${model} toolCalls=${pendingToolCalls.length} stopReason=${stopReason} ` +
+      `${providerLabel} stream done model=${model} toolCalls=${pendingToolCalls.length} stopReason=${stopReason} ` +
       `providerFinishReason=${providerFinishReason || "n/a"} refusal=${refusal ? "yes" : "no"} ` +
-      `prompt=${streamUsage.inputTokens} completion=${streamUsage.outputTokens}`,
+      `prompt=${streamUsage.inputTokens} completion=${streamUsage.outputTokens} attempts=${attempt + 1}`,
     );
     yield {
       type: "usage",
@@ -3763,22 +3791,43 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
         ...(refusal ? { refusal } : {}),
       },
     };
+    recoveredRetryAttempts = attempt;
+    break streamRetryLoop;
   } catch (err: unknown) {
     if (isAbortError(err, options.signal)) {
-      log.debug(`openai stream aborted model=${model}`);
+      log.debug(`${providerLabel} stream aborted model=${model}`);
       yield { type: "usage", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, stopReason: "end_turn" };
       return;
     }
+    const attemptError = openaiSdkAttemptError(err, clientRequestId);
+    // Content already streamed cannot be replayed safely on this connector.
+    attemptError.retryable = attemptError.retryable && !yieldedReplayUnsafeEvent;
+    lastEarlyReason = `${attemptError.kind}:${attemptError.message}`;
+    log.debug(
+      `openai-compatible stream attempt failed attempt=${attempt + 1}/${CODEX_MAX_ATTEMPTS} provider=${providerLabel} model=${model} ` +
+      `kind=${attemptError.kind} retryable=${attemptError.retryable} phase=${attemptError.phase} ` +
+      `status=${attemptError.status || 0} clientRequestId=${attemptError.clientRequestId} error=${attemptError.message}`,
+    );
+    if (attemptError.retryable && attempt < CODEX_MAX_ATTEMPTS - 1) continue streamRetryLoop;
     const providerError = modelProviderErrorFromAttempt(
-      openaiSdkAttemptError(err, clientRequestId),
-      1,
-      { provider: "openai", model, metadata: options.metadata },
+      attemptError,
+      attempt + 1,
+      { provider: providerLabel as ModelProviderFailure["provider"], model, metadata: options.metadata },
     );
     yield {
       type: "error",
       error: providerError.message,
       providerFailure: providerError.providerFailure,
     };
+    return;
+  }
+  }
+
+  if (recoveredRetryAttempts > 0) {
+    log.warn(
+      `openai-compatible stream recovered after retry attempts=${recoveredRetryAttempts + 1}/${CODEX_MAX_ATTEMPTS} ` +
+      `provider=${providerLabel} model=${model} previousFailure=${lastEarlyReason || "unknown"}`,
+    );
   }
 }
 
