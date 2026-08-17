@@ -24,6 +24,7 @@ import type {
 } from "./types";
 
 const log = createLogger("OuraSync");
+const OURA_SYNC_FRESHNESS_MS = 3 * 60 * 60 * 1000;
 
 export type OuraSyncMode = "initial" | "incremental";
 
@@ -63,10 +64,56 @@ interface DatasetSyncSummary {
   metricRows: number;
 }
 
-function classifyOuraSyncError(error: unknown): string {
-  if (error instanceof OuraApiError) return error.code;
-  if (error instanceof Error) return error.name || "error";
-  return typeof error;
+function classifyOuraSyncFailureCode(error: unknown): string {
+  if (error instanceof OuraApiError) {
+    switch (error.code) {
+      case "auth":
+        return "OURA_SYNC_AUTH";
+      case "rate_limited":
+        return "OURA_SYNC_RATE_LIMITED";
+      case "timeout":
+        return "OURA_SYNC_TIMEOUT";
+      case "network":
+        return "OURA_SYNC_NETWORK";
+      case "configuration":
+        return "OURA_SYNC_CONFIGURATION";
+      default:
+        return "OURA_SYNC_RESPONSE";
+    }
+  }
+  return "OURA_SYNC_FAILED";
+}
+
+function isOuraAuthFailure(error: unknown): boolean {
+  return error instanceof OuraApiError && error.code === "auth";
+}
+
+function readPriorSync(account: Awaited<ReturnType<typeof getAccount>>): OuraSyncMetadata | undefined {
+  const permissions = resolvePermissions(account?.permissions);
+  return permissions.sync && typeof permissions.sync === "object" ? permissions.sync : undefined;
+}
+
+function isOuraSyncStale(prior?: OuraSyncMetadata): boolean {
+  if (!prior?.lastSyncError) return false;
+  if (!prior.lastSuccessfulSyncAt) return true;
+  const successAt = Date.parse(prior.lastSuccessfulSyncAt);
+  return !Number.isNaN(successAt) && Date.now() - successAt >= OURA_SYNC_FRESHNESS_MS;
+}
+
+function shouldPageOuraSyncFailure(error: unknown, prior?: OuraSyncMetadata): boolean {
+  return isOuraAuthFailure(error) || isOuraSyncStale(prior);
+}
+
+function normalizeOuraSyncLogError(
+  error: unknown,
+  message: string,
+  code: string,
+): Error & { code: string } {
+  const logged = new Error(message) as Error & { code: string };
+  logged.name = error instanceof OuraApiError ? "OuraApiError" : "Error";
+  logged.code = code;
+  if (error instanceof Error) logged.cause = error;
+  return logged;
 }
 
 function summarizeDatasets(datasets: DatasetSyncSummary[]): string {
@@ -186,7 +233,13 @@ export async function syncOuraAccount(input: { accountId: string; mode?: OuraSyn
     return result;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    const errorClass = classifyOuraSyncError(error);
+    const prior = readPriorSync(await getAccount(input.accountId));
+    const page = shouldPageOuraSyncFailure(error, prior);
+    const code = isOuraAuthFailure(error)
+      ? "OURA_SYNC_AUTH"
+      : page
+        ? "OURA_SYNC_STALE"
+        : classifyOuraSyncFailureCode(error);
     await persistSyncMetadata(input.accountId, {
       lastSyncAt: startedAt,
       lastSyncMode: mode,
@@ -199,7 +252,15 @@ export async function syncOuraAccount(input: { accountId: string; mode?: OuraSyn
       healthError: error instanceof OuraApiError ? error.code : message,
       healthCheckedAt: new Date(),
     });
-    log.warn(`sync failed accountId=${input.accountId} mode=${mode} range=${startDate}..${endDate} errorClass=${errorClass} message=${message}`);
+    const line = `sync failed accountId=${input.accountId} mode=${mode} range=${startDate}..${endDate} errorClass=${code} message=${message}`;
+    if (page) {
+      log.error(line, normalizeOuraSyncLogError(error, message, code), {
+        operation: "sync_account",
+        accountId: input.accountId,
+      });
+    } else {
+      log.warn(line);
+    }
     throw error;
   }
 }

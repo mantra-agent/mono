@@ -390,7 +390,7 @@ async function reconcileOuraWebhooks(req: Request, accountId: string): Promise<v
 function triggerOuraWebhookSync(accountId: string): void {
   void syncOuraAccount({ accountId, mode: "incremental" }).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
-    log.warn(`webhook-triggered sync failed accountId=${accountId} errorClass=${classifyOuraRouteError(error)} message=${message}`);
+    log.debug(`webhook-triggered sync failed accountId=${accountId} errorClass=${classifyOuraRouteError(error)} message=${message}`);
   });
 }
 
@@ -541,7 +541,7 @@ export async function registerOuraRoutes(app: Express): Promise<void> {
       res.json({ ok: true, result, account: accountSummary(account) });
     } catch (error: unknown) {
       const publicError = toPublicError(error);
-      log.warn(`manual sync failed accountId=${OURA_ACCOUNT_ID} errorClass=${classifyOuraRouteError(error)} status=${publicError.status}`);
+      log.debug(`manual sync failed accountId=${OURA_ACCOUNT_ID} errorClass=${classifyOuraRouteError(error)} status=${publicError.status}`);
       res.status(publicError.status).json({ ok: false, error: publicError.message });
     }
   });
