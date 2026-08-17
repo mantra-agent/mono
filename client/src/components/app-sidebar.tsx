@@ -34,6 +34,7 @@ import {
   Clock,
   DatabaseZap,
   DollarSign,
+  FileStack,
   FileText,
   Gauge,
   GitBranch,
@@ -307,6 +308,7 @@ const navSections: NavSection[] = [
     items: [
       navItem("Agendas", "navigation.agendas.open", ClipboardList),
       navItem("Skills", "navigation.skills.open", Lightbulb),
+      navItem("Templates", "navigation.templates.open", FileStack),
       navItem("Plans", "navigation.plans.open", FileText),
       navItem("Hooks", "navigation.hooks.open", GitBranch),
       navItem("Timers", "navigation.timers.open", Clock),

@@ -111,6 +111,7 @@ const SIDE_EFFECT_TIERS: Record<string, ToolSideEffectEntry> = {
   // invokes is authorized independently at that tool's real capability boundary.
   skills: { default: 1, actions: { list: 0, get: 0, search: 0, scores: 0, run: 1 } },
   agendas: { default: 1, actions: { list: 0, get: 0, search: 0 } },
+  templates: { default: 1, actions: { list: 0, get: 0, search: 0, resolve: 0 } },
   timers: { default: 1, actions: { list: 0, get: 0, runs: 0 } },
   hooks: { default: 1, actions: { list: 0, get: 0 } },
   session: { default: 0, actions: {

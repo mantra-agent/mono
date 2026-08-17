@@ -1119,7 +1119,7 @@ Surface any errors returned by the cycle explicitly in the Memory section and in
     category: "thinking",
     activity: ACTIVITY_THINKING,
     author: "system",
-    version: "2.0",
+    version: "2.1",
     addToMemory: true,
     pinnedToContext: false,
     callType: "internal",
@@ -1131,10 +1131,11 @@ Surface any errors returned by the cycle explicitly in the Memory section and in
     checklist: [
       { check: "PreContext cadence and period bounds are explicitly read and used to choose data sources, Library title, tags, and parent collection", weight: 3 },
       { check: "Relevant period data is loaded before writing: Library artifacts for adjacent cadences, goals/projects/tasks, calendar, people, memory, and observations as appropriate", weight: 3 },
+      { check: "Daily and weekly runs resolve the bound document template (templates.resolve) before write; monthly+ may omit", weight: 3 },
       { check: "Brief is concise and evidence-backed, naming actual outcomes, open loops, patterns, and one practical next action without live-interview questions", weight: 3 },
       { check: "Daily Digest uses unlabeled lead + closed Moved/Open/Learning/Memory sections with discrete lines, never one undifferentiated paragraph", weight: 3 },
       { check: "Daily Memory section lists that local day's claims as @claim rows (or None) via search_claims with includeReviewedRetired and createdAt bounds; Digest never writes review judgments", weight: 3 },
-      { check: "Useful cadence-specific logic is preserved: daily is structured closeout, weekly compares plan vs reality, monthly synthesizes weekly artifacts, quarterly/annual synthesize lower-cadence artifacts", weight: 3 },
+      { check: "Useful cadence-specific logic is preserved: daily is structured closeout against the Digest template vessel, weekly against Weekly Summary template, monthly synthesizes weekly artifacts, quarterly/annual synthesize lower-cadence artifacts", weight: 3 },
       { check: "Library artifact is created or edited in the correct collection with cadence-specific title and tags, and linked through goals check-in artifact metadata when a supported link action exists", weight: 2 },
       { check: "Artifact is surfaced to Home/Simple Inbox only when it contains a decision, risk, carry-forward, or review-worthy synthesis", weight: 2 },
       { check: "Final output includes the brief content or a compact faithful summary plus page reference, not merely a delivery confirmation", weight: 2 },
@@ -1155,12 +1156,24 @@ Read preContext first. It should provide some or all of:
 
 If cadence is missing, infer the smallest honest cadence from the period bounds. If period bounds are missing, infer the current local period from the world model and state the assumption in the brief.
 
+## Document templates (day-one vessels)
+
+Shape is data, not folklore. Before writing daily or weekly artifacts:
+
+1. Call \`templates(action: "resolve", skill: "reflect", key: "daily")\` for daily — bound to \`daily-digest\`, **not** Brief.
+2. Call \`templates(action: "resolve", skill: "reflect", key: "weekly")\` for weekly — bound to \`weekly-summary\`.
+3. Read the resolved Library shape page. Its headings are the vessel; the closed Digest taxonomy and claim-list rules below still apply (Structured Daily Digest owns claim-review UX, not this skill).
+4. After write, if a required heading is missing or empty (except omit-if-empty), append \`### Residual\` (daily day entry) or \`## Residual\` (weekly) listing the missing headings, and name them in the skill-run / session note.
+5. If resolve fails, stamp residual \`template_unavailable\`, warn, and still write what you can — do not crash the parent timer. Never treat Brief as the Digest vessel.
+
+Monthly+ stay folklore until a later Feature adds keys. \`brief-daily\` is not bound here.
+
 ## Cadence Semantics
 
 Use one skill. Vary only the period and source altitude.
 
 ### Daily
-Purpose: structured evening closeout (Daily Digest). Brief-comparable form: unlabeled lead, named sections, discrete lines. Not one paragraph.
+Purpose: structured evening closeout (Daily Digest). Brief-comparable form: unlabeled lead, named sections, discrete lines. Not one paragraph. Vessel comes from the resolved daily-digest template.
 
 Read order (required):
 1. \`session.list\` for the local day in \`[periodStart, periodEnd)\` — primary inventory of what happened.
@@ -1220,21 +1233,23 @@ Save to Library — one running Daily Digest page (mirror Morning Brief geometry
 Do NOT create a new page per day. Do NOT put Digest under Specs/Skills canonical folders.
 
 ### Weekly
-Purpose: concise review of the completed week, replacing standalone interview-heavy weekly reflection when planning is not being run.
+Purpose: concise review of the completed week, replacing standalone interview-heavy weekly reflection when planning is not being run. Vessel comes from the resolved weekly-summary template.
 
 Read:
 - The most recent weekly plan for the period, in full via \`get_library_page\`.
 - Daily Digest / journal entries from the week, in full when available.
 - Goals for this_week/this_month and active projects/tasks.
 - Calendar for the week and people agenda/interactions when relationships materially changed.
+- Resolved \`weekly-summary\` template page headings (SSOT for sections).
 
-Write sections:
+Write sections against the template vessel (typical global headings):
 - \`## Summary\` — week in 2-3 factual sentences.
 - \`## Plan vs Reality\` — what the plan committed to vs what happened.
 - \`## Wins\` — work, family, personal, or Agent capability wins.
 - \`## Drift and Friction\` — what slipped, overloaded, or stayed unresolved.
 - \`## Patterns\` — what repeated across days.
 - \`## Carry Forward\` — 1-5 concrete items for the next planning cycle.
+- \`## Residual\` only when required headings are missing.
 
 Save to Library:
 - parent: \`weekly-reflections\`
@@ -1890,7 +1905,7 @@ This is developmental coaching, not medical or mental-health treatment. If Ray i
     category: "build",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "2.0",
+    version: "2.1",
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "agent",
@@ -1899,6 +1914,7 @@ This is developmental coaching, not medical or mental-health treatment. If Ray i
     checklist: [
       { check: "Executed only the assigned Feature job (produce or review) named in the first message", weight: 4 },
       { check: "Loaded the Feature (@feature), its status, and any linked spec page before judging or writing", weight: 3 },
+      { check: "When the assigned job is Spec Produce, successfully resolved the bound Spec document template before writing the Library spec; other jobs may omit", weight: 3 },
       { check: "Produced or reviewed the room's required evidence without widening the Feature request", weight: 4 },
       { check: "Produce never wrote stage; only Review-pass advanced stage; Produce set needs_review after the artifact", weight: 4 },
     ],

@@ -111,6 +111,7 @@ const ProfilePage = lazyWithRetry(() => import("@/pages/profile"));
 const PipelinesPage = lazyWithRetry(() => import("@/pages/pipelines"));
 const SkillsPage = lazyWithRetry(() => import("@/pages/skills"));
 const AgendasPage = lazyWithRetry(() => import("@/pages/agendas"));
+const TemplatesPage = lazyWithRetry(() => import("@/pages/templates"));
 const ZeroPage = lazyWithRetry(() => import("@/pages/zero"));
 const GlassesStandalone = lazyWithRetry(() => import("@/pages/glasses-standalone"));
 const InterfacePreviewPage = lazyWithRetry(() => import("@/pages/interface-preview"));
@@ -300,6 +301,7 @@ function Router() {
         <Route path="/brain" component={BrainPage} />
         <Route path="/agendas" component={AgendasPage} />
         <Route path="/skills" component={SkillsPage} />
+        <Route path="/templates" component={TemplatesPage} />
         <Route path="/system">{() => <RequirePermission permission="system:read"><SystemPage /></RequirePermission>}</Route>
         <Route path="/performance">{() => <RequirePermission permission="system:read"><PerformancePage /></RequirePermission>}</Route>
         <Route path="/logs">{() => <LogsPage />}</Route>

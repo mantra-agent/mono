@@ -446,6 +446,12 @@ app.use((req, res, next) => {
   } catch (err: unknown) {
     log(`[startup] email-triage library page seed failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
   }
+  try {
+    const { ensureDocumentTemplateSeeds } = await import("./document-template-seed");
+    await ensureDocumentTemplateSeeds();
+  } catch (err: unknown) {
+    log(`[startup] document template seed failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
+  }
   bootTracker.completePhase("skills_library");
 
   bootTracker.startPhase("memory");

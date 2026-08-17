@@ -43,6 +43,7 @@ export const coreDefinition: CoreDefinition = {
       clientRoute("core.route.brain", "/brain", "brain"),
       clientRoute("core.route.agendas", "/agendas", "agendas"),
       clientRoute("core.route.skills", "/skills", "skills"),
+      clientRoute("core.route.templates", "/templates", "templates"),
       clientRoute("core.route.system", "/system", "system", { requiredPermissions: ["system:read"] }),
       clientRoute("core.route.logs", "/logs", "logs"),
       clientRoute("core.route.dashboard", "/dashboard", "dashboard", { requiredPermissions: ["system:read"] }),
@@ -85,9 +86,10 @@ export const coreDefinition: CoreDefinition = {
       // Automation
       nav("core.nav.agendas", "Automation", "Agendas", "ClipboardList", "navigation.agendas.open", "core.route.agendas", 1),
       nav("core.nav.skills", "Automation", "Skills", "Lightbulb", "navigation.skills.open", "core.route.skills", 2),
-      nav("core.nav.plans", "Automation", "Plans", "FileText", "navigation.plans.open", "core.route.brain", 3),
-      nav("core.nav.hooks", "Automation", "Hooks", "GitBranch", "navigation.hooks.open", "core.route.system", 4, { requiredPermissions: ["system:read"] }),
-      nav("core.nav.timers", "Automation", "Timers", "Clock", "navigation.timers.open", "core.route.system", 5, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.templates", "Automation", "Templates", "FileStack", "navigation.templates.open", "core.route.templates", 3),
+      nav("core.nav.plans", "Automation", "Plans", "FileText", "navigation.plans.open", "core.route.brain", 4),
+      nav("core.nav.hooks", "Automation", "Hooks", "GitBranch", "navigation.hooks.open", "core.route.system", 5, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.timers", "Automation", "Timers", "Clock", "navigation.timers.open", "core.route.system", 6, { requiredPermissions: ["system:read"] }),
       // Agent
       nav("core.nav.orientation", "Agent", "Orientation", "Globe", "navigation.orientation.open", "core.route.orientation", 1),
       nav("core.nav.persona", "Agent", "Persona", "User", "navigation.persona.open", "core.route.brain", 2),
