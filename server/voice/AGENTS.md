@@ -65,6 +65,9 @@ Uses per-iteration content model (`iterationResults[]`) with explicit `mergeIter
 
 Voice assistant persistence is replay-safe by canonical `turnId` and inserts the assistant row immediately after its matching user row. Provider callback completion order must never create a second assistant row for one logical turn or detach a response from the utterance that caused it.
 
+### Mid-turn TTS dispatch
+`turn-io.ts` owns the coalesce buffer and ElevenLabs SSE write. Soft flushes (80ms timer, first content) emit only completed sentence boundaries via `takeCompletedSpeakable` and always set `delta.flush=true` so ElevenLabs speaks finished progress during tool execution. Forced flushes (`pre_tool_call`, `turn_end`, overflow, guide introduction) empty the remainder with `flush=true`. Never stream unstable partial clauses with `flush=true`, and never withhold completed sentences until the turn ends.
+
 ## When Working Here
 - The `VoiceSession` interface in `types.ts` is the source of truth
 - `voice-llm.ts` is the thin orchestration layer (~600 lines) importing from submodules
