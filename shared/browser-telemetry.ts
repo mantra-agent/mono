@@ -9,6 +9,7 @@ export const BROWSER_TELEMETRY_EVENT_KINDS = [
   "event_loop_responsiveness",
   "frame_contention",
   "graph",
+  "features",
 ] as const;
 
 export type BrowserTelemetryEventKind = typeof BROWSER_TELEMETRY_EVENT_KINDS[number];
@@ -79,6 +80,13 @@ export const BROWSER_TELEMETRY_BUDGETS = {
     firstInteractiveMobileMs: 1500,
     initTaskMaxMs: 100,
     frameP95Ms: 33,
+  },
+  /** Features page — list + humming session chrome under load. */
+  features: {
+    listFetchP95Ms: 500,
+    firstPaintP95Ms: 1000,
+    sessionMatchP95Ms: 50,
+    expandP95Ms: 400,
   },
 } as const;
 
