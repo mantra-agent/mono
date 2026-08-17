@@ -265,6 +265,25 @@ function AttributePicker({
   );
 }
 
+interface WorkPersonOption {
+  id: string;
+  name: string;
+  cabinetLevel?: string | null;
+}
+
+function useWorkPeople(): WorkPersonOption[] {
+  const { data } = useQuery<{ people: WorkPersonOption[] }>({
+    queryKey: ["/api/people"],
+  });
+  return data?.people ?? [];
+}
+
+function useCabinetOwnerShortcuts(people: WorkPersonOption[]) {
+  const user = people.find((p) => p.cabinetLevel === "user");
+  const agent = people.find((p) => p.cabinetLevel === "agent");
+  return { user, agent };
+}
+
 function OwnerPicker({
   value,
   onChange,
@@ -275,13 +294,20 @@ function OwnerPicker({
   testId: string;
 }) {
   const [open, setOpen] = useState(false);
-  const owners = [
-    { value: "me", label: "Me", icon: User },
-    { value: "agent", label: getInstanceName(), icon: Bot },
-  ];
+  const [search, setSearch] = useState("");
+  const people = useWorkPeople();
+  const { user, agent } = useCabinetOwnerShortcuts(people);
+  const current = people.find((p) => p.id === value);
+  const isAgent = Boolean(agent && value === agent.id);
+  const CurrentIcon = isAgent ? Bot : User;
 
-  const currentIcon = value === "me" ? User : Bot;
-  const CurrentIcon = currentIcon;
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const base = q
+      ? people.filter((p) => p.name.toLowerCase().includes(q))
+      : people;
+    return base.slice(0, 12);
+  }, [people, search]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -292,32 +318,203 @@ function OwnerPicker({
           variant="ghost"
           className="text-muted-foreground"
           data-testid={testId}
+          title={current?.name ?? "Owner"}
         >
           <CurrentIcon className="h-3.5 w-3.5" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-1" align="start" sideOffset={4}>
-        <div className="flex flex-col gap-0.5">
-          {owners.map(o => (
+      <PopoverContent className="w-[220px] p-2 space-y-1" align="start" sideOffset={4}>
+        <Input
+          placeholder="Search people…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-7 text-xs"
+          data-testid={`${testId}-search`}
+        />
+        {user && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={cn("justify-start gap-2 w-full", value === user.id && "bg-muted")}
+            onClick={() => { onChange(user.id); setOpen(false); }}
+            data-testid={`${testId}-option-me`}
+          >
+            <User className="h-3.5 w-3.5" />
+            <span className="text-xs font-medium">Me</span>
+          </Button>
+        )}
+        {agent && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={cn("justify-start gap-2 w-full", value === agent.id && "bg-muted")}
+            onClick={() => { onChange(agent.id); setOpen(false); }}
+            data-testid={`${testId}-option-agent`}
+          >
+            <Bot className="h-3.5 w-3.5" />
+            <span className="text-xs font-medium">{agent.name || getInstanceName()}</span>
+          </Button>
+        )}
+        <div className="max-h-48 overflow-y-auto flex flex-col gap-0.5">
+          {filtered.map((p) => (
             <Button
-              key={o.value}
+              key={p.id}
               type="button"
               variant="ghost"
               size="sm"
-              className={cn(
-                "justify-start gap-2 w-full",
-                value === o.value && "bg-muted"
-              )}
-              onClick={() => { onChange(o.value); setOpen(false); }}
-              data-testid={`${testId}-option-${o.value}`}
+              className={cn("justify-start gap-2 w-full", value === p.id && "bg-muted")}
+              onClick={() => { onChange(p.id); setOpen(false); }}
+              data-testid={`${testId}-option-${p.id}`}
             >
-              <o.icon className="h-3.5 w-3.5" />
-              <span className="text-xs font-medium">{o.label}</span>
+              {p.cabinetLevel === "agent" ? <Bot className="h-3.5 w-3.5" /> : <User className="h-3.5 w-3.5" />}
+              <span className="text-xs font-medium truncate">{p.name}</span>
             </Button>
           ))}
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+function TaskOwnerMenu({
+  task,
+  onUpdate,
+}: {
+  task: Task;
+  onUpdate: (patch: Partial<Task>) => void;
+}) {
+  const people = useWorkPeople();
+  const { user, agent } = useCabinetOwnerShortcuts(people);
+  const current = people.find((p) => p.id === task.ownerPersonId);
+  const isAgent = Boolean(agent && task.ownerPersonId === agent.id);
+  const [search, setSearch] = useState("");
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (q ? people.filter((p) => p.name.toLowerCase().includes(q)) : people).slice(0, 12);
+  }, [people, search]);
+
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        {isAgent ? <Bot className="h-3.5 w-3.5 mr-2" /> : <User className="h-3.5 w-3.5 mr-2" />}
+        Owner{current?.name ? `: ${current.name}` : ""}
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="w-56 p-2 space-y-1">
+        <Input
+          placeholder="Search people…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-7 text-xs"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        />
+        {user && (
+          <DropdownMenuItem onClick={() => onUpdate({ ownerPersonId: user.id })}>
+            <User className="h-3.5 w-3.5 mr-2" />
+            <span className={cn(task.ownerPersonId === user.id && "font-medium")}>Me</span>
+          </DropdownMenuItem>
+        )}
+        {agent && (
+          <DropdownMenuItem onClick={() => onUpdate({ ownerPersonId: agent.id })}>
+            <Bot className="h-3.5 w-3.5 mr-2" />
+            <span className={cn(task.ownerPersonId === agent.id && "font-medium")}>
+              {agent.name || getInstanceName()}
+            </span>
+          </DropdownMenuItem>
+        )}
+        {filtered.map((p) => (
+          <DropdownMenuItem key={p.id} onClick={() => onUpdate({ ownerPersonId: p.id })}>
+            {p.cabinetLevel === "agent" ? (
+              <Bot className="h-3.5 w-3.5 mr-2" />
+            ) : (
+              <User className="h-3.5 w-3.5 mr-2" />
+            )}
+            <span className={cn("truncate", task.ownerPersonId === p.id && "font-medium")}>{p.name}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  );
+}
+
+function ProjectOwnerMenu({
+  project,
+  onUpdateProject,
+}: {
+  project: Project;
+  onUpdateProject: (patch: Partial<Project>) => void;
+}) {
+  const people = useWorkPeople();
+  const { user, agent } = useCabinetOwnerShortcuts(people);
+  const current = people.find((p) => p.id === project.ownerPersonId);
+  const isAgent = Boolean(agent && project.ownerPersonId === agent.id);
+  const [search, setSearch] = useState("");
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (q ? people.filter((p) => p.name.toLowerCase().includes(q)) : people).slice(0, 12);
+  }, [people, search]);
+
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger data-testid={`menu-project-owner-${project.id}`}>
+        {isAgent ? <Bot className="h-3.5 w-3.5 mr-2" /> : <User className="h-3.5 w-3.5 mr-2" />}
+        Owner{current?.name ? `: ${current.name}` : ""}
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="w-56 p-2 space-y-1">
+        <Input
+          placeholder="Search people…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-7 text-xs"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        />
+        {user && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onUpdateProject({ ownerPersonId: user.id });
+            }}
+            data-testid={`menu-project-owner-me-${project.id}`}
+          >
+            <User className="h-3.5 w-3.5 mr-2" />
+            <span className={cn(project.ownerPersonId === user.id && "font-medium")}>Me</span>
+          </DropdownMenuItem>
+        )}
+        {agent && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onUpdateProject({ ownerPersonId: agent.id });
+            }}
+            data-testid={`menu-project-owner-agent-${project.id}`}
+          >
+            <Bot className="h-3.5 w-3.5 mr-2" />
+            <span className={cn(project.ownerPersonId === agent.id && "font-medium")}>
+              {agent.name || getInstanceName()}
+            </span>
+          </DropdownMenuItem>
+        )}
+        {filtered.map((p) => (
+          <DropdownMenuItem
+            key={p.id}
+            onClick={(e) => {
+              e.stopPropagation();
+              onUpdateProject({ ownerPersonId: p.id });
+            }}
+          >
+            {p.cabinetLevel === "agent" ? (
+              <Bot className="h-3.5 w-3.5 mr-2" />
+            ) : (
+              <User className="h-3.5 w-3.5 mr-2" />
+            )}
+            <span className={cn("truncate", project.ownerPersonId === p.id && "font-medium")}>{p.name}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
 }
 
@@ -978,22 +1175,7 @@ function TaskRow({
               })}
             </DropdownMenuSubContent>
           </DropdownMenuSub>
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              {task.owner === "me" ? <User className="h-3.5 w-3.5 mr-2" /> : <Bot className="h-3.5 w-3.5 mr-2" />}
-              Owner
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent>
-              <DropdownMenuItem onClick={() => onUpdate({ owner: "me" })}>
-                <User className="h-3.5 w-3.5 mr-2" />
-                <span className={cn(task.owner === "me" && "font-medium")}>Me</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onUpdate({ owner: "agent" })}>
-                <Bot className="h-3.5 w-3.5 mr-2" />
-                <span className={cn(task.owner === "agent" && "font-medium")}>{getInstanceName()}</span>
-              </DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
+          <TaskOwnerMenu task={task} onUpdate={onUpdate} />
           <DropdownMenuSeparator />
           <DropdownMenuSub>
             <DropdownMenuSubTrigger data-testid={`menu-task-priority-${task.id}`}>
@@ -1873,22 +2055,7 @@ function ProjectTreeNode({
                       />
                     </DropdownMenuSubContent>
                   </DropdownMenuSub>
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger data-testid={`menu-project-owner-${project.id}`}>
-                      {project.owner === "me" ? <User className="h-3.5 w-3.5 mr-2" /> : <Bot className="h-3.5 w-3.5 mr-2" />}
-                      Owner
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent>
-                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onUpdateProject({ owner: "me" }); }} data-testid={`menu-project-owner-me-${project.id}`}>
-                        <User className="h-3.5 w-3.5 mr-2" />
-                        <span className={cn(project.owner === "me" && "font-medium")}>Me</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onUpdateProject({ owner: "agent" }); }} data-testid={`menu-project-owner-agent-${project.id}`}>
-                        <Bot className="h-3.5 w-3.5 mr-2" />
-                        <span className={cn(project.owner === "agent" && "font-medium")}>{getInstanceName()}</span>
-                      </DropdownMenuItem>
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
+                  <ProjectOwnerMenu project={project} onUpdateProject={onUpdateProject} />
                   <DropdownMenuItem
                     onClick={(e) => {
                       e.stopPropagation();
@@ -2283,9 +2450,11 @@ function ProjectTreeNode({
 
 function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const { toast } = useToast();
+  const people = useWorkPeople();
+  const { user, agent } = useCabinetOwnerShortcuts(people);
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState<PriorityLevel>("mid");
-  const [owner, setOwner] = useState<"me" | "agent">("me");
+  const [ownerPersonId, setOwnerPersonId] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -2293,6 +2462,10 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     titleRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (!ownerPersonId && user?.id) setOwnerPersonId(user.id);
+  }, [user?.id, ownerPersonId]);
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/projects/projects", data),
@@ -2313,7 +2486,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
     createMutation.mutate({
       title: title.trim(),
       priority,
-      owner,
+      ...(ownerPersonId ? { ownerPersonId } : {}),
       dueDate: dueDate || null,
       tags,
     });
@@ -2324,7 +2497,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
     createMutation.mutate({
       title: title.trim(),
       priority,
-      owner,
+      ...(ownerPersonId ? { ownerPersonId } : {}),
       dueDate: dueDate || null,
       tags,
     });
@@ -2379,13 +2552,19 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
         </Select>
       </ProfileTreeRow>
       <ProfileTreeRow label="Owner" icon={<User className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-new-project-owner">
-        <Select value={owner} onValueChange={(v) => setOwner(v as "me" | "agent")}>
+        <Select value={ownerPersonId || undefined} onValueChange={setOwnerPersonId}>
           <SelectTrigger className="h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0" data-testid="select-project-owner">
-            <SelectValue />
+            <SelectValue placeholder="Me" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="me">Me</SelectItem>
-            <SelectItem value="agent">{getInstanceName()}</SelectItem>
+            {user && <SelectItem value={user.id}>Me</SelectItem>}
+            {agent && <SelectItem value={agent.id}>{agent.name || getInstanceName()}</SelectItem>}
+            {people
+              .filter((p) => p.id !== user?.id && p.id !== agent?.id)
+              .slice(0, 40)
+              .map((p) => (
+                <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+              ))}
           </SelectContent>
         </Select>
       </ProfileTreeRow>

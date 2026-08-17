@@ -288,7 +288,7 @@ async function genProjects(dir: string): Promise<{ count: number }> {
         `# ${proj.title ?? "Project"}\n\n` +
         `**Status:** ${proj.status ?? ""}\n` +
         `**Priority:** ${proj.priority ?? ""}\n` +
-        `**Owner:** ${proj.owner ?? ""}\n` +
+        `**Owner:** ${proj.ownerPersonId ? `@person:${proj.ownerPersonId}` : ""}\n` +
         (proj.startDate ? `**Start:** ${proj.startDate}\n` : "") +
         (proj.dueDate ? `**Due:** ${proj.dueDate}\n` : "") +
         (proj.goalId ? `**Goal:** ${proj.goalId}\n` : "") +
@@ -311,7 +311,7 @@ async function genProjects(dir: string): Promise<{ count: number }> {
               const estimate = "";
               return (
                 `- [${done ? "x" : " "}] **${t.title ?? "Task"}**${estimate}\n` +
-                `  Status: ${t.status ?? ""} | Priority: ${t.priority ?? ""} | Effort: ${t.effort ?? ""} | Impact: ${t.impact ?? ""} | Owner: ${t.owner ?? ""}\n` +
+                `  Status: ${t.status ?? ""} | Priority: ${t.priority ?? ""} | Effort: ${t.effort ?? ""} | Impact: ${t.impact ?? ""} | Owner: ${t.ownerPersonId ? `@person:${t.ownerPersonId}` : ""}\n` +
                 (t.deadline ? `  Deadline: ${t.deadline}\n` : "") +
                 (t.description ? `  ${t.description}\n` : "") +
                 (t.context ? `  Context: ${t.context}\n` : "") +

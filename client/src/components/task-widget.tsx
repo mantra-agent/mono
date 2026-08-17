@@ -77,6 +77,54 @@ const EFFORT_OPTIONS: { value: string; label: string; color: string }[] = [
   { value: "high", label: "High", color: COLOR_RED },
 ];
 
+interface WorkPersonOption {
+  id: string;
+  name: string;
+  cabinetLevel?: string | null;
+}
+
+function TaskOwnerField({
+  task,
+  onChange,
+}: {
+  task: Task;
+  onChange: (ownerPersonId: string) => void;
+}) {
+  const { data } = useQuery<{ people: WorkPersonOption[] }>({
+    queryKey: ["/api/people"],
+  });
+  const people = data?.people ?? [];
+  const user = people.find((p) => p.cabinetLevel === "user");
+  const agent = people.find((p) => p.cabinetLevel === "agent");
+  const current = people.find((p) => p.id === task.ownerPersonId);
+  const isAgent = Boolean(agent && task.ownerPersonId === agent.id);
+
+  return (
+    <TaskFieldRow icon={isAgent ? Bot : User} label="Owner" testId="row-task-owner">
+      <Select
+        value={task.ownerPersonId || undefined}
+        onValueChange={(v) => onChange(v)}
+      >
+        <SelectTrigger className="h-5 text-xs w-auto min-w-[80px]" data-testid="select-task-widget-owner">
+          <SelectValue placeholder={current?.name || "Owner"} />
+        </SelectTrigger>
+        <SelectContent>
+          {user && <SelectItem value={user.id}>Me</SelectItem>}
+          {agent && (
+            <SelectItem value={agent.id}>{agent.name || getInstanceName()}</SelectItem>
+          )}
+          {people
+            .filter((p) => p.id !== user?.id && p.id !== agent?.id)
+            .slice(0, 40)
+            .map((p) => (
+              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+            ))}
+        </SelectContent>
+      </Select>
+    </TaskFieldRow>
+  );
+}
+
 function getColorForOption(value: string, options: { value: string; color: string }[]) {
   return options.find(o => o.value === value)?.color || "text-muted-foreground";
 }
@@ -442,17 +490,7 @@ export function TaskWidget({ taskId, defaultExpanded = false, showHeader = true,
             </Select>
           </TaskFieldRow>
 
-          <TaskFieldRow icon={task.owner === "me" ? User : Bot} label="Owner" testId="row-task-owner">
-            <Select value={task.owner} onValueChange={(v) => updateMutation.mutate({ owner: v as "me" | "agent" })}>
-              <SelectTrigger className="h-5 text-xs w-auto min-w-[80px]" data-testid="select-task-widget-owner">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="me">Me</SelectItem>
-                <SelectItem value="agent">{getInstanceName()}</SelectItem>
-              </SelectContent>
-            </Select>
-          </TaskFieldRow>
+          <TaskOwnerField task={task} onChange={(ownerPersonId) => updateMutation.mutate({ ownerPersonId })} />
 
           <TaskFieldRow icon={Flag} label="Priority" testId="row-task-priority">
             <Select value={task.priority} onValueChange={(v) => updateMutation.mutate({ priority: v as PriorityLevel })}>

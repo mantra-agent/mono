@@ -707,8 +707,9 @@ export const tasks = pgTable("tasks", {
   priority: text("priority").notNull().default("mid"),
   impact: text("impact").notNull().default("mid"),
   effort: text("effort").notNull().default("mid"),
-  owner: text("owner").notNull().default("me"),
-  /** Human obligation axis. Execution ownership remains in owner (me | agent). */
+  /** Accountability owner — persons.id. Not a login, grant subject, or row visibility owner. */
+  ownerPersonId: text("owner_person_id").notNull(),
+  /** Human obligation axis. Separate from accountability ownerPersonId. */
   assigneeSubjectType: text("assignee_subject_type", { enum: taskAssigneeSubjectTypes }),
   assigneeSubjectId: text("assignee_subject_id"),
   requiresReview: boolean("requires_review").notNull().default(false),
@@ -735,6 +736,7 @@ export const tasks = pgTable("tasks", {
   index("idx_tasks_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_tasks_vault").on(table.vaultId),
   index("idx_tasks_assignee").on(table.assigneeSubjectType, table.assigneeSubjectId),
+  index("idx_tasks_owner_person").on(table.ownerPersonId),
   check("tasks_assignee_subject_pair_check", sql`
     (${table.assigneeSubjectType} IS NULL AND ${table.assigneeSubjectId} IS NULL)
     OR (${table.assigneeSubjectType} IN ('user', 'invited_subject') AND NULLIF(BTRIM(${table.assigneeSubjectId}), '') IS NOT NULL)
@@ -750,7 +752,8 @@ export const projects = pgTable("projects", {
   description: text("description").notNull().default(""),
   status: text("status").notNull().default("idea"),
   priority: text("priority").notNull().default("mid"),
-  owner: text("owner").notNull().default("me"),
+  /** Accountability owner — persons.id. Not a login or row visibility owner. */
+  ownerPersonId: text("owner_person_id").notNull(),
   requiresReview: boolean("requires_review").notNull().default(false),
   dueDate: text("due_date"),
   completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -775,6 +778,7 @@ export const projects = pgTable("projects", {
   index("idx_projects_status").on(table.status),
   index("idx_projects_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_projects_vault").on(table.vaultId),
+  index("idx_projects_owner_person").on(table.ownerPersonId),
 ]);
 
 export type ProjectRow = typeof projects.$inferSelect;
@@ -810,6 +814,8 @@ export const milestones = pgTable("milestones", {
   startDate: text("start_date"),
   dueDate: text("due_date"),
   displayOrder: integer("display_order").notNull().default(0),
+  /** Accountability owner — persons.id. Inherited from project at create when omitted. */
+  ownerPersonId: text("owner_person_id"),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -818,6 +824,7 @@ export const milestones = pgTable("milestones", {
   index("idx_milestones_project_order").on(table.projectId, table.displayOrder, table.id),
   index("idx_milestones_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_milestones_account").on(table.accountId),
+  index("idx_milestones_owner_person").on(table.ownerPersonId),
   index("idx_milestones_vault").on(table.vaultId),
   check("milestones_status_check", sql`${table.status} IN ('planned', 'active', 'completed')`),
 ]);

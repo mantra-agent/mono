@@ -80,7 +80,7 @@ function normalizeTaskUpdate(taskId: number, command: TaskUpdateCommand): Partia
     priority: command.priority,
     impact: command.impact,
     effort: command.effort,
-    owner: command.owner,
+    ownerPersonId: command.ownerPersonId,
     assigneeSubjectType: command.assigneeSubjectType,
     assigneeSubjectId: command.assigneeSubjectId,
     requiresReview: command.requiresReview,
@@ -99,7 +99,7 @@ function normalizeTaskUpdate(taskId: number, command: TaskUpdateCommand): Partia
       "priority",
       "impact",
       "effort",
-      "owner",
+      "ownerPersonId",
       "assigneeSubjectType",
       "assigneeSubjectId",
       "projectId",
@@ -161,7 +161,7 @@ export interface TaskPageOptions {
   status?: TaskStatus;
   statuses?: TaskStatus[];
   projectId?: number;
-  owner?: string;
+  ownerPersonId?: string;
   priority?: string;
   limit?: number;
   offset?: number;
@@ -248,7 +248,7 @@ function rowToTask(row: typeof tasks.$inferSelect): Task {
     priority: row.priority as Task["priority"],
     impact: row.impact as Task["impact"],
     effort: row.effort as Task["effort"],
-    owner: row.owner as Task["owner"],
+    ownerPersonId: row.ownerPersonId,
     assigneeSubjectType: row.assigneeSubjectType as Task["assigneeSubjectType"],
     assigneeSubjectId: row.assigneeSubjectId,
     requiresReview: row.requiresReview,
@@ -275,7 +275,7 @@ export class FileTaskStorage {
     if (options?.status) conditions.push(eq(tasks.status, options.status));
     if (options?.statuses?.length) conditions.push(inArray(tasks.status, options.statuses));
     if (options?.projectId !== undefined) conditions.push(eq(tasks.projectId, options.projectId));
-    if (options?.owner) conditions.push(eq(tasks.owner, options.owner));
+    if (options?.ownerPersonId) conditions.push(eq(tasks.ownerPersonId, options.ownerPersonId));
     if (options?.priority) conditions.push(eq(tasks.priority, options.priority));
     return conditions.length > 0 ? and(...conditions) : undefined;
   }
@@ -345,7 +345,7 @@ export class FileTaskStorage {
       : [[row.projectId, Number(row.count ?? 0)] as const]));
   }
 
-  async getTasks(options?: { status?: string; projectId?: number; owner?: string; priority?: string }): Promise<Task[]> {
+  async getTasks(options?: { status?: string; projectId?: number; ownerPersonId?: string; priority?: string }): Promise<Task[]> {
     const normalizedStatus = options?.status === "push" ? "on_hold" : options?.status;
     const predicate = this.taskReadPredicate({
       ...options,
@@ -369,8 +369,10 @@ export class FileTaskStorage {
   }
 
   async getTodoTasks(): Promise<Task[]> {
+    const { getCabinetWorkOwnerPersons } = await import("../work-owner");
+    const cabinet = await getCabinetWorkOwnerPersons();
     const predicate = and(
-      eq(tasks.owner, "me"),
+      eq(tasks.ownerPersonId, cabinet.userPersonId),
       sql`${tasks.status} IN ('ready', 'active')`,
     );
     const rows = await db.select().from(tasks).where(
@@ -446,6 +448,19 @@ export class FileTaskStorage {
     const vaultId = parentVaultId ?? resolveCreationVaultId(input.vaultId);
     const assigneeInput = assignmentFromValues(input.assigneeSubjectType, input.assigneeSubjectId);
     const origin = resolveMutationOrigin(provenance);
+    const { resolveWorkOwnerPerson } = await import("../work-owner");
+    const ownerPersonId = await resolveWorkOwnerPerson({
+      ownerPersonId: input.ownerPersonId,
+      mode: "create",
+      workVaultId: vaultId,
+    });
+    if (!ownerPersonId) {
+      throw new ToolFailureError("Task creation requires an owner Person", {
+        kind: "input",
+        code: "work_owner_person_required",
+        retryable: false,
+      });
+    }
 
     const row = await db.transaction(async tx => {
       const assignee = await resolveAssignmentSubjectInTransaction(tx, assigneeInput);
@@ -456,7 +471,7 @@ export class FileTaskStorage {
         priority: input.priority || "mid",
         impact: input.impact || "mid",
         effort,
-        owner: input.owner || "me",
+        ownerPersonId,
         assigneeSubjectType: assignee?.subjectType ?? null,
         assigneeSubjectId: assignee?.subjectId ?? null,
         requiresReview: input.requiresReview ?? false,
@@ -531,7 +546,15 @@ export class FileTaskStorage {
       if (updates.priority !== undefined) setValues.priority = updates.priority;
       if (updates.impact !== undefined) setValues.impact = updates.impact;
       if (updates.effort !== undefined) setValues.effort = updates.effort;
-      if (updates.owner !== undefined) setValues.owner = updates.owner;
+      if (updates.ownerPersonId !== undefined) {
+        const { resolveWorkOwnerPerson } = await import("../work-owner");
+        const resolved = await resolveWorkOwnerPerson({
+          ownerPersonId: updates.ownerPersonId,
+          mode: "update",
+          workVaultId: placementVaultId ?? existing.vaultId,
+        });
+        if (resolved) setValues.ownerPersonId = resolved;
+      }
       if (assignee.changed) {
         setValues.assigneeSubjectType = assignee.next?.subjectType ?? null;
         setValues.assigneeSubjectId = assignee.next?.subjectId ?? null;

@@ -1659,7 +1659,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     // Hard-requiring it here was a validation thrash wall against the advertised contract.
     const description = typeof args.description === "string" ? args.description.trim() : "";
 
-    const owner = args.owner === "xyz" ? "agent" : (args.owner || "me");
+    if (args.owner !== undefined) {
+      return {
+        result: `Unknown parameter "owner". Use ownerPersonId with a Person id or @person:{id}. me/agent are not accepted.`,
+        error: true,
+        failure: inputFailure("work_owner_enum_rejected"),
+      };
+    }
     const milestoneId = typeof args.milestoneId === "number" ? args.milestoneId : Number(args.milestoneId);
     if (!Number.isInteger(milestoneId) || milestoneId <= 0) {
       return {
@@ -1708,7 +1714,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         title,
         description,
         priority: args.priority || "mid",
-        owner,
+        ...(args.ownerPersonId !== undefined ? { ownerPersonId: args.ownerPersonId } : {}),
         ...assignmentInput.assignment,
         projectId,
         status: args.status || "ready",
@@ -1730,7 +1736,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const assignee = task.assigneeSubjectType && task.assigneeSubjectId
         ? `, assignee: ${task.assigneeSubjectType}:${task.assigneeSubjectId}`
         : "";
-      return { result: `Task created: "${task.title}" (ID: ${task.id}, priority: ${task.priority}, owner: ${task.owner}${assignee}${task.milestoneId ? `, milestone: ${task.milestoneId}` : ""})${sourceSessionId ? `, source: @session:${sourceSessionId}` : ""}` };
+      const ownerRef = task.ownerPersonId ? `@person:${task.ownerPersonId}` : "unknown";
+      return { result: `Task created: "${task.title}" (ID: ${task.id}, priority: ${task.priority}, owner: ${ownerRef}${assignee}${task.milestoneId ? `, milestone: ${task.milestoneId}` : ""})${sourceSessionId ? `, source: @session:${sourceSessionId}` : ""}` };
     } catch (err: any) {
       const failure = toolFailureFromError(err);
       if (failure) {
@@ -1812,7 +1819,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (args.status !== undefined) command.status = args.status;
     if (args.impact !== undefined) command.impact = args.impact;
     if (args.effort !== undefined) command.effort = args.effort;
-    if (args.owner !== undefined) command.owner = args.owner;
+    if (args.owner !== undefined) {
+      return {
+        result: `Unknown parameter "owner". Use ownerPersonId with a Person id or @person:{id}. me/agent are not accepted.`,
+        error: true,
+        failure: inputFailure("work_owner_enum_rejected"),
+      };
+    }
+    if (args.ownerPersonId !== undefined) command.ownerPersonId = args.ownerPersonId;
     const assignmentInput = taskAssignmentFromToolArgs(args);
     if (assignmentInput.error) return { result: assignmentInput.error, error: true };
     if (assignmentInput.assignment) Object.assign(command, assignmentInput.assignment);
@@ -2977,12 +2991,18 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         case "create_project": {
           if (!args.title) return { result: "Missing required field: title", error: true };
           const { insertProjectSchema: projectInsertSchema } = await import("../shared/models/work");
+          if (args.owner !== undefined) {
+            return {
+              result: `Unknown parameter "owner". Use ownerPersonId with a Person id or @person:{id}. me/agent are not accepted.`,
+              error: true,
+            };
+          }
           const input = projectInsertSchema.parse({
             title: args.title,
             ...(args.description !== undefined && { description: args.description }),
             ...(args.status !== undefined && { status: args.status }),
             ...(args.priority !== undefined && { priority: args.priority }),
-            ...(args.owner !== undefined && { owner: args.owner }),
+            ...(args.ownerPersonId !== undefined && { ownerPersonId: args.ownerPersonId }),
             ...(args.dueDate !== undefined && { dueDate: args.dueDate }),
             ...(args.tags !== undefined && { tags: args.tags }),
             ...(args.people !== undefined && { people: args.people }),
@@ -3307,7 +3327,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           if (args.description !== undefined) raw.description = args.description;
           if (args.status !== undefined) raw.status = args.status;
           if (args.priority !== undefined) raw.priority = args.priority;
-          if (args.owner !== undefined) raw.owner = args.owner;
+          if (args.owner !== undefined) {
+            return {
+              result: `Unknown parameter "owner". Use ownerPersonId with a Person id or @person:{id}. me/agent are not accepted.`,
+              error: true,
+            };
+          }
+          if (args.ownerPersonId !== undefined) raw.ownerPersonId = args.ownerPersonId;
           if (args.dueDate !== undefined) raw.dueDate = args.dueDate;
           if (args.tags !== undefined) raw.tags = args.tags;
           if (args.people !== undefined) raw.people = args.people;

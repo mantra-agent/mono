@@ -78,6 +78,7 @@ export async function ensureMilestonesSchema(pool: ConnectionPool): Promise<void
       ["start_date", "TEXT"],
       ["due_date", "TEXT"],
       ["display_order", "INTEGER DEFAULT 0"],
+      ["owner_person_id", "TEXT"],
       ["completed_at", "TIMESTAMPTZ"],
       ["created_at", "TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP"],
       ["updated_at", "TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP"],
