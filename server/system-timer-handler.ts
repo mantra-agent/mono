@@ -89,7 +89,12 @@ const SYSTEM_COMMAND_HANDLERS: Record<string, SystemCommandHandler> = {
     const { createBackup, getBackup } = await import("./backup-storage");
     const job = await createBackup("scheduled");
     const startedAt = Date.now();
-    const timeoutMs = 10 * 60 * 1000;
+    // Live dumps now run 15–25+ minutes as row counts grow past ~3.5M.
+    // Waiting too short projects TIMER_HANDLER_FAILED while the job still
+    // finishes successfully (2026-08-17 job b4d067c5: 1194s complete after
+    // a 10m wait throw). Keep a hard ceiling so the serial scheduler does
+    // not park forever on a stuck job.
+    const timeoutMs = 45 * 60 * 1000;
 
     while (Date.now() - startedAt < timeoutMs) {
       const current = await getBackup(job.id);
@@ -114,9 +119,41 @@ const SYSTEM_COMMAND_HANDLERS: Record<string, SystemCommandHandler> = {
       await new Promise((resolve) => setTimeout(resolve, 5_000));
     }
 
-    throw new Error(
-      `backup:create timed out waiting for job ${job.id} to complete`,
+    const current = await getBackup(job.id);
+    // Job is still running (or status unknown) after the wait ceiling.
+    // Do not throw: backup continues in-process and createBackup already
+    // owns durable completion/failure. Degrade so Nightly Backup does not
+    // flood TIMER_HANDLER_FAILED for slow-but-healthy dumps.
+    if (current?.status === "complete") {
+      log.log(
+        `backup:create complete after wait ceiling: job=${job.id} size=${current.size_bytes ?? "unknown"} rows=${current.row_count ?? "unknown"}`,
+      );
+      return {
+        outcome: "success",
+        output: {
+          jobId: job.id,
+          sizeBytes: current.size_bytes,
+          rowCount: current.row_count,
+        },
+      };
+    }
+    if (current?.status === "failed") {
+      throw new Error(
+        `backup:create failed: job=${job.id} error=${current.error || "unknown"}`,
+      );
+    }
+    log.warn(
+      `backup:create wait ceiling reached with job still ${current?.status ?? "unknown"}: job=${job.id} waitedMs=${timeoutMs}`,
     );
+    return {
+      outcome: "degraded",
+      reason: "backup_wait_timeout_still_running",
+      output: {
+        jobId: job.id,
+        waitedMs: timeoutMs,
+        status: current?.status ?? "unknown",
+      },
+    };
   },
 
   "oura-sync": async (_timer, _run) => {
