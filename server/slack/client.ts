@@ -58,6 +58,9 @@ export async function postSlackMessage(credentials: SlackCredentialBundle, input
   const result = await slackMethod(credentials.botToken, "chat.postMessage", {
     channel: input.channel,
     text: input.text,
+    // mrkdwn is the default for chat.postMessage text; set explicitly so the
+    // outbound boundary's Markdown→mrkdwn conversion is never disabled by API drift.
+    mrkdwn: true,
     client_msg_id: input.clientMsgId,
     ...(input.threadTs ? { thread_ts: input.threadTs, reply_broadcast: false } : {}),
   });
