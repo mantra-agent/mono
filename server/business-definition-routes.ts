@@ -12,17 +12,30 @@ import { requireCurrentPrincipal } from "./principal-context";
 import { createLogger } from "./log";
 
 // REST surface over BusinessStorage for the Definition page: identity scalars
-// plus the fixed narrative slots (Values / Vision / Mission / Phases / Pitch /
-// GTM), each a linked Library page resolved through the canonical reference
-// system. Reads enrich the stored `*_page_id` soft-refs into `{ id, title, slug }`
-// so the client can render the shared inline library-page editor without a
-// second round-trip per slot. Every read/write flows through the
-// principal-scoped BusinessStorage and scoped library predicates — no unscoped
-// table reads.
+// plus the fixed narrative slots (DNA / Product / Marketing / Success page
+// links, plus Phases and Pitch so existing bindings stay reachable), each a
+// linked Library page resolved through the canonical reference system. Reads
+// enrich the stored `*_page_id` soft-refs into `{ id, title, slug }` so the
+// client can render the shared inline library-page editor without a second
+// round-trip per slot. Every read/write flows through the principal-scoped
+// BusinessStorage and scoped library predicates — no unscoped table reads.
 
 const log = createLogger("BusinessDefinitionRoutes");
 
-const NARRATIVE_SLOTS = ["values", "vision", "mission", "phases", "pitch", "gtm"] as const;
+const NARRATIVE_SLOTS = [
+  "values",
+  "vision",
+  "mission",
+  "phases",
+  "pitch",
+  "gtm",
+  "product",
+  "brand",
+  "differentiators",
+  "market",
+  "icp",
+  "activation",
+] as const;
 type NarrativeSlot = (typeof NARRATIVE_SLOTS)[number];
 type NarrativeColumn = `${NarrativeSlot}PageId`;
 
@@ -33,6 +46,12 @@ const SLOT_LABEL: Record<NarrativeSlot, string> = {
   phases: "Phases",
   pitch: "Pitch",
   gtm: "GTM",
+  product: "Product",
+  brand: "Brand",
+  differentiators: "Differentiators",
+  market: "Market",
+  icp: "ICP",
+  activation: "Activation",
 };
 
 const SLOT_COLUMN: Record<NarrativeSlot, NarrativeColumn> = {
@@ -42,6 +61,12 @@ const SLOT_COLUMN: Record<NarrativeSlot, NarrativeColumn> = {
   phases: "phasesPageId",
   pitch: "pitchPageId",
   gtm: "gtmPageId",
+  product: "productPageId",
+  brand: "brandPageId",
+  differentiators: "differentiatorsPageId",
+  market: "marketPageId",
+  icp: "icpPageId",
+  activation: "activationPageId",
 };
 
 function narrativePageIds(business: Business): string[] {
@@ -77,6 +102,12 @@ interface BusinessDefinitionView extends Business {
   phasesPage: NarrativePageRef | null;
   pitchPage: NarrativePageRef | null;
   gtmPage: NarrativePageRef | null;
+  productPage: NarrativePageRef | null;
+  brandPage: NarrativePageRef | null;
+  differentiatorsPage: NarrativePageRef | null;
+  marketPage: NarrativePageRef | null;
+  icpPage: NarrativePageRef | null;
+  activationPage: NarrativePageRef | null;
 }
 
 const createSchema = z.object({
@@ -102,6 +133,12 @@ const patchSchema = z
     phasesPageId: narrativePageIdSchema,
     pitchPageId: narrativePageIdSchema,
     gtmPageId: narrativePageIdSchema,
+    productPageId: narrativePageIdSchema,
+    brandPageId: narrativePageIdSchema,
+    differentiatorsPageId: narrativePageIdSchema,
+    marketPageId: narrativePageIdSchema,
+    icpPageId: narrativePageIdSchema,
+    activationPageId: narrativePageIdSchema,
   })
   .refine((patch) => Object.keys(patch).length > 0, "At least one change is required");
 

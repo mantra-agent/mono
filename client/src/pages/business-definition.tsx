@@ -35,13 +35,45 @@ import {
 } from "@/hooks/use-selected-business";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-const NARRATIVE_SLOTS = [
-  { slot: "values", label: "Values", page: (b: BusinessDefinition) => b.valuesPage },
-  { slot: "vision", label: "Vision", page: (b: BusinessDefinition) => b.visionPage },
-  { slot: "mission", label: "Mission", page: (b: BusinessDefinition) => b.missionPage },
-  { slot: "phases", label: "Phases", page: (b: BusinessDefinition) => b.phasesPage },
-  { slot: "pitch", label: "Pitch", page: (b: BusinessDefinition) => b.pitchPage },
-  { slot: "gtm", label: "GTM", page: (b: BusinessDefinition) => b.gtmPage },
+const NARRATIVE_SLOT_GROUPS = [
+  {
+    title: "DNA",
+    slots: [
+      { slot: "vision", label: "Vision", page: (b: BusinessDefinition) => b.visionPage },
+      { slot: "mission", label: "Mission", page: (b: BusinessDefinition) => b.missionPage },
+      { slot: "values", label: "Values", page: (b: BusinessDefinition) => b.valuesPage },
+    ],
+  },
+  {
+    title: "Product",
+    slots: [
+      { slot: "product", label: "Product", page: (b: BusinessDefinition) => b.productPage },
+      { slot: "brand", label: "Brand", page: (b: BusinessDefinition) => b.brandPage },
+      { slot: "differentiators", label: "Differentiators", page: (b: BusinessDefinition) => b.differentiatorsPage },
+    ],
+  },
+  {
+    title: "Marketing",
+    slots: [
+      { slot: "market", label: "Market", page: (b: BusinessDefinition) => b.marketPage },
+      { slot: "icp", label: "ICP", page: (b: BusinessDefinition) => b.icpPage },
+      { slot: "gtm", label: "GTM", page: (b: BusinessDefinition) => b.gtmPage },
+    ],
+  },
+  {
+    title: "Success",
+    slots: [
+      { slot: "activation", label: "Activation", page: (b: BusinessDefinition) => b.activationPage },
+    ],
+  },
+  {
+    // Existing ASI bindings stay reachable; not part of Ray's category list.
+    title: "Company",
+    slots: [
+      { slot: "phases", label: "Phases", page: (b: BusinessDefinition) => b.phasesPage },
+      { slot: "pitch", label: "Pitch", page: (b: BusinessDefinition) => b.pitchPage },
+    ],
+  },
 ] as const;
 
 function ScalarField({
@@ -393,14 +425,16 @@ function DefinitionEditor({ business }: { business: BusinessDefinition }) {
         </DialogContent>
       </Dialog>
 
-      <div className={HIERARCHY_TREE_STACK_CLASS}>
-        <HierarchySectionHeader>Narrative</HierarchySectionHeader>
-        <div>
-          {NARRATIVE_SLOTS.map(({ slot, label, page }) => (
-            <NarrativeSlot key={slot} business={business} slot={slot} label={label} page={page(business)} />
-          ))}
+      {NARRATIVE_SLOT_GROUPS.map((group) => (
+        <div key={group.title} className={HIERARCHY_TREE_STACK_CLASS}>
+          <HierarchySectionHeader>{group.title}</HierarchySectionHeader>
+          <div>
+            {group.slots.map(({ slot, label, page }) => (
+              <NarrativeSlot key={slot} business={business} slot={slot} label={label} page={page(business)} />
+            ))}
+          </div>
         </div>
-      </div>
+      ))}
     </div>
   );
 }

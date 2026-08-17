@@ -18,13 +18,20 @@ export const businesses = pgTable(
     // Fixed narrative slots, each a soft reference to a Library page (canonical
     // reference system), like People's referenced pages. Null until the page is
     // created. Soft refs mirror business_plans.thematic_goal_id rather than a
-    // hard DB FK so page deletion never blocks a Business.
+    // hard DB FK so page deletion never blocks a Business. Adding a noun is a
+    // list edit across SLOT_COLUMN consumers, not a new picker.
     valuesPageId: text("values_page_id"),
     visionPageId: text("vision_page_id"),
     missionPageId: text("mission_page_id"),
     phasesPageId: text("phases_page_id"),
     pitchPageId: text("pitch_page_id"),
     gtmPageId: text("gtm_page_id"),
+    productPageId: text("product_page_id"),
+    brandPageId: text("brand_page_id"),
+    differentiatorsPageId: text("differentiators_page_id"),
+    marketPageId: text("market_page_id"),
+    icpPageId: text("icp_page_id"),
+    activationPageId: text("activation_page_id"),
     // User-configured external destination for the Business data room. The
     // server mutation boundary accepts HTTPS URLs only.
     dataRoomUrl: text("data_room_url"),
@@ -85,6 +92,12 @@ export const businessCreateSchema = z.object({
   phasesPageId: z.string().min(1).nullable().optional(),
   pitchPageId: z.string().min(1).nullable().optional(),
   gtmPageId: z.string().min(1).nullable().optional(),
+  productPageId: z.string().min(1).nullable().optional(),
+  brandPageId: z.string().min(1).nullable().optional(),
+  differentiatorsPageId: z.string().min(1).nullable().optional(),
+  marketPageId: z.string().min(1).nullable().optional(),
+  icpPageId: z.string().min(1).nullable().optional(),
+  activationPageId: z.string().min(1).nullable().optional(),
   dataRoomUrl: z.string().url().max(2048).refine((value) => new URL(value).protocol === "https:", "Data Room URL must use HTTPS").nullable().optional(),
   vaultIds: z.array(z.string().min(1)).max(64).optional(),
 });
@@ -100,6 +113,12 @@ export const businessPatchSchema = z
     phasesPageId: z.string().min(1).nullable().optional(),
     pitchPageId: z.string().min(1).nullable().optional(),
     gtmPageId: z.string().min(1).nullable().optional(),
+    productPageId: z.string().min(1).nullable().optional(),
+    brandPageId: z.string().min(1).nullable().optional(),
+    differentiatorsPageId: z.string().min(1).nullable().optional(),
+    marketPageId: z.string().min(1).nullable().optional(),
+    icpPageId: z.string().min(1).nullable().optional(),
+    activationPageId: z.string().min(1).nullable().optional(),
     dataRoomUrl: z.string().url().max(2048).refine((value) => new URL(value).protocol === "https:", "Data Room URL must use HTTPS").nullable().optional(),
     status: businessStatusSchema.optional(),
   })
