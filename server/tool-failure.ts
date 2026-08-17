@@ -116,10 +116,11 @@ export function inputFailure(code: ToolFailureCode, detail?: string): ToolFailur
 
 /**
  * Authority / credential walls the caller cannot restore inside this run.
- * Do not use for missing optional integration readiness (`integration_not_configured`)
- * or working-set / origin policy misses (`tools_authority_denied`,
- * `tool_authority_denied`) — those are `inputFailure` so the model can pivot
- * without run-terminal quarantine.
+ * Do not use for missing optional integration readiness (`integration_not_configured`),
+ * working-set / origin policy misses (`tools_authority_denied`, `tool_authority_denied`),
+ * command-shape allowlist rejects (`shell_policy_denied`), or scratch path-shape /
+ * session-clone boundary rejects (`scratch_path_denied`) — those are `inputFailure`
+ * so the model can pivot without run-terminal quarantine.
  */
 export function permissionFailure(code: ToolFailureCode, detail?: string): ToolFailure {
   return makeFailure("permission", code, false, detail ? { detail } : undefined);
