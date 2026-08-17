@@ -215,9 +215,9 @@ function ConnectorTierTree({
               showEmpty
               defaultOpen={tier === "balanced"}
               testId={`${testIdPrefix}-${tier}-tier`}
-              expandedContentClassName="space-y-3"
+              expandedContentClassName="space-y-0"
               expandedContent={(
-                <div className="space-y-3">
+                <div className="space-y-0">
                   <TierSettingSelect
                     label="Model"
                     value={config.model}
@@ -353,7 +353,7 @@ export function ModelConnectorSection({
   provider,
   connectorId,
   connector: connectorProp,
-  title = "Model mapping",
+  title = "Models",
   nested = false,
   invalidateQueryKeys,
 }: {

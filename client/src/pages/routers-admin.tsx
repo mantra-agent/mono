@@ -17,7 +17,11 @@ import {
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
-import { ModelConnectorSection } from "@/components/integrations/model-connector-section";
+import {
+  PACKAGED_CONNECTOR_PROVIDERS,
+  ProviderConnectorPackage,
+  type PackagedConnectorProvider,
+} from "@/components/integrations/provider-connector-package";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
@@ -34,16 +38,7 @@ import { usePageLoadActivity } from "@/hooks/use-page-activity";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
-import type { ModelConnectorProvider } from "@shared/model-connectors";
 
-// Providers whose per-connector semantic-tier → model mapping widget can render inline.
-const MODEL_MAPPING_PROVIDERS = new Set<string>([
-  "anthropic",
-  "openai",
-  "openai-subscription",
-  "claude-cli",
-  "grok-subscription",
-]);
 
 const ROUTERS_QUERY_KEY = ["/api/routers"] as const;
 const LEGACY_CONNECTORS_QUERY_KEY = ["/api/routers/legacy-connectors"] as const;
@@ -64,7 +59,7 @@ interface RouterConnector {
   sortOrder: number;
   priorityPinned: boolean;
   routerId?: string | null;
-  /** Present on router detail; required for inline ModelConnectorSection. */
+  /** Present on router detail; required for inline ProviderConnectorPackage models tree. */
   config?: {
     kind?: "model" | "openai-models" | "claude-cli-models" | "grok-models";
     tierMappings: Record<"max" | "high" | "balanced" | "fast", string | { model: string }>;
@@ -100,12 +95,12 @@ function RouterConnectorRow({
   actions: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const supportsModelMapping = MODEL_MAPPING_PROVIDERS.has(connector.provider);
+  const supportsPackage = PACKAGED_CONNECTOR_PROVIDERS.has(connector.provider);
   // Router detail already carries config; do not resolve through legacy-only /api/models/connectors.
-  const mappingConnector = connector.config
+  const packageConnector = connector.config
     ? {
         id: connector.id,
-        provider: connector.provider as ModelConnectorProvider,
+        provider: connector.provider as PackagedConnectorProvider,
         label: connector.label,
         status: connector.status,
         sortOrder: connector.sortOrder,
@@ -122,29 +117,28 @@ function RouterConnectorRow({
           {connector.label}
           <span className="ml-1 text-muted-foreground">{connector.provider}</span>
         </span>
-        {supportsModelMapping ? (
+        {supportsPackage ? (
           <button
             type="button"
             className="rounded p-0.5 hover:bg-accent/60"
             onClick={() => setOpen((value) => !value)}
-            aria-label={open ? "Collapse model mapping" : "Expand model mapping"}
+            aria-label={open ? "Collapse connector" : "Expand connector"}
           >
             <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-90")} />
           </button>
         ) : null}
         {actions}
       </div>
-      {supportsModelMapping && open ? (
-        <div className="pb-1 pl-6 pr-1">
-          {mappingConnector ? (
-            <ModelConnectorSection
-              connector={mappingConnector}
-              provider={mappingConnector.provider}
-              nested
+      {supportsPackage && open ? (
+        <div className="space-y-0 pb-1 pl-6 pr-1">
+          {packageConnector ? (
+            <ProviderConnectorPackage
+              provider={packageConnector.provider}
+              connector={packageConnector as any}
               invalidateQueryKeys={[[...ROUTERS_QUERY_KEY, routerId]]}
             />
           ) : (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">Model mapping unavailable.</div>
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">Connector configuration unavailable.</div>
           )}
         </div>
       ) : null}
