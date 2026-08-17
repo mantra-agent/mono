@@ -632,6 +632,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         marketPageId: { type: "string", description: "Library page ID for the Business Market narrative (create_business/update_business)" },
         icpPageId: { type: "string", description: "Library page ID for the Business ICP narrative (create_business/update_business)" },
         activationPageId: { type: "string", description: "Library page ID for the Business Activation narrative (create_business/update_business)" },
+        moatPageId: { type: "string", description: "Library page ID for the Business Moat narrative (create_business/update_business)" },
         businessStatus: { type: "string", enum: ["active", "archived"], description: "Business status (update_business)" },
         vaultIds: { type: "array", items: { type: "string" }, description: "Complete visible live Vault ID set for create_business (optional, defaults to active Vault) and set_business_vaults (required, non-empty)" },
       },

@@ -67,11 +67,12 @@ const NARRATIVE_SLOT_GROUPS = [
     ],
   },
   {
-    // Existing ASI bindings stay reachable; not part of Ray's category list.
+    // Existing ASI bindings stay reachable; Moat is the durable advantage slot.
     title: "Company",
     slots: [
       { slot: "phases", label: "Phases", page: (b: BusinessDefinition) => b.phasesPage },
       { slot: "pitch", label: "Pitch", page: (b: BusinessDefinition) => b.pitchPage },
+      { slot: "moat", label: "Moat", page: (b: BusinessDefinition) => b.moatPage },
     ],
   },
 ] as const;

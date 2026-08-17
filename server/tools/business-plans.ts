@@ -180,6 +180,7 @@ function businessResult(business: Business) {
     marketPageId: business.marketPageId,
     icpPageId: business.icpPageId,
     activationPageId: business.activationPageId,
+    moatPageId: business.moatPageId,
     status: business.status,
     vaultIds: business.vaultIds,
     createdAt: business.createdAt,
@@ -270,6 +271,7 @@ async function handleEntityAction(action: string, args: Record<string, unknown>)
       marketPageId: optionalStr(args, "marketPageId"),
       icpPageId: optionalStr(args, "icpPageId"),
       activationPageId: optionalStr(args, "activationPageId"),
+      moatPageId: optionalStr(args, "moatPageId"),
       vaultIds: stringArray(args.vaultIds),
     });
     if (!parsed.success) return { result: `business.create_business invalid: ${parsed.error.issues[0]?.message ?? "bad input"}`, error: true };
@@ -302,6 +304,7 @@ async function handleEntityAction(action: string, args: Record<string, unknown>)
       marketPageId: optionalStr(args, "marketPageId"),
       icpPageId: optionalStr(args, "icpPageId"),
       activationPageId: optionalStr(args, "activationPageId"),
+      moatPageId: optionalStr(args, "moatPageId"),
       status: optionalStr(args, "businessStatus"),
     });
     if (!parsed.success) return { result: `business.update_business invalid: ${parsed.error.issues[0]?.message ?? "bad input"}`, error: true };

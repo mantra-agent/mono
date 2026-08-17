@@ -35,6 +35,7 @@ const NARRATIVE_SLOTS = [
   "market",
   "icp",
   "activation",
+  "moat",
 ] as const;
 type NarrativeSlot = (typeof NARRATIVE_SLOTS)[number];
 type NarrativeColumn = `${NarrativeSlot}PageId`;
@@ -52,6 +53,7 @@ const SLOT_LABEL: Record<NarrativeSlot, string> = {
   market: "Market",
   icp: "ICP",
   activation: "Activation",
+  moat: "Moat",
 };
 
 const SLOT_COLUMN: Record<NarrativeSlot, NarrativeColumn> = {
@@ -67,6 +69,7 @@ const SLOT_COLUMN: Record<NarrativeSlot, NarrativeColumn> = {
   market: "marketPageId",
   icp: "icpPageId",
   activation: "activationPageId",
+  moat: "moatPageId",
 };
 
 function narrativePageIds(business: Business): string[] {
@@ -108,6 +111,7 @@ interface BusinessDefinitionView extends Business {
   marketPage: NarrativePageRef | null;
   icpPage: NarrativePageRef | null;
   activationPage: NarrativePageRef | null;
+  moatPage: NarrativePageRef | null;
 }
 
 const createSchema = z.object({
@@ -139,6 +143,7 @@ const patchSchema = z
     marketPageId: narrativePageIdSchema,
     icpPageId: narrativePageIdSchema,
     activationPageId: narrativePageIdSchema,
+    moatPageId: narrativePageIdSchema,
   })
   .refine((patch) => Object.keys(patch).length > 0, "At least one change is required");
 
