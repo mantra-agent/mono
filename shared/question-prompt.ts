@@ -29,7 +29,6 @@ export interface QuestionPrompt {
   question: string;
   options: QuestionOption[];
   selectionMode: QuestionSelectionMode;
-  allowOther: boolean;
   reasoning?: string;
   principles: QuestionPrincipleOption[];
   allowResponseReasoning: boolean;
@@ -179,6 +178,12 @@ export function normalizeQuestionPrompt(input: unknown): QuestionValidationResul
     if (!id || !label) {
       return { ok: false, error: "Every option needs a non-empty id and label." };
     }
+    if (id === "other") {
+      return {
+        ok: false,
+        error: 'Authored option id "other" is reserved for the free-text escape hatch.',
+      };
+    }
     if (optionIds.has(id)) {
       return { ok: false, error: `Duplicate option id: ${id}` };
     }
@@ -319,7 +324,7 @@ export function normalizeQuestionPrompt(input: unknown): QuestionValidationResul
       question,
       options,
       selectionMode,
-      allowOther: raw.allowOther === true,
+      // allowOther is ignored when present on historical args — Other is structural.
       ...(reasoning ? { reasoning } : {}),
       principles,
       allowResponseReasoning: raw.allowResponseReasoning === true,
@@ -405,9 +410,7 @@ export function validateQuestionResponse(
   const validIds = new Set(prompt.options.map((option) => option.id));
   const invalidId = response.selectedOptionIds.find((id) => !validIds.has(id));
   if (invalidId) return { ok: false, error: `Unknown option id: ${invalidId}` };
-  if (response.otherText && !prompt.allowOther) {
-    return { ok: false, error: "This question does not allow an Other response." };
-  }
+  // Other is always admitted; otherText validity is enforced by normalizeQuestionResponse.
   // Principle revisions may come from the prompt shortlist or a searchable picker.
   // Existence is enforced by recordJudgment when the answer is accepted.
   const acceptedResponse = prompt.allowResponseReasoning

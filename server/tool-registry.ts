@@ -713,7 +713,6 @@ export const TOOLS: Record<string, ToolMeta> = {
             "Two to eight discrete choices. Prefer an array of { id, label, description? } objects; plain labels and JSON-encoded arrays are normalized. Option descriptions must help decide (prioritize X; tradeoffs Y, Z), not restate the label.",
         },
         selectionMode: { type: "string", enum: ["single", "multiple"], description: "single by default; multiple allows more than one choice." },
-        allowOther: { type: "boolean", description: "Allow a free-text Other answer, default false." },
         reasoning: {
           type: "string",
           description: "Why I'm asking — short context shown above the options so the user understands the judgment stake.",

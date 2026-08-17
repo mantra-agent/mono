@@ -579,29 +579,27 @@ export function QuestionWidget({
             />
           );
         })}
-        {prompt.allowOther && (
-          <div>
-            <ExpandableDetailRow
-              checked={otherSelected}
+        <div>
+          <ExpandableDetailRow
+            checked={otherSelected}
+            disabled={controlsDisabled}
+            label="Other"
+            testId={`question-option-${prompt.toolCallId}-other`}
+            onSelect={toggleOther}
+          />
+          {otherSelected && (
+            <textarea
+              autoFocus
+              value={otherText}
+              onChange={(event) => setOtherText(event.target.value)}
               disabled={controlsDisabled}
-              label="Other"
-              testId={`question-option-${prompt.toolCallId}-other`}
-              onSelect={toggleOther}
+              rows={2}
+              placeholder="Add your answer"
+              className="ml-[26px] mt-1 w-[calc(100%-26px)] resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
+              data-testid={`question-other-text-${prompt.toolCallId}`}
             />
-            {otherSelected && (
-              <textarea
-                autoFocus
-                value={otherText}
-                onChange={(event) => setOtherText(event.target.value)}
-                disabled={controlsDisabled}
-                rows={2}
-                placeholder="Add your answer"
-                className="ml-[26px] mt-1 w-[calc(100%-26px)] resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
-                data-testid={`question-other-text-${prompt.toolCallId}`}
-              />
-            )}
-          </div>
-        )}
+          )}
+        </div>
       </div>
       {prompt.allowResponseReasoning ? (
         <div className="space-y-1.5 border-t border-border/40 px-3 py-2">
