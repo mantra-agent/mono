@@ -3,6 +3,7 @@ import { runWithPrincipal } from "../principal-context";
 import { chatFileStorage } from "../chat-file-storage";
 import { stripExpressionTags } from "@shared/expression-tags";
 import { SLACK_OUTPUT_CHAR_LIMIT } from "./contracts";
+import { markdownToSlackMrkdwn } from "./mrkdwn";
 
 const SLACK_HISTORY_STAMP = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} [^\]]+\]\s*/;
 
@@ -47,7 +48,9 @@ export async function executeSlackTurn(
 }
 
 function sanitizeSlackOutbound(text: string): string {
-  return stripExpressionTags(text.replace(SLACK_HISTORY_STAMP, "")).replace(/\s+$/g, "").trim();
+  const stripped = stripExpressionTags(text.replace(SLACK_HISTORY_STAMP, "")).replace(/\s+$/g, "").trim();
+  // Model output is Markdown; Slack renders mrkdwn. Convert at the sole outbound boundary.
+  return markdownToSlackMrkdwn(stripped).replace(/\s+$/g, "").trim();
 }
 
 async function resolveTurnContent(input: SlackChatTurnInput): Promise<string> {
