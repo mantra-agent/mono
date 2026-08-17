@@ -1,4 +1,7 @@
-import { isConsecutiveCadenceCompletion } from "@shared/wellness-window";
+import {
+  isConsecutiveCadenceCompletion,
+  isWithinOpenCadenceWindow,
+} from "@shared/wellness-window";
 import { useMemo } from "react";
 
 export interface WellnessLogEntry {
@@ -35,6 +38,14 @@ type ConnectorSegment =
       kind: "blend";
       fromIsStreakDay: boolean;
       toIsStreakDay: boolean;
+    }
+  | {
+      key: string;
+      x1: number;
+      x2: number;
+      /** Open trail after a missed cadence window — spike color settles to muted gray. */
+      kind: "fade_to_muted";
+      fromIsStreakDay: boolean;
     };
 
 export interface HeartbeatTimelineModel {
@@ -52,12 +63,16 @@ const BASELINE_Y = 128;
 const SPIKE_STROKE_WIDTH = 0.75;
 /** Unscaled half-width of a heartbeat path from center to each baseline foot. */
 const SPIKE_HALF_WIDTH = 40;
-/** Base spike size relative to the original path amplitude. */
-const SPIKE_BASE_SCALE = 0.7;
-/** Per-spike variance around SPIKE_BASE_SCALE (±10%). */
-const SPIKE_SCALE_VARIANCE = 0.1;
+/** Streak spike base size (green consecutive completions). */
+const STREAK_SPIKE_BASE_SCALE = 0.75;
+/** Isolated / broken-streak spikes stay visibly smaller than streak spikes. */
+const SOLO_SPIKE_BASE_SCALE = 0.42;
+/** Per-spike variance around the role base (±8%). */
+const SPIKE_SCALE_VARIANCE = 0.08;
 /** Completions always paint full strength — Window is label/cue only. */
 const COMPLETION_OPACITY = 1;
+/** Open trail after a broken cadence window. */
+const BROKEN_TRAIL_OPACITY = 0.45;
 
 /** Stable 0–1 hash from a numeric id so spike sizes don't reshuffle on re-render. */
 function unitHash(id: number): number {
@@ -65,9 +80,10 @@ function unitHash(id: number): number {
   return (mixed % 10_000) / 10_000;
 }
 
-function spikeScaleForId(id: number): number {
+function spikeScaleForId(id: number, isStreakDay: boolean): number {
+  const base = isStreakDay ? STREAK_SPIKE_BASE_SCALE : SOLO_SPIKE_BASE_SCALE;
   const variance = (unitHash(id) * 2 - 1) * SPIKE_SCALE_VARIANCE;
-  return SPIKE_BASE_SCALE * (1 + variance);
+  return base * (1 + variance);
 }
 
 function spikeEdges(x: number, scale: number): { left: number; right: number } {
@@ -96,21 +112,32 @@ function eventStrokeClass(isStreakDay: boolean): string {
   return isStreakDay ? "stroke-success" : "stroke-foreground";
 }
 
-/** Token stroke for gradient stops — matches stroke-success / stroke-foreground. */
+/** Token stroke for gradient stops — matches stroke-success / stroke-foreground / muted. */
 function paintStopColor(isStreakDay: boolean, opacity: number): string {
   const token = isStreakDay ? "var(--success)" : "var(--foreground)";
   return `hsl(${token} / ${opacity.toFixed(3)})`;
 }
 
-/** Open-ended connectors keep a single solid stroke from the adjacent spike (or muted empty). */
-function openEndedSegment(
+function mutedTrailSegment(key: string, x1: number, x2: number): ConnectorSegment {
+  return {
+    key,
+    x1,
+    x2,
+    kind: "solid",
+    className: "stroke-muted-foreground/50",
+    opacity: BROKEN_TRAIL_OPACITY,
+  };
+}
+
+/** Lead-in open connector inherits the first spike color (or muted empty). */
+function leadSegment(
   key: string,
   x1: number,
   x2: number,
   neighbor: Pick<TimelineEvent, "isStreakDay"> | null,
 ): ConnectorSegment {
   if (!neighbor) {
-    return { key, x1, x2, kind: "solid", className: "stroke-muted-foreground/40", opacity: 0.35 };
+    return mutedTrailSegment(key, x1, x2);
   }
   return {
     key,
@@ -118,6 +145,48 @@ function openEndedSegment(
     x2,
     kind: "solid",
     className: eventStrokeClass(neighbor.isStreakDay),
+    opacity: COMPLETION_OPACITY,
+  };
+}
+
+/**
+ * Trail after the last spike: keep the spike color only while still inside the open
+ * cadence window. After a miss, fade back to muted gray instead of holding green.
+ */
+function trailSegment(
+  key: string,
+  x1: number,
+  x2: number,
+  last: TimelineEvent | null,
+  now: Date,
+  intervalDays: number,
+  timezone: string,
+): ConnectorSegment {
+  if (!last) {
+    return mutedTrailSegment(key, x1, x2);
+  }
+  const stillInWindow = isWithinOpenCadenceWindow(
+    new Date(last.entry.completedAt),
+    now,
+    intervalDays,
+    timezone,
+  );
+  if (!stillInWindow) {
+    // Missed the window after the last completion — settle the open line to gray.
+    return {
+      key,
+      x1,
+      x2,
+      kind: "fade_to_muted",
+      fromIsStreakDay: last.isStreakDay,
+    };
+  }
+  return {
+    key,
+    x1,
+    x2,
+    kind: "solid",
+    className: eventStrokeClass(last.isStreakDay),
     opacity: COMPLETION_OPACITY,
   };
 }
@@ -188,7 +257,7 @@ export function buildHeartbeatTimeline(
         && isConsecutiveCadenceCompletion(previousCompletedAt, completedAt, intervalDays, timezone),
       );
       const x = toX(completedAt.getTime());
-      const scale = spikeScaleForId(entry.id);
+      const scale = spikeScaleForId(entry.id, isStreakDay);
       const { left, right } = spikeEdges(x, scale);
       return {
         entry,
@@ -201,17 +270,18 @@ export function buildHeartbeatTimeline(
     });
 
   // Stop the living baseline at the current moment inside today's band, not end-of-day.
+  const nowDate = new Date(now);
   const nowX = Math.max(GRAPH_LEFT, Math.min(GRAPH_RIGHT, toX(Math.min(now, domainEnd))));
 
   // Connectors stop at spike feet so the path + segments read as one contiguous EKG line.
   const connectors: ConnectorSegment[] = [];
   if (events.length === 0) {
-    connectors.push(openEndedSegment("empty", GRAPH_LEFT, nowX, null));
+    connectors.push(leadSegment("empty", GRAPH_LEFT, nowX, null));
   } else {
     const first = events[0];
     const last = events[events.length - 1];
     if (first.left > GRAPH_LEFT) {
-      connectors.push(openEndedSegment("lead", GRAPH_LEFT, first.left, first));
+      connectors.push(leadSegment("lead", GRAPH_LEFT, first.left, first));
     }
     for (let i = 0; i < events.length - 1; i += 1) {
       const a = events[i];
@@ -221,7 +291,7 @@ export function buildHeartbeatTimeline(
       }
     }
     if (nowX > last.right) {
-      connectors.push(openEndedSegment("trail", last.right, nowX, last));
+      connectors.push(trailSegment("trail", last.right, nowX, last, nowDate, intervalDays, timezone));
     }
   }
 
@@ -253,10 +323,14 @@ function HeartbeatPaint({
   const blendGradients = timeline.connectors.filter(
     (segment): segment is Extract<ConnectorSegment, { kind: "blend" }> => segment.kind === "blend",
   );
+  const mutedFadeGradients = timeline.connectors.filter(
+    (segment): segment is Extract<ConnectorSegment, { kind: "fade_to_muted" }> =>
+      segment.kind === "fade_to_muted",
+  );
 
   return (
     <>
-      {blendGradients.length > 0 ? (
+      {blendGradients.length > 0 || mutedFadeGradients.length > 0 ? (
         <defs>
           {blendGradients.map(({ key, x1, x2, fromIsStreakDay, toIsStreakDay }) => (
             <linearGradient
@@ -270,6 +344,23 @@ function HeartbeatPaint({
             >
               <stop offset="0%" stopColor={paintStopColor(fromIsStreakDay, COMPLETION_OPACITY)} />
               <stop offset="100%" stopColor={paintStopColor(toIsStreakDay, COMPLETION_OPACITY)} />
+            </linearGradient>
+          ))}
+          {mutedFadeGradients.map(({ key, x1, x2, fromIsStreakDay }) => (
+            <linearGradient
+              key={`grad-muted-${key}`}
+              id={`${gradientIdPrefix}-muted-${key}`}
+              gradientUnits="userSpaceOnUse"
+              x1={x1}
+              y1={BASELINE_Y}
+              x2={x2}
+              y2={BASELINE_Y}
+            >
+              <stop offset="0%" stopColor={paintStopColor(fromIsStreakDay, COMPLETION_OPACITY)} />
+              <stop
+                offset="100%"
+                stopColor={`hsl(var(--muted-foreground) / ${BROKEN_TRAIL_OPACITY.toFixed(3)})`}
+              />
             </linearGradient>
           ))}
         </defs>
@@ -320,6 +411,21 @@ function HeartbeatPaint({
               x2={segment.x2}
               y2={BASELINE_Y}
               stroke={`url(#${gradientIdPrefix}-${segment.key})`}
+              strokeWidth={SPIKE_STROKE_WIDTH}
+              vectorEffect="non-scaling-stroke"
+              strokeLinecap="round"
+            />
+          );
+        }
+        if (segment.kind === "fade_to_muted") {
+          return (
+            <line
+              key={segment.key}
+              x1={segment.x1}
+              y1={BASELINE_Y}
+              x2={segment.x2}
+              y2={BASELINE_Y}
+              stroke={`url(#${gradientIdPrefix}-muted-${segment.key})`}
               strokeWidth={SPIKE_STROKE_WIDTH}
               vectorEffect="non-scaling-stroke"
               strokeLinecap="round"
