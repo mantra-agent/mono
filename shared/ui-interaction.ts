@@ -34,6 +34,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.health.open": { href: "/health", description: "See your health metrics." },
   "navigation.agendas.open": { href: "/agendas", description: "Build reusable agendas for your sessions." },
   "navigation.skills.open": { href: "/skills", description: "Run and manage your reusable skills." },
+  "navigation.templates.open": { href: "/templates", description: "Map artifact shapes to Library pages." },
   "navigation.plans.open": { href: "/brain?tab=plans", description: "Track your multi-step plans." },
   "navigation.hooks.open": { href: "/system?tab=hooks", permission: "system:read", description: "Automate actions when events fire." },
   "navigation.timers.open": { href: "/system?tab=timers", permission: "system:read", description: "Schedule reminders and recurring runs." },

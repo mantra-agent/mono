@@ -111,6 +111,7 @@ export async function convergeBootSchema(): Promise<void> {
         const { ensureFilesIndexSchema } = await import("./files-index-schema");
         const { ensureDocumentArtifactsSchema } = await import("./document-artifacts-schema");
         const { ensureAgendaDefinitionSchema } = await import("./agenda-schema");
+        const { ensureDocumentTemplateSchema } = await import("./document-template-schema");
         const { ensureInvitedSubjectSchema } = await import("./invited-subject-schema");
         const { ensureTaskAssignmentSchema } = await import("./task-assignment-schema");
         await ensureProjectVaultMembershipSchema();
@@ -130,6 +131,7 @@ export async function convergeBootSchema(): Promise<void> {
         await ensureFilesIndexSchema(pool);
         await ensureDocumentArtifactsSchema(pool);
         await ensureAgendaDefinitionSchema();
+        await ensureDocumentTemplateSchema();
         await ensureInvitedSubjectSchema(pool);
         await ensureTaskAssignmentSchema(pool);
       },
