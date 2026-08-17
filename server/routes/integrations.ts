@@ -1676,8 +1676,20 @@ export async function registerIntegrationsRoutes(app: Express) {
       });
       res.json({ cancelled });
     } catch (error: any) {
-      log.error("Expo build cancel request failed", { error: error.message, stack: error.stack });
-      res.status(500).json({ error: error.message });
+      const { isExpoTransientProviderFailure } = await import("../integrations/expo");
+      const payload = {
+        error: error?.message || String(error),
+        stack: error?.stack,
+        code: error?.code,
+      };
+      if (isExpoTransientProviderFailure(error)) {
+        log.warn("Expo build cancel request failed", payload);
+      } else {
+        log.error("Expo build cancel request failed", payload);
+      }
+      res.status(error?.status && Number.isInteger(error.status) ? error.status : 500).json({
+        error: error?.message || String(error),
+      });
     }
   });
 
@@ -1752,8 +1764,21 @@ export async function registerIntegrationsRoutes(app: Express) {
       const { getLatestEasRun } = await import("../integrations/expo");
       res.json({ run: await getLatestEasRun() });
     } catch (error: any) {
-      log.error("Expo build log request failed", { error: error.message, stack: error.stack });
-      res.status(500).json({ error: error.message });
+      const { isExpoTransientProviderFailure } = await import("../integrations/expo");
+      const payload = {
+        error: error?.message || String(error),
+        stack: error?.stack,
+        code: error?.code,
+      };
+      // Transient provider network/timeout is degraded operator UI, not an Issues page.
+      if (isExpoTransientProviderFailure(error)) {
+        log.warn("Expo build log request failed", payload);
+      } else {
+        log.error("Expo build log request failed", payload);
+      }
+      res.status(error?.status && Number.isInteger(error.status) ? error.status : 500).json({
+        error: error?.message || String(error),
+      });
     }
   });
 
@@ -1765,8 +1790,22 @@ export async function registerIntegrationsRoutes(app: Express) {
       const builds = await listBuilds(projectId, 10);
       res.json({ builds });
     } catch (error: any) {
-      log.error("Expo build list request failed", { error: error.message, stack: error.stack });
-      res.status(500).json({ error: error.message, stderr: error.message });
+      const { isExpoTransientProviderFailure } = await import("../integrations/expo");
+      const payload = {
+        error: error?.message || String(error),
+        stack: error?.stack,
+        code: error?.code,
+      };
+      // Transient Expo GraphQL transport misses must not mint ERRORS aggregates.
+      if (isExpoTransientProviderFailure(error)) {
+        log.warn("Expo build list request failed", payload);
+      } else {
+        log.error("Expo build list request failed", payload);
+      }
+      res.status(error?.status && Number.isInteger(error.status) ? error.status : 500).json({
+        error: error?.message || String(error),
+        stderr: error?.message || String(error),
+      });
     }
   });
 

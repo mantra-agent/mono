@@ -11,8 +11,45 @@ import { resolveGitSource } from "../git-source-resolver";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
 import { and, eq } from "drizzle-orm";
 import { environmentHostingBindings, platformProductEnvironments, products, platforms } from "@shared/models/platforms";
+import { providerFetch, readBoundedProviderBody } from "./provider-http";
 
 const log = createLogger("Expo");
+const EXPO_GRAPHQL_URL = "https://api.expo.dev/graphql";
+const EXPO_PROVIDER_TIMEOUT_MS = 20_000;
+
+export type ExpoProviderFailureCode =
+  | "configuration"
+  | "auth"
+  | "timeout"
+  | "network"
+  | "response";
+
+/** Structured Expo provider failure. Network/timeout are transient; auth/config are durable. */
+export class ExpoApiError extends Error {
+  status: number;
+  code: ExpoProviderFailureCode;
+
+  constructor(message: string, status: number, code: ExpoProviderFailureCode) {
+    super(message);
+    this.name = "ExpoApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export function isExpoTransientProviderFailure(error: unknown): boolean {
+  return error instanceof ExpoApiError && (error.code === "network" || error.code === "timeout");
+}
+
+function toExpoNetworkError(prefix: string, err: unknown): ExpoApiError {
+  const message = err instanceof Error ? err.message : String(err);
+  const isTimeout = err instanceof Error && err.name === "TimeoutError";
+  return new ExpoApiError(
+    `${prefix}: ${message}`,
+    isTimeout ? 504 : 502,
+    isTimeout ? "timeout" : "network",
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Token
@@ -206,23 +243,49 @@ async function expoGraphQL<T = any>(
   variables?: Record<string, any>,
 ): Promise<T> {
   const token = await getExpoToken();
-  if (!token) throw new Error("No Expo access token configured");
-  const resp = await fetch("https://api.expo.dev/graphql", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
+  if (!token) {
+    throw new ExpoApiError("No Expo access token configured", 400, "configuration");
+  }
+
+  let resp: Response;
+  try {
+    resp = await providerFetch(EXPO_GRAPHQL_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query, variables }),
+      timeoutMs: EXPO_PROVIDER_TIMEOUT_MS,
+    });
+  } catch (err: unknown) {
+    throw toExpoNetworkError("Expo GraphQL request failed", err);
+  }
+
   if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`Expo API ${resp.status}: ${text}`);
+    const text = await readBoundedProviderBody(resp);
+    const detail = text.replace(/\s+/g, " ").trim().slice(0, 320);
+    const code: ExpoProviderFailureCode =
+      resp.status === 401 || resp.status === 403 ? "auth" : "response";
+    throw new ExpoApiError(
+      detail ? `Expo API ${resp.status}: ${detail}` : `Expo API ${resp.status}`,
+      resp.status,
+      code,
+    );
   }
-  const json = await resp.json();
+
+  let json: { data?: T; errors?: Array<{ message?: string }> };
+  try {
+    json = (await resp.json()) as { data?: T; errors?: Array<{ message?: string }> };
+  } catch {
+    throw new ExpoApiError("Expo GraphQL returned invalid JSON", 502, "response");
+  }
+
   if (json.errors?.length) {
-    throw new Error(`Expo GraphQL: ${json.errors[0].message}`);
+    const message = json.errors[0]?.message?.trim() || "unknown GraphQL error";
+    throw new ExpoApiError(`Expo GraphQL: ${message}`, 502, "response");
   }
+
   return json.data as T;
 }
 
@@ -529,8 +592,24 @@ function collectErrorExcerpts(text: string, maxExcerpts = 80): string[] {
 }
 
 async function fetchExpoLogText(url: string, token: string): Promise<string> {
-  const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text().then((t) => t.slice(0, 500)).catch(() => "")}`);
+  let resp: Response;
+  try {
+    resp = await providerFetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeoutMs: EXPO_PROVIDER_TIMEOUT_MS,
+    });
+  } catch (err: unknown) {
+    throw toExpoNetworkError("Expo build log fetch failed", err);
+  }
+  if (!resp.ok) {
+    const text = await readBoundedProviderBody(resp);
+    const detail = text.replace(/\s+/g, " ").trim().slice(0, 320);
+    throw new ExpoApiError(
+      detail ? `HTTP ${resp.status}: ${detail}` : `HTTP ${resp.status}`,
+      resp.status,
+      resp.status === 401 || resp.status === 403 ? "auth" : "response",
+    );
+  }
   return resp.text();
 }
 

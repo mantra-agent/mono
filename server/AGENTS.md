@@ -12,7 +12,7 @@ Slack IDs never grant Mantra authority. Each claim revalidates one admin-created
 
 ## Domain provider transport boundary
 
-`server/integrations/provider-http.ts` owns the shared resource ceiling for fixed-origin domain provider adapters: it composes caller cancellation with a real request deadline and caps untrusted error-response bytes before adapters inspect or retain them. Provider adapters still own credentials, endpoint allowlists, schemas, status semantics, idempotency, retries, and degraded outcomes; the transport helper never retries mutations or turns ambiguous timeout into success. New direct provider `fetch` calls must name why this boundary cannot express their transport contract.
+`server/integrations/provider-http.ts` owns the shared resource ceiling for fixed-origin domain provider adapters: it composes caller cancellation with a real request deadline and caps untrusted error-response bytes before adapters inspect or retain them. Provider adapters still own credentials, endpoint allowlists, schemas, status semantics, idempotency, retries, and degraded outcomes; the transport helper never retries mutations or turns ambiguous timeout into success. New direct provider `fetch` calls must name why this boundary cannot express their transport contract. Expo GraphQL and build-log reads cross this boundary via `ExpoApiError`; IntegrationsRoutes logs `network`/`timeout` at `warn` so Issues pages only durable Expo defects (`auth`/`configuration`/`response`).
 
 ## Media persistence boundary
 
