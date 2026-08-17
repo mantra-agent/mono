@@ -86,6 +86,15 @@ function localCivilEpochDay(date: Date, timezone: string): number {
   return Math.floor(Date.parse(`${civil}T00:00:00Z`) / 86_400_000);
 }
 
+/** Local civil-day gap from previous → current (0 = same day). */
+export function cadenceCivilDayGap(
+  previous: Date,
+  current: Date,
+  timezone: string,
+): number {
+  return localCivilEpochDay(current, timezone) - localCivilEpochDay(previous, timezone);
+}
+
 /** True when current falls on a later local calendar day within the next cadence interval. */
 export function isConsecutiveCadenceCompletion(
   previous: Date,
@@ -93,8 +102,23 @@ export function isConsecutiveCadenceCompletion(
   intervalDays: number,
   timezone: string,
 ): boolean {
-  const gap = localCivilEpochDay(current, timezone) - localCivilEpochDay(previous, timezone);
+  const gap = cadenceCivilDayGap(previous, current, timezone);
   return gap >= 1 && gap <= Math.max(1, intervalDays);
+}
+
+/**
+ * True while the open interval after `previous` has not yet broken cadence.
+ * Same day and every day through the interval still count as in-window;
+ * once the gap exceeds the interval, the streak is broken.
+ */
+export function isWithinOpenCadenceWindow(
+  previous: Date,
+  now: Date,
+  intervalDays: number,
+  timezone: string,
+): boolean {
+  const gap = cadenceCivilDayGap(previous, now, timezone);
+  return gap >= 0 && gap <= Math.max(1, intervalDays);
 }
 
 export function getWellnessWindowAdherence(
