@@ -10667,6 +10667,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           createdAfter: typeof args.createdAfter === "string" ? args.createdAfter : undefined,
           createdBefore: typeof args.createdBefore === "string" ? args.createdBefore : undefined,
           lifecycleStage: typeof args.lifecycleStage === "string" ? args.lifecycleStage : undefined,
+          includeReviewedRetired: args.includeReviewedRetired === true,
           limit,
           offset,
         });
@@ -10689,6 +10690,9 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
             entityMentions: claim.entityMentions || [],
             lifecycleStage: claim.lifecycleStage,
             lifecycleStageUpdatedAt: claim.lifecycleStageUpdatedAt?.toISOString() ?? null,
+            reviewJudgment: claim.reviewJudgment ?? null,
+            reviewNote: claim.reviewNote ?? null,
+            reviewedAt: claim.reviewedAt?.toISOString() ?? null,
             tags: claim.topics || [],
             createdAt: claim.createdAt?.toISOString() ?? null,
           })),
@@ -10696,6 +10700,43 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         return { result: `Failed to search vNEXT claims: ${msg}`, error: true };
+      }
+    }
+
+    if (action === "review_claim") {
+      try {
+        const id = typeof args.id === "number" ? args.id : parseInt(String(args.id ?? ""), 10);
+        if (!Number.isFinite(id) || id <= 0) {
+          return { result: "review_claim requires a positive numeric claim id", error: true };
+        }
+        const clearReview = args.clearReview === true;
+        const judgmentRaw = typeof args.judgment === "string" ? args.judgment.trim() : null;
+        if (!clearReview && !judgmentRaw) {
+          return {
+            result: "review_claim requires judgment (useful | incorrect | needs_clarification) or clearReview=true",
+            error: true,
+          };
+        }
+        const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
+        const claim = await memoryVnextClaimStorage.reviewClaim(id, {
+          judgment: clearReview ? null : (judgmentRaw as "useful" | "incorrect" | "needs_clarification"),
+          note: typeof args.note === "string" ? args.note : args.note === null ? null : undefined,
+        });
+        return {
+          result: JSON.stringify({
+            id: claim.id,
+            storage: "memory_vnext_claims",
+            reviewJudgment: claim.reviewJudgment ?? null,
+            reviewNote: claim.reviewNote ?? null,
+            reviewedAt: claim.reviewedAt?.toISOString() ?? null,
+            reviewerUserId: claim.reviewerUserId ?? null,
+            lifecycleStage: claim.lifecycleStage,
+            content: claim.content.slice(0, 300),
+          }),
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { result: `Failed to review claim: ${msg}`, error: true };
       }
     }
 

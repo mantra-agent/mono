@@ -3018,12 +3018,17 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS lifecycle_stage_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`);
     await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS active_touched_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS instance_id VARCHAR`);
+    await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS review_judgment TEXT`);
+    await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS review_note TEXT`);
+    await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS reviewer_user_id TEXT`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_source ON memory_vnext_claims(source, source_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_lifecycle_stage ON memory_vnext_claims(lifecycle_stage)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_created_at ON memory_vnext_claims(created_at)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_scope_owner ON memory_vnext_claims(scope, owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_account ON memory_vnext_claims(account_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claims_instance ON memory_vnext_claims(instance_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_review_judgment ON memory_vnext_claims(review_judgment)`);
     await pool.query(`
       DO $$
       BEGIN

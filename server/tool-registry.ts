@@ -343,7 +343,10 @@ export const TOOLS: Record<string, ToolMeta> = {
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["read", "write", "read_entry", "search", "get", "get_many", "count", "link_entity", "get_entity_links", "list_sources", "add_source", "delete_source", "search_claims", "vnext_claim_counts", "vnext_claim_detail", "run_vnext_lifecycle", "run_full_sleep_cycle", "compute_gsi", "run_rem"], description: "Action" },
+        action: { type: "string", enum: ["read", "write", "read_entry", "search", "get", "get_many", "count", "link_entity", "get_entity_links", "list_sources", "add_source", "delete_source", "search_claims", "review_claim", "vnext_claim_counts", "vnext_claim_detail", "run_vnext_lifecycle", "run_full_sleep_cycle", "compute_gsi", "run_rem"], description: "Action" },
+        judgment: { type: "string", enum: ["useful", "incorrect", "needs_clarification"], description: "Human review judgment for review_claim (omit with clearReview=true to clear)" },
+        note: { type: "string", description: "Required review note when judgment is needs_clarification (review_claim)" },
+        clearReview: { type: "boolean", description: "When true, clears the current claim review stamp (review_claim)" },
         file: { type: "string", description: "File name (read/write, e.g., PRINCIPLES.md)" },
         content: { type: "string", description: "Content to write (write)." },
         append: { type: "boolean", description: "Append instead of overwrite (write, default false)" },
@@ -377,6 +380,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         claimType: { type: "string", description: "Filter by claim type: state, cause, or action (search_claims)" },
         storage: { type: "string", enum: ["vnext"], description: "Optional explicit vNEXT storage selector for search_claims" },
         lifecycleStage: { type: "string", enum: ["extracted", "sourced", "linked", "canonical", "retired"], description: "Filter vNext claims by lifecycle stage (search_claims)" },
+        includeReviewedRetired: { type: "boolean", description: "When true, include retired claims that already carry a human review stamp (Digest Memory membership; search_claims)" },
         hasEntityLinks: { type: "boolean", description: "Filter claims by whether they have entity links (search_claims)" },
         minLinks: { type: "number", description: "Filter: minimum link count (search)" },
         maxLinks: { type: "number", description: "Filter: maximum link count (search)" },

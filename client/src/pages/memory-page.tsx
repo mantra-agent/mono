@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
@@ -284,6 +285,8 @@ interface MemoryLink {
   strength: number;
 }
 
+type VnextReviewJudgment = "useful" | "incorrect" | "needs_clarification";
+
 interface VnextClaim {
   id: number;
   storage: "memory_vnext_claims";
@@ -303,6 +306,10 @@ interface VnextClaim {
   recallCount?: number;
   lastRecalledAt?: string | null;
   activeTouchedAt?: string | null;
+  reviewJudgment?: VnextReviewJudgment | string | null;
+  reviewNote?: string | null;
+  reviewedAt?: string | null;
+  reviewerUserId?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }
@@ -915,6 +922,154 @@ function claimTypeLabel(type?: string | null): string {
   return type.charAt(0).toUpperCase() + type.slice(1);
 }
 
+function reviewJudgmentLabel(judgment?: string | null): string {
+  if (!judgment) return "unset";
+  if (judgment === "needs_clarification") return "Needs clarification";
+  return judgment.charAt(0).toUpperCase() + judgment.slice(1);
+}
+
+/** Explicit human review actions on a claim (Digest Memory / Memory page). */
+function ClaimReviewActions({
+  claim,
+  onReviewed,
+}: {
+  claim: VnextClaim;
+  onReviewed?: (claim: VnextClaim) => void;
+}) {
+  const { toast } = useToast();
+  const [clarifyNote, setClarifyNote] = useState(claim.reviewNote ?? "");
+  const [showClarify, setShowClarify] = useState(claim.reviewJudgment === "needs_clarification");
+
+  useEffect(() => {
+    setClarifyNote(claim.reviewNote ?? "");
+    setShowClarify(claim.reviewJudgment === "needs_clarification");
+  }, [claim.id, claim.reviewJudgment, claim.reviewNote]);
+
+  const reviewMutation = useMutation({
+    mutationFn: async (body: { judgment: VnextReviewJudgment | null; note?: string | null }) => {
+      const res = await apiRequest("POST", `/api/memory/vnext/claims/${claim.id}/review`, body);
+      return res.json() as Promise<{ claim: VnextClaim }>;
+    },
+    onSuccess: async (data) => {
+      onReviewed?.(data.claim);
+      await queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims"] });
+      toast({
+        title: data.claim.reviewJudgment
+          ? `Marked ${reviewJudgmentLabel(data.claim.reviewJudgment).toLowerCase()}`
+          : "Review cleared",
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Review failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const current = claim.reviewJudgment ?? null;
+
+  return (
+    <div className="space-y-2" data-testid={`claim-review-${claim.id}`}>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground/80">Review</span>
+        <Badge variant="outline" data-testid={`claim-review-status-${claim.id}`}>
+          {reviewJudgmentLabel(current)}
+        </Badge>
+        {claim.reviewedAt && (
+          <span className="tabular-nums">
+            {new Date(claim.reviewedAt).toLocaleString("en-US", {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </span>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant={current === "useful" ? "default" : "outline"}
+          disabled={reviewMutation.isPending}
+          onClick={() => reviewMutation.mutate({ judgment: "useful" })}
+          data-testid={`button-review-useful-${claim.id}`}
+        >
+          Useful
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={current === "incorrect" ? "default" : "outline"}
+          disabled={reviewMutation.isPending}
+          onClick={() => reviewMutation.mutate({ judgment: "incorrect" })}
+          data-testid={`button-review-incorrect-${claim.id}`}
+        >
+          Incorrect
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={current === "needs_clarification" ? "default" : "outline"}
+          disabled={reviewMutation.isPending}
+          onClick={() => setShowClarify(true)}
+          data-testid={`button-review-clarify-${claim.id}`}
+        >
+          Needs clarification
+        </Button>
+        {current && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={reviewMutation.isPending}
+            onClick={() => reviewMutation.mutate({ judgment: null })}
+            data-testid={`button-review-clear-${claim.id}`}
+          >
+            Clear
+          </Button>
+        )}
+      </div>
+      {showClarify && (
+        <div className="space-y-2">
+          <Textarea
+            value={clarifyNote}
+            onChange={(event) => setClarifyNote(event.target.value)}
+            placeholder="What needs clarifying?"
+            className="min-h-[72px] text-sm"
+            data-testid={`input-review-note-${claim.id}`}
+          />
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              size="sm"
+              disabled={reviewMutation.isPending || !clarifyNote.trim()}
+              onClick={() =>
+                reviewMutation.mutate({
+                  judgment: "needs_clarification",
+                  note: clarifyNote.trim(),
+                })
+              }
+              data-testid={`button-review-clarify-save-${claim.id}`}
+            >
+              Save clarification
+            </Button>
+            {current !== "needs_clarification" && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={reviewMutation.isPending}
+                onClick={() => setShowClarify(false)}
+              >
+                Cancel
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MemoryPipelineRow({ entry, expanded, onToggle, timezone }: { entry: MemoryEntry; expanded: boolean; onToggle: () => void; timezone: string }) {
   const title = getDisplayTitle(entry, 90);
   const topics = displayTags(entry.tags);
@@ -1000,8 +1155,10 @@ function VnextClaimRow({ claim, expanded, onToggle, timezone }: { claim: VnextCl
             <span>{lifecycleLabel(claim.lifecycleStage)}</span>
             <span>{claimTypeLabel(claim.claimType)}</span>
             <span>{Math.round(Number(claim.confidence ?? 0) * 100)}% confidence</span>
+            {claim.reviewJudgment && <span>Review: {reviewJudgmentLabel(claim.reviewJudgment)}</span>}
           </div>
           {topics.length > 0 && <div className="flex flex-wrap gap-1.5">{topics.map(topic => <Badge key={topic} variant="outline" className="px-1.5 py-0 text-xs">{topic}</Badge>)}</div>}
+          <ClaimReviewActions claim={claim} />
           <VnextLinksSection claimId={claim.id} />
           {metadataEntries.length > 0 && (
             <div>
@@ -1384,6 +1541,8 @@ function VnextJournalTab() {
                                           </p>
                                           <SimpleTextFrame content={selectedClaim.content} />
                                         </div>
+
+                                        <ClaimReviewActions claim={selectedClaim} />
 
                                         <VnextLinksSection claimId={selectedClaim.id} />
 
