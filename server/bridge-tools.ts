@@ -13040,7 +13040,13 @@ ${outcome.result}`
       undefined;
     recordToolCallEnd(toolCallId, true, thrownFailureKind);
     _wwTrackEnd?.(toolCallId);
-    toolExec.error(`complete tool=${toolName} callId=${toolCallId} duration=${durationMs}ms error=true exception=${err.message}`);
+    // Contained handler throw: executeTool completed its contract by returning
+    // error:true to the model. Log warn so ERRORS does not page every tool name
+    // tokenized from this line (e.g. complete tool=orient → COMPLETE_TOOL_ORIENT_CALLID).
+    // True producer defects must log.error at the throw site with a stable code.
+    toolExec.warn(
+      `complete tool=${toolName} callId=${toolCallId} duration=${durationMs}ms error=true exception=${err.message}`,
+    );
     return {
       result: `Tool execution error: ${err.message}`,
       error: true,
