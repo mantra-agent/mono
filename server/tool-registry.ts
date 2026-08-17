@@ -407,7 +407,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["status", "issues", "issue", "events", "latest_event", "uptime", "sync_availability", "resolve", "unresolve", "ignore"], description: "Action" },
+        action: { type: "string", enum: ["status", "issues", "issue", "events", "latest_event", "uptime", "sync_availability", "resolve", "unresolve", "ignore"], description: "Action. Prefer issues for the unresolved inventory; list is accepted as a compatibility alias for issues." },
         issueId: { type: "string", description: "Sentry issue ID (required for issue, events, latest_event, resolve, unresolve, ignore)" },
         query: { type: "string", description: "Sentry issue search query (default: is:unresolved). Space-separated terms are implicit AND. Boolean OR/AND operators are not supported; use key:[value1,value2] for multi-value match." },
         sort: { type: "string", description: "Sort order for issues: date, new, freq, user (default: date)" },
