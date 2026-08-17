@@ -85,7 +85,23 @@ export type ToolFailureCode =
   | "git_state_conflict"
   | "git_network"
   | "scratch_path_denied"
-  | "scratch_not_found";
+  | "scratch_not_found"
+  // Slack outbound tool rejects
+  | "slack_input_invalid"
+  | "slack_person_unaddressed"
+  | "slack_not_mapped"
+  | "slack_channel_unconfigured"
+  | "slack_channel_mismatch"
+  | "slack_person_required"
+  | "slack_person_not_found"
+  | "slack_body_empty"
+  | "slack_body_too_long"
+  | "slack_idempotency_required"
+  | "slack_idempotency_conflict"
+  | "slack_idempotency_invalid"
+  | "slack_rate_limited"
+  | "slack_quota"
+  | "slack_provider_error";
 
 export interface ToolFailure {
   kind: ToolFailureKind;

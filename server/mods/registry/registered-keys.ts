@@ -231,6 +231,7 @@ export const REGISTERED_MOD_TOOL_KEYS = [
   "jobs",
   "companies",
   "scenarios",
+  "slack",
 ] as const;
 export type RegisteredToolKey = (typeof REGISTERED_MOD_TOOL_KEYS)[number];
 

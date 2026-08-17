@@ -178,7 +178,72 @@ export async function ensureSlackSchema(pool: Pool): Promise<void> {
   await pool.query(`ALTER TABLE slack_principal_mappings DROP CONSTRAINT IF EXISTS slack_principal_mappings_ids_check`);
   await pool.query(`
     ALTER TABLE slack_principal_mappings ADD CONSTRAINT slack_principal_mappings_ids_check CHECK (
-      team_id ~ '^T[A-Z0-9]{1,31}$' AND slack_user_id ~ '^U[A-Z0-9]{1,31}$'
+      team_id ~ '^T[A-Z0-9]{1,31}
+ AND slack_user_id ~ '^U[A-Z0-9]{1,31}
+
     )
+  `);
+
+  // Outbound tool receipts. Distinct from inbound slack_events (event_id keyed).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS slack_outbound_messages (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      installation_id UUID NOT NULL REFERENCES slack_installations(id) ON DELETE CASCADE,
+      idempotency_key TEXT NOT NULL,
+      origin TEXT NOT NULL,
+      caller_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE RESTRICT,
+      session_id TEXT,
+      run_id TEXT,
+      tool_call_id TEXT,
+      destination_kind TEXT NOT NULL,
+      destination_slack_id TEXT NOT NULL,
+      person_id TEXT,
+      mapping_id UUID REFERENCES slack_principal_mappings(id) ON DELETE SET NULL,
+      body TEXT,
+      body_hash TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      delivery_client_msg_id UUID NOT NULL,
+      delivery_channel TEXT,
+      delivery_ts TEXT,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      failure_code TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      sent_at TIMESTAMPTZ,
+      CONSTRAINT slack_outbound_messages_idempotency_check CHECK (char_length(idempotency_key) BETWEEN 8 AND 120),
+      CONSTRAINT slack_outbound_messages_origin_check CHECK (
+        origin IN ('interactive','autonomous','timer','hook','skill','plan')
+      ),
+      CONSTRAINT slack_outbound_messages_destination_kind_check CHECK (destination_kind IN ('dm','channel')),
+      CONSTRAINT slack_outbound_messages_destination_id_check CHECK (
+        (destination_kind = 'dm' AND destination_slack_id ~ '^U[A-Z0-9]{1,31}
+)
+        OR (destination_kind = 'channel' AND destination_slack_id ~ '^C[A-Z0-9]{1,31}
+)
+      ),
+      CONSTRAINT slack_outbound_messages_status_check CHECK (
+        status IN ('queued','sending','sent','failed','blocked')
+      ),
+      CONSTRAINT slack_outbound_messages_body_limit CHECK (body IS NULL OR char_length(body) <= 4000),
+      CONSTRAINT slack_outbound_messages_attempt_limit CHECK (attempt_count BETWEEN 0 AND 3)
+    )
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS slack_outbound_messages_idempotency_unique
+      ON slack_outbound_messages(installation_id, idempotency_key)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS slack_outbound_messages_rate_destination
+      ON slack_outbound_messages(installation_id, destination_slack_id, created_at)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS slack_outbound_messages_rate_caller
+      ON slack_outbound_messages(caller_user_id, created_at)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS slack_outbound_messages_retention
+      ON slack_outbound_messages(updated_at)
   `);
 }
