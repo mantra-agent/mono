@@ -174,6 +174,12 @@ function businessResult(business: Business) {
     phasesPageId: business.phasesPageId,
     pitchPageId: business.pitchPageId,
     gtmPageId: business.gtmPageId,
+    productPageId: business.productPageId,
+    brandPageId: business.brandPageId,
+    differentiatorsPageId: business.differentiatorsPageId,
+    marketPageId: business.marketPageId,
+    icpPageId: business.icpPageId,
+    activationPageId: business.activationPageId,
     status: business.status,
     vaultIds: business.vaultIds,
     createdAt: business.createdAt,
@@ -258,6 +264,12 @@ async function handleEntityAction(action: string, args: Record<string, unknown>)
       phasesPageId: optionalStr(args, "phasesPageId"),
       pitchPageId: optionalStr(args, "pitchPageId"),
       gtmPageId: optionalStr(args, "gtmPageId"),
+      productPageId: optionalStr(args, "productPageId"),
+      brandPageId: optionalStr(args, "brandPageId"),
+      differentiatorsPageId: optionalStr(args, "differentiatorsPageId"),
+      marketPageId: optionalStr(args, "marketPageId"),
+      icpPageId: optionalStr(args, "icpPageId"),
+      activationPageId: optionalStr(args, "activationPageId"),
       vaultIds: stringArray(args.vaultIds),
     });
     if (!parsed.success) return { result: `business.create_business invalid: ${parsed.error.issues[0]?.message ?? "bad input"}`, error: true };
@@ -284,6 +296,12 @@ async function handleEntityAction(action: string, args: Record<string, unknown>)
       phasesPageId: optionalStr(args, "phasesPageId"),
       pitchPageId: optionalStr(args, "pitchPageId"),
       gtmPageId: optionalStr(args, "gtmPageId"),
+      productPageId: optionalStr(args, "productPageId"),
+      brandPageId: optionalStr(args, "brandPageId"),
+      differentiatorsPageId: optionalStr(args, "differentiatorsPageId"),
+      marketPageId: optionalStr(args, "marketPageId"),
+      icpPageId: optionalStr(args, "icpPageId"),
+      activationPageId: optionalStr(args, "activationPageId"),
       status: optionalStr(args, "businessStatus"),
     });
     if (!parsed.success) return { result: `business.update_business invalid: ${parsed.error.issues[0]?.message ?? "bad input"}`, error: true };

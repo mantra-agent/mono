@@ -37,6 +37,12 @@ export interface Business {
   phasesPageId: string | null;
   pitchPageId: string | null;
   gtmPageId: string | null;
+  productPageId: string | null;
+  brandPageId: string | null;
+  differentiatorsPageId: string | null;
+  marketPageId: string | null;
+  icpPageId: string | null;
+  activationPageId: string | null;
   dataRoomUrl: string | null;
   status: string;
   isPlatformInstrument: boolean;
@@ -71,6 +77,12 @@ export async function ensureBusinessesSchema(): Promise<void> {
       phases_page_id text,
       pitch_page_id text,
       gtm_page_id text,
+      product_page_id text,
+      brand_page_id text,
+      differentiators_page_id text,
+      market_page_id text,
+      icp_page_id text,
+      activation_page_id text,
       data_room_url text,
       status text NOT NULL DEFAULT 'active',
       is_platform_instrument boolean NOT NULL DEFAULT false,
@@ -87,6 +99,12 @@ export async function ensureBusinessesSchema(): Promise<void> {
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS phases_page_id text`);
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS pitch_page_id text`);
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS gtm_page_id text`);
+  await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS product_page_id text`);
+  await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS brand_page_id text`);
+  await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS differentiators_page_id text`);
+  await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS market_page_id text`);
+  await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS icp_page_id text`);
+  await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS activation_page_id text`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_businesses_owner ON businesses(owner_user_id, account_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_businesses_scope_owner ON businesses(scope, owner_user_id)`);
 
@@ -153,6 +171,12 @@ function hydrate(row: BusinessRow, vaultIds: string[]): Business {
     phasesPageId: row.phasesPageId ?? null,
     pitchPageId: row.pitchPageId ?? null,
     gtmPageId: row.gtmPageId ?? null,
+    productPageId: row.productPageId ?? null,
+    brandPageId: row.brandPageId ?? null,
+    differentiatorsPageId: row.differentiatorsPageId ?? null,
+    marketPageId: row.marketPageId ?? null,
+    icpPageId: row.icpPageId ?? null,
+    activationPageId: row.activationPageId ?? null,
     dataRoomUrl: row.dataRoomUrl ?? null,
     status: row.status,
     isPlatformInstrument: row.isPlatformInstrument,
@@ -218,6 +242,12 @@ export const businessStorage = {
         phasesPageId: input.phasesPageId ?? null,
         pitchPageId: input.pitchPageId ?? null,
         gtmPageId: input.gtmPageId ?? null,
+        productPageId: input.productPageId ?? null,
+        brandPageId: input.brandPageId ?? null,
+        differentiatorsPageId: input.differentiatorsPageId ?? null,
+        marketPageId: input.marketPageId ?? null,
+        icpPageId: input.icpPageId ?? null,
+        activationPageId: input.activationPageId ?? null,
         dataRoomUrl: input.dataRoomUrl ?? null,
         status: "active",
         createdByUserId: principal.userId,
@@ -270,6 +300,12 @@ export const businessStorage = {
     if (patch.phasesPageId !== undefined) updates.phasesPageId = patch.phasesPageId;
     if (patch.pitchPageId !== undefined) updates.pitchPageId = patch.pitchPageId;
     if (patch.gtmPageId !== undefined) updates.gtmPageId = patch.gtmPageId;
+    if (patch.productPageId !== undefined) updates.productPageId = patch.productPageId;
+    if (patch.brandPageId !== undefined) updates.brandPageId = patch.brandPageId;
+    if (patch.differentiatorsPageId !== undefined) updates.differentiatorsPageId = patch.differentiatorsPageId;
+    if (patch.marketPageId !== undefined) updates.marketPageId = patch.marketPageId;
+    if (patch.icpPageId !== undefined) updates.icpPageId = patch.icpPageId;
+    if (patch.activationPageId !== undefined) updates.activationPageId = patch.activationPageId;
     if (patch.dataRoomUrl !== undefined) updates.dataRoomUrl = patch.dataRoomUrl;
     if (patch.status !== undefined) updates.status = patch.status;
 

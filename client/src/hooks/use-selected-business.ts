@@ -22,6 +22,12 @@ export interface BusinessDefinition {
   phasesPageId: string | null;
   pitchPageId: string | null;
   gtmPageId: string | null;
+  productPageId: string | null;
+  brandPageId: string | null;
+  differentiatorsPageId: string | null;
+  marketPageId: string | null;
+  icpPageId: string | null;
+  activationPageId: string | null;
   dataRoomUrl: string | null;
   status: string;
   isPlatformInstrument: boolean;
@@ -32,6 +38,12 @@ export interface BusinessDefinition {
   phasesPage: NarrativePageRef | null;
   pitchPage: NarrativePageRef | null;
   gtmPage: NarrativePageRef | null;
+  productPage: NarrativePageRef | null;
+  brandPage: NarrativePageRef | null;
+  differentiatorsPage: NarrativePageRef | null;
+  marketPage: NarrativePageRef | null;
+  icpPage: NarrativePageRef | null;
+  activationPage: NarrativePageRef | null;
   createdAt?: string;
   updatedAt?: string;
 }
