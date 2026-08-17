@@ -1752,7 +1752,11 @@ export async function registerIntegrationsRoutes(app: Express) {
       const { getLatestEasRun } = await import("../integrations/expo");
       res.json({ run: await getLatestEasRun() });
     } catch (error: any) {
-      log.error("Expo build log request failed", { error: error.message, stack: error.stack });
+      const { isExpoProviderTransportError } = await import("../integrations/expo");
+      const payload = { error: error.message, stack: error.stack };
+      // Transient Expo/network transport is degraded provider state, not an app defect.
+      if (isExpoProviderTransportError(error)) log.warn("Expo build log request failed", payload);
+      else log.error("Expo build log request failed", payload);
       res.status(500).json({ error: error.message });
     }
   });
@@ -1765,7 +1769,11 @@ export async function registerIntegrationsRoutes(app: Express) {
       const builds = await listBuilds(projectId, 10);
       res.json({ builds });
     } catch (error: any) {
-      log.error("Expo build list request failed", { error: error.message, stack: error.stack });
+      const { isExpoProviderTransportError } = await import("../integrations/expo");
+      const payload = { error: error.message, stack: error.stack };
+      // Transient Expo GraphQL transport must not mint ERRORS / Self-Heal Issues.
+      if (isExpoProviderTransportError(error)) log.warn("Expo build list request failed", payload);
+      else log.error("Expo build list request failed", payload);
       res.status(500).json({ error: error.message, stderr: error.message });
     }
   });
