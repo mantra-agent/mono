@@ -8966,62 +8966,40 @@ ${refs}` : ""),
             return { result: "Missing image source. Provide one of: path (workspace file), url (image URL), or base64 (raw data)", error: true };
           }
 
-          // Prefer Grok subscription multimodal chat (current default provider pool).
-          // Fall back to openai-subscription vision only if Grok fails.
-          // Avoid claude-cli: buildPrompt JSON.stringifies multimodal content into flat text.
+          // Route through the active connector pool. Multimodal image_url is supported by
+          // openai / openai-subscription / grok-subscription / anthropic; claude-cli
+          // flattens content via buildPrompt and will fail — model-client walks the
+          // pool and surfaces the first successful connector (or the last error).
           const dataUrl = `data:${mediaType};base64,${imageBase64}`;
           const { chatCompletion } = await import("./model-client");
-          const grokVisionModel = a.depth === "deep"
-            ? "grok-subscription/grok-4.6"
-            : "grok-subscription/grok-4.3";
-          const openAiVisionModel = a.depth === "deep"
-            ? "openai-subscription/gpt-5.5-sub"
-            : "openai-subscription/gpt-5.4-mini-sub";
+          const activity = (await import("./job-profiles")).ACTIVITY_MEDIA;
+          const depthTier =
+            a.depth === "deep" ? "max" as const
+              : a.depth === "quick" ? "fast" as const
+                : undefined;
           const visionMessages = [
             { role: "user" as const, content: [
               { type: "image_url" as const, image_url: { url: dataUrl } },
               { type: "text" as const, text: prompt },
             ] },
           ];
-          const activity = (await import("./job-profiles")).ACTIVITY_MEDIA;
-          log.debug(`[Images] analyze: routing to ${grokVisionModel}`);
-          let description: string;
-          try {
-            const result = await chatCompletion({
-              activity,
-              model: grokVisionModel,
-              overrideReason: "image analysis prefers multimodal Grok subscription model",
-              metadata: { source: "bridge-tool", toolName: "images.analyze", activity },
-              maxTokens: 4000,
-              messages: visionMessages,
-            });
-            description = result.content.trim() || "Unable to describe image";
-          } catch (primaryErr: any) {
-            const primaryMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
-            log.warn(`[Images] Grok analyze failed; falling back to OpenAI: ${primaryMsg}`);
-            log.debug(`[Images] analyze: routing fallback to ${openAiVisionModel}`);
-            try {
-              const fallback = await chatCompletion({
-                activity,
-                model: openAiVisionModel,
-                overrideReason: "image analysis fallback to multimodal OpenAI subscription model",
-                metadata: {
-                  source: "bridge-tool",
-                  toolName: "images.analyze",
-                  activity,
-                  fallbackFrom: grokVisionModel,
-                },
-                maxTokens: 4000,
-                messages: visionMessages,
-              });
-              description = fallback.content.trim() || "Unable to describe image";
-            } catch (fallbackErr: any) {
-              const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-              throw new Error(
-                `Image analysis failed on Grok (${primaryMsg}); OpenAI fallback also failed (${fallbackMsg})`,
-              );
-            }
-          }
+          log.debug(
+            `[Images] analyze: connector pool activity=${activity}` +
+            `${depthTier ? ` tier=${depthTier}` : " tier=persona/default"}`,
+          );
+          const completion = await chatCompletion({
+            activity,
+            ...(depthTier
+              ? {
+                  semanticTierOverride: depthTier,
+                  overrideReason: `images.analyze depth=${a.depth} maps to semantic tier ${depthTier}`,
+                }
+              : {}),
+            metadata: { source: "bridge-tool", toolName: "images.analyze", activity },
+            maxTokens: 4000,
+            messages: visionMessages,
+          });
+          const description = completion.content.trim() || "Unable to describe image";
           log.debug(`[Images] analyze complete: ${description.length} chars`);
           let result = description;
           const objectPath = typeof a.path === "string" ? a.path.split("?")[0] : "";

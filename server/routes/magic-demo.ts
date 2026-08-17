@@ -148,10 +148,12 @@ async function analyzeMagicDemoFrame(buffer: Buffer, contentType: string): Promi
   const { chatCompletion } = await import("../model-client");
   const { ACTIVITY_MEDIA } = await import("../job-profiles");
   const dataUrl = `data:${contentType};base64,${buffer.toString("base64")}`;
+  // No provider hardpin — active connector pool decides. Unsupported connectors
+  // fail and model-client walks the rest of the pool.
   const result = await chatCompletion({
     activity: ACTIVITY_MEDIA,
-    model: "openai-subscription/gpt-5.4-mini-sub",
-    overrideReason: "Magic Demo quick vision requires low-latency multimodal analysis",
+    semanticTierOverride: "fast",
+    overrideReason: "magic-demo vision.frame is latency-bound spoken description",
     metadata: { source: "magic-demo", route: "vision.frame", activity: ACTIVITY_MEDIA },
     maxTokens: 700,
     messages: [{
