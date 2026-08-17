@@ -344,17 +344,6 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
     sessionType: "autonomous",
     admissionTier: "background",
   },
-  "issue-burndown": {
-    skillId: "issue-burndown",
-    label: "Issue Burndown",
-    callType: "full",
-    activity: ACTIVITY_WORK,
-    temperature: 0.2,
-    timeoutMs: 3 * 60 * 60 * 1000,
-    // Manual Open Issues orchestrator. Plan children own engineering writes.
-    sessionType: "autonomous",
-    admissionTier: "background",
-  },
   "enrich-email": {
     skillId: "enrich-email",
     label: "Enrich Email",
