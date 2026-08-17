@@ -36,6 +36,8 @@ export interface Principle {
 export interface PrincipleIndex {
   principles: Array<{
     id: string;
+    /** Current immutable revision id — required for @principle: chips and judgment provenance. */
+    currentRevisionId: string;
     title: string;
     layer1: string;
     tags: string[];
@@ -141,6 +143,7 @@ function buildIndex(items: Principle[]): PrincipleIndex {
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
       .map((p) => ({
         id: p.id,
+        currentRevisionId: p.currentRevisionId,
         title: p.title,
         layer1: p.layer1,
         tags: Array.from(new Set([...p.autoTags, ...p.manualTags])),
@@ -392,10 +395,17 @@ export class FilePrincipleStorage {
     return buildIndex(all);
   }
 
-  async getAllLayer1(): Promise<Array<{ id: string; title: string; layer1: string; tags: string[] }>> {
+  async getAllLayer1(): Promise<Array<{
+    id: string;
+    currentRevisionId: string;
+    title: string;
+    layer1: string;
+    tags: string[];
+  }>> {
     const index = await this.getIndex();
     return index.principles.map((p) => ({
       id: p.id,
+      currentRevisionId: p.currentRevisionId,
       title: p.title,
       layer1: p.layer1,
       tags: p.tags,

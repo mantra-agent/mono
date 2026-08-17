@@ -193,13 +193,17 @@ export class DecisionsStorage {
         const selectedPrinciples: typeof principles = [];
         const seenPrincipleIds = new Set<string>();
         for (const rawId of [...new Set(input.principleRevisionIds ?? [])]) {
-          let principle = byCurrentRevisionId.get(rawId) ?? byPrincipleId.get(rawId) ?? null;
+          const trimmedId = typeof rawId === "string" ? rawId.trim() : "";
+          // Context once emitted @principle:undefined when Layer1 omitted currentRevisionId.
+          // Skip those inert tokens rather than failing the whole judgment.
+          if (!trimmedId || trimmedId === "undefined" || trimmedId === "null") continue;
+          let principle = byCurrentRevisionId.get(trimmedId) ?? byPrincipleId.get(trimmedId) ?? null;
           if (!principle) {
-            principle = await filePrincipleStorage.resolvePrincipleFromAnyId(rawId);
+            principle = await filePrincipleStorage.resolvePrincipleFromAnyId(trimmedId);
           }
           if (!principle) {
             throw Object.assign(
-              new Error(`Principle revision is not current or visible: ${rawId}`),
+              new Error(`Principle revision is not current or visible: ${trimmedId}`),
               { status: 400 },
             );
           }
