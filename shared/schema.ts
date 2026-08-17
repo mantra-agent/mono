@@ -1500,6 +1500,8 @@ export const subscriptionOAuthTransactions = pgTable("subscription_oauth_transac
   provider: text("provider").notNull(),
   codeVerifier: text("code_verifier").notNull(),
   redirectUri: text("redirect_uri").notNull(),
+  /** Target model connector when OAuth is connector-scoped; null = legacy primary. */
+  connectorId: integer("connector_id"),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),

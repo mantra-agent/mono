@@ -12,6 +12,7 @@ export interface SubscriptionPkceRecord {
   codeVerifier: string;
   redirectUri: string;
   provider: SubscriptionOAuthProvider;
+  connectorId?: number | null;
 }
 
 function hashState(state: string): string {
@@ -24,6 +25,7 @@ export async function storeSubscriptionPkce(input: {
   codeVerifier: string;
   redirectUri: string;
   provider: SubscriptionOAuthProvider;
+  connectorId?: number | null;
   ttlMs?: number;
 }): Promise<void> {
   const now = new Date();
@@ -35,6 +37,7 @@ export async function storeSubscriptionPkce(input: {
       provider: input.provider,
       codeVerifier: input.codeVerifier,
       redirectUri: input.redirectUri,
+      connectorId: input.connectorId ?? null,
       expiresAt,
       createdAt: now,
     })
@@ -44,6 +47,7 @@ export async function storeSubscriptionPkce(input: {
         provider: input.provider,
         codeVerifier: input.codeVerifier,
         redirectUri: input.redirectUri,
+        connectorId: input.connectorId ?? null,
         expiresAt,
         consumedAt: null,
         createdAt: now,
@@ -84,6 +88,7 @@ export async function consumeSubscriptionPkce(
       codeVerifier: subscriptionOAuthTransactions.codeVerifier,
       redirectUri: subscriptionOAuthTransactions.redirectUri,
       provider: subscriptionOAuthTransactions.provider,
+      connectorId: subscriptionOAuthTransactions.connectorId,
     });
 
   const row = rows[0];
@@ -93,5 +98,6 @@ export async function consumeSubscriptionPkce(
     codeVerifier: row.codeVerifier,
     redirectUri: row.redirectUri,
     provider: row.provider as SubscriptionOAuthProvider,
+    connectorId: row.connectorId ?? null,
   };
 }

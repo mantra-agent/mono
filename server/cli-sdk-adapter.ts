@@ -1100,9 +1100,15 @@ export async function* cliSdkStream(
   const { query, tool: sdkToolFn, createSdkMcpServer } = await sdkModulePromise;
   const sdkImportMs = Date.now() - ttftStart;
 
-  const token = getSecretSync("CLAUDE_CODE_OAUTH_TOKEN");
+  // Prefer the routed connector credential; fall back to global secret for unmigrated rows.
+  const routedCredential = typeof options.routingDecision?.credential === "string"
+    && options.routingDecision.credential !== "connector-subscription"
+    && options.routingDecision.credential !== "legacy-subscription"
+    ? options.routingDecision.credential
+    : null;
+  const token = routedCredential || getSecretSync("CLAUDE_CODE_OAUTH_TOKEN") || process.env.CLAUDE_CODE_OAUTH_TOKEN;
   if (!token) {
-    yield { type: "error", error: "Claude CLI subscription not configured. Please add CLAUDE_CODE_OAUTH_TOKEN in Settings → Connections." };
+    yield { type: "error", error: "Claude CLI not configured. Add a credential on this connector (or CLAUDE_CODE_OAUTH_TOKEN during migration)." };
     return;
   }
 

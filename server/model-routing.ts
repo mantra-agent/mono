@@ -1,13 +1,11 @@
 import { createHash } from "node:crypto";
 import { createLogger } from "./log";
 import { getSecretSync } from "./secrets-store";
-import { getProviderCredential } from "./provider-credential-store";
-import { getAccount } from "./connected-accounts";
-import { createNamedSystemPrincipal } from "./principal";
-import { runWithPrincipal } from "./principal-context";
 import { listModelConnectors, type ModelConnector } from "./model-connectors";
+import { resolveConnectorCredentialMaterial } from "./model-connector-credentials";
 import { getConnectorTierModelConfig, type ConnectorTierModelConfig, semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
 import type { ActivityId } from "./job-profiles";
+import type { ModelConnectorProvider } from "@shared/model-connectors";
 
 const log = createLogger("ModelRouting");
 
@@ -74,14 +72,11 @@ function legacyCredential(provider: string): string | null {
 }
 
 async function connectorCredential(connector: ModelConnector): Promise<string | null> {
-  if (connector.credentialRef) return getProviderCredential(connector.credentialRef);
-  if (connector.provider === "openai-subscription") {
-    return (await runWithPrincipal(createNamedSystemPrincipal("openai-subscription-check"), () => getAccount("openai-subscription-primary"))) ? "connected-account" : null;
-  }
-  if (connector.provider === "grok-subscription") {
-    return (await runWithPrincipal(createNamedSystemPrincipal("grok-subscription-check"), () => getAccount("grok-subscription-primary"))) ? "connected-account" : null;
-  }
-  return legacyCredential(connector.provider);
+  // Prefer connector-owned material; legacy global secrets/accounts are fallback only.
+  return resolveConnectorCredentialMaterial(
+    connector.id,
+    connector.provider as ModelConnectorProvider,
+  );
 }
 
 export async function resolveSemanticTier(sessionId?: string): Promise<{ tier: SemanticTier; source: "persona" | "default-fallback"; personaId?: number }> {

@@ -20,24 +20,67 @@ import { useAuth } from "@/hooks/use-auth";
 
 type SubscriptionKind = "openai" | "grok";
 
-const SUBSCRIPTION_CONFIG = {
-  openai: {
-    statusKey: ["/api/openai-subscription/status"] as const,
-    disconnectPath: "/api/openai-subscription/disconnect",
-    exchangePath: "/api/openai-subscription/oauth/exchange",
-    startPath: "/api/openai-subscription/oauth/start",
-    popupName: "openai-subscription-oauth",
-    testId: "card-openai-subscription",
-    disconnectTestId: "button-disconnect-openai-subscription",
-    connectTestId: "button-connect-openai-subscription",
-    pasteTestId: "input-oauth-callback-url",
-    submitTestId: "button-submit-oauth-url",
-    connectedToast: "ChatGPT account connected",
-    disconnectedToast: "ChatGPT account disconnected",
-    pastePlaceholder: "Paste callback URL",
-    usesRawCode: false,
-  },
-  grok: {
+function subscriptionPaths(kind: SubscriptionKind, connectorId?: number) {
+  if (connectorId && connectorId > 0) {
+    const base = `/api/models/connectors/${connectorId}`;
+    if (kind === "openai") {
+      return {
+        statusKey: [`${base}/auth-status`] as const,
+        disconnectPath: `${base}/disconnect`,
+        exchangePath: `${base}/openai-subscription/oauth/exchange`,
+        startPath: `${base}/openai-subscription/oauth/start`,
+        popupName: `openai-subscription-oauth-${connectorId}`,
+        testId: `card-openai-subscription-${connectorId}`,
+        disconnectTestId: `button-disconnect-openai-subscription-${connectorId}`,
+        connectTestId: `button-connect-openai-subscription-${connectorId}`,
+        pasteTestId: `input-oauth-callback-url-${connectorId}`,
+        submitTestId: `button-submit-oauth-url-${connectorId}`,
+        authorizeTestId: undefined as string | undefined,
+        connectedToast: "ChatGPT account connected on connector",
+        disconnectedToast: "ChatGPT account disconnected from connector",
+        pastePlaceholder: "Paste callback URL",
+        usesRawCode: false as const,
+      };
+    }
+    return {
+      statusKey: [`${base}/auth-status`] as const,
+      disconnectPath: `${base}/disconnect`,
+      exchangePath: `${base}/grok-subscription/oauth/exchange`,
+      startPath: `${base}/grok-subscription/oauth/start`,
+      popupName: `grok-subscription-oauth-${connectorId}`,
+      testId: `card-grok-subscription-${connectorId}`,
+      disconnectTestId: `button-disconnect-grok-subscription-${connectorId}`,
+      connectTestId: `button-connect-grok-subscription-${connectorId}`,
+      pasteTestId: `input-grok-oauth-callback-url-${connectorId}`,
+      submitTestId: `button-submit-grok-oauth-url-${connectorId}`,
+      authorizeTestId: `link-grok-oauth-authorize-${connectorId}`,
+      connectedToast: "Grok account connected on connector",
+      disconnectedToast: "Grok account disconnected from connector",
+      pastePlaceholder: "Paste code",
+      usesRawCode: true as const,
+    };
+  }
+  // Legacy global paths (Integrations without a resolved connector id).
+  if (kind === "openai") {
+    return {
+      statusKey: ["/api/openai-subscription/status"] as const,
+      disconnectPath: "/api/openai-subscription/disconnect",
+      exchangePath: "/api/openai-subscription/oauth/exchange",
+      startPath: "/api/openai-subscription/oauth/start",
+      popupName: "openai-subscription-oauth",
+      testId: "card-openai-subscription",
+      disconnectTestId: "button-disconnect-openai-subscription",
+      connectTestId: "button-connect-openai-subscription",
+      pasteTestId: "input-oauth-callback-url",
+      submitTestId: "button-submit-oauth-url",
+      authorizeTestId: undefined as string | undefined,
+      connectedToast: "ChatGPT account connected",
+      disconnectedToast: "ChatGPT account disconnected",
+      pastePlaceholder: "Paste callback URL",
+      usesRawCode: false as const,
+    };
+  }
+  return {
     statusKey: ["/api/grok-subscription/status"] as const,
     disconnectPath: "/api/grok-subscription/disconnect",
     exchangePath: "/api/grok-subscription/oauth/exchange",
@@ -52,23 +95,28 @@ const SUBSCRIPTION_CONFIG = {
     connectedToast: "Grok account connected",
     disconnectedToast: "Grok account disconnected",
     pastePlaceholder: "Paste code",
-    usesRawCode: true,
-  },
-} as const;
+    usesRawCode: true as const,
+  };
+}
 
 /**
  * Shared subscription account section for OpenAI / Grok. Owns connect,
- * disconnect, and status rows. Label is "Subscription" because the parent
- * Integrations/Routers row already names the provider.
+ * disconnect, and status rows. When connectorId is set, auth binds to that
+ * provider_connections row; otherwise legacy global primary account paths.
  */
 export function SubscriptionSection({
   kind,
+  connectorId,
+  invalidateQueryKeys,
   children,
 }: {
   kind: SubscriptionKind;
+  /** When set, OAuth/status bind to this model connector instance. */
+  connectorId?: number;
+  invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
   children?: React.ReactNode;
 }) {
-  const cfg = SUBSCRIPTION_CONFIG[kind];
+  const cfg = subscriptionPaths(kind, connectorId);
   const { toast } = useToast();
   const { hasPermission } = useAuth();
   const canManageSystemIntegrations = hasPermission("system:write");
@@ -78,19 +126,27 @@ export function SubscriptionSection({
     email?: string;
     label?: string;
     hasTokens?: boolean;
+    source?: string;
   }>({
     queryKey: [...cfg.statusKey],
     refetchInterval: 30000,
   });
+
+  async function invalidateAuth() {
+    await queryClient.invalidateQueries({ queryKey: [...cfg.statusKey] });
+    await queryClient.invalidateQueries({ queryKey: ["/api/models/available"] });
+    if (invalidateQueryKeys) {
+      await Promise.all(invalidateQueryKeys.map((key) => queryClient.invalidateQueries({ queryKey: [...key] })));
+    }
+  }
 
   const disconnectMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", cfg.disconnectPath);
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [...cfg.statusKey] });
-      queryClient.invalidateQueries({ queryKey: ["/api/models/available"] });
+    onSuccess: async () => {
+      await invalidateAuth();
       toast({ title: cfg.disconnectedToast });
     },
     onError: (err: Error) => {
@@ -116,8 +172,8 @@ export function SubscriptionSection({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Exchange failed");
       toast({ title: cfg.connectedToast, description: data.email || "Success" });
+      await invalidateAuth();
       refetch();
-      queryClient.invalidateQueries({ queryKey: ["/api/models/available"] });
       setShowUrlPaste(false);
       setPasteUrl("");
     } catch (err: any) {
@@ -288,7 +344,7 @@ export function SubscriptionSection({
                     target="_blank"
                     rel="noreferrer"
                     className="text-xs text-cta underline hover:text-active"
-                    data-testid={SUBSCRIPTION_CONFIG.grok.authorizeTestId}
+                    data-testid={cfg.authorizeTestId}
                   >
                     Authorize
                   </a>
@@ -308,10 +364,34 @@ export function SubscriptionSection({
   );
 }
 
-export function OpenAISubscriptionSection({ children }: { children?: React.ReactNode }) {
-  return <SubscriptionSection kind="openai">{children}</SubscriptionSection>;
+export function OpenAISubscriptionSection({
+  connectorId,
+  invalidateQueryKeys,
+  children,
+}: {
+  connectorId?: number;
+  invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
+  children?: React.ReactNode;
+}) {
+  return (
+    <SubscriptionSection kind="openai" connectorId={connectorId} invalidateQueryKeys={invalidateQueryKeys}>
+      {children}
+    </SubscriptionSection>
+  );
 }
 
-export function GrokSubscriptionSection({ children }: { children?: React.ReactNode }) {
-  return <SubscriptionSection kind="grok">{children}</SubscriptionSection>;
+export function GrokSubscriptionSection({
+  connectorId,
+  invalidateQueryKeys,
+  children,
+}: {
+  connectorId?: number;
+  invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
+  children?: React.ReactNode;
+}) {
+  return (
+    <SubscriptionSection kind="grok" connectorId={connectorId} invalidateQueryKeys={invalidateQueryKeys}>
+      {children}
+    </SubscriptionSection>
+  );
 }
