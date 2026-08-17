@@ -1,8 +1,19 @@
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ChevronRight } from "lucide-react";
+import { AlertTriangle, ChevronRight, SlidersHorizontal } from "lucide-react";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatBytes } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
@@ -40,11 +51,23 @@ const RELIABILITY_DOMAINS: Array<{ key: ReliabilityDomainKey; label: string }> =
   { key: "conversationalTurns", label: "Conversational turns" },
 ];
 
-const RELIABILITY_WINDOWS = [
+/** Page-level date range for every windowed metric on Performance. */
+const PERFORMANCE_WINDOWS = [
   { hours: 24, label: "24h" },
   { hours: 168, label: "7d" },
   { hours: 720, label: "30d" },
 ] as const;
+
+interface ConnectedAccountRow {
+  accountId: string;
+  provider: string;
+  email?: string | null;
+  label?: string | null;
+  healthy?: boolean | null;
+  healthError?: string | null;
+  healthCheckedAt?: string | null;
+  missingScopes?: string[] | null;
+}
 
 function reliabilityHealthStatus(health: ReliabilityHealth | "no_data" | undefined): Status {
   if (health === "critical" || health === "failing") return "red";
@@ -241,7 +264,7 @@ function isChatLatencyMetric(kind: string): boolean {
 
 function chatExperienceStatus(frontend: BrowserTelemetrySummary | null): Status {
   if (!frontend) return "unknown";
-  const chatMetrics = frontend.metrics.filter(metric => isChatLatencyMetric(metric.kind));
+  const chatMetrics = sortChatMetrics(frontend.metrics.filter(metric => isChatLatencyMetric(metric.kind)));
   if (chatMetrics.length === 0) return "unknown";
   // Health = ordinary experience (mean of best 95%) vs target — not the tail.
   if (chatMetrics.some(metric => metric.upperTrimmedMean95 !== null && metric.upperTrimmedMean95 > frontendMetricBudget(frontend, metric.kind, metric.name))) {
@@ -350,7 +373,6 @@ function formatMetricTitle(kind: string, name: string): string {
     "chat_latency:submit_to_ack": "Ack",
     "chat_latency:submit_to_first_progress": "First progress",
     "chat_latency:submit_to_first_token": "First text",
-    "chat_latency:submit_to_complete": "Complete",
     "frame_contention:slow_frame": "Slow frame",
     "long_task:main_thread_blocked": "Long task",
     "web_vital:lcp": "LCP",
@@ -373,42 +395,54 @@ const CHAT_METRIC_ORDER = [
   "submit_to_ack",
   "submit_to_first_progress",
   "submit_to_first_token",
-  "submit_to_complete",
 ] as const;
 
 function sortChatMetrics<T extends { name: string }>(metrics: T[]): T[] {
-  return [...metrics].sort((a, b) => {
-    const ai = CHAT_METRIC_ORDER.indexOf(a.name as (typeof CHAT_METRIC_ORDER)[number]);
-    const bi = CHAT_METRIC_ORDER.indexOf(b.name as (typeof CHAT_METRIC_ORDER)[number]);
-    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-  });
+  return [...metrics]
+    .filter((metric) => metric.name !== "submit_to_complete")
+    .sort((a, b) => {
+      const ai = CHAT_METRIC_ORDER.indexOf(a.name as (typeof CHAT_METRIC_ORDER)[number]);
+      const bi = CHAT_METRIC_ORDER.indexOf(b.name as (typeof CHAT_METRIC_ORDER)[number]);
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
 }
 
 function chatMetricDefinition(name: string): string {
   if (name === "submit_to_ack") return "Send → server acceptance";
   if (name === "submit_to_first_progress") return "Send → first visible thinking, tool use, or assistant text";
   if (name === "submit_to_first_token") return "Send → first visible assistant text";
-  if (name === "submit_to_complete") return "Send → completed assistant turn";
   return "Browser-observed chat latency";
+}
+
+function formatConnectorProvider(provider: string): string {
+  return provider
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function connectorStatus(account: ConnectedAccountRow): Status {
+  if (account.healthy === false) return "red";
+  if (account.healthy === true) return "ok";
+  return "unknown";
+}
+
+function connectorLabel(account: ConnectedAccountRow): string {
+  const provider = formatConnectorProvider(account.provider);
+  const identity = account.email || account.label || account.accountId;
+  return identity ? `${provider} · ${identity}` : provider;
+}
+
+function connectorsSectionStatus(accounts: ConnectedAccountRow[] | undefined): Status {
+  if (!accounts || accounts.length === 0) return "unknown";
+  if (accounts.some((account) => account.healthy === false)) return "red";
+  if (accounts.every((account) => account.healthy === true)) return "ok";
+  return "amber";
 }
 
 function formatNavigationDiagnosis(value: string): string {
   return value.replace(/_/g, " ");
-}
-
-function formatNavigationEvidence(incident: BrowserTelemetrySummary["recentNavigationIncidents"][number]): string {
-  const evidence = incident.evidence;
-  return [
-    `${incident.fromRoute} → ${incident.toRoute}`,
-    formatMs(incident.durationMs),
-    formatNavigationDiagnosis(incident.diagnosis),
-    `commit ${evidence.firstCommitMs === null ? "—" : formatMs(evidence.firstCommitMs)}`,
-    `ready ${evidence.dataReadyMs === null ? "—" : formatMs(evidence.dataReadyMs)}`,
-    `queries ${evidence.queriesActiveAtEnd}/${evidence.peakQueries}`,
-    `task ${formatMs(evidence.longTaskMaxMs)}`,
-    `frame ${formatMs(evidence.slowFrameMaxMs)}`,
-    `streams ${evidence.streamActiveMax}/${evidence.streamSegmentsMax}`,
-  ].join(" · ");
 }
 
 function formatFrontendMetricValue(kind: string, name: string, value: number | null): string {
@@ -564,7 +598,8 @@ function BuildDeploymentDetail({
 
 export default function PerformancePage() {
   usePageHeader({ title: "Performance" });
-  const [reliabilityHours, setReliabilityHours] = useState(24);
+  const [windowHours, setWindowHours] = useState(24);
+  const windowLabel = PERFORMANCE_WINDOWS.find((window) => window.hours === windowHours)?.label ?? `${windowHours}h`;
   const { data, isLoading, isError, error, dataUpdatedAt } = useQuery<ResourcesResponse>({
     queryKey: ["/api/gateway/processes", "resources"],
     retry: false,
@@ -579,9 +614,9 @@ export default function PerformancePage() {
   });
 
   const { data: feData } = useQuery<{ frontendExperience: BrowserTelemetrySummary | null }>({
-    queryKey: ["/api/gateway/frontend-experience"],
+    queryKey: ["/api/gateway/frontend-experience", windowHours],
     queryFn: async () => {
-      const res = await fetch("/api/gateway/frontend-experience", { credentials: "include" });
+      const res = await fetch(`/api/gateway/frontend-experience?hours=${windowHours}`, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -590,9 +625,9 @@ export default function PerformancePage() {
   });
 
   const { data: contextData } = useQuery<{ contextHealth: ContextHealthSummary }>({
-    queryKey: ["/api/gateway/context-health"],
+    queryKey: ["/api/gateway/context-health", windowHours],
     queryFn: async () => {
-      const res = await fetch("/api/gateway/context-health", { credentials: "include" });
+      const res = await fetch(`/api/gateway/context-health?hours=${windowHours}`, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -605,9 +640,9 @@ export default function PerformancePage() {
     isLoading: reliabilityLoading,
     isError: reliabilityError,
   } = useQuery<ReliabilityOutcomeSummary>({
-    queryKey: ["/api/performance/reliability", reliabilityHours],
+    queryKey: ["/api/performance/reliability", windowHours],
     queryFn: async () => {
-      const res = await fetch(`/api/performance/reliability?hours=${reliabilityHours}`, {
+      const res = await fetch(`/api/performance/reliability?hours=${windowHours}`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -615,6 +650,18 @@ export default function PerformancePage() {
     },
     refetchInterval: RELIABILITY_OUTCOMES_REFRESH_INTERVAL_MS,
     refetchIntervalInBackground: false,
+  });
+
+  const { data: connectorsData, isLoading: connectorsLoading, isError: connectorsError } = useQuery<{
+    accounts: ConnectedAccountRow[];
+  }>({
+    queryKey: ["/api/connected-accounts", "performance"],
+    queryFn: async () => {
+      const res = await fetch("/api/connected-accounts", { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    staleTime: 30_000,
   });
 
   const {
@@ -673,10 +720,14 @@ export default function PerformancePage() {
       frontendExperience={feData?.frontendExperience ?? null}
       contextHealth={contextData?.contextHealth ?? null}
       reliability={reliability ?? null}
-      reliabilityHours={reliabilityHours}
-      onReliabilityHoursChange={setReliabilityHours}
+      windowHours={windowHours}
+      windowLabel={windowLabel}
+      onWindowHoursChange={setWindowHours}
       reliabilityLoading={reliabilityLoading}
       reliabilityError={reliabilityError}
+      connectors={connectorsData?.accounts ?? []}
+      connectorsLoading={connectorsLoading}
+      connectorsError={connectorsError}
       buildDeploymentTimings={buildDeploymentTimings ?? null}
       buildDeploymentTimingsLoading={buildDeploymentTimingsLoading}
       buildDeploymentTimingsError={buildDeploymentTimingsError}
@@ -692,10 +743,14 @@ function ResourcesView({
   frontendExperience,
   contextHealth,
   reliability,
-  reliabilityHours,
-  onReliabilityHoursChange,
+  windowHours,
+  windowLabel,
+  onWindowHoursChange,
   reliabilityLoading,
   reliabilityError,
+  connectors,
+  connectorsLoading,
+  connectorsError,
   buildDeploymentTimings,
   buildDeploymentTimingsLoading,
   buildDeploymentTimingsError,
@@ -707,10 +762,14 @@ function ResourcesView({
   frontendExperience: BrowserTelemetrySummary | null;
   contextHealth: ContextHealthSummary | null;
   reliability: ReliabilityOutcomeSummary | null;
-  reliabilityHours: number;
-  onReliabilityHoursChange: (hours: number) => void;
+  windowHours: number;
+  windowLabel: string;
+  onWindowHoursChange: (hours: number) => void;
   reliabilityLoading: boolean;
   reliabilityError: boolean;
+  connectors: ConnectedAccountRow[];
+  connectorsLoading: boolean;
+  connectorsError: boolean;
   buildDeploymentTimings: BuildDeploymentTimingSummary | null;
   buildDeploymentTimingsLoading: boolean;
   buildDeploymentTimingsError: boolean;
@@ -724,6 +783,14 @@ function ResourcesView({
     getSharedWSDiagnostics,
   );
   const [pingMs, setPingMs] = useState<number | null>(null);
+  const activeConnectors = useMemo(
+    () => [...connectors].sort((a, b) => {
+      const providerCmp = a.provider.localeCompare(b.provider);
+      if (providerCmp !== 0) return providerCmp;
+      return connectorLabel(a).localeCompare(connectorLabel(b));
+    }),
+    [connectors],
+  );
 
   const { data: diagData } = useQuery<DiagnosticData>({
     queryKey: ["/api/diagnostics/performance"],
@@ -787,6 +854,11 @@ function ResourcesView({
     : reliability
       ? reliabilityHealthStatus(reliability.health)
       : "unknown";
+  const connectorsStatus = connectorsError
+    ? "red"
+    : connectorsLoading
+      ? "unknown"
+      : connectorsSectionStatus(connectors);
 
   const memoryPercent = r.memory.maxMemoryBytes
     ? r.memory.rssUsedPct ?? Math.round((r.memory.rss / r.memory.maxMemoryBytes) * 1000) / 10
@@ -806,6 +878,40 @@ function ResourcesView({
     <div className="flex h-full min-w-0 flex-col overflow-hidden">
       <div className="min-h-0 flex-1 overflow-y-auto p-4 scrollbar-thin @sm:p-6">
         <div className="mx-auto max-w-5xl space-y-1">
+          <div className="mb-2 flex items-center gap-2 px-1" data-testid="performance-filter-bar">
+            <div className="min-w-0 flex-1 text-sm text-muted-foreground">
+              Window · {windowLabel}
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-7 gap-1.5 px-2 text-xs" data-testid="button-performance-mixer">
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  Mixer
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger data-testid="menu-performance-date-range">Date range</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup
+                      value={String(windowHours)}
+                      onValueChange={(value) => onWindowHoursChange(Number(value))}
+                    >
+                      {PERFORMANCE_WINDOWS.map(({ hours, label }) => (
+                        <DropdownMenuRadioItem
+                          key={hours}
+                          value={String(hours)}
+                          data-testid={`menu-performance-window-${hours}`}
+                        >
+                          {label}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
           <PerformanceSection
             label="Service"
             status={serviceStatus}
@@ -1098,19 +1204,6 @@ function ResourcesView({
                         testId="tile-navigation-health"
                       />
                       <MetricRow
-                        label="Incidents"
-                        value={String(frontendExperience.recentNavigationIncidents.length)}
-                        status={frontendExperience.recentNavigationIncidents.length ? "amber" : "ok"}
-                        detail={(
-                          <DetailList
-                            items={frontendExperience.recentNavigationIncidents.length
-                              ? frontendExperience.recentNavigationIncidents.slice(0, 8).map(formatNavigationEvidence)
-                              : ["No diagnosed navigation incidents in this window."]}
-                          />
-                        )}
-                        testId="tile-navigation-incidents"
-                      />
-                      <MetricRow
                         label="History"
                         value={String(frontendExperience.recentDegradations.length)}
                         status="ok"
@@ -1120,7 +1213,7 @@ function ResourcesView({
                               ? [
                                 "Informational history only; each metric row colors against its target.",
                                 `Targets · navigation ${formatMs(frontendExperience.budgets.navigation.p95Ms)} · long task ${formatMs(frontendExperience.budgets.longTaskP95Ms)} · frame ${formatMs(frontendExperience.budgets.frameContentionP95Ms)}`,
-                                `Chat · ack ${formatMs(frontendExperience.budgets.chatLatency.submitToAckP95Ms)} · first progress ${formatMs(frontendExperience.budgets.chatLatency.submitToFirstTokenP95Ms)} · complete ${formatMs(frontendExperience.budgets.chatLatency.submitToCompleteP95Ms)}`,
+                                `Chat · ack ${formatMs(frontendExperience.budgets.chatLatency.submitToAckP95Ms)} · first progress ${formatMs(frontendExperience.budgets.chatLatency.submitToFirstTokenP95Ms)}`,
                                 ...frontendExperience.recentDegradations.slice(0, 7).map(item => `${formatMetricTitle(item.kind, item.name)} · ${formatMs(item.value)}${item.routeKey ? ` · ${item.routeKey}` : ""} · ${formatRelative(new Date(item.occurredAt).getTime(), now)}`),
                               ]
                               : ["No threshold-only frontend degradations in this window."]}
@@ -1340,27 +1433,6 @@ function ResourcesView({
             status={reliabilityStatus}
             testId="section-reliability"
           >
-            <div className="mb-1 flex flex-wrap items-center gap-1 px-2">
-              {RELIABILITY_WINDOWS.map(({ hours, label }) => {
-                const selected = reliabilityHours === hours;
-                return (
-                  <button
-                    key={hours}
-                    type="button"
-                    className={cn(
-                      "rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
-                      selected
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover-elevate",
-                    )}
-                    onClick={() => onReliabilityHoursChange(hours)}
-                    data-testid={`button-reliability-window-${hours}`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
             {reliabilityLoading ? (
               <MetricRow
                 label="Reliability outcomes"
@@ -1396,6 +1468,65 @@ function ResourcesView({
                     status={reliabilityHealthStatus(metric.health)}
                     detail={reliabilityMetricDetail(metric)}
                     testId={`tile-reliability-${key}`}
+                  />
+                );
+              })
+            )}
+          </PerformanceSection>
+
+          <PerformanceSection
+            label="Connectors"
+            status={connectorsStatus}
+            testId="section-connectors"
+            defaultOpen
+          >
+            {connectorsLoading ? (
+              <MetricRow
+                label="Connectors"
+                value="Loading"
+                detail={<DetailText>Loading connected external accounts.</DetailText>}
+                testId="tile-connectors-loading"
+              />
+            ) : connectorsError ? (
+              <MetricRow
+                label="Connectors"
+                value="Unavailable"
+                status="red"
+                detail={<DetailText>Could not load connected accounts.</DetailText>}
+                testId="tile-connectors-error"
+              />
+            ) : activeConnectors.length === 0 ? (
+              <MetricRow
+                label="Active connectors"
+                value="None"
+                status="unknown"
+                detail={<DetailText>No connected external accounts for this principal.</DetailText>}
+                testId="tile-connectors-empty"
+              />
+            ) : (
+              activeConnectors.map((account) => {
+                const status = connectorStatus(account);
+                return (
+                  <MetricRow
+                    key={account.accountId}
+                    label={connectorLabel(account)}
+                    value={status === "ok" ? "Healthy" : status === "red" ? "Unhealthy" : "Unknown"}
+                    status={status}
+                    detail={(
+                      <DetailList
+                        items={[
+                          `Provider ${formatConnectorProvider(account.provider)} · ${account.accountId}`,
+                          account.healthError ? `Error: ${account.healthError}` : "No health error recorded",
+                          account.healthCheckedAt
+                            ? `Checked ${formatRelative(new Date(account.healthCheckedAt).getTime(), now)}`
+                            : "No health check timestamp",
+                          account.missingScopes?.length
+                            ? `Missing scopes: ${account.missingScopes.join(", ")}`
+                            : "No missing scopes",
+                        ]}
+                      />
+                    )}
+                    testId={`tile-connector-${account.accountId}`}
                   />
                 );
               })

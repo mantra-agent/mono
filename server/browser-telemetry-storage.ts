@@ -252,7 +252,8 @@ function isCompletedNavigationSample(kind: string, metadata: unknown): boolean {
 }
 
 export async function getBrowserTelemetrySummary(principal: Principal, windowHours = 24): Promise<BrowserTelemetrySummary> {
-  const hours = Math.min(Math.max(Math.floor(windowHours), 1), 168);
+  // Match reliability window ceiling so Performance page date range is one source of truth.
+  const hours = Math.min(Math.max(Math.floor(windowHours), 1), 720);
   const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
   const scope = combineWithVisibleScope(principal, {
     scope: browserPerformanceTelemetry.scope,

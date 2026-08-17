@@ -431,7 +431,8 @@ async function getMidTurnCompactionSummary(windowHours: number): Promise<MidTurn
 }
 
 export async function getContextHealthSummary(windowHours = 24): Promise<ContextHealthSummary> {
-  const hours = Math.min(Math.max(Math.floor(windowHours), 1), 168);
+  // Match reliability window ceiling so Performance page date range is one source of truth.
+  const hours = Math.min(Math.max(Math.floor(windowHours), 1), 720);
   const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
 
   const result = await withQueryAttributionAsync("general", () => pool.query<ApiCallContextRow>(boundedTrackedCallsSql, [cutoff, CONTEXT_HEALTH_ROW_LIMIT]), "context-health.summary");

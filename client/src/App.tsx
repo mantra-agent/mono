@@ -301,7 +301,7 @@ function Router() {
         <Route path="/agendas" component={AgendasPage} />
         <Route path="/skills" component={SkillsPage} />
         <Route path="/system">{() => <RequirePermission permission="system:read"><SystemPage /></RequirePermission>}</Route>
-        <Route path="/performance">{() => <Redirect to="/system?tab=resources" />}</Route>
+        <Route path="/performance">{() => <RequirePermission permission="system:read"><PerformancePage /></RequirePermission>}</Route>
         <Route path="/logs">{() => <LogsPage />}</Route>
         <Route path="/goals/:id" component={GoalDetailRedirect} />
         <Route path="/dashboard">{() => <RequirePermission permission="system:read"><DashboardPage /></RequirePermission>}</Route>
