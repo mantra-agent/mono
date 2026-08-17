@@ -3366,7 +3366,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           return { result: `Project ${projectId} deleted` };
         }
         default:
-          return { result: `Unknown work action: ${action}. Available: create_project, update_project, set_status, delete_project, status, list_projects, get_project, list_tasks, set_goal, add_note, update_note, remove_note, read_note, add_file, read_file, remove_file, add_milestone, update_milestone, remove_milestone`, error: true };
+          return contractReject(
+            `Unknown work action: ${action}. Available: create_project, update_project, set_status, delete_project, status, list_projects, get_project, list_tasks, set_goal, add_note, update_note, remove_note, read_note, add_file, read_file, remove_file, add_milestone, update_milestone, remove_milestone`,
+            "work_input_invalid",
+            String(action ?? "missing"),
+          );
       }
     } catch (err: any) {
       return { result: `Work tool error: ${err.message}`, error: true };
