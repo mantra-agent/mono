@@ -191,6 +191,7 @@ export type RegisteredWorkflowKey = (typeof REGISTERED_WORKFLOW_KEYS)[number];
 // Code-owned built-in Skill definitions referenced by Mod contributions.
 export const REGISTERED_SKILL_KEYS = [
   "self-heal",
+  "issue-burndown",
   "sentry",
   "guard",
   "regression",

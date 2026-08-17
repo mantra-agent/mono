@@ -46,6 +46,8 @@ import { composeIssueFeatureLaunchMessage } from "@shared/issue-feature";
 
 /** Build-owned ERRORS backlog repair skill — catalog identity, not a code branch set. */
 const SELF_HEAL_SKILL_NAME = "self-heal";
+/** Build-owned Open Issues burndown skill — manual only; never Self Heal. */
+const ISSUE_BURNDOWN_SKILL_NAME = "issue-burndown";
 
 const STATUS_CYCLE: IssueStatus[] = ["open", "in_progress", "in_review", "resolved"];
 
@@ -646,6 +648,14 @@ export function IssuesTab() {
       ),
     [skillsData],
   );
+  const issueBurndownSkill = useMemo(
+    () =>
+      (skillsData ?? []).find(
+        (skill) =>
+          skill.name === ISSUE_BURNDOWN_SKILL_NAME && (skill.status == null || skill.status === "active"),
+      ),
+    [skillsData],
+  );
 
   const selfHealMutation = useMutation({
     mutationFn: async (skillId: string) => {
@@ -661,6 +671,26 @@ export function IssuesTab() {
     onError: (error: Error) => {
       toast({
         title: "Failed to start Self Heal",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const issueBurndownMutation = useMutation({
+    mutationFn: async (skillId: string) => {
+      const response = await apiRequest("POST", `/api/skills/${skillId}/run`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/skills/last-runs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/skills", ISSUE_BURNDOWN_SKILL_NAME, "runs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/issues"] });
+      toast({ title: "Issue Burndown started" });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to start Issue Burndown",
         description: error.message,
         variant: "destructive",
       });
@@ -925,6 +955,25 @@ export function IssuesTab() {
           count={openIssues.length}
           loading={isLoading}
           emptyLabel="No open issues."
+          menuContent={
+            issueBurndownSkill ? (
+              <DropdownMenuItem
+                disabled={issueBurndownMutation.isPending}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  issueBurndownMutation.mutate(issueBurndownSkill.id);
+                }}
+                data-testid="menu-open-issue-burndown"
+              >
+                {issueBurndownMutation.isPending ? (
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Wrench className="mr-2 h-3.5 w-3.5" />
+                )}
+                Issue Burndown
+              </DropdownMenuItem>
+            ) : undefined
+          }
           renderIssue={(issue) => renderIssue(issue)}
         />
 

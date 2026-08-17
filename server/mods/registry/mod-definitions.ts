@@ -64,7 +64,7 @@ const planning: ModDefinition = {
 
 const build: ModDefinition = {
   key: "build",
-  version: "1.2.0",
+  version: "1.2.1",
   name: "Build",
   description: "The Build product area: Platforms, Design, Database, Issues, and build workflows.",
   outcome: {
@@ -132,6 +132,7 @@ const build: ModDefinition = {
     workflows: [workflowRef("build.workflow.build-v1", "build-v1")],
     skills: [
       skillRef("build.skill.self-heal", "self-heal"),
+      skillRef("build.skill.issue-burndown", "issue-burndown"),
       skillRef("build.skill.sentry", "sentry"),
       skillRef("build.skill.guard", "guard"),
       skillRef("build.skill.regression", "regression"),
