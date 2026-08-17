@@ -1,6 +1,7 @@
 import type { ToolHandlerResult } from "../contracts";
 import { createLogger } from "../../log";
 import { safeStringify } from "../../utils/safe-stringify";
+import { parseCachedEmailMessageId, rejectInvalidCachedEmailMessageId } from "./gmail-boundary";
 
 const log = createLogger("EmailCache");
 
@@ -111,8 +112,8 @@ async function resolveThread(args: Record<string, any>): Promise<ToolHandlerResu
   let accountId = explicitAccountId;
   let providerThreadId: string | null = null;
   if (refType === "email_message") {
-    const messageId = Number(refId);
-    if (!Number.isFinite(messageId)) return { result: `Invalid email_message ref: ${rawRef}`, error: true };
+    const messageId = parseCachedEmailMessageId(refId);
+    if (messageId == null) return rejectInvalidCachedEmailMessageId(refId);
     const [message] = await db.select({ accountId: emailMessages.accountId, providerThreadId: emailMessages.providerThreadId, providerMessageId: emailMessages.providerMessageId })
       .from(emailMessages)
       .where(combineWithVisibleScope(principal, emailScope, eqOp(emailMessages.id, messageId)))
@@ -172,8 +173,11 @@ async function resolveThread(args: Record<string, any>): Promise<ToolHandlerResu
 }
 
 async function getMessage(args: Record<string, any>): Promise<ToolHandlerResult> {
-  const messageId = args.message_id;
-  if (!messageId) return { result: "Missing 'message_id' parameter.", error: true };
+  if (args.message_id == null || args.message_id === "") {
+    return { result: "Missing 'message_id' parameter.", error: true };
+  }
+  const messageId = parseCachedEmailMessageId(args.message_id);
+  if (messageId == null) return rejectInvalidCachedEmailMessageId(args.message_id);
   const { db } = await import("../../db");
   const { emailMessages, emailEnrichments } = await import("@shared/schema");
   const { and: andOp, eq: eqOp } = await import("drizzle-orm");
@@ -183,7 +187,7 @@ async function getMessage(args: Record<string, any>): Promise<ToolHandlerResult>
   const messageScope = { ownerUserId: emailMessages.ownerUserId, accountId: emailMessages.principalAccountId, vaultId: emailMessages.vaultId };
   const enrichmentScope = { ownerUserId: emailEnrichments.ownerUserId, accountId: emailEnrichments.principalAccountId, vaultId: emailEnrichments.vaultId };
   const [message] = await db.select().from(emailMessages)
-    .where(combineWithVisibleScope(principal, messageScope, eqOp(emailMessages.id, Number(messageId))))
+    .where(combineWithVisibleScope(principal, messageScope, eqOp(emailMessages.id, messageId)))
     .limit(1);
   if (!message) return { result: `Email message ${messageId} not found.`, error: true };
   let enrichment = null;

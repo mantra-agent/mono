@@ -1,5 +1,6 @@
 import type { ToolHandlerResult } from "../contracts";
 import { createLogger } from "../../log";
+import { parseCachedEmailMessageId, rejectInvalidCachedEmailMessageId } from "./gmail-boundary";
 
 const log = createLogger("EmailCache");
 const VALID_TIERS = new Set(["🔴", "🟡", "🟢", "📋", "🗑️", "respond_now", "respond_today", "acknowledge", "fyi", "noise"]);
@@ -71,9 +72,13 @@ async function markTriaged(args: Record<string, any>): Promise<ToolHandlerResult
 async function storeEnrichment(args: Record<string, any>): Promise<ToolHandlerResult> {
   const { storage } = await import("../../storage");
   const { thread_id, account_id, message_id, summary, decisions, actions, dismissed, dismiss_reason, model, tokens_used } = args;
-  if (!thread_id || !account_id || !message_id) return { result: "Missing required thread_id, account_id, or message_id.", error: true };
-  const sourceEmail = await storage.getCachedEmailById(Number(message_id));
-  if (!sourceEmail) return { result: `Email message ${message_id} not found.`, error: true };
+  if (!thread_id || !account_id || message_id == null || message_id === "") {
+    return { result: "Missing required thread_id, account_id, or message_id.", error: true };
+  }
+  const cachedMessageId = parseCachedEmailMessageId(message_id);
+  if (cachedMessageId == null) return rejectInvalidCachedEmailMessageId(message_id);
+  const sourceEmail = await storage.getCachedEmailById(cachedMessageId);
+  if (!sourceEmail) return { result: `Email message ${cachedMessageId} not found.`, error: true };
   const sourceThreadId = sourceEmail.providerThreadId || sourceEmail.providerMessageId;
   if (sourceThreadId !== thread_id || sourceEmail.accountId !== account_id) return { result: "Email enrichment identity does not match the visible source message.", error: true };
   const neverDismissTiers = new Set(["🟡", "🔴"]);
@@ -98,8 +103,8 @@ async function storeEnrichment(args: Record<string, any>): Promise<ToolHandlerRe
     if (dismissed) log.debug(`store_enrichment: SAFETY RAIL — blocked dismissal of important email thread=${thread_id} tier=${importantThreadMessages[0].triageTier}`);
   }
   let normalizedActions = Array.isArray(actions) ? actions : null;
-  if (normalizedActions && message_id) {
-    const email = await storage.getCachedEmailById(message_id);
+  if (normalizedActions) {
+    const email = await storage.getCachedEmailById(cachedMessageId);
     if (email?.providerThreadId && email.date) {
       const outbound = await db.select({ id: emailMessages.id })
         .from(emailMessages)
@@ -120,7 +125,7 @@ async function storeEnrichment(args: Record<string, any>): Promise<ToolHandlerRe
   await storage.upsertEmailEnrichment({
     providerThreadId: thread_id,
     accountId: account_id,
-    messageId: message_id || null,
+    messageId: cachedMessageId,
     summary: summary || null,
     decisions: decisions || null,
     actions: normalizedActions,
@@ -129,12 +134,12 @@ async function storeEnrichment(args: Record<string, any>): Promise<ToolHandlerRe
     model: model || null,
     tokensUsed: tokens_used || null,
   });
-  if (shouldDismiss && message_id) {
-    const email = await storage.getCachedEmailById(message_id);
+  if (shouldDismiss) {
+    const email = await storage.getCachedEmailById(cachedMessageId);
     if (email) {
-      await storage.markEmailDone(message_id, true);
+      await storage.markEmailDone(cachedMessageId, true);
       await storage.recordEmailDismissal({
-        messageId: message_id,
+        messageId: cachedMessageId,
         providerThreadId: thread_id,
         accountId: account_id,
         tier: email.triageTier || null,
