@@ -7501,6 +7501,7 @@ ${refs}` : ""),
             annualSalaryMax: args.annualSalaryMax ?? 0,
             targetBonusPercent: args.targetBonusPercent ?? 0,
             equityShareCount: args.equityShareCount ?? 0,
+            scorecardPageId: args.scorecardPageId,
           });
           const role = await jobRoleStorage.create(input);
           return { result: JSON.stringify(role, null, 2) };
@@ -7508,7 +7509,7 @@ ${refs}` : ""),
         case "update": {
           if (!args.id) return { result: "Missing 'id' parameter", error: true };
           const patch = jobRoleUpdateSchema.parse(Object.fromEntries(
-            ["title", "description", "team", "annualSalaryMin", "annualSalaryMax", "targetBonusPercent", "equityShareCount", "clearFields"]
+            ["title", "description", "team", "annualSalaryMin", "annualSalaryMax", "targetBonusPercent", "equityShareCount", "scorecardPageId", "clearFields"]
               .filter((key) => args[key] !== undefined)
               .map((key) => [key, args[key]]),
           ));

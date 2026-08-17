@@ -1282,6 +1282,8 @@ export const jobRoles = pgTable("job_roles", {
   annualSalaryMax: integer("annual_salary_max").notNull().default(0),
   targetBonusPercent: real("target_bonus_percent").notNull().default(0),
   equityShareCount: integer("equity_share_count").notNull().default(0),
+  // Soft-ref to a principal-visible Library page; Role UI expands it Home-style.
+  scorecardPageId: text("scorecard_page_id"),
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),

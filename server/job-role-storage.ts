@@ -1,16 +1,17 @@
 import { randomBytes } from "crypto";
-import { asc, eq, ilike, or } from "drizzle-orm";
-import { jobRoles } from "@shared/schema";
+import { asc, eq, ilike, inArray, or } from "drizzle-orm";
+import { jobRoles, libraryPages } from "@shared/schema";
 import {
   jobRoleCreateSchema,
   jobRoleUpdateSchema,
   normalizeJobRoleTitle,
   type JobRole,
   type JobRoleCreate,
+  type JobRoleScorecardPage,
   type JobRoleUpdate,
 } from "@shared/models/job-roles";
 import { db } from "./db";
-import { getCurrentPrincipal } from "./principal-context";
+import { getCurrentPrincipal, requireCurrentPrincipal } from "./principal-context";
 import {
   assertVisible,
   assertWritable,
@@ -25,6 +26,13 @@ const roleScope = {
   accountId: jobRoles.accountId,
 };
 
+const libraryScopeColumns = {
+  scope: libraryPages.scope,
+  ownerUserId: libraryPages.ownerUserId,
+  accountId: libraryPages.accountId,
+  vaultId: libraryPages.vaultId,
+};
+
 function currentPrincipal() {
   const principal = getCurrentPrincipal();
   if (!principal?.userId || !principal.accountId) {
@@ -37,7 +45,7 @@ function newRoleId(): string {
   return randomBytes(8).toString("hex");
 }
 
-function mapRole(row: typeof jobRoles.$inferSelect): JobRole {
+function mapRole(row: typeof jobRoles.$inferSelect, scorecardPage: JobRoleScorecardPage | null = null): JobRole {
   return {
     id: row.id,
     title: row.title,
@@ -47,6 +55,8 @@ function mapRole(row: typeof jobRoles.$inferSelect): JobRole {
     annualSalaryMax: row.annualSalaryMax,
     targetBonusPercent: row.targetBonusPercent,
     equityShareCount: row.equityShareCount,
+    scorecardPageId: row.scorecardPageId ?? null,
+    scorecardPage,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -58,6 +68,52 @@ function validateRange(current: JobRole, patch: JobRoleUpdate): void {
   if (max < min) {
     throw Object.assign(new Error("Annual salary maximum must be greater than or equal to the minimum"), { status: 400 });
   }
+}
+
+/**
+ * Resolve reference-picker page refs (slug or id) to canonical visible page IDs.
+ * Soft-refs never grant visibility; missing pages fail closed on write.
+ */
+async function resolveVisiblePageId(ref: string): Promise<string> {
+  const principal = requireCurrentPrincipal();
+  const needle = ref.trim();
+  if (!needle) {
+    throw Object.assign(new Error("Scorecard page is required"), { status: 400 });
+  }
+  const [row] = await db
+    .select({ id: libraryPages.id })
+    .from(libraryPages)
+    .where(
+      combineWithVisibleScope(
+        principal,
+        libraryScopeColumns,
+        or(eq(libraryPages.id, needle), eq(libraryPages.slug, needle)),
+      ),
+    )
+    .limit(1);
+  if (!row) {
+    throw Object.assign(new Error("Scorecard page not found"), { status: 400 });
+  }
+  return row.id;
+}
+
+async function loadScorecardPages(pageIds: Array<string | null | undefined>): Promise<Map<string, JobRoleScorecardPage>> {
+  const ids = [...new Set(pageIds.filter((id): id is string => Boolean(id)))];
+  if (ids.length === 0) return new Map();
+  const principal = requireCurrentPrincipal();
+  const rows = await db
+    .select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug })
+    .from(libraryPages)
+    .where(combineWithVisibleScope(principal, libraryScopeColumns, inArray(libraryPages.id, ids)));
+  return new Map(rows.map((row) => [row.id, row]));
+}
+
+function withScorecard(
+  row: typeof jobRoles.$inferSelect,
+  pages: Map<string, JobRoleScorecardPage>,
+): JobRole {
+  const pageId = row.scorecardPageId ?? null;
+  return mapRole(row, pageId ? pages.get(pageId) ?? null : null);
 }
 
 export class JobRoleStorage {
@@ -74,7 +130,8 @@ export class JobRoleStorage {
       .where(combineWithVisibleScope(principal, roleScope, search))
       .orderBy(asc(jobRoles.team), asc(jobRoles.normalizedTitle))
       .limit(limit);
-    return rows.map(mapRole);
+    const pages = await loadScorecardPages(rows.map((row) => row.scorecardPageId));
+    return rows.map((row) => withScorecard(row, pages));
   }
 
   async get(id: string): Promise<JobRole> {
@@ -84,12 +141,18 @@ export class JobRoleStorage {
       .from(jobRoles)
       .where(combineWithVisibleScope(principal, roleScope, eq(jobRoles.id, id)))
       .limit(1);
-    return mapRole(assertVisible(principal, row, "Job role"));
+    const visible = assertVisible(principal, row, "Job role");
+    const pages = await loadScorecardPages([visible.scorecardPageId]);
+    return withScorecard(visible, pages);
   }
 
   async create(input: JobRoleCreate): Promise<JobRole> {
     const principal = currentPrincipal();
     const parsed = jobRoleCreateSchema.parse(input);
+    const scorecardPageId =
+      parsed.scorecardPageId === undefined || parsed.scorecardPageId === null
+        ? null
+        : await resolveVisiblePageId(parsed.scorecardPageId);
     const now = new Date();
     const [row] = await db
       .insert(jobRoles)
@@ -105,11 +168,14 @@ export class JobRoleStorage {
         annualSalaryMax: parsed.annualSalaryMax,
         targetBonusPercent: parsed.targetBonusPercent,
         equityShareCount: parsed.equityShareCount,
+        scorecardPageId,
         createdAt: now,
         updatedAt: now,
       })
       .returning();
-    return mapRole(assertWritable(principal, row, "Job role"));
+    const writable = assertWritable(principal, row, "Job role");
+    const pages = await loadScorecardPages([writable.scorecardPageId]);
+    return withScorecard(writable, pages);
   }
 
   async update(id: string, input: JobRoleUpdate): Promise<JobRole> {
@@ -117,20 +183,31 @@ export class JobRoleStorage {
     const parsed = jobRoleUpdateSchema.parse(input);
     const { clearFields, ...patch } = parsed;
     if (patch.description === "" && !clearFields?.includes("description")) delete patch.description;
-    if (Object.keys(patch).length === 0 && !clearFields?.length) return this.get(id);
+    if (patch.scorecardPageId === "" && !clearFields?.includes("scorecardPageId")) delete patch.scorecardPageId;
+
+    const next: Record<string, unknown> = { ...patch };
+    if (clearFields?.includes("description")) next.description = "";
+    if (clearFields?.includes("scorecardPageId") || patch.scorecardPageId === null) {
+      next.scorecardPageId = null;
+    } else if (typeof patch.scorecardPageId === "string") {
+      next.scorecardPageId = await resolveVisiblePageId(patch.scorecardPageId);
+    }
+
+    if (Object.keys(next).length === 0) return this.get(id);
     const current = await this.get(id);
     validateRange(current, patch);
     const [row] = await db
       .update(jobRoles)
       .set({
-        ...patch,
-        ...(clearFields?.includes("description") ? { description: "" } : {}),
+        ...next,
         ...(patch.title ? { normalizedTitle: normalizeJobRoleTitle(patch.title) } : {}),
         updatedAt: new Date(),
       })
       .where(combineWithWritableScope(principal, roleScope, eq(jobRoles.id, id)))
       .returning();
-    return mapRole(assertWritable(principal, row, "Job role"));
+    const writable = assertWritable(principal, row, "Job role");
+    const pages = await loadScorecardPages([writable.scorecardPageId]);
+    return withScorecard(writable, pages);
   }
 
   async delete(id: string): Promise<JobRole> {
@@ -139,7 +216,7 @@ export class JobRoleStorage {
       .delete(jobRoles)
       .where(combineWithWritableScope(principal, roleScope, eq(jobRoles.id, id)))
       .returning();
-    return mapRole(assertWritable(principal, row, "Job role"));
+    return mapRole(assertWritable(principal, row, "Job role"), null);
   }
 }
 

@@ -844,7 +844,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   jobs: {
-    description: "Manage admin-only job role definitions used by future hiring plans and P&L headcount costs. Every field is available to query and edit: title, description, team, annual salary minimum/maximum, target annual performance or bonus compensation as a percentage of base salary, and equity share count.",
+    description: "Manage admin-only job role definitions used by future hiring plans and P&L headcount costs. Every field is available to query and edit: title, description, team, annual salary minimum/maximum, target annual performance or bonus compensation as a percentage of base salary, equity share count, and optional Scorecard Library page.",
     category: "work",
     sideEffectDefault: 1,
     sideEffectActions: { list: 0, get: 0 },
@@ -862,7 +862,8 @@ export const TOOLS: Record<string, ToolMeta> = {
         annualSalaryMax: { type: "number", description: "Annual base salary range maximum in whole dollars" },
         targetBonusPercent: { type: "number", description: "Target annual performance or bonus compensation as a percentage of base salary" },
         equityShareCount: { type: "number", description: "Equity share count" },
-        clearFields: { type: "array", items: { type: "string", enum: ["description"] }, description: "Fields to explicitly clear during update. Currently supports description." },
+        scorecardPageId: { type: "string", description: "Library page ID or slug for the role Scorecard; null or clearFields clears it" },
+        clearFields: { type: "array", items: { type: "string", enum: ["description", "scorecardPageId"] }, description: "Fields to explicitly clear during update. Supports description and scorecardPageId." },
       },
       required: ["action"],
     },
