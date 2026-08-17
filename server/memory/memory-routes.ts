@@ -89,6 +89,10 @@ function serializeVnextClaim(claim: MemoryVnextClaim) {
     recallCount: claim.recallCount,
     lastRecalledAt: serializeDate(claim.lastRecalledAt),
     activeTouchedAt: serializeDate(claim.activeTouchedAt),
+    reviewJudgment: claim.reviewJudgment ?? null,
+    reviewNote: claim.reviewNote ?? null,
+    reviewedAt: serializeDate(claim.reviewedAt),
+    reviewerUserId: claim.reviewerUserId ?? null,
     createdAt: serializeDate(claim.createdAt),
     updatedAt: serializeDate(claim.updatedAt),
   };
@@ -1133,6 +1137,49 @@ async function handleDeleteVnextClaim(req: Request, res: Response): Promise<void
   }
 }
 
+const reviewClaimBodySchema = z.object({
+  judgment: z.union([
+    z.enum(["useful", "incorrect", "needs_clarification"]),
+    z.null(),
+  ]),
+  note: z.string().max(2000).optional().nullable(),
+});
+
+async function handleReviewVnextClaim(req: Request, res: Response): Promise<void> {
+  try {
+    const id = parsePositiveInt(req.params.id);
+    if (!id) { res.status(400).json({ error: "Invalid claim id" }); return; }
+    const parsed = reviewClaimBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid review body" });
+      return;
+    }
+    const claim = await memoryVnextClaimStorage.reviewClaim(id, {
+      judgment: parsed.data.judgment,
+      note: parsed.data.note,
+    });
+    eventBus.publish({
+      category: "memory",
+      event: "entries_changed",
+      payload: {
+        action: "vnext_claim_reviewed",
+        claimId: id,
+        judgment: claim.reviewJudgment,
+        level: "info",
+      },
+    });
+    res.json({ storage: "memory_vnext_claims", claim: serializeVnextClaim(claim) });
+  } catch (error: unknown) {
+    const message = errorMessage(error);
+    const status =
+      message.includes("not found") ? 404
+        : message.includes("requires") || message.includes("Invalid") || message.includes("must be")
+          ? 400
+          : 500;
+    res.status(status).json({ error: message });
+  }
+}
+
 async function handleGetVnextClaim(req: Request, res: Response): Promise<void> {
   try {
     const id = parsePositiveInt(req.params.id);
@@ -1376,6 +1423,7 @@ export function registerMemoryRoutes(app: Express) {
   app.post("/api/memory/vnext/evaluation/predictions/reviews", requirePermission("system:write"), handleSetVnextCausalPathReview);
   app.get("/api/memory/vnext/claims", handleSearchVnextClaims);
   app.get("/api/memory/vnext/claims/:id", handleGetVnextClaim);
+  app.post("/api/memory/vnext/claims/:id/review", handleReviewVnextClaim);
   app.delete("/api/memory/vnext/claims/:id", handleDeleteVnextClaim);
   app.get("/api/memory/vnext/claims/:id/sources", handleGetVnextClaimSources);
   app.get("/api/memory/vnext/claims/:id/entity-links", handleGetVnextClaimEntityLinks);

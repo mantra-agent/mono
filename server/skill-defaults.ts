@@ -1119,7 +1119,7 @@ Surface any errors returned by the cycle explicitly in the Memory section and in
     category: "thinking",
     activity: ACTIVITY_THINKING,
     author: "system",
-    version: "1.0",
+    version: "2.0",
     addToMemory: true,
     pinnedToContext: false,
     callType: "internal",
@@ -1132,8 +1132,10 @@ Surface any errors returned by the cycle explicitly in the Memory section and in
       { check: "PreContext cadence and period bounds are explicitly read and used to choose data sources, Library title, tags, and parent collection", weight: 3 },
       { check: "Relevant period data is loaded before writing: Library artifacts for adjacent cadences, goals/projects/tasks, calendar, people, memory, and observations as appropriate", weight: 3 },
       { check: "Brief is concise and evidence-backed, naming actual outcomes, open loops, patterns, and one practical next action without live-interview questions", weight: 3 },
-      { check: "Useful cadence-specific logic is preserved: daily captures events/open threads/learning, weekly compares plan vs reality, monthly synthesizes weekly artifacts, quarterly/annual synthesize lower-cadence artifacts", weight: 3 },
-      { check: "Library artifact is created in the correct collection with cadence-specific title and tags, and linked through goals check-in artifact metadata when a supported link action exists", weight: 2 },
+      { check: "Daily Digest uses unlabeled lead + closed Moved/Open/Learning/Memory sections with discrete lines, never one undifferentiated paragraph", weight: 3 },
+      { check: "Daily Memory section lists that local day's claims as @claim rows (or None) via search_claims with includeReviewedRetired and createdAt bounds; Digest never writes review judgments", weight: 3 },
+      { check: "Useful cadence-specific logic is preserved: daily is structured closeout, weekly compares plan vs reality, monthly synthesizes weekly artifacts, quarterly/annual synthesize lower-cadence artifacts", weight: 3 },
+      { check: "Library artifact is created or edited in the correct collection with cadence-specific title and tags, and linked through goals check-in artifact metadata when a supported link action exists", weight: 2 },
       { check: "Artifact is surfaced to Home/Simple Inbox only when it contains a decision, risk, carry-forward, or review-worthy synthesis", weight: 2 },
       { check: "Final output includes the brief content or a compact faithful summary plus page reference, not merely a delivery confirmation", weight: 2 },
     ],
@@ -1158,31 +1160,71 @@ If cadence is missing, infer the smallest honest cadence from the period bounds.
 Use one skill. Vary only the period and source altitude.
 
 ### Daily
-Purpose: compact journal / day closeout.
+Purpose: structured evening closeout (Daily Digest). Brief-comparable form: unlabeled lead, named sections, discrete lines. Not one paragraph.
 
-Read:
-- Current context first: memory, calendar, active work, people, goals, observations.
-- Targeted \`memory.search\` queries for named events, projects, or people if context is incomplete.
-- \`goals\` / \`work\` only when the day touched explicit priorities or project movement.
+Read order (required):
+1. \`session.list\` for the local day in \`[periodStart, periodEnd)\` — primary inventory of what happened.
+2. Claim query for Memory (complete inventory of claims *created* that local day):
+   - \`memory(action: "search_claims", createdAfter: <periodStart ISO>, createdBefore: <periodEnd ISO>, includeReviewedRetired: true, limit: 50, offset: 0)\`
+   - Membership is \`createdAt\` only. Do not rank, filter by claimType/source, or hide metacognitive rows.
+   - \`includeReviewedRetired\` keeps human-reviewed incorrect rows so same-day rewrite still shows the stamp; unreviewed retired stays out.
+   - Newest first (search already orders that way). Cap 50; if more exist, list 50 and one overflow line: \`and {N} more created today\`.
+3. Targeted follow-up only for named gaps: calendar, goals/work, people, memory.search for narrative color. Scored memory is supplementary to the lead/Moved narrative, never the Memory inventory.
 
-Write sections, omitting empties:
-- \`## Summary\` — 2-3 factual sentences.
-- \`## What Happened\` — named events and conversations.
-- \`## What Moved\` — completed work, decisions, shipped artifacts, relationship movement.
-- \`## Open Threads\` — what carries into tomorrow.
-- \`## Learning\` — exactly one honest learning.
+Write the day's section (closed taxonomy — do not add, rename, or revive retired daily headings):
 
-Save to Library:
-- parent: \`journals\`
-- title: \`Journal — YYYY-MM-DD\`
-- tags: [\`journal\`, \`daily\`, \`reflection\`]
+\`\`\`markdown
+## YYYY-MM-DD
+
+{unlabeled lead: 1–2 sentences naming what kind of day it was}
+
+### Moved
+- discrete line
+- discrete line
+
+### Open
+- discrete unresolved thread
+
+### Learning
+one honest line
+
+### Memory
+- @claim:{id} — {one-line content} · {source} · {lifecycle} · {review or unset}
+\`\`\`
+
+Rules:
+- Lead is unlabeled — not a heading called Summary. Like Brief's thesis line.
+- **Moved** = shipped work, decisions, relationship movement evidenced by session.list (and targeted follow-up). Discrete lines, not a paragraph.
+- **Open** = unresolved threads worth tomorrow. Omit the heading when there are none.
+- **Learning** = one line. Omit only when the day produced no honest learning (rare; prefer naming the absence in the lead rather than inventing a lesson).
+- **Memory** = always present. Each in-bound claim is its own row with canonical \`@claim:{id}\`, one-line content (title if present else truncated body), source/source type, lifecycleStage, and current reviewJudgment or \`unset\`. Zero claims → a single line \`None\`.
+- Empty optional sections are omitted, never padded. No other daily headings.
+- Digest generation NEVER calls \`memory.review_claim\` and never stamps or retires claims. Review actions live on the claim surface (\`/memory?claim=\`); this skill only lists.
+
+Save to Library — one running Daily Digest page (mirror Morning Brief geometry):
+1. Resolve the page:
+   - Prefer \`library(action: "get_library_page", id: "journal")\`.
+   - If missing, try title search for "Daily Digest" / "Nightly Journal" / "Journal" before creating.
+   - If still missing, create once with:
+     - id/slug: \`journal\`
+     - title: \`Daily Digest\`
+     - plainTextContent starting with \`# Daily Digest\` then today's dated section
+     - tags: [\`journal\`, \`daily\`, \`digest\`, \`reflection\`]
+2. If the page exists, prepend (or replace same-day) via \`library(action: "edit_library_page")\`:
+   - Newest day first, immediately under any intro/purpose prose.
+   - Each day starts with \`## YYYY-MM-DD\` then the structured body above.
+   - Same-day rerun replaces that day's section in place — do not duplicate.
+   - Do not mint \`journal-YYYY-MM-DD\` or any dated sibling.
+3. Surface the SAME running page when useful (surfacePolicy + decision/risk/carry-forward/review-worthy synthesis), surfaceDurationHours: 48, surfaceReason naming the day.
+
+Do NOT create a new page per day. Do NOT put Digest under Specs/Skills canonical folders.
 
 ### Weekly
 Purpose: concise review of the completed week, replacing standalone interview-heavy weekly reflection when planning is not being run.
 
 Read:
 - The most recent weekly plan for the period, in full via \`get_library_page\`.
-- Daily journals/reviews from the week, in full when available.
+- Daily Digest / journal entries from the week, in full when available.
 - Goals for this_week/this_month and active projects/tasks.
 - Calendar for the week and people agenda/interactions when relationships materially changed.
 
@@ -1267,29 +1309,31 @@ Save to Library:
 ## Data Rules
 
 - Always call \`get_library_page\` for any Library artifact you rely on. Search previews are truncated.
-- Prefer deterministic period artifacts over semantic memory when available: daily journals feed weekly; weekly reflections feed monthly; monthly reflections feed quarterly; quarterly reflections feed annual.
+- Prefer deterministic period artifacts over semantic memory when available: daily digests feed weekly; weekly reflections feed monthly; monthly reflections feed quarterly; quarterly reflections feed annual.
 - Use memory search to fill named gaps, not as the primary source when period artifacts exist.
 - Do not fabricate. If a section has no evidence, omit it or name the absence as a signal.
 - Keep tool mutations rare. Reflection may create/link the Library page and update check-in artifact metadata. Do not rewrite goals, principles, theses, personal patterns, or Rules unless preContext explicitly asks for maintenance and the evidence is strong.
+- Never auto-judge, auto-retire, or auto-canonicalize claims from Digest generation.
 
 ## Library Save and Surfacing
 
 After writing the brief:
 
-1. Create the Library page with a cadence-specific title, tags, and full markdown content; use an explicit parent when filing under a known collection.
-2. If a supported goals check-in link exists for the cadence, link the page.
-3. Surface to Home/Simple Inbox only when useful:
+1. For daily: follow the running Daily Digest page rules above (slug \`journal\`, title \`Daily Digest\`).
+2. For other cadences: create the Library page with a cadence-specific title, tags, and full markdown content; use an explicit parent when filing under a known collection.
+3. If a supported goals check-in link exists for the cadence, link the page.
+4. Surface to Home/Simple Inbox only when useful:
    - \`surfacePolicy === "always"\`; or
    - \`surfacePolicy !== "never"\` and the brief contains a decision, risk, stalled goal, carry-forward, or review-worthy synthesis.
 
-Use \`library(action: "create_library_page", surface: true, surfaceDurationHours: 48, surfaceReason: "Review {cadence} reflection: {one concrete reason}", surfaceSection: "inbox")\` when surfacing. For annual/quarterly artifacts, use 96 hours if the synthesis is strategic.
+Use \`library(action: "create_library_page", surface: true, surfaceDurationHours: 48, surfaceReason: "Review {cadence} reflection: {one concrete reason}", surfaceSection: "inbox")\` when surfacing a new non-daily page. For the running Daily Digest / Morning-style rolling page, re-surface the same page via edit. For annual/quarterly artifacts, use 96 hours if the synthesis is strategic.
 
 If the page has already been created but you later decide it should be surfaced, use \`library(action: "edit_library_page", surface: true, ...)\` rather than duplicating the page.
 
 ## Output Rules
 
 - Final response must include the brief content or a compact faithful summary plus page reference. Never output only "saved".
-- Be concise. Daily: 300-600 words. Weekly/monthly: 500-900 words. Quarterly/annual: 700-1200 words unless the caller requests more.
+- Be concise. Daily: scannable lead + discrete lines (not a 150–350 word wall). Weekly/monthly: 500-900 words. Quarterly/annual: 700-1200 words unless the caller requests more.
 - Use first person for Agent's own journal/identity reflections. Use Ray-centered language for Ray's planning/review artifacts.
 - No live-interview burden: do not stop for Ray's answers unless the caller explicitly requested an interactive review.
 - No empty headings.

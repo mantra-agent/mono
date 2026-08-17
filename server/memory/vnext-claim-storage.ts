@@ -12,15 +12,18 @@ import {
 } from "../scoped-storage";
 import {
   MEMORY_VNEXT_LIFECYCLE_STAGE,
+  MEMORY_VNEXT_REVIEW_JUDGMENT,
   memoryVnextClaimLinkEvidence,
   memoryVnextClaimLinks,
   memoryVnextClaims,
   memoryVnextEntityLinks,
+  memoryVnextReviewJudgments,
   memoryVnextSourceRefs,
   type MemorySource,
   type MemoryVnextClaim,
   type MemoryVnextClaimType,
   type MemoryVnextLifecycleStage,
+  type MemoryVnextReviewJudgment,
   type MemoryVnextSourceRef,
   type MemoryVnextEntityLink,
   type MemoryVnextClaimLink,
@@ -206,6 +209,13 @@ export interface VnextLifecycleTransitionInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface VnextClaimReviewInput {
+  /** Current judgment, or null to clear. */
+  judgment: MemoryVnextReviewJudgment | null;
+  /** Required when judgment is needs_clarification; omitted/cleared otherwise. */
+  note?: string | null;
+}
+
 export interface VnextLifecycleSkipInput {
   reason: string;
   nextAttemptAt: Date;
@@ -229,6 +239,12 @@ export interface VnextClaimSearchFilters {
   limit?: number;
   offset?: number;
   lifecycleStage?: string;
+  /**
+   * Digest Memory membership: exclude retired claims that have no human review
+   * stamp; keep reviewed (including incorrect→retired) rows so same-day rewrite
+   * still shows the judgment. When true, plain lifecycleStage exclusion is not applied.
+   */
+  includeReviewedRetired?: boolean;
 }
 
 export interface VnextBridgeCandidate {
@@ -447,6 +463,10 @@ function mapRawVnextClaimRow(row: Record<string, unknown>): MemoryVnextClaim {
     recallCount: Number(row.recall_count ?? 0),
     lastRecalledAt: toClaimDate(row.last_recalled_at),
     activeTouchedAt: toClaimDate(row.active_touched_at),
+    reviewJudgment: (row.review_judgment as string | null) ?? null,
+    reviewNote: (row.review_note as string | null) ?? null,
+    reviewedAt: toClaimDate(row.reviewed_at),
+    reviewerUserId: (row.reviewer_user_id as string | null) ?? null,
     createdAt: toClaimDate(row.created_at) ?? new Date(0),
     updatedAt: toClaimDate(row.updated_at) ?? new Date(0),
   };
@@ -463,7 +483,7 @@ export async function executeVnextClaimSemanticSearch(
     SELECT id, title, content, claim_type, confidence, observed_at, valid_from, valid_until, occurred_at, expected_by, topics, entity_mentions, source_claim_index,
       content_hash, embedding, source_memory_id, source, source_id, lifecycle_stage,
       lifecycle_stage_updated_at, scope, owner_user_id, account_id, instance_id, created_by_user_id, updated_by_user_id, metadata, recall_count,
-      last_recalled_at, active_touched_at, created_at, updated_at,
+      last_recalled_at, active_touched_at, review_judgment, review_note, reviewed_at, reviewer_user_id, created_at, updated_at,
       1 - (embedding <=> ${embeddingStr}::vector) AS similarity
     FROM memory_vnext_claims
     WHERE embedding IS NOT NULL
@@ -495,7 +515,7 @@ export async function executeVnextClaimTitleTwinSearch(
     SELECT id, title, content, claim_type, confidence, observed_at, valid_from, valid_until, occurred_at, expected_by, topics, entity_mentions, source_claim_index,
       content_hash, embedding, source_memory_id, source, source_id, lifecycle_stage,
       lifecycle_stage_updated_at, scope, owner_user_id, account_id, instance_id, created_by_user_id, updated_by_user_id, metadata, recall_count,
-      last_recalled_at, active_touched_at, created_at, updated_at,
+      last_recalled_at, active_touched_at, review_judgment, review_note, reviewed_at, reviewer_user_id, created_at, updated_at,
       1 - (embedding <=> ${embeddingStr}::vector) AS similarity
     FROM memory_vnext_claims
     WHERE embedding IS NOT NULL
@@ -1105,6 +1125,117 @@ export class MemoryVnextClaimStorage {
       reason: transition.reason,
     }));
     return updated;
+  }
+
+  /**
+   * Canonical human review mutation for Digest / Memory claim surfaces.
+   * Stamps typed review columns; `incorrect` retires through retireClaim.
+   * Fail-closed without a user principal. Sleep/lifecycle must not call this.
+   */
+  async reviewClaim(id: number, input: VnextClaimReviewInput): Promise<MemoryVnextClaim> {
+    const principal = requireCurrentUserPrincipal();
+    if (!principal.userId) {
+      throw new Error("Claim review requires an owning user principal");
+    }
+
+    const judgment = input.judgment;
+    if (judgment !== null) {
+      if (!(memoryVnextReviewJudgments as readonly string[]).includes(judgment)) {
+        throw new Error(
+          `Invalid review judgment "${String(judgment)}". Expected useful | incorrect | needs_clarification | null.`,
+        );
+      }
+    }
+
+    const noteRaw = typeof input.note === "string" ? input.note.trim() : "";
+    if (judgment === MEMORY_VNEXT_REVIEW_JUDGMENT.NEEDS_CLARIFICATION && !noteRaw) {
+      throw new Error("needs_clarification requires a non-empty review note");
+    }
+    if (noteRaw.length > 2000) {
+      throw new Error("review note must be at most 2000 characters");
+    }
+
+    const [current] = await db
+      .select()
+      .from(memoryVnextClaims)
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
+      .limit(1);
+
+    if (!current) {
+      throw new Error(`vNext claim ${id} not found`);
+    }
+
+    const now = new Date();
+    const nextNote =
+      judgment === MEMORY_VNEXT_REVIEW_JUDGMENT.NEEDS_CLARIFICATION ? noteRaw : null;
+    const sameJudgment = (current.reviewJudgment ?? null) === judgment;
+    const sameNote = (current.reviewNote ?? null) === nextNote;
+
+    // Idempotent same judgment: refresh reviewedAt only (and note if clarification).
+    if (sameJudgment && sameNote && judgment !== null) {
+      const [refreshed] = await db
+        .update(memoryVnextClaims)
+        .set({
+          reviewedAt: now,
+          reviewerUserId: principal.userId,
+          updatedByUserId: principal.userId,
+          updatedAt: now,
+        })
+        .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
+        .returning();
+      return refreshed;
+    }
+
+    if (judgment === null) {
+      const [cleared] = await db
+        .update(memoryVnextClaims)
+        .set({
+          reviewJudgment: null,
+          reviewNote: null,
+          reviewedAt: null,
+          reviewerUserId: null,
+          updatedByUserId: principal.userId,
+          updatedAt: now,
+        })
+        .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
+        .returning();
+      log.info(JSON.stringify({
+        event: "memory.vnext.claim_review_cleared",
+        claimId: id,
+        previous: current.reviewJudgment,
+      }));
+      return cleared;
+    }
+
+    const [stamped] = await db
+      .update(memoryVnextClaims)
+      .set({
+        reviewJudgment: judgment,
+        reviewNote: nextNote,
+        reviewedAt: now,
+        reviewerUserId: principal.userId,
+        updatedByUserId: principal.userId,
+        updatedAt: now,
+      })
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
+      .returning();
+
+    log.info(JSON.stringify({
+      event: "memory.vnext.claim_reviewed",
+      claimId: id,
+      judgment,
+      previous: current.reviewJudgment,
+    }));
+
+    if (judgment === MEMORY_VNEXT_REVIEW_JUDGMENT.INCORRECT) {
+      // Stamp first, then retire through the existing canonical retire path.
+      return this.retireClaim(id, {
+        reason: "human_review_incorrect",
+        metadata: { reviewJudgment: judgment },
+      });
+    }
+
+    return stamped;
   }
 
   async retireClaim(id: number, input: VnextLifecycleTransitionInput): Promise<MemoryVnextClaim> {
@@ -1853,12 +1984,18 @@ export class MemoryVnextClaimStorage {
     }
     if (typeof filters.lifecycleStage === "string") {
       conditions.push(eq(memoryVnextClaims.lifecycleStage, normalizeLifecycleStage(filters.lifecycleStage)));
+    } else if (filters.includeReviewedRetired) {
+      // Digest Memory: retired without a human stamp stays out; reviewed incorrect stays in.
+      conditions.push(sql`(
+        ${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}
+        OR ${memoryVnextClaims.reviewJudgment} IS NOT NULL
+      )`);
     } else {
       // Exclude retired claims from default search unless explicitly requested
       conditions.push(sql`${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}`);
     }
     if (typeof filters.createdAfter === "string") {
-      conditions.push(sql`${memoryVnextClaims.createdAt} > ${filters.createdAfter}::timestamptz`);
+      conditions.push(sql`${memoryVnextClaims.createdAt} >= ${filters.createdAfter}::timestamptz`);
     }
     if (typeof filters.createdBefore === "string") {
       conditions.push(sql`${memoryVnextClaims.createdAt} < ${filters.createdBefore}::timestamptz`);

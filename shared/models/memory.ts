@@ -431,6 +431,20 @@ export const MEMORY_VNEXT_LIFECYCLE_STAGE = {
   RETIRED: "retired",
 } as const satisfies Record<string, MemoryVnextLifecycleStage>;
 
+/** Explicit human review judgment on a claim (Digest / Memory surface). Null = unset. */
+export const memoryVnextReviewJudgments = [
+  "useful",
+  "incorrect",
+  "needs_clarification",
+] as const;
+export type MemoryVnextReviewJudgment = (typeof memoryVnextReviewJudgments)[number];
+
+export const MEMORY_VNEXT_REVIEW_JUDGMENT = {
+  USEFUL: "useful",
+  INCORRECT: "incorrect",
+  NEEDS_CLARIFICATION: "needs_clarification",
+} as const satisfies Record<string, MemoryVnextReviewJudgment>;
+
 export const memoryVnextClaims = pgTable(
   "memory_vnext_claims",
   {
@@ -479,6 +493,12 @@ export const memoryVnextClaims = pgTable(
       withTimezone: true,
       precision: 6,
     }),
+    /** Current human review judgment from Digest/Memory. Null = unset. */
+    reviewJudgment: text("review_judgment"),
+    /** Required when reviewJudgment is needs_clarification; otherwise null. */
+    reviewNote: text("review_note"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true, precision: 6 }),
+    reviewerUserId: text("reviewer_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true, precision: 6 })
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),
@@ -496,6 +516,7 @@ export const memoryVnextClaims = pgTable(
     index("idx_memory_vnext_claim_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_memory_vnext_claim_account").on(table.accountId),
     index("idx_memory_vnext_claim_instance").on(table.instanceId),
+    index("idx_memory_vnext_claim_review_judgment").on(table.reviewJudgment),
   ],
 );
 
