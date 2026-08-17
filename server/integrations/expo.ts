@@ -11,8 +11,39 @@ import { resolveGitSource } from "../git-source-resolver";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
 import { and, eq } from "drizzle-orm";
 import { environmentHostingBindings, platformProductEnvironments, products, platforms } from "@shared/models/platforms";
+import { providerFetch, readBoundedProviderBody } from "./provider-http";
 
 const log = createLogger("Expo");
+
+const EXPO_GRAPHQL_URL = "https://api.expo.dev/graphql";
+const EXPO_TRANSPORT_MESSAGE_RE =
+  /fetch failed|timed?\s*out|ECONNRESET|ENOTFOUND|EAI_AGAIN|socket hang up|network|UND_ERR|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH/i;
+const EXPO_TRANSPORT_CODE_RE =
+  /^(ECONNRESET|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|UND_ERR)/;
+
+/** True when Expo GraphQL/log transport failed before a durable API/application response. */
+export function isExpoProviderTransportError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const err = error as { name?: unknown; message?: unknown; code?: unknown; cause?: unknown };
+  const name = typeof err.name === "string" ? err.name : "";
+  if (name === "AbortError" || name === "TimeoutError") return true;
+  const message = typeof err.message === "string" ? err.message : String(error);
+  if (EXPO_TRANSPORT_MESSAGE_RE.test(message)) return true;
+  const code = typeof err.code === "string" ? err.code : "";
+  if (code && EXPO_TRANSPORT_CODE_RE.test(code)) return true;
+  const cause = err.cause;
+  if (cause && typeof cause === "object") {
+    const causeCode = typeof (cause as { code?: unknown }).code === "string"
+      ? String((cause as { code: string }).code)
+      : "";
+    if (causeCode && EXPO_TRANSPORT_CODE_RE.test(causeCode)) return true;
+    const causeMessage = typeof (cause as { message?: unknown }).message === "string"
+      ? String((cause as { message: string }).message)
+      : "";
+    if (causeMessage && EXPO_TRANSPORT_MESSAGE_RE.test(causeMessage)) return true;
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Token
@@ -207,16 +238,27 @@ async function expoGraphQL<T = any>(
 ): Promise<T> {
   const token = await getExpoToken();
   if (!token) throw new Error("No Expo access token configured");
-  const resp = await fetch("https://api.expo.dev/graphql", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
+  let resp: Response;
+  try {
+    resp = await providerFetch(EXPO_GRAPHQL_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+  } catch (error) {
+    if (isExpoProviderTransportError(error)) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const wrapped = new Error(`Expo GraphQL transport failed: ${detail}`);
+      (wrapped as Error & { cause?: unknown }).cause = error;
+      throw wrapped;
+    }
+    throw error;
+  }
   if (!resp.ok) {
-    const text = await resp.text();
+    const text = await readBoundedProviderBody(resp);
     throw new Error(`Expo API ${resp.status}: ${text}`);
   }
   const json = await resp.json();
@@ -529,8 +571,11 @@ function collectErrorExcerpts(text: string, maxExcerpts = 80): string[] {
 }
 
 async function fetchExpoLogText(url: string, token: string): Promise<string> {
-  const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text().then((t) => t.slice(0, 500)).catch(() => "")}`);
+  const resp = await providerFetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!resp.ok) {
+    const text = await readBoundedProviderBody(resp);
+    throw new Error(`HTTP ${resp.status}: ${text.slice(0, 500)}`);
+  }
   return resp.text();
 }
 
