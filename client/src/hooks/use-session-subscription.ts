@@ -507,13 +507,11 @@ export function useSessionSubscriptions(
     };
   }, [handlerId, handleMessage, handleReconnect, owner, requestRecovery, sendSubscribe, sendUnsubscribe, setStreamConnected, tabId, wsOwnerId]);
 
-  useEffect(() => {
-    if (sharedWSRef.current?.getReadyState() !== WebSocket.OPEN) return;
-    const ids = Array.from(subscribedIdsRef.current);
-    if (ids.length === 0) return;
-    requestedIdsRef.current.clear();
-    ids.forEach((id) => sendSubscribe(id, "active-session-change"));
-  }, [activeSession, sendSubscribe]);
+  // activeSession is diagnostic metadata on subscribe payloads only. Focus changes
+  // must not clear requestedIds or force a mass resubscribe — that races live
+  // streams with a second snapshot delivery while output is active (Question
+  // answers and other Session Window lifecycle transitions). Ownership stays on
+  // the session-id set effect and the coalesced recovery coordinator.
 
   useEffect(() => {
     const normalizedIds = normalizedKey ? normalizedKey.split("\u0000") : [];

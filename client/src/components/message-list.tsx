@@ -690,16 +690,16 @@ export function MessageList({
     (effectiveStreaming.source !== null || !!liveStreamRenderId) &&
     (effectiveStreaming.segments.length > 0 || hasActiveAssistantPlaceholder) &&
     ((runActive ?? isSessionStreaming) || !!liveStreamRenderId);
-  const activeTurnKey = activeTurn
-    ? activeTurn.clientTurnId
-    : activeSession
-      ? `server-${activeSession}`
-      : null;
-  const activeStreamingDraftId = activeTurnKey
-    ? `draft-assistant-${activeTurnKey}`
-    : hasServerAuthoritativeStream
-      ? liveStreamRenderId ?? `draft-assistant-server-${activeSession}`
-      : null;
+  // One logical assistant turn has one React identity for the whole stream.
+  // Prefer the server-minted liveStreamRenderId (attempt/run) whenever present so
+  // pending-turn adoption, Question answers, and terminal handoff cannot flip the
+  // draft key mid-stream and mount a second assistant copy. Local clientTurnId is
+  // only the pre-source placeholder before SessionManager publishes identity.
+  const activeStreamingDraftId = hasServerAuthoritativeStream
+    ? (liveStreamRenderId
+      ?? (activeTurn?.clientTurnId ? `draft-assistant-${activeTurn.clientTurnId}` : null)
+      ?? (activeSession ? `draft-assistant-server-${activeSession}` : null))
+    : null;
   const needsStreamingTarget =
     !!activeStreamingDraftId &&
     hasRenderableStreamForTurn;
@@ -843,7 +843,8 @@ export function MessageList({
     const traceKey = [
       activeSession,
       activeTurn?.clientTurnId ?? null,
-      activeTurnKey,
+      activeStreamingDraftId,
+      liveStreamRenderId ?? null,
       activeTurn?.status ?? null,
       effectiveStreaming.source,
       effectiveStreaming.segments.length,
@@ -859,7 +860,8 @@ export function MessageList({
       log.debug("STREAM:TARGET:SELECT", {
         activeSession,
         clientTurnId: activeTurn?.clientTurnId ?? null,
-        activeTurnKey,
+        activeStreamingDraftId,
+        liveStreamRenderId: liveStreamRenderId ?? null,
         pendingStatus: activeTurn?.status ?? null,
         streamingSource: effectiveStreaming.source,
         segments: effectiveStreaming.segments.length,
