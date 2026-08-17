@@ -69,6 +69,7 @@ export async function convergeBootSchema(): Promise<void> {
         const { migrateOpportunitySchema } = await import("./opportunity-storage");
         const { ensureWorkVaultParentSchema, ensureWorkVaultSchema } = await import("./work-vault-schema");
         const { ensureMilestonesSchema } = await import("./milestone-schema");
+        const { ensureWorkOwnerPersonSchema } = await import("./work-owner-schema");
         const { ensureMetricsDefinitionsSchema } = await import("./metrics/core-engine");
         const { ensureBusinessPlansSchema } = await import("./business-plan-storage");
         const { ensureBusinessesSchema } = await import("./business-storage");
@@ -81,6 +82,8 @@ export async function convergeBootSchema(): Promise<void> {
         await migrateOpportunitySchema();
         await ensureWorkVaultParentSchema(pool);
         await ensureMilestonesSchema(pool);
+        // After milestones + foundation cabinet Person ensure: Person is the only work owner.
+        await ensureWorkOwnerPersonSchema(pool);
         await ensureBusinessesSchema();
         await ensureBusinessBudgetsSchema(pool);
         await ensureMetricsDefinitionsSchema();

@@ -146,7 +146,7 @@ async function loadDomainSnapshots(
             id: tasks.id,
             title: tasks.title,
             status: tasks.status,
-            owner: tasks.owner,
+            ownerPersonId: tasks.ownerPersonId,
           })
           .from(tasks)
           .where(combineWithTaskAccess(principal, taskScope, "read", inArray(tasks.id, taskIds)))
@@ -155,7 +155,7 @@ async function loadDomainSnapshots(
               out.set(`@task:${row.id}`, {
                 label: row.title,
                 status: row.status,
-                owner: row.owner,
+                owner: row.ownerPersonId ? `@person:${row.ownerPersonId}` : undefined,
               });
             }
           })
@@ -166,7 +166,7 @@ async function loadDomainSnapshots(
             id: projects.id,
             title: projects.title,
             status: projects.status,
-            owner: projects.owner,
+            ownerPersonId: projects.ownerPersonId,
           })
           .from(projects)
           .where(combineWithProjectAccess(principal, "read", inArray(projects.id, projectIds)))
@@ -175,7 +175,7 @@ async function loadDomainSnapshots(
               out.set(`@project:${row.id}`, {
                 label: row.title,
                 status: row.status,
-                owner: row.owner,
+                owner: row.ownerPersonId ? `@person:${row.ownerPersonId}` : undefined,
               });
             }
           })

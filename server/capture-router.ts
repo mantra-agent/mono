@@ -29,8 +29,7 @@ export async function routeCapture(
           title: classification.summary,
           description: `From quick capture: ${rawText}`,
           priority: "mid",
-          owner: "me",
-        });
+          });
         if (result.error) {
           return { success: false, system: "tasks", ref: null, error: result.result };
         }
@@ -101,8 +100,7 @@ export async function routeCapture(
           title: `${classification.summary}${timeNote}`,
           description: `From quick capture (reminder): ${rawText}${classification.timeRef ? `\nTime reference: ${classification.timeRef}` : ""}`,
           priority: "mid",
-          owner: "me",
-        });
+          });
         if (result.error) {
           return { success: false, system: "tasks", ref: null, error: result.result };
         }

@@ -1132,6 +1132,7 @@ function isHomeBarTask(
   task: Task,
   principalUserId: string | undefined,
   ownedProjectIds: ReadonlySet<number>,
+  homeOwnerPersonIds: ReadonlySet<string>,
 ): boolean {
   if (
     task.assigneeSubjectType === "user"
@@ -1142,12 +1143,15 @@ function isHomeBarTask(
     return true;
   }
 
+  // Spec: Home membership is assignee→user, or work on a Home-owned project
+  // (any Person), or standalone owned by cabinet user/agent Person.
+  // Shared-grant access alone never populates Home.
   if (task.projectId != null && ownedProjectIds.has(task.projectId)) {
-    return task.owner === "me" || task.owner === "agent";
+    return true;
   }
 
   if (task.projectId == null) {
-    return task.owner === "me" || task.owner === "agent";
+    return Boolean(task.ownerPersonId && homeOwnerPersonIds.has(task.ownerPersonId));
   }
 
   return false;
@@ -2006,6 +2010,19 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
 
   // Tasks
   try {
+    const { getCabinetWorkOwnerPersons } = await import("../work-owner");
+    let userPersonId: string | null = null;
+    let agentPersonId: string | null = null;
+    try {
+      const cabinet = await getCabinetWorkOwnerPersons();
+      userPersonId = cabinet.userPersonId;
+      agentPersonId = cabinet.agentPersonId;
+    } catch {
+      // Cabinet missing — assignee path still works; ownership membership is empty.
+    }
+    const homeOwnerPersonIds = new Set(
+      [userPersonId, agentPersonId].filter((id): id is string => Boolean(id)),
+    );
     const [readyTasks, activeTasks, completedTasks] = await Promise.all([
       fileTaskStorage.getTasks({ status: "ready" }),
       fileTaskStorage.getTasks({ status: "active" }),
@@ -2013,13 +2030,21 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     ]);
     [...readyTasks, ...activeTasks]
       .filter(task => {
-        if (!isHomeBarTask(task, principalUserId, homeProjectIds)) return false;
+        if (!isHomeBarTask(task, principalUserId, homeProjectIds, homeOwnerPersonIds)) return false;
         const milestone = task.milestoneId && task.projectId != null
           ? milestoneMap.get(`${task.projectId}-${task.milestoneId}`)
           : undefined;
-        // User-owned tasks remain first-class Simple items. Agent-owned tasks only
+        // Cabinet-user Person tasks remain first-class. Agent-Person tasks only
         // surface when their active project milestone gives them structural context.
-        if (task.owner !== "me" && !milestone) return false;
+        // On a Home-owned project any Person owner is first-class (isHomeBarTask).
+        if (
+          task.projectId == null
+          && agentPersonId
+          && task.ownerPersonId === agentPersonId
+          && !milestone
+        ) {
+          return false;
+        }
         // Skip tasks belonging to completed milestones — the milestone is done,
         // these orphan tasks would otherwise surface as overdue in NOW.
         if (milestone?.status === "completed") return false;
@@ -2027,7 +2052,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
       })
       .forEach((task, index) => items.push(itemFromTask(task, today, tomorrow, weekEnd, monthEnd, quarterEnd, yearEnd, index, milestoneMap)));
     completedTasks
-      .filter(task => isHomeBarTask(task, principalUserId, homeProjectIds) && isTodayInTimezone(task.updatedAt, timezone))
+      .filter(task => isHomeBarTask(task, principalUserId, homeProjectIds, homeOwnerPersonIds) && isTodayInTimezone(task.updatedAt, timezone))
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
       .forEach((task, index) => items.push({ ...itemFromTask(task, today, tomorrow, weekEnd, monthEnd, quarterEnd, yearEnd, 80 + index, milestoneMap), section: "done", status: "completed", completedAt: task.updatedAt }));
   } catch (err) {

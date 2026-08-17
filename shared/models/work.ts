@@ -12,14 +12,23 @@ export type PriorityLevel = z.infer<typeof priorityEnum>;
 export const impactEffortEnum = z.enum(["high", "mid", "low"]);
 export type ImpactEffort = z.infer<typeof impactEffortEnum>;
 
-export const ownerEnum = z.enum(["me", "agent"]);
-export type Owner = z.infer<typeof ownerEnum>;
+/** Activity author only — who edited, not work accountability. */
+export const activityAuthorEnum = z.enum(["me", "agent"]);
+export type ActivityAuthor = z.infer<typeof activityAuthorEnum>;
+
+/** @deprecated Use activityAuthorEnum. Retained for activity JSON compatibility only. */
+export const ownerEnum = activityAuthorEnum;
+/** @deprecated Use ActivityAuthor. Not work ownership. */
+export type Owner = ActivityAuthor;
 
 export const assigneeSubjectTypeEnum = z.enum(["user", "invited_subject"]);
 export type AssigneeSubjectType = z.infer<typeof assigneeSubjectTypeEnum>;
 
 export const milestoneStatusEnum = z.enum(["planned", "active", "completed"]);
 export type MilestoneStatus = z.infer<typeof milestoneStatusEnum>;
+
+/** Person id raw or `@person:{id}` reference form. */
+export const ownerPersonIdSchema = z.string().min(1);
 
 export const milestoneSchema = z.object({
   id: z.number(),
@@ -29,6 +38,8 @@ export const milestoneSchema = z.object({
   startDate: z.string().nullable().optional().default(null),
   dueDate: z.string().nullable().optional().default(null),
   completedAt: z.string().nullable().optional().default(null),
+  /** Accountability owner Person id. Required after boot merge; create inherits project when omitted. */
+  ownerPersonId: z.string().min(1).optional(),
 });
 export type Milestone = z.infer<typeof milestoneSchema>;
 
@@ -38,6 +49,7 @@ export const insertMilestoneSchema = z.object({
   order: z.number().optional().default(0),
   startDate: z.string().nullable().optional().default(null),
   dueDate: z.string().nullable().optional().default(null),
+  ownerPersonId: ownerPersonIdSchema.optional(),
 });
 export type InsertMilestone = z.infer<typeof insertMilestoneSchema>;
 
@@ -69,7 +81,7 @@ export type ProjectPage = z.infer<typeof projectPageSchema>;
 
 export const activityEntrySchema = z.object({
   timestamp: z.string(),
-  author: ownerEnum,
+  author: activityAuthorEnum,
   message: z.string(),
 });
 export type ActivityEntry = z.infer<typeof activityEntrySchema>;
@@ -83,7 +95,8 @@ export const insertTaskSchema = z.object({
   priority: priorityEnum.optional().default("mid"),
   impact: impactEffortEnum.optional().default("mid"),
   effort: impactEffortEnum.optional().default("mid"),
-  owner: ownerEnum.optional().default("me"),
+  /** Accountability owner Person id (raw or @person:id). Omitted on create → cabinet user Person. */
+  ownerPersonId: ownerPersonIdSchema.optional(),
   assigneeSubjectType: assigneeSubjectTypeEnum.nullable().optional(),
   assigneeSubjectId: z.string().min(1).nullable().optional(),
   requiresReview: z.boolean().optional().default(false),
@@ -107,7 +120,8 @@ export interface Task {
   priority: PriorityLevel;
   impact: ImpactEffort;
   effort: ImpactEffort;
-  owner: Owner;
+  /** Accountability owner — persons.id */
+  ownerPersonId: string;
   assigneeSubjectType: AssigneeSubjectType | null;
   assigneeSubjectId: string | null;
   requiresReview: boolean;
@@ -148,7 +162,8 @@ export const insertProjectSchema = z.object({
   description: z.string().optional().default(""),
   status: projectStatusEnum.optional().default("idea"),
   priority: priorityEnum.optional().default("mid"),
-  owner: ownerEnum.optional().default("me"),
+  /** Accountability owner Person id (raw or @person:id). Omitted on create → cabinet user Person. */
+  ownerPersonId: ownerPersonIdSchema.optional(),
   requiresReview: z.boolean().optional().default(false),
   dueDate: z.string().nullable().optional().default(null),
   milestones: z.array(milestoneSchema).optional().default([]),
@@ -172,7 +187,8 @@ export interface Project {
   description: string;
   status: ProjectStatus;
   priority: PriorityLevel;
-  owner: Owner;
+  /** Accountability owner — persons.id */
+  ownerPersonId: string;
   requiresReview: boolean;
   dueDate: string | null;
   completedAt: string | null;
@@ -188,4 +204,3 @@ export interface Project {
   createdAt: string;
   updatedAt: string;
 }
-

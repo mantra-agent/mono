@@ -1255,7 +1255,8 @@ async function resolveActiveTasks(): Promise<string> {
         const compact = formatDeadlineCompact(t.deadline);
         dlStr = dlProx ? `, due ${compact} (${dlProx.label})` : `, due ${compact}`;
       }
-      return `- [${t.status}] ${t.title} (${t.priority}, owner: ${t.owner})${estStr}${dlStr}${context}`;
+      const owner = t.ownerPersonId ? `@person:${t.ownerPersonId}` : "unknown";
+      return `- [${t.status}] ${t.title} (${t.priority}, owner: ${owner})${estStr}${dlStr}${context}`;
     });
     return `### Tasks (${activeTasks.length})\n${lines.join("\n")}`;
   } catch {
@@ -1339,7 +1340,8 @@ async function resolveActiveProjects(): Promise<string> {
     const lines = activeProjects.map(p => {
       const progress = p.milestones.length > 0 ? ` (${p.milestones.filter(m => m.status === "completed").length}/${p.milestones.length} milestones)` : "";
       const due = p.dueDate ? ` — due ${p.dueDate}` : "";
-      const projectLine = `- [#${p.id}] ${p.title} (${p.priority}, ${p.status}, owner: ${p.owner})${progress}${due}`;
+      const owner = p.ownerPersonId ? `@person:${p.ownerPersonId}` : "unknown";
+      const projectLine = `- [#${p.id}] ${p.title} (${p.priority}, ${p.status}, owner: ${owner})${progress}${due}`;
 
       const nextMilestone = p.milestones
         .filter(m => m.status !== "completed")

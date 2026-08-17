@@ -111,6 +111,7 @@ function rowToMilestone(row: typeof milestoneRows.$inferSelect): Milestone {
     startDate: row.startDate ?? null,
     dueDate: row.dueDate ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,
+    ownerPersonId: row.ownerPersonId ?? undefined,
   };
 }
 
@@ -134,7 +135,7 @@ function rowToProject(
     description: row.description,
     status,
     priority: row.priority as PriorityLevel,
-    owner: row.owner as Project["owner"],
+    ownerPersonId: row.ownerPersonId,
     requiresReview: row.requiresReview,
     dueDate: row.dueDate || null,
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
@@ -272,13 +273,24 @@ export class FileProjectStorage {
     const vaultId = resolveCreationVaultId(input.vaultId);
     const creationProvenance = normalizeCreationProvenance(provenance);
 
+    const { resolveWorkOwnerPerson } = await import("../work-owner");
+    const ownerPersonId = await resolveWorkOwnerPerson({
+      ownerPersonId: input.ownerPersonId,
+      mode: "create",
+      workVaultId: vaultId,
+      principal,
+    });
+    if (!ownerPersonId) {
+      throw new Error("Project creation requires an owner Person");
+    }
+
     const created = await db.transaction(async tx => {
       const [row] = await tx.insert(projects).values({
         title: input.title,
         description: input.description || "",
         status: input.status || "idea",
         priority: input.priority || "mid",
-        owner: input.owner || "me",
+        ownerPersonId,
         requiresReview: input.requiresReview ?? false,
         dueDate: input.dueDate ?? null,
         completedAt: (input.status || "idea") === "completed" ? now : null,
@@ -474,7 +486,16 @@ export class FileProjectStorage {
         else if (updates.status !== "completed") setValues.completedAt = null;
       }
       if (updates.priority !== undefined) setValues.priority = updates.priority;
-      if (updates.owner !== undefined) setValues.owner = updates.owner;
+      if (updates.ownerPersonId !== undefined) {
+        const { resolveWorkOwnerPerson } = await import("../work-owner");
+        const resolved = await resolveWorkOwnerPerson({
+          ownerPersonId: updates.ownerPersonId,
+          mode: "update",
+          workVaultId: existing.vaultId,
+          principal,
+        });
+        if (resolved) setValues.ownerPersonId = resolved;
+      }
       if (updates.requiresReview !== undefined) setValues.requiresReview = updates.requiresReview;
       if (updates.dueDate !== undefined) setValues.dueDate = updates.dueDate;
       if (updates.spec !== undefined) setValues.spec = updates.spec;
@@ -564,7 +585,14 @@ export class FileProjectStorage {
 
   async addMilestone(
     projectId: number,
-    input: { name: string; status?: string; startDate?: string | null; dueDate?: string | null; blockedBy?: string[] },
+    input: {
+      name: string;
+      status?: string;
+      startDate?: string | null;
+      dueDate?: string | null;
+      blockedBy?: string[];
+      ownerPersonId?: string;
+    },
     provenance?: WorkCreationProvenance,
   ): Promise<Project | undefined> {
     if (input.status && !["planned", "active", "completed"].includes(input.status)) {
@@ -572,6 +600,7 @@ export class FileProjectStorage {
     }
     const principal = requireCurrentUserPrincipal();
     const creationProvenance = normalizeCreationProvenance(provenance);
+    const { resolveWorkOwnerPerson } = await import("../work-owner");
     const newId = await db.transaction(async tx => {
       await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(projectId));
       const [project] = await tx.select().from(projects).where(
@@ -585,6 +614,14 @@ export class FileProjectStorage {
       const displayOrder = Math.max(-1, ...existing.map(row => row.displayOrder)) + 1;
       const status = (input.status as Milestone["status"]) || "planned";
       const now = new Date();
+      const ownerPersonId = input.ownerPersonId
+        ? await resolveWorkOwnerPerson({
+            ownerPersonId: input.ownerPersonId,
+            mode: "create",
+            workVaultId: project.vaultId,
+            principal,
+          })
+        : project.ownerPersonId;
       await tx.insert(milestoneRows).values({
         id,
         projectId,
@@ -598,6 +635,7 @@ export class FileProjectStorage {
         startDate: input.startDate || null,
         dueDate: input.dueDate || null,
         displayOrder,
+        ownerPersonId: ownerPersonId || project.ownerPersonId,
         completedAt: status === "completed" ? now : null,
         createdAt: now,
         updatedAt: now,
@@ -654,6 +692,16 @@ export class FileProjectStorage {
       if (updates.order !== undefined) setValues.displayOrder = updates.order;
       if (updates.startDate !== undefined) setValues.startDate = updates.startDate;
       if (updates.dueDate !== undefined) setValues.dueDate = updates.dueDate;
+      if (updates.ownerPersonId !== undefined) {
+        const { resolveWorkOwnerPerson } = await import("../work-owner");
+        const resolved = await resolveWorkOwnerPerson({
+          ownerPersonId: updates.ownerPersonId,
+          mode: "update",
+          workVaultId: existing.vaultId,
+          principal,
+        });
+        if (resolved) setValues.ownerPersonId = resolved;
+      }
       if (nextStatus === "completed" && existing.status !== "completed") {
         setValues.completedAt = updates.completedAt ? new Date(updates.completedAt) : new Date();
       } else if (nextStatus !== "completed") {

@@ -65,17 +65,17 @@ export function combineWithWorkObjectAccess(
 }
 
 export function hasAdminOnlyProjectChanges(changes: Record<string, unknown>): boolean {
-  return ["title", "description", "spec", "goalId", "owner", "people", "milestones"].some(
+  return ["title", "description", "spec", "goalId", "ownerPersonId", "people", "milestones"].some(
     field => changes[field] !== undefined,
   );
 }
 
 export function hasAdminOnlyTaskChanges(changes: Record<string, unknown>): boolean {
-  return ["title", "description", "owner", "assigneeSubjectType", "assigneeSubjectId", "projectId", "milestoneId"].some(
+  return ["title", "description", "ownerPersonId", "assigneeSubjectType", "assigneeSubjectId", "projectId", "milestoneId"].some(
     field => changes[field] !== undefined,
   );
 }
 
 export function hasAdminOnlyMilestoneChanges(changes: Record<string, unknown>): boolean {
-  return changes.name !== undefined;
+  return changes.name !== undefined || changes.ownerPersonId !== undefined;
 }
