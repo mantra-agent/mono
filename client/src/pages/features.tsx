@@ -19,6 +19,7 @@ import {
   Search,
   SlidersHorizontal,
   Sparkles,
+  Square,
   User,
   Wrench,
 } from "lucide-react";
@@ -58,6 +59,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { recordBrowserTelemetry } from "@/lib/browser-telemetry";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { emitSessionChanged } from "@/hooks/use-data-sync";
 import {
   FEATURE_PIPELINE,
   FEATURE_STAGES,
@@ -593,6 +595,34 @@ const FeatureRow = memo(function FeatureRow({
     });
   };
 
+  /** Stop the in-progress Feature session (abort active run). */
+  const stopSession = useMutation({
+    mutationFn: async (sessionId: string) => {
+      await apiRequest("POST", `/api/sessions/${sessionId}/abort`);
+      return sessionId;
+    },
+    onSuccess: (sessionId) => {
+      setLaunchedSessionId(null);
+      void emitSessionChanged(sessionId, "feature-row-stop");
+      void queryClient.invalidateQueries({
+        queryKey: ["/api/features", feature.id, "sessions"],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Could not stop session",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const runStopSession = () => {
+    if (!activeSession || stopSession.isPending) return;
+    stopSession.mutate(activeSession.id);
+  };
+
   const commitTitle = () => {
     const next = titleDraft.trim();
     if (!next || next === feature.summary.trim()) {
@@ -661,17 +691,37 @@ const FeatureRow = memo(function FeatureRow({
         mobileLayout="inline"
         valueLayout="compact"
         testId={`feature-row-${feature.id}`}
-        // Ready: Play (Produce). needs_review: AI Review (left) + human Check (right).
-        // Check advances stage; AI Review launches the opposite-seat session.
+        // In-progress: Stop replaces Play/AI/Check. Idle: Play or AI Review + green Check.
         actionContent={(
           <div className="flex shrink-0 items-center justify-end">
-            {needsReview ? (
+            {isSessionInProgress ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:size-3"
+                disabled={stopSession.isPending}
+                aria-label={`Stop session for ${feature.summary}`}
+                title="Stop"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  runStopSession();
+                }}
+                data-testid={`button-feature-stop-${feature.id}`}
+              >
+                {stopSession.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Square className="h-3 w-3 fill-current" />
+                )}
+              </Button>
+            ) : needsReview ? (
               <>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="relative h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground/70 hover:bg-accent hover:text-foreground [&_svg]:size-3"
+                  className="relative h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-cta hover:bg-accent hover:text-active [&_svg]:size-3"
                   disabled={launch.isPending}
                   aria-label={`AI review ${feature.summary}`}
                   title={`AI ${reviewContract.actionLabel}`}
@@ -686,7 +736,7 @@ const FeatureRow = memo(function FeatureRow({
                   ) : (
                     <>
                       <Search className="h-3 w-3" />
-                      <Sparkles className="absolute right-0.5 top-0.5 h-1.5 w-1.5 text-foreground" />
+                      <Sparkles className="absolute right-0.5 top-0.5 h-1.5 w-1.5 text-cta" />
                     </>
                   )}
                 </Button>
@@ -694,7 +744,7 @@ const FeatureRow = memo(function FeatureRow({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 [&_svg]:size-3"
+                  className="h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-success hover:bg-accent hover:text-success disabled:opacity-40 [&_svg]:size-3"
                   disabled={!canApprove || update.isPending}
                   aria-label={
                     canApprove
@@ -979,7 +1029,23 @@ const FeatureRow = memo(function FeatureRow({
       )}
       menuContent={(
         <>
-          {needsReview ? (
+          {isSessionInProgress ? (
+            <DropdownMenuItem
+              disabled={stopSession.isPending}
+              onSelect={(event) => {
+                event.preventDefault();
+                runStopSession();
+              }}
+              data-testid={`button-feature-menu-stop-${feature.id}`}
+            >
+              {stopSession.isPending ? (
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Square className="mr-2 h-3.5 w-3.5 fill-current" />
+              )}
+              Stop
+            </DropdownMenuItem>
+          ) : needsReview ? (
             <>
               <DropdownMenuItem
                 disabled={launch.isPending}
@@ -992,9 +1058,9 @@ const FeatureRow = memo(function FeatureRow({
                 {reviewLaunchPending ? (
                   <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                 ) : (
-                  <span className="relative mr-2 inline-flex h-3.5 w-3.5 items-center justify-center">
+                  <span className="relative mr-2 inline-flex h-3.5 w-3.5 items-center justify-center text-cta">
                     <Search className="h-3.5 w-3.5" />
-                    <Sparkles className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5" />
+                    <Sparkles className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 text-cta" />
                   </span>
                 )}
                 AI {reviewContract.actionLabel}
@@ -1010,7 +1076,7 @@ const FeatureRow = memo(function FeatureRow({
                 {update.isPending ? (
                   <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                 ) : (
-                  <Check className="mr-2 h-3.5 w-3.5" />
+                  <Check className="mr-2 h-3.5 w-3.5 text-success" />
                 )}
                 {canApprove
                   ? `Approve → ${formatStage(nextStageOnPass!)}`
@@ -1035,7 +1101,7 @@ const FeatureRow = memo(function FeatureRow({
             </DropdownMenuItem>
           )}
           <DropdownMenuItem
-            disabled={launch.isPending}
+            disabled={launch.isPending || isSessionInProgress}
             onSelect={(event) => {
               event.preventDefault();
               runDiscussLaunch();
