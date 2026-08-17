@@ -1,3 +1,10 @@
+<!-- 2026-08-17 Document Template Shapes (map of pages + /api/templates + templates tool):
+- Assets/data: A04 account catalog `document_templates` / `skill_template_bindings` (S2 map pointers); ordinary Library shape pages (already scoped). No secrets, no new principal class.
+- Flow/threat: cross-account map read/write; resolving a Library page the principal cannot see; binding another account's template id into this tenant; skill key/kind confusion (STRIDE information disclosure/tampering; DATA-01/IAM-01/AGENT-03).
+- Deterministic controls/owner: scoped storage (global + current account only); resolve loads page under visible Library scope and fails closed; kind/key compatibility (`feature-pipeline`→spec, `reflect`→daily|weekly) enforced in storage; HTTP `/api/templates` uses `requireAuth` (skills/agendas analog — no new permission); Agent `templates` tool crosses the same storage. Owner: Core Automation. Severity: medium confidentiality/integrity. SLA: same PR.
+- Residual/rollback: missing template stamps residual and degrades produce rather than crashing timers. Revert schema/routes/tool/seed/screen and this finding together.
+-->
+
 <!-- 2026-08-17 Interactive Web Test (web.test act + browser-session auth):
 - Assets/data: A04 model-directed tool behavior; A06 short-lived principal cookie (S2) and automation-auth token while Chromium holds it; A01 the caller's product surfaces. No new principal, table, route, or autonomy tier.
 - Flow/threat: Model-supplied CSS selector clicks a destructive control on the caller's own app; named integration injects a token the model then exfiltrates; navigation escapes and acts on the open web; unrestricted evaluate would be in-page code execution (STRIDE tampering/elevation/information disclosure; AGENT-03/DATA-03).

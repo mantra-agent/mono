@@ -41,6 +41,7 @@ const FIXTURE_NAV_KEYS: string[] = [
   "Business|Roles",
   "Automation|Agendas",
   "Automation|Skills",
+  "Automation|Templates",
   "Automation|Plans",
   "Automation|Hooks",
   "Automation|Timers",

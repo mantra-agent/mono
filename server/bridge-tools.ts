@@ -12817,6 +12817,7 @@ const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   session: new Set(["set_status", "end", "send_message"]),
   companies: new Set(["create", "update", "delete", "add_person", "remove_person", "add_opportunity", "remove_opportunity"]),
   agendas: new Set(["create", "update", "delete"]),
+  templates: new Set(["create", "update", "bind"]),
   jobs: new Set(["create", "update", "delete"]),
   people: new Set(["create", "update", "merge", "add_note", "update_note", "delete_note", "log_interaction", "update_interaction", "delete_interaction", "set_daily_contact", "add_vault_membership", "remove_vault_membership", "set_vault_memberships"]),
   calendar: new Set(["create", "update", "delete"]),

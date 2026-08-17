@@ -494,6 +494,14 @@ The first message names the Feature (\`@feature:\`), the stage (room), and the j
 ## Status machine
 create → idea/ready · launch Produce → in_progress · Produce done + artifact → needs_review · Review pass → next stage/ready · Review fail → same stage/ready · any stage change → ready
 
+## Spec Produce — document template vessel
+When the assigned job is Spec Produce:
+1. Call \`templates(action: "resolve", skill: "feature-pipeline", key: "spec")\` before writing the Library spec.
+2. Read the resolved shape page. Its headings are the required vessel (not prompt folklore).
+3. Write a *new* Library spec (\`canonicalFolder: "specs"\`) against those headings. Template page ≠ output page.
+4. After write, if required headings are missing/empty, append trailing \`## Residual\` naming them and include the same headings in Feature \`historyNote\`. Still link \`specPageId\`. Produce may still set \`needs_review\`.
+5. If resolve fails, stamp residual \`template_unavailable\` in historyNote, warn, and still write if you can — fail loud, degrade. Do not hardcode TIVE-only headings in process text; account overlays retarget \`spec\` without forking this skill.
+
 ${body}
 
 ## Hard rules
