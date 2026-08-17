@@ -150,9 +150,11 @@ export function ProfileTreeRow({
           {showAction ? (
             <div
               className={cn(
-                "flex shrink-0 items-center justify-end",
+                // Width follows content so rows can host one control (Play) or a
+                // dual pair (AI review + Check) without clipping.
+                "flex shrink-0 items-center justify-end gap-0",
                 usesSessionMenuControls
-                  ? "h-6 min-h-6 w-6 min-w-6"
+                  ? "h-6 min-h-6 min-w-6 w-auto"
                   : "min-h-11 min-w-11 sm:min-h-5 sm:min-w-5",
               )}
             >
