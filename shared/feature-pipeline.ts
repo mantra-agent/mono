@@ -450,6 +450,25 @@ export function composeFeatureLaunchMessage(
   ].join("\n");
 }
 
+/**
+ * Discuss launch: stage Produce persona seat, Feature context only.
+ * No pipeline Skill, no Produce/Review procedure — open conversation about the Feature.
+ */
+export function composeFeatureDiscussMessage(feature: FeatureLaunchContext): string {
+  return [
+    `Let's discuss this Feature.`,
+    "",
+    composeFeatureContext({ ...feature, status: feature.status ?? "ready" }),
+    "",
+    "This is an open discussion, not a pipeline job. Do not run Frame, Spec, Build, Smoke, Tune, Review, or any other feature-pipeline procedure unless asked. Help think through the Feature.",
+  ].join("\n");
+}
+
+/** Persona seat for open Feature discussion — stage Produce seat, not Review opposite. */
+export function getFeatureDiscussPersona(stage: FeatureStage): FeaturePipelinePersona {
+  return FEATURE_PIPELINE[stage].produce.persona;
+}
+
 /** Full Skill process: every stage's produce and review jobs. */
 export function composeFeaturePipelineSkillProcess(): string {
   const body = FEATURE_STAGES.map((stage) => {
