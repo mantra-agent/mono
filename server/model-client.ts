@@ -99,22 +99,25 @@ function isOpenAISubscriptionTokens(v: unknown): v is OpenAISubscriptionTokens {
   return typeof v === "object" && v !== null && typeof (v as Record<string, unknown>).access_token === "string";
 }
 
-async function getOpenAISubscriptionAccessToken(): Promise<string> {
-  return singleFlightSubscriptionToken(OPENAI_SUBSCRIPTION_ACCOUNT_ID, () => runWithPrincipal(createNamedSystemPrincipal("model-client"), async () => {
-    const { getAccountTokens, updateAccount } = await import("./connected-accounts");
-    const rawTokens = await getAccountTokens(OPENAI_SUBSCRIPTION_ACCOUNT_ID);
-    if (!isOpenAISubscriptionTokens(rawTokens)) {
-      throw codedError("CONNECTOR_NOT_CONFIGURED", "OpenAI Subscription not connected. Please connect your ChatGPT account in Settings → Connections.");
+async function getOpenAISubscriptionAccessToken(connectorId?: number | null): Promise<string> {
+  const flightKey = connectorId && connectorId > 0
+    ? `openai-subscription:${connectorId}`
+    : OPENAI_SUBSCRIPTION_ACCOUNT_ID;
+  return singleFlightSubscriptionToken(flightKey, async () => {
+    const { loadSubscriptionTokens, persistSubscriptionTokens } = await import("./model-connector-credentials");
+    let loaded;
+    try {
+      loaded = await loadSubscriptionTokens("openai-subscription", connectorId);
+    } catch (err: any) {
+      throw codedError(
+        "CONNECTOR_NOT_CONFIGURED",
+        err?.message || "OpenAI Subscription not connected. Connect the ChatGPT account on this connector.",
+      );
     }
-
-    const tokens: OpenAISubscriptionTokens = rawTokens;
-
-    // Check if token needs refresh. OpenAI Subscription is a system integration:
-    // all users can use it for model execution, but only system/admin paths may
-    // read or rotate its OAuth tokens.
+    const tokens = loaded.tokens as OpenAISubscriptionTokens;
     const isExpired = typeof tokens.expiry_date === "number" && Date.now() >= tokens.expiry_date - 60_000;
     if (isExpired && tokens.refresh_token) {
-      log.debug("openai-subscription: refreshing access token");
+      log.debug("openai-subscription: refreshing access token", { connectorId: loaded.connectorId, source: loaded.source });
       try {
         const params = new URLSearchParams({
           client_id: OPENAI_SUBSCRIPTION_CLIENT_ID,
@@ -134,19 +137,17 @@ async function getOpenAISubscriptionAccessToken(): Promise<string> {
             refresh_token: newTokens.refresh_token || tokens.refresh_token,
             expiry_date: newTokens.expires_in ? Date.now() + newTokens.expires_in * 1000 : undefined,
           };
-          await updateAccount(OPENAI_SUBSCRIPTION_ACCOUNT_ID, { tokens: updated });
+          await persistSubscriptionTokens("openai-subscription", updated, loaded.connectorId, null);
           log.debug("openai-subscription: token refreshed successfully");
           return updated.access_token;
-        } else {
-          log.warn("openai-subscription: token refresh failed, using existing token");
         }
+        log.warn("openai-subscription: token refresh failed, using existing token");
       } catch (err: any) {
         log.warn(`openai-subscription: token refresh error: ${err.message}`);
       }
     }
-
     return tokens.access_token;
-  }));
+  });
 }
 
 // ─── Grok Subscription (xAI SuperGrok / X Premium+) ────────────────────────
@@ -172,21 +173,25 @@ function isGrokSubscriptionTokens(v: unknown): v is GrokSubscriptionTokens {
   return typeof v === "object" && v !== null && typeof (v as Record<string, unknown>).access_token === "string";
 }
 
-async function getGrokSubscriptionAccessToken(): Promise<string> {
-  return singleFlightSubscriptionToken(GROK_SUBSCRIPTION_ACCOUNT_ID, () => runWithPrincipal(createNamedSystemPrincipal("model-client"), async () => {
-    const { getAccountTokens, updateAccount } = await import("./connected-accounts");
-    const rawTokens = await getAccountTokens(GROK_SUBSCRIPTION_ACCOUNT_ID);
-    if (!isGrokSubscriptionTokens(rawTokens)) {
-      throw codedError("CONNECTOR_NOT_CONFIGURED", "Grok Subscription not connected. Please connect your xAI account in Settings → Connections.");
+async function getGrokSubscriptionAccessToken(connectorId?: number | null): Promise<string> {
+  const flightKey = connectorId && connectorId > 0
+    ? `grok-subscription:${connectorId}`
+    : GROK_SUBSCRIPTION_ACCOUNT_ID;
+  return singleFlightSubscriptionToken(flightKey, async () => {
+    const { loadSubscriptionTokens, persistSubscriptionTokens } = await import("./model-connector-credentials");
+    let loaded;
+    try {
+      loaded = await loadSubscriptionTokens("grok-subscription", connectorId);
+    } catch (err: any) {
+      throw codedError(
+        "CONNECTOR_NOT_CONFIGURED",
+        err?.message || "Grok Subscription not connected. Connect the xAI account on this connector.",
+      );
     }
-
-    const tokens: GrokSubscriptionTokens = rawTokens;
-
-    // Grok Subscription is a system integration: all users can use it for model
-    // execution, but only system/admin paths may read or rotate its OAuth tokens.
+    const tokens = loaded.tokens as GrokSubscriptionTokens;
     const isExpired = typeof tokens.expiry_date === "number" && Date.now() >= tokens.expiry_date - 60_000;
     if (isExpired && tokens.refresh_token) {
-      log.debug("grok-subscription: refreshing access token");
+      log.debug("grok-subscription: refreshing access token", { connectorId: loaded.connectorId, source: loaded.source });
       try {
         const params = new URLSearchParams({
           client_id: GROK_SUBSCRIPTION_CLIENT_ID,
@@ -206,19 +211,17 @@ async function getGrokSubscriptionAccessToken(): Promise<string> {
             refresh_token: newTokens.refresh_token || tokens.refresh_token,
             expiry_date: newTokens.expires_in ? Date.now() + newTokens.expires_in * 1000 : undefined,
           };
-          await updateAccount(GROK_SUBSCRIPTION_ACCOUNT_ID, { tokens: updated });
+          await persistSubscriptionTokens("grok-subscription", updated, loaded.connectorId, null);
           log.debug("grok-subscription: token refreshed successfully");
           return updated.access_token;
-        } else {
-          log.warn("grok-subscription: token refresh failed, using existing token");
         }
+        log.warn("grok-subscription: token refresh failed, using existing token");
       } catch (err: any) {
         log.warn(`grok-subscription: token refresh error: ${err.message}`);
       }
     }
-
     return tokens.access_token;
-  }));
+  });
 }
 
 
@@ -1975,19 +1978,19 @@ function modelProviderErrorFromAttempt(
 // streaming paths reuse the OpenAI request/response shape via transport override
 // (OAuth bearer + api.x.ai base URL). Non-stream inherits tools/tool_calls parity.
 async function grokSubscriptionCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
-  const token = await getGrokSubscriptionAccessToken();
+  const token = await getGrokSubscriptionAccessToken(options.routingDecision?.connectorId);
   const client = getOpenAIClient(token, GROK_SUBSCRIPTION_API_BASE_URL);
   return openaiCompletion(model, options, { client, providerLabel: "grok-subscription" });
 }
 
 async function* grokSubscriptionStream(model: string, options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
-  const token = await getGrokSubscriptionAccessToken();
+  const token = await getGrokSubscriptionAccessToken(options.routingDecision?.connectorId);
   const client = getOpenAIClient(token, GROK_SUBSCRIPTION_API_BASE_URL);
   yield* openaiStream(model, options, { client, providerLabel: "grok-subscription" });
 }
 
 async function openaiSubscriptionCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
-  const accessToken = await getOpenAISubscriptionAccessToken();
+  const accessToken = await getOpenAISubscriptionAccessToken(options.routingDecision?.connectorId);
   const modelInfo = getModel(model);
   const codexModel = modelInfo?.codexModelId ?? model;
   const { instructions, input } = buildCodexInput(options.messages);
@@ -2762,7 +2765,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
 
   try {
     const authStart = Date.now();
-    const accessToken = await getOpenAISubscriptionAccessToken();
+    const accessToken = await getOpenAISubscriptionAccessToken(options.routingDecision?.connectorId);
     const authMs = Date.now() - authStart;
 
     const modelInfo = getModel(model);

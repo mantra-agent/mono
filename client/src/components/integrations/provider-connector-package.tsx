@@ -1,13 +1,13 @@
-import { Bot, Shield } from "lucide-react";
-import { ProfileTreeRow } from "@/components/profile-tree-row";
-import { IntegrationTreeSection } from "@/components/integrations/integration-tree-section";
+import { useQuery } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import { ModelConnectorSection } from "@/components/integrations/model-connector-section";
 import {
   GrokSubscriptionSection,
   OpenAISubscriptionSection,
 } from "@/components/integrations/subscription-section";
-import { SecretsForSection } from "@/components/SecretControl";
+import { ConnectorSecretSection } from "@/components/integrations/connector-secret-section";
 import type { ModelConnectorProvider } from "@shared/model-connectors";
+import { apiRequest } from "@/lib/queryClient";
 
 export type PackagedConnectorProvider =
   | "openai-subscription"
@@ -39,8 +39,8 @@ type ConnectorProp = {
 
 /**
  * Full packageable connector widget: account/credentials + Models tree.
- * Used by Integrations detail and Routers connector expand so both surfaces
- * show the same configuration, including subscription account state.
+ * Auth is always connector-scoped (provider_connections.id). When only a
+ * provider is passed (Integrations page), resolve the legacy singleton row.
  */
 export function ProviderConnectorPackage({
   provider,
@@ -54,10 +54,39 @@ export function ProviderConnectorPackage({
   invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
   bare?: boolean;
 }) {
+  const legacyQuery = useQuery<{ id: number; provider: string }>({
+    queryKey: ["/api/models/connectors/by-provider", provider],
+    enabled: connector == null,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/models/connectors/by-provider/${provider}`);
+      return res.json();
+    },
+    staleTime: 15_000,
+  });
+
+  const connectorId = connector?.id ?? legacyQuery.data?.id;
+
+  if (connectorId == null) {
+    if (legacyQuery.isLoading) {
+      return (
+        <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Loading connector…
+        </div>
+      );
+    }
+    return (
+      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+        No connector instance for {provider}.
+      </div>
+    );
+  }
+
   const models = (
     <ModelConnectorSection
       provider={provider}
       connector={connector as any}
+      connectorId={connector ? undefined : connectorId}
       title="Models"
       nested
       invalidateQueryKeys={invalidateQueryKeys}
@@ -65,66 +94,67 @@ export function ProviderConnectorPackage({
   );
 
   if (provider === "openai-subscription") {
-    return <OpenAISubscriptionSection>{models}</OpenAISubscriptionSection>;
+    return (
+      <OpenAISubscriptionSection connectorId={connectorId} invalidateQueryKeys={invalidateQueryKeys}>
+        {models}
+      </OpenAISubscriptionSection>
+    );
   }
 
   if (provider === "grok-subscription") {
-    return <GrokSubscriptionSection>{models}</GrokSubscriptionSection>;
+    return (
+      <GrokSubscriptionSection connectorId={connectorId} invalidateQueryKeys={invalidateQueryKeys}>
+        {models}
+      </GrokSubscriptionSection>
+    );
   }
 
   if (provider === "openai") {
     const body = (
-      <>
-        <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
-          <div className="min-w-0 w-full"><SecretsForSection section="openai" /></div>
-        </ProfileTreeRow>
+      <ConnectorSecretSection
+        connectorId={connectorId}
+        label="API"
+        placeholder="sk-…"
+        invalidateQueryKeys={invalidateQueryKeys}
+      >
         {models}
-      </>
+      </ConnectorSecretSection>
     );
     if (bare) return <div className="min-w-0" data-testid="card-secret-openai">{body}</div>;
-    return (
-      <div className="min-w-0" data-testid="card-secret-openai">
-        <IntegrationTreeSection label="API" initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
-          {body}
-        </IntegrationTreeSection>
-      </div>
-    );
+    return <div className="min-w-0" data-testid="card-secret-openai">{body}</div>;
   }
 
   if (provider === "anthropic") {
     const body = (
-      <>
-        <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
-          <div className="min-w-0 w-full"><SecretsForSection section="anthropic" /></div>
-        </ProfileTreeRow>
+      <ConnectorSecretSection
+        connectorId={connectorId}
+        label="API"
+        placeholder="sk-ant-…"
+        invalidateQueryKeys={invalidateQueryKeys}
+      >
         {models}
-      </>
+      </ConnectorSecretSection>
     );
     if (bare) return <div className="min-w-0" data-testid="card-secret-anthropic">{body}</div>;
-    return (
-      <div className="min-w-0" data-testid="card-secret-anthropic">
-        <IntegrationTreeSection label="API" initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
-          {body}
-        </IntegrationTreeSection>
-      </div>
-    );
+    return <div className="min-w-0" data-testid="card-secret-anthropic">{body}</div>;
   }
 
   // claude-cli
   const body = (
-    <>
-      <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
-        <div className="min-w-0 w-full"><SecretsForSection section="claude-cli" /></div>
-      </ProfileTreeRow>
+    <ConnectorSecretSection
+      connectorId={connectorId}
+      label="Claude Code CLI"
+      placeholder="Claude Code OAuth token"
+      invalidateQueryKeys={invalidateQueryKeys}
+    >
       {models}
-    </>
+    </ConnectorSecretSection>
   );
   if (bare) return <div className="min-w-0" data-testid="card-secret-claude-cli">{body}</div>;
   return (
     <div className="min-w-0" data-testid="card-secret-claude-cli">
-      <IntegrationTreeSection label="Claude Code CLI" initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
-        {body}
-      </IntegrationTreeSection>
+      {body}
     </div>
   );
 }
+

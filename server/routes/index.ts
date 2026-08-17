@@ -49,6 +49,7 @@ import { registerGoalRoutes } from "./goal-routes";
 import { registerIssueRoutes } from "./issue-routes";
 import { registerProviderConnectionRoutes } from "./provider-connections";
 import { registerRouterRoutes } from "./routers";
+import { registerModelConnectorAuthRoutes } from "./model-connector-auth";
 import { registerOnboardingRoutes } from "../onboarding";
 import { registerMobileTelemetryRoutes } from "./mobile-telemetry";
 import { registerMobileDATDebugRoutes } from "./mobile-dat-debug";
@@ -78,6 +79,7 @@ export async function registerDomainRoutes(
   await registerOrientationRoutes(app);
   await registerInferenceRoutes(app, serverStartTime);
   await registerRouterRoutes(app);
+  registerModelConnectorAuthRoutes(app);
   await registerEventsRoutes(app, wss, eventsWss);
   registerClientPresenceRoutes(app);
 
