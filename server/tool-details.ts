@@ -38,12 +38,17 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     },
   },
   web: {
-    description: "Search the web or fetch content from URLs. Actions: search, fetch.",
-    whenToUse: "When the user asks to look something up online, needs current information, or wants to read a web page.",
-    example: 'Search: { "action": "search", "query": "latest AI news" }\nFetch: { "action": "fetch", "url": "https://example.com" }',
+    description: "Search the web, fetch URLs, or run one authenticated interactive page test. test/screenshot: navigate, click, tap, scroll, press, type, screenshot on one Chromium session; closing frame always persists. Auth is browser-session integration capability (day-one automation-auth) or local principal cookie.",
+    whenToUse: "When looking something up online, reading a page, or proving an authenticated product path with act-then-evidence (Smoke click-paths). Prefer test over inventing a second browser tool. ui stays guide-only.",
+    example: 'Search: { "action": "search", "query": "latest AI news" }\nFetch: { "action": "fetch", "url": "https://example.com" }\nLocal photo: { "action": "test", "route": "/home", "viewport": "mobile" }\nTap path: { "action": "test", "route": "/home", "viewport": "mobile", "steps": [{ "kind": "tap", "selector": "[data-tool-id=\\"memory\\"]" }, { "kind": "screenshot" }] }\nExternal auth: { "action": "test", "url": "https://stage.example", "auth": { "integration": "automation-auth" }, "steps": [{ "kind": "click", "selector": "button.primary" }] }',
     actions: {
       search: { description: "Search the web using Brave Search API.", requiredParams: ["query"], optionalParams: ["count"] },
       fetch: { description: "Fetch and extract text content from a URL. Large pages are automatically summarized.", requiredParams: ["url"], optionalParams: ["timeout"] },
+      test: {
+        description: "One authenticated Chromium session. Entry via route (localhost) or url. Optional closed steps (max 8): navigate, click, tap, scroll, press, type, screenshot. Origin re-checked after every step. Closing screenshot always taken when a page exists. auth.integration must carry browser-session (day-one: automation-auth). Omitted auth on local app uses calling principal cookie; external without auth is photograph-only.",
+        optionalParams: ["route", "url", "viewport", "fullPage", "delay", "auth", "steps"],
+      },
+      screenshot: { description: "Deprecated alias for test.", optionalParams: ["route", "url", "viewport", "fullPage", "delay", "auth", "steps"] },
     },
   },
   memory: {

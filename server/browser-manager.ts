@@ -262,6 +262,366 @@ async function createScreenshotSession(userId: string, sessionSecret?: string): 
   return { sid, signedCookie, cleanup };
 }
 
+/** Closed keyboard keys for web.test press steps. */
+export const WEB_TEST_KEYS = [
+  "Enter",
+  "Escape",
+  "Tab",
+  "Space",
+  "Backspace",
+  "Delete",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Home",
+  "End",
+] as const;
+
+export type WebTestKey = (typeof WEB_TEST_KEYS)[number];
+
+export type WebTestStep =
+  | { kind: "navigate"; route: string }
+  | { kind: "navigate"; url: string }
+  | { kind: "click"; selector: string }
+  | { kind: "tap"; selector: string }
+  | { kind: "scroll"; selector: string }
+  | { kind: "scroll"; deltaX?: number; deltaY?: number }
+  | { kind: "press"; key: WebTestKey }
+  | { kind: "type"; text: string }
+  | { kind: "screenshot" };
+
+export type WebTestOutcome =
+  | "ok"
+  | "input_invalid"
+  | "auth_failed"
+  | "step_failed"
+  | "origin_escaped"
+  | "capture_failed";
+
+export type WebTestAuthUsed = "none" | "principal-cookie" | "automation-auth";
+
+export interface WebTestFrame {
+  path: string;
+  width: number;
+  height: number;
+  truncated: boolean;
+  label: string;
+}
+
+export interface WebTestStepResult {
+  index: number;
+  kind: string;
+  status: "ok" | "failed";
+  detail: string;
+}
+
+export interface WebTestResult {
+  outcome: WebTestOutcome;
+  authUsed: WebTestAuthUsed;
+  entryUrl: string;
+  finalUrl: string | null;
+  steps: WebTestStepResult[];
+  frames: WebTestFrame[];
+  errorMessage?: string;
+  /** First/closing frame path for callers that still expect a single screenshot. */
+  path: string;
+  width: number;
+  height: number;
+  truncated: boolean;
+}
+
+const WEB_TEST_MAX_STEPS = 8;
+const WEB_TEST_SELECTOR_MAX = 200;
+const WEB_TEST_STEP_TIMEOUT_MS = 7_000;
+const WEB_TEST_SCROLL_CLAMP = 4000;
+const WEB_TEST_KEY_SET = new Set<string>(WEB_TEST_KEYS);
+
+export class WebTestError extends Error {
+  readonly outcome: WebTestOutcome;
+  constructor(outcome: WebTestOutcome, message: string) {
+    super(message);
+    this.name = "WebTestError";
+    this.outcome = outcome;
+  }
+}
+
+function isLocalAppUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    const host = parsed.hostname;
+    if (host !== "localhost" && host !== "127.0.0.1") return false;
+    const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+    const appPort = String(process.env.PORT || "5000");
+    return port === appPort || (port === "80" && appPort === "80");
+  } catch {
+    return false;
+  }
+}
+
+function resolveViewportSize(
+  vpOpt: string | { width: number; height: number } | undefined,
+): { width: number; height: number } {
+  if (!vpOpt) return VIEWPORT_PRESETS.desktop;
+  if (typeof vpOpt === "string") {
+    if (VIEWPORT_PRESETS[vpOpt]) return VIEWPORT_PRESETS[vpOpt];
+    const match = vpOpt.match(/^(\d+)[xX](\d+)$/);
+    if (match) {
+      return { width: parseInt(match[1], 10), height: parseInt(match[2], 10) };
+    }
+    return VIEWPORT_PRESETS.desktop;
+  }
+  return vpOpt;
+}
+
+async function integrationHasBrowserSession(connectorKey: string): Promise<boolean> {
+  // Capability catalog lives on IntegrationContribution; code only checks the field.
+  const { getModRegistry } = await import("./mods/registry");
+  const registry = getModRegistry();
+  const contributions = [
+    ...(registry.core.contributions.integrations ?? []),
+    ...registry.mods.flatMap((mod) => mod.contributions.integrations ?? []),
+  ];
+  const hit = contributions.find((c) => c.connectorKey === connectorKey);
+  return Boolean(hit?.capabilities?.includes("browser-session"));
+}
+
+function localAppOrigin(): string {
+  const port = process.env.PORT || "5000";
+  return `http://localhost:${port}`;
+}
+
+function resolveLocalRoute(route: string): string {
+  const trimmed = route.trim();
+  if (!trimmed) throw new WebTestError("input_invalid", "navigate route must be non-empty");
+  const pathPart = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return `${localAppOrigin()}${pathPart}`;
+}
+
+export function parseWebTestSteps(raw: unknown): WebTestStep[] {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) {
+    throw new WebTestError("input_invalid", "steps must be an array");
+  }
+  if (raw.length > WEB_TEST_MAX_STEPS) {
+    throw new WebTestError("input_invalid", `steps max is ${WEB_TEST_MAX_STEPS}`);
+  }
+
+  const steps: WebTestStep[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i];
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new WebTestError("input_invalid", `steps[${i}] must be an object`);
+    }
+    const rec = item as Record<string, unknown>;
+    const kind = rec.kind;
+    if (typeof kind !== "string") {
+      throw new WebTestError("input_invalid", `steps[${i}].kind is required`);
+    }
+
+    const keys = Object.keys(rec).filter((k) => k !== "kind");
+    const requireOnly = (allowed: string[]) => {
+      for (const k of keys) {
+        if (!allowed.includes(k)) {
+          throw new WebTestError("input_invalid", `steps[${i}] has extra key '${k}'`);
+        }
+      }
+    };
+    const nonEmptyString = (field: string): string => {
+      const v = rec[field];
+      if (typeof v !== "string" || !v.trim()) {
+        throw new WebTestError("input_invalid", `steps[${i}].${field} must be a non-empty string`);
+      }
+      return v.trim();
+    };
+
+    switch (kind) {
+      case "navigate": {
+        const hasRoute = Object.prototype.hasOwnProperty.call(rec, "route");
+        const hasUrl = Object.prototype.hasOwnProperty.call(rec, "url");
+        if (hasRoute === hasUrl) {
+          throw new WebTestError("input_invalid", `steps[${i}] navigate needs exactly one of route or url`);
+        }
+        requireOnly(hasRoute ? ["route"] : ["url"]);
+        if (hasRoute) steps.push({ kind: "navigate", route: nonEmptyString("route") });
+        else steps.push({ kind: "navigate", url: nonEmptyString("url") });
+        break;
+      }
+      case "click":
+      case "tap": {
+        requireOnly(["selector"]);
+        const selector = nonEmptyString("selector");
+        if (selector.length > WEB_TEST_SELECTOR_MAX) {
+          throw new WebTestError("input_invalid", `steps[${i}].selector max ${WEB_TEST_SELECTOR_MAX} characters`);
+        }
+        steps.push(kind === "click" ? { kind: "click", selector } : { kind: "tap", selector });
+        break;
+      }
+      case "scroll": {
+        const hasSelector = Object.prototype.hasOwnProperty.call(rec, "selector");
+        const hasDeltaX = Object.prototype.hasOwnProperty.call(rec, "deltaX");
+        const hasDeltaY = Object.prototype.hasOwnProperty.call(rec, "deltaY");
+        if (hasSelector && (hasDeltaX || hasDeltaY)) {
+          throw new WebTestError("input_invalid", `steps[${i}] scroll supplies selector or deltas, not both`);
+        }
+        if (!hasSelector && !hasDeltaX && !hasDeltaY) {
+          throw new WebTestError("input_invalid", `steps[${i}] scroll needs selector or deltaX/deltaY`);
+        }
+        if (hasSelector) {
+          requireOnly(["selector"]);
+          const selector = nonEmptyString("selector");
+          if (selector.length > WEB_TEST_SELECTOR_MAX) {
+            throw new WebTestError("input_invalid", `steps[${i}].selector max ${WEB_TEST_SELECTOR_MAX} characters`);
+          }
+          steps.push({ kind: "scroll", selector });
+        } else {
+          requireOnly(["deltaX", "deltaY"]);
+          const clamp = (n: unknown, field: string): number | undefined => {
+            if (n === undefined) return undefined;
+            if (typeof n !== "number" || !Number.isFinite(n)) {
+              throw new WebTestError("input_invalid", `steps[${i}].${field} must be a finite number`);
+            }
+            return Math.max(-WEB_TEST_SCROLL_CLAMP, Math.min(WEB_TEST_SCROLL_CLAMP, n));
+          };
+          steps.push({
+            kind: "scroll",
+            deltaX: clamp(rec.deltaX, "deltaX"),
+            deltaY: clamp(rec.deltaY, "deltaY"),
+          });
+        }
+        break;
+      }
+      case "press": {
+        requireOnly(["key"]);
+        const key = nonEmptyString("key");
+        if (!WEB_TEST_KEY_SET.has(key)) {
+          throw new WebTestError("input_invalid", `steps[${i}].key '${key}' is outside the allowlist`);
+        }
+        steps.push({ kind: "press", key: key as WebTestKey });
+        break;
+      }
+      case "type": {
+        requireOnly(["text"]);
+        const text = nonEmptyString("text");
+        steps.push({ kind: "type", text });
+        break;
+      }
+      case "screenshot": {
+        requireOnly([]);
+        steps.push({ kind: "screenshot" });
+        break;
+      }
+      default:
+        throw new WebTestError("input_invalid", `steps[${i}].kind '${kind}' is unknown`);
+    }
+  }
+  return steps;
+}
+
+export function parseWebTestAuth(
+  raw: unknown,
+): { mode: "omit" } | { mode: "integration"; integration: string } {
+  if (raw == null) return { mode: "omit" };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new WebTestError("input_invalid", "auth must be an object");
+  }
+  const rec = raw as Record<string, unknown>;
+  for (const k of Object.keys(rec)) {
+    if (k !== "integration") {
+      throw new WebTestError("input_invalid", `auth has extra key '${k}'`);
+    }
+  }
+  const integration = rec.integration;
+  if (typeof integration !== "string" || !integration.trim()) {
+    throw new WebTestError("input_invalid", "auth.integration must be a non-empty string");
+  }
+  return { mode: "integration", integration: integration.trim() };
+}
+
+function ensureScreenshotsDir(): string {
+  const scratchDir = process.env.SCRATCH_DIR || "/app/scratch";
+  const screenshotsDir = path.join(scratchDir, "screenshots");
+  if (!fs.existsSync(screenshotsDir)) {
+    fs.mkdirSync(screenshotsDir, { recursive: true });
+  }
+  return screenshotsDir;
+}
+
+function buildFramePath(
+  entryUrl: string,
+  viewportSize: { width: number; height: number },
+  vpOpt: string | { width: number; height: number } | undefined,
+  label: string,
+): string {
+  const screenshotsDir = ensureScreenshotsDir();
+  const urlObj = new URL(entryUrl);
+  const routeSlug = urlObj.pathname.replace(/\//g, "-").replace(/^-/, "") || "home";
+  const vpLabel = typeof vpOpt === "string" ? vpOpt : `${viewportSize.width}x${viewportSize.height}`;
+  const safeLabel = label.replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 40) || "frame";
+  return path.join(screenshotsDir, `${routeSlug}-${vpLabel}-${safeLabel}-${Date.now()}.png`);
+}
+
+async function captureFrame(
+  page: Page,
+  viewportSize: { width: number; height: number },
+  fullPage: boolean,
+  outputPath: string,
+  label: string,
+): Promise<WebTestFrame> {
+  let truncated = false;
+  if (fullPage) {
+    const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
+    if (scrollHeight > 4000) {
+      truncated = true;
+      await page.screenshot({
+        path: outputPath,
+        clip: { x: 0, y: 0, width: viewportSize.width, height: 4000 },
+      });
+    } else {
+      await page.screenshot({ path: outputPath, fullPage: true });
+    }
+  } else {
+    await page.screenshot({ path: outputPath });
+  }
+
+  const finalHeight = truncated
+    ? 4000
+    : fullPage
+      ? await page.evaluate(() => document.body.scrollHeight)
+      : viewportSize.height;
+
+  log.log(`Screenshot saved: ${outputPath} (${viewportSize.width}×${finalHeight}${truncated ? " truncated" : ""})`);
+  return {
+    path: outputPath,
+    width: viewportSize.width,
+    height: finalHeight,
+    truncated,
+    label,
+  };
+}
+
+async function firstVisibleLocator(page: Page, selector: string) {
+  const locator = page.locator(selector);
+  const count = await locator.count();
+  for (let i = 0; i < count; i++) {
+    const candidate = locator.nth(i);
+    if (await candidate.isVisible().catch(() => false)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function originOf(url: string): string {
+  return new URL(url).origin;
+}
+
+/**
+ * One authenticated Chromium session for web.test.
+ * Empty steps = today's photograph. Closed steps act then evidence; origin re-checked after each act.
+ * Does not use withTargetBoundBrowserPage (isolator would change the photograph).
+ */
 export async function screenshotPage(
   url: string,
   options?: {
@@ -270,129 +630,340 @@ export async function screenshotPage(
     delay?: number;
     outputPath?: string;
     userId?: string;
-  }
-): Promise<{ path: string; width: number; height: number; truncated: boolean }> {
+    steps?: unknown;
+    auth?: unknown;
+  },
+): Promise<WebTestResult> {
   return withIsolatedBrowserCapacity("browser.screenshot", async () => {
-  let page: Page | null = null;
-  let screenshotContext: BrowserContext | null = null;
+    let page: Page | null = null;
+    let screenshotContext: BrowserContext | null = null;
+    let session: ScreenshotSession | null = null;
 
-  // Determine if URL targets an external host (not localhost)
-  const isExternal = !url.includes("localhost") && !url.includes("127.0.0.1");
-  let session: ScreenshotSession | null = null;
-  if (!isExternal) {
-    const { getCurrentPrincipal } = await import("./principal-context");
-    const userId = options?.userId || getCurrentPrincipal()?.userId;
-    if (!userId) throw new Error("Local screenshot authentication requires a user principal");
-    session = await createScreenshotSession(userId);
-  }
+    const frames: WebTestFrame[] = [];
+    const stepResults: WebTestStepResult[] = [];
+    let authUsed: WebTestAuthUsed = "none";
+    let finalUrl: string | null = null;
+    let outcome: WebTestOutcome = "ok";
+    let errorMessage: string | undefined;
 
-  try {
-    await ensureBrowser();
-    if (!browser) throw new Error("Browser not available");
+    const emptyResult = (o: WebTestOutcome, message: string): WebTestResult => ({
+      outcome: o,
+      authUsed,
+      entryUrl: url,
+      finalUrl,
+      steps: stepResults,
+      frames,
+      errorMessage: message,
+      path: frames[0]?.path ?? "",
+      width: frames[0]?.width ?? 0,
+      height: frames[0]?.height ?? 0,
+      truncated: frames[0]?.truncated ?? false,
+    });
 
-    // Resolve viewport
-    let viewportSize: { width: number; height: number };
-    const vpOpt = options?.viewport;
-    if (!vpOpt) {
-      viewportSize = VIEWPORT_PRESETS.desktop;
-    } else if (typeof vpOpt === "string") {
-      if (VIEWPORT_PRESETS[vpOpt]) {
-        viewportSize = VIEWPORT_PRESETS[vpOpt];
-      } else {
-        const match = vpOpt.match(/^(\d+)[xX](\d+)$/);
-        if (match) {
-          viewportSize = { width: parseInt(match[1], 10), height: parseInt(match[2], 10) };
-        } else {
-          viewportSize = VIEWPORT_PRESETS.desktop;
-        }
-      }
-    } else {
-      viewportSize = vpOpt;
-    }
-
-    // Create a SEPARATE context — no route blocking, so CSS/images/fonts load
-    if (isExternal) {
-      // External target: authenticate via bearer token, no cookie injection
-      let extraHTTPHeaders: Record<string, string> = {};
+    try {
+      let steps: WebTestStep[];
+      let authArg: ReturnType<typeof parseWebTestAuth>;
       try {
-        const { getAutomationAuthToken } = await import("./automation-auth-token");
-        const token = await getAutomationAuthToken();
-        if (token) {
-          extraHTTPHeaders["Authorization"] = `Bearer ${token}`;
-        }
+        steps = parseWebTestSteps(options?.steps);
+        authArg = parseWebTestAuth(options?.auth);
+      } catch (err) {
+        if (err instanceof WebTestError) return emptyResult(err.outcome, err.message);
+        throw err;
+      }
+
+      let entryOrigin: string;
+      try {
+        entryOrigin = originOf(url);
       } catch {
-        // Proceed without auth header
+        return emptyResult("input_invalid", `Invalid entry URL: ${url}`);
       }
-      screenshotContext = await browser.newContext({ viewport: viewportSize, extraHTTPHeaders });
-    } else {
-      // Localhost: use session cookie auth
-      screenshotContext = await browser.newContext({ viewport: viewportSize });
-      await screenshotContext.addCookies([
-        {
-          name: "connect.sid",
-          value: session!.signedCookie,
-          url: new URL(url).origin,
-          httpOnly: true,
-          secure: url.startsWith("https://"),
-          sameSite: "Lax",
-        },
-      ]);
-    }
 
-    page = await screenshotContext.newPage();
-    await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
+      const localApp = isLocalAppUrl(url);
+      const hasSteps = steps.length > 0;
 
-    const delay = options?.delay ?? 2000;
-    if (delay > 0) {
-      await page.waitForTimeout(delay);
-    }
+      // Auth + origin legality before any act.
+      if (authArg.mode === "integration") {
+        if (!(await integrationHasBrowserSession(authArg.integration))) {
+          return emptyResult(
+            "input_invalid",
+            `Integration '${authArg.integration}' is unknown or lacks browser-session capability`,
+          );
+        }
+        // Day-one injector is automation-auth bearer only.
+        if (authArg.integration !== "automation-auth") {
+          return emptyResult(
+            "input_invalid",
+            `Integration '${authArg.integration}' has no browser-session injector in this build`,
+          );
+        }
+      } else if (hasSteps && !localApp) {
+        return emptyResult(
+          "input_invalid",
+          "External URL with steps requires auth.integration with browser-session capability",
+        );
+      }
 
-    // Build output path
-    const scratchDir = process.env.SCRATCH_DIR || "/app/scratch";
-    const screenshotsDir = path.join(scratchDir, "screenshots");
-    if (!fs.existsSync(screenshotsDir)) {
-      fs.mkdirSync(screenshotsDir, { recursive: true });
-    }
+      const viewportSize = resolveViewportSize(options?.viewport);
+      const vpOpt = options?.viewport;
+      const fullPage = options?.fullPage ?? false;
 
-    let outputPath = options?.outputPath;
-    if (!outputPath) {
-      const urlObj = new URL(url);
-      const routeSlug = urlObj.pathname.replace(/\//g, "-").replace(/^-/, "") || "home";
-      const vpLabel = typeof vpOpt === "string" ? vpOpt : `${viewportSize.width}x${viewportSize.height}`;
-      const timestamp = Date.now();
-      outputPath = path.join(screenshotsDir, `${routeSlug}-${vpLabel}-${timestamp}.png`);
-    }
+      await ensureBrowser();
+      if (!browser) throw new Error("Browser not available");
 
-    const fullPage = options?.fullPage ?? false;
-    let truncated = false;
+      const extraHTTPHeaders: Record<string, string> = {};
 
-    if (fullPage) {
-      const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
-      if (scrollHeight > 4000) {
-        truncated = true;
-        await page.screenshot({ path: outputPath, clip: { x: 0, y: 0, width: viewportSize.width, height: 4000 } });
+      if (authArg.mode === "integration") {
+        try {
+          const { getAutomationAuthToken } = await import("./automation-auth-token");
+          const token = await getAutomationAuthToken();
+          if (!token) {
+            return emptyResult("auth_failed", "automation-auth token is unset");
+          }
+          extraHTTPHeaders["Authorization"] = `Bearer ${token}`;
+          authUsed = "automation-auth";
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return emptyResult("auth_failed", `automation-auth injector failed: ${msg}`);
+        }
+      } else if (localApp) {
+        const { getCurrentPrincipal } = await import("./principal-context");
+        const userId = options?.userId || getCurrentPrincipal()?.userId;
+        if (!userId) {
+          return emptyResult("auth_failed", "Local screenshot authentication requires a user principal");
+        }
+        try {
+          session = await createScreenshotSession(userId);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return emptyResult("auth_failed", `Principal cookie could not be minted: ${msg}`);
+        }
+        authUsed = "principal-cookie";
       } else {
-        await page.screenshot({ path: outputPath, fullPage: true });
+        // External photograph-only stranger — no credentials (spec).
+        authUsed = "none";
       }
-    } else {
-      await page.screenshot({ path: outputPath });
+
+      // hasTouch so tap is first-class (Playwright requires it); does not change the photograph path.
+      const contextOptions = {
+        viewport: viewportSize,
+        hasTouch: true,
+        ...(Object.keys(extraHTTPHeaders).length > 0 ? { extraHTTPHeaders } : {}),
+      };
+      screenshotContext = await browser.newContext(contextOptions);
+      if (session) {
+        await screenshotContext.addCookies([
+          {
+            name: "connect.sid",
+            value: session.signedCookie,
+            url: entryOrigin,
+            httpOnly: true,
+            secure: url.startsWith("https://"),
+            sameSite: "Lax",
+          },
+        ]);
+      }
+
+      page = await screenshotContext.newPage();
+      page.setDefaultTimeout(WEB_TEST_STEP_TIMEOUT_MS);
+      page.setDefaultNavigationTimeout(30_000);
+
+      try {
+        await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        outcome = "capture_failed";
+        errorMessage = `Entry navigation failed: ${msg}`;
+        try {
+          finalUrl = page.url();
+        } catch {
+          finalUrl = null;
+        }
+        return emptyResult(outcome, errorMessage);
+      }
+
+      finalUrl = page.url();
+      if (originOf(finalUrl) !== entryOrigin) {
+        outcome = "origin_escaped";
+        errorMessage = `Entry navigation left origin ${entryOrigin} → ${originOf(finalUrl)}`;
+      } else {
+        // Run closed steps
+        for (let i = 0; i < steps.length; i++) {
+          const step = steps[i];
+          try {
+            let detail = "";
+            switch (step.kind) {
+              case "navigate": {
+                const target =
+                  "route" in step && step.route !== undefined
+                    ? resolveLocalRoute(step.route)
+                    : (step as { url: string }).url;
+                if ("url" in step && step.url) {
+                  let parsed: URL;
+                  try {
+                    parsed = new URL(step.url);
+                  } catch {
+                    throw new WebTestError("input_invalid", `steps[${i}] navigate url is invalid`);
+                  }
+                  if (parsed.origin !== entryOrigin) {
+                    throw new WebTestError(
+                      "origin_escaped",
+                      `steps[${i}] navigate url leaves entry origin`,
+                    );
+                  }
+                } else if ("route" in step) {
+                  if (!isLocalAppUrl(target) || originOf(target) !== entryOrigin) {
+                    throw new WebTestError(
+                      "input_invalid",
+                      `steps[${i}] navigate route is local-app only on the entry origin`,
+                    );
+                  }
+                }
+                await page.goto(target, { waitUntil: "networkidle", timeout: 30_000 });
+                detail = `navigated ${target}`;
+                break;
+              }
+              case "click": {
+                const loc = await firstVisibleLocator(page, step.selector);
+                if (!loc) {
+                  throw new WebTestError("step_failed", `No visible match for selector '${step.selector}'`);
+                }
+                await loc.click({ timeout: WEB_TEST_STEP_TIMEOUT_MS });
+                detail = `clicked ${step.selector}`;
+                break;
+              }
+              case "tap": {
+                const loc = await firstVisibleLocator(page, step.selector);
+                if (!loc) {
+                  throw new WebTestError("step_failed", `No visible match for selector '${step.selector}'`);
+                }
+                await loc.tap({ timeout: WEB_TEST_STEP_TIMEOUT_MS });
+                detail = `tapped ${step.selector}`;
+                break;
+              }
+              case "scroll": {
+                if ("selector" in step && step.selector) {
+                  const loc = await firstVisibleLocator(page, step.selector);
+                  if (!loc) {
+                    throw new WebTestError("step_failed", `No visible match for selector '${step.selector}'`);
+                  }
+                  await loc.scrollIntoViewIfNeeded({ timeout: WEB_TEST_STEP_TIMEOUT_MS });
+                  detail = `scrolled into view ${step.selector}`;
+                } else {
+                  const dx = step.deltaX ?? 0;
+                  const dy = step.deltaY ?? 0;
+                  await page.mouse.wheel(dx, dy);
+                  detail = `wheeled deltaX=${dx} deltaY=${dy}`;
+                }
+                break;
+              }
+              case "press": {
+                const key = step.key === "Space" ? " " : step.key;
+                await page.keyboard.press(key);
+                detail = `pressed ${step.key}`;
+                break;
+              }
+              case "type": {
+                await page.keyboard.type(step.text, { delay: 0 });
+                detail = `typed ${step.text.length} chars`;
+                break;
+              }
+              case "screenshot": {
+                const midPath = buildFramePath(url, viewportSize, vpOpt, `step${i}`);
+                const frame = await captureFrame(page, viewportSize, fullPage, midPath, `step-${i}`);
+                frames.push(frame);
+                detail = `frame ${frame.path}`;
+                break;
+              }
+              default:
+                throw new WebTestError("input_invalid", `Unknown step kind`);
+            }
+
+            finalUrl = page.url();
+            if (originOf(finalUrl) !== entryOrigin) {
+              throw new WebTestError(
+                "origin_escaped",
+                `Step ${i} left entry origin → ${originOf(finalUrl)}`,
+              );
+            }
+            stepResults.push({ index: i, kind: step.kind, status: "ok", detail });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (err instanceof WebTestError) {
+              outcome = err.outcome;
+            } else {
+              outcome = "step_failed";
+            }
+            errorMessage = msg;
+            stepResults.push({ index: i, kind: step.kind, status: "failed", detail: msg });
+            try {
+              finalUrl = page.url();
+            } catch {
+              /* keep prior */
+            }
+            break;
+          }
+        }
+      }
+
+      const delay = options?.delay ?? 2000;
+      if (delay > 0 && page) {
+        await page.waitForTimeout(delay);
+      }
+
+      // Closing frame whenever a page exists.
+      if (page) {
+        try {
+          const closePath =
+            options?.outputPath || buildFramePath(url, viewportSize, vpOpt, "close");
+          const closeFrame = await captureFrame(page, viewportSize, fullPage, closePath, "close");
+          frames.push(closeFrame);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (outcome === "ok") {
+            outcome = "capture_failed";
+            errorMessage = `Closing screenshot failed: ${msg}`;
+          }
+        }
+      }
+
+      try {
+        finalUrl = page?.url() ?? finalUrl;
+      } catch {
+        /* keep */
+      }
+
+      const primary = frames[frames.length - 1] ?? frames[0];
+      return {
+        outcome,
+        authUsed,
+        entryUrl: url,
+        finalUrl,
+        steps: stepResults,
+        frames,
+        errorMessage,
+        path: primary?.path ?? "",
+        width: primary?.width ?? 0,
+        height: primary?.height ?? 0,
+        truncated: primary?.truncated ?? false,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`screenshotPage failed: ${msg}`);
+      return emptyResult("capture_failed", msg);
+    } finally {
+      if (page) {
+        try {
+          await page.close();
+        } catch {}
+      }
+      if (screenshotContext) {
+        try {
+          await screenshotContext.close();
+        } catch {}
+      }
+      resetIdleTimer();
+      if (session) await session.cleanup();
     }
-
-    const finalHeight = truncated
-      ? 4000
-      : fullPage
-      ? await page.evaluate(() => document.body.scrollHeight)
-      : viewportSize.height;
-
-    log.log(`Screenshot saved: ${outputPath} (${viewportSize.width}×${finalHeight}${truncated ? " truncated" : ""})`);
-
-    return { path: outputPath, width: viewportSize.width, height: finalHeight, truncated };
-  } finally {
-    if (page) { try { await page.close(); } catch {} }
-    if (screenshotContext) { try { await screenshotContext.close(); } catch {} }
-    resetIdleTimer();
-    if (session) await session.cleanup();
-  }
   });
 }
 
