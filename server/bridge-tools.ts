@@ -7297,15 +7297,44 @@ ${refs}` : ""),
 
 
   async sentry(args: Record<string, any>): Promise<ToolHandlerResult> {
-    const action = typeof args.action === "string" ? args.action : "";
-    if (!action) return { result: "Missing 'action' parameter", error: true };
-    const allowed = new Set(["status", "issues", "issue", "events", "latest_event", "uptime", "sync_availability", "resolve", "unresolve", "ignore"]);
-    if (!allowed.has(action)) {
-      return {
-        result: `Unknown sentry action: ${action}. Allowed: ${[...allowed].join(", ")}.`,
-        error: true,
-      };
+    // Compatibility alias: models sometimes emit list for the issues inventory.
+    const rawAction = typeof args.action === "string" ? args.action.trim() : "";
+    const action = rawAction === "list" ? "issues" : rawAction;
+    if (!action) {
+      return contractReject("Missing 'action' parameter", "system_input_invalid", "sentry_missing_action");
     }
+    const allowed = new Set([
+      "status",
+      "issues",
+      "issue",
+      "events",
+      "latest_event",
+      "uptime",
+      "sync_availability",
+      "resolve",
+      "unresolve",
+      "ignore",
+    ]);
+    if (!allowed.has(action)) {
+      // Caller-correctable action miss — amber input, never Executor TOOL_FAILED_SENTRY.
+      return contractReject(
+        `Unknown sentry action: ${rawAction}. Allowed: ${[...allowed].join(", ")}.`,
+        "system_input_invalid",
+        "sentry_unknown_action",
+      );
+    }
+
+    const requireIssueId = (): string | ToolHandlerResult => {
+      const issueId = typeof args.issueId === "string" ? args.issueId.trim() : "";
+      if (!issueId) {
+        return contractReject(
+          "Missing 'issueId' parameter",
+          "system_input_invalid",
+          "sentry_missing_issue_id",
+        );
+      }
+      return issueId;
+    };
 
     const {
       getSentryConfig,
@@ -7384,45 +7413,49 @@ ${refs}` : ""),
           return { result: JSON.stringify({ count: items.length, issues: items }) };
         }
         case "issue": {
-          const issueId = typeof args.issueId === "string" ? args.issueId : "";
-          if (!issueId) return { result: "Missing 'issueId' parameter", error: true };
-          const issue = await fetchIssue(org, issueId);
+          const issueIdOrReject = requireIssueId();
+          if (typeof issueIdOrReject !== "string") return issueIdOrReject;
+          const issue = await fetchIssue(org, issueIdOrReject);
           return { result: JSON.stringify(issue) };
         }
         case "events": {
-          const issueId = typeof args.issueId === "string" ? args.issueId : "";
-          if (!issueId) return { result: "Missing 'issueId' parameter", error: true };
+          const issueIdOrReject = requireIssueId();
+          if (typeof issueIdOrReject !== "string") return issueIdOrReject;
           const limit = Math.min(100, Math.max(1, Number(args.limit) || 10));
           const full = args.full !== false;
-          const events = await fetchIssueEvents(org, issueId, { full, limit });
-          return { result: JSON.stringify({ issueId, count: events.length, events }) };
+          const events = await fetchIssueEvents(org, issueIdOrReject, { full, limit });
+          return { result: JSON.stringify({ issueId: issueIdOrReject, count: events.length, events }) };
         }
         case "latest_event": {
-          const issueId = typeof args.issueId === "string" ? args.issueId : "";
-          if (!issueId) return { result: "Missing 'issueId' parameter", error: true };
-          const event = await fetchLatestEvent(org, issueId);
+          const issueIdOrReject = requireIssueId();
+          if (typeof issueIdOrReject !== "string") return issueIdOrReject;
+          const event = await fetchLatestEvent(org, issueIdOrReject);
           return { result: JSON.stringify(event) };
         }
         case "resolve": {
-          const issueId = typeof args.issueId === "string" ? args.issueId : "";
-          if (!issueId) return { result: "Missing 'issueId' parameter", error: true };
-          const updated = await updateIssueStatus(org, issueId, "resolved");
+          const issueIdOrReject = requireIssueId();
+          if (typeof issueIdOrReject !== "string") return issueIdOrReject;
+          const updated = await updateIssueStatus(org, issueIdOrReject, "resolved");
           return { result: JSON.stringify({ ok: true, id: updated.id, status: updated.status }) };
         }
         case "unresolve": {
-          const issueId = typeof args.issueId === "string" ? args.issueId : "";
-          if (!issueId) return { result: "Missing 'issueId' parameter", error: true };
-          const updated = await updateIssueStatus(org, issueId, "unresolved");
+          const issueIdOrReject = requireIssueId();
+          if (typeof issueIdOrReject !== "string") return issueIdOrReject;
+          const updated = await updateIssueStatus(org, issueIdOrReject, "unresolved");
           return { result: JSON.stringify({ ok: true, id: updated.id, status: updated.status }) };
         }
         case "ignore": {
-          const issueId = typeof args.issueId === "string" ? args.issueId : "";
-          if (!issueId) return { result: "Missing 'issueId' parameter", error: true };
-          const updated = await updateIssueStatus(org, issueId, "ignored");
+          const issueIdOrReject = requireIssueId();
+          if (typeof issueIdOrReject !== "string") return issueIdOrReject;
+          const updated = await updateIssueStatus(org, issueIdOrReject, "ignored");
           return { result: JSON.stringify({ ok: true, id: updated.id, status: updated.status }) };
         }
       }
-      return { result: `Unhandled sentry action: ${action}`, error: true };
+      return contractReject(
+        `Unhandled sentry action: ${action}`,
+        "system_input_invalid",
+        "sentry_unhandled_action",
+      );
     } catch (err: unknown) {
       if (err instanceof SentryApiError) {
         const failure = toolFailureFromError(err);
