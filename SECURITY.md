@@ -19,11 +19,18 @@
 - Residual/rollback: Business route aliases, Business collection adapter, and seed retirement path remain until zero callers. Revert the route ownership flip, AGENTS metrics boundary note, and this finding together; never drop metric history as rollback.
 -->
 
+<!-- 2026-08-17 Outbound Slack tool:
+- Assets/data: A01 mapped Slack identity and Person locator, A03 encrypted Slack credentials, A04 Agent/tool behavior, A06 Principal/Vault/origin authority, A07 outbound receipts (`slack_outbound_messages`), A08 Slack Web API availability. Locators/receipts S1; message bodies S2; tokens S3.
+- Flow/threat: Mantra tool/timer/hook/skill → Slack storage `sendOnce` → existing `postSlackMessage` → workspace DM or one allowlisted channel. Credible abuse: treating `persons.social_profiles.slack` as send authority; Slack-ingress prompt injection DMing mapped users; disabled-install race; duplicate retries; posting to a non-allowlisted channel; token leak in logs/tool results (STRIDE spoofing/elevation/repudiation/disclosure; IAM-01, AGENT-03, AGENT-04, DATA-01, OBS-01).
+- Deterministic controls/owner: Slack Mod owns the `slack` tool and outbox. Send requires active Mod + enabled current-env installation + (active mapping ∧ visible Person locator) or exact allowlisted `C…`. Person Slack ID is never sufficient. Slack-ingress origin cannot see or call `slack`. Dual kill switch rechecked immediately before dispatch. Unique idempotency + deterministic `client_msg_id`. Bodies hashed, then nulled after send; never logged. `slack:send` is on the autonomous external-effect allowlist; other external effects stay gated. Owner: Slack Mod + Core Agent Authority. Severity: high confidentiality/integrity. SLA: before enabling outbound on any installation.
+- Residual/rollback: a mapped teammate can be DMed by any Account member who can invoke tools under that installation; channel posts are visible to everyone in the one allowlisted room. Disable installation or Slack Mod to stop sends; revoke Slack tokens for provider-side stop. Revert the tool contribution, allowlist entry, outbox, origin filter, and this finding together. Additive outbox rows remain inert.
+-->
+
 <!-- 2026-08-14 People Slack User ID is an address, not a Principal:
 - Assets/data: A01 Person contact identity (`persons.social_profiles.slack`, S1 Slack User ID). No token, mapping, Session, or send authority.
 - Flow/threat: People profile -> typed Slack User ID (`U…`) stored like Instagram. Credible abuse is treating that field as inbound Slack identity, auto-discovering IDs, or posting from it (STRIDE spoofing/elevation; IAM-01/AGENT-03).
-- Deterministic controls/owner: `savePerson` persists only a Slack User ID matching U followed by 1-31 A-Z/0-9 characters. `slack_principal_mappings` remains the only inbound User locator. No `users:read`, workspace catalog, Slack tool, or outbound origin is added. Owner: Core People. Severity: medium integrity. SLA: immediate.
-- Residual/rollback: a Person Slack ID cannot run a Session or send. Revert the socialProfiles.slack field, sanitizer, profile row, and this finding together.
+- Deterministic controls/owner: `savePerson` persists only a Slack User ID matching U followed by 1-31 A-Z/0-9 characters. `slack_principal_mappings` remains the only inbound User locator. A Slack tool exists; `social_profiles.slack` still does not grant mapping, Session, or send. No `users:read` or workspace catalog. Owner: Core People. Severity: medium integrity. SLA: immediate.
+- Residual/rollback: a Person Slack ID alone cannot run a Session or send. Revert the socialProfiles.slack field, sanitizer, profile row, and this finding together.
 -->
 
 <!-- 2026-08-14 Leftover catalog followers rebase:

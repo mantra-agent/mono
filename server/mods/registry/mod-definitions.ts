@@ -368,10 +368,10 @@ const slack: ModDefinition = {
   key: "slack",
   version: "1.0.0",
   name: "Slack",
-  description: "A default-deny Slack interaction adapter for explicitly mapped internal workspaces.",
+  description: "A default-deny Slack interaction adapter for explicitly mapped internal workspaces, including governed outbound send.",
   outcome: {
     label: "Use Mantra in Slack",
-    promise: "Bring bounded, explicit Slack conversations into canonical Mantra Sessions.",
+    promise: "Bring bounded, explicit Slack conversations into canonical Mantra Sessions and deliver intentional outbound messages under authority.",
     activationSignals: ["slack.integration.slack"],
   },
   experience: { primaryObjectKind: "integration", primaryActionId: "slack.action.connect", rootSurfaceKey: "integrations" },
@@ -389,6 +389,7 @@ const slack: ModDefinition = {
         requiredPermissions: ["system:read"],
       }),
     ],
+    tools: [toolRef("slack.tool.slack", "slack")],
     serverRouteGroups: [serverRouteGroupRef("slack.routes.api", "slack.api")],
   },
 };

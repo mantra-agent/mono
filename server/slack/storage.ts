@@ -1,13 +1,26 @@
 import { createHash, randomUUID } from "crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db, runWithDatabaseTransaction } from "../db";
 import { chatFileStorage } from "../chat-file-storage";
 import type { Principal } from "../principal";
-import { getCurrentPrincipal, runWithPrincipal } from "../principal-context";
+import { getCurrentPrincipal, requireCurrentUserPrincipal, runWithPrincipal } from "../principal-context";
 import { resolveCurrentProfileIdentity } from "../profile-identity";
-import { peopleStorage } from "../people-storage";
+import { peopleStorage, normalizePersonSlackUserId } from "../people-storage";
 import { users } from "@shared/schema";
 import type { AdmittedSlackEvent, SlackEventStatus } from "./contracts";
+import { createLogger } from "../log";
+import { getRuntimeIdentity } from "../runtime-identity";
+import { hasActiveModAccess } from "../mods/mod-access";
+import { loadSlackCredentials, postSlackMessage } from "./client";
+
+const outboundLog = createLogger("SlackOutbound");
+
+const OUTBOUND_BODY_MAX = 4000;
+const OUTBOUND_DESTINATION_MIN_MS = 2_000;
+const OUTBOUND_CALLER_LIMIT = 20;
+const OUTBOUND_INSTALLATION_LIMIT = 30;
+const OUTBOUND_MAX_ATTEMPTS = 3;
+const OUTBOUND_RETRY_BASE_MS = 500;
 
 export interface SlackInstallationRow {
   id: string;
@@ -419,4 +432,365 @@ function mapInstallation(row: Record<string, unknown>): SlackInstallationRow {
     allowedChannelName: typeof row.allowed_channel_name === "string" ? row.allowed_channel_name : null,
     enabled: Boolean(row.enabled), status: String(row.status),
   };
+}
+
+// ─── Outbound tool path ─────────────────────────────────────────────────────
+
+export type SlackOutboundStatus =
+  | "inactive_mod"
+  | "no_installation"
+  | "disabled"
+  | "unconfigured"
+  | "ready";
+
+export type SlackOutboundOrigin =
+  | "interactive"
+  | "autonomous"
+  | "timer"
+  | "hook"
+  | "skill"
+  | "plan";
+
+export interface SlackOutboundSendInput {
+  to: "person" | "channel";
+  personId?: string;
+  channelId?: string;
+  text: string;
+  idempotencyKey: string;
+  origin: SlackOutboundOrigin;
+  sessionId?: string;
+  runId?: string;
+  toolCallId?: string;
+}
+
+export interface SlackOutboundReceipt {
+  id: string;
+  status: "sent";
+  destinationKind: "dm" | "channel";
+  deliveryChannel: string;
+  deliveryTs: string;
+  replayed: boolean;
+}
+
+/** Provider-free readiness discriminant for slack.status. Never decrypts tokens. */
+export async function getOutboundStatus(): Promise<SlackOutboundStatus> {
+  const principal = requireCurrentUserPrincipal();
+  if (!(await hasActiveModAccess(principal, "slack"))) return "inactive_mod";
+
+  const identity = await getRuntimeIdentity();
+  if (!identity.platformEnvironmentId) return "no_installation";
+
+  const result = await db.execute(sql`
+    SELECT enabled, status, allowed_channel_ids, provider_connection_id
+      FROM slack_installations
+     WHERE platform_environment_id = ${identity.platformEnvironmentId}
+       AND account_id = ${principal.accountId}
+     ORDER BY enabled DESC, created_at ASC
+     LIMIT 1
+  `);
+  const row = result.rows[0];
+  if (!row) return "no_installation";
+  if (!row.enabled) return "disabled";
+  if (String(row.status) === "unconfigured" || row.provider_connection_id == null) return "unconfigured";
+  return "ready";
+}
+
+/**
+ * Canonical outbound send. Revalidates Mod + installation + mapping/allowlist +
+ * Person visibility, enforces ceilings, claims the outbox, then posts via the
+ * existing client. Tool handlers must not SQL or call Slack HTTP directly.
+ */
+export async function sendOnce(input: SlackOutboundSendInput): Promise<SlackOutboundReceipt> {
+  const principal = requireCurrentUserPrincipal();
+  const text = input.text.trim();
+  if (!text) throw new Error("slack_body_empty");
+  if ([...text].length > OUTBOUND_BODY_MAX) throw new Error("slack_body_too_long");
+
+  const idempotencyKey = input.idempotencyKey.trim();
+  if (idempotencyKey.length < 8 || idempotencyKey.length > 120) {
+    throw new Error("slack_idempotency_invalid");
+  }
+
+  if (!(await hasActiveModAccess(principal, "slack"))) throw new Error("slack_mod_inactive");
+
+  const identity = await getRuntimeIdentity();
+  if (!identity.platformEnvironmentId) throw new Error("slack_no_installation");
+
+  const installations = await getRuntimeInstallations(identity.platformEnvironmentId);
+  const installation = installations.find(
+    (row) => row.accountId === principal.accountId && row.enabled,
+  );
+  if (!installation) {
+    const any = await db.execute(sql`
+      SELECT enabled FROM slack_installations
+       WHERE platform_environment_id = ${identity.platformEnvironmentId}
+         AND account_id = ${principal.accountId}
+       LIMIT 1
+    `);
+    if (any.rows[0] && any.rows[0].enabled === false) throw new Error("slack_installation_disabled");
+    throw new Error("slack_no_installation");
+  }
+
+  const bodyHash = hashSlackContent(text);
+  const deliveryClientMsgId = deterministicOutboundClientMsgId(installation.id, idempotencyKey);
+
+  let destinationKind: "dm" | "channel";
+  let destinationSlackId: string;
+  let personId: string | null = null;
+  let mappingId: string | null = null;
+
+  if (input.to === "person") {
+    if (!input.personId?.trim()) throw new Error("slack_person_required");
+    const person = await peopleStorage.getPerson(input.personId.trim());
+    if (!person) throw new Error("slack_person_not_found");
+    personId = person.id;
+
+    const rawSlack = person.socialProfiles?.slack;
+    if (typeof rawSlack !== "string" || !rawSlack.trim()) throw new Error("slack_person_unaddressed");
+    destinationSlackId = normalizePersonSlackUserId(rawSlack);
+    destinationKind = "dm";
+
+    const mapping = await db.execute(sql`
+      SELECT id FROM slack_principal_mappings
+       WHERE installation_id = ${installation.id}
+         AND team_id = ${installation.teamId}
+         AND slack_user_id = ${destinationSlackId}
+         AND active = TRUE
+       LIMIT 1
+    `);
+    if (mapping.rows.length !== 1) throw new Error("slack_not_mapped");
+    mappingId = String(mapping.rows[0].id);
+  } else {
+    const allowed = installation.allowedChannelIds[0];
+    if (!allowed || !/^C[A-Z0-9]{1,31}$/.test(allowed)) throw new Error("slack_channel_unconfigured");
+    if (input.channelId && input.channelId.trim() !== allowed) throw new Error("slack_channel_mismatch");
+    destinationKind = "channel";
+    destinationSlackId = allowed;
+  }
+
+  // Replay of same key + same body returns the existing sent receipt.
+  const existing = await db.execute(sql`
+    SELECT id, status, body_hash, delivery_channel, delivery_ts, destination_kind
+      FROM slack_outbound_messages
+     WHERE installation_id = ${installation.id}
+       AND idempotency_key = ${idempotencyKey}
+     LIMIT 1
+  `);
+  if (existing.rows[0]) {
+    const row = existing.rows[0];
+    if (String(row.body_hash) !== bodyHash) throw new Error("slack_idempotency_conflict");
+    if (String(row.status) === "sent" && row.delivery_channel && row.delivery_ts) {
+      return {
+        id: String(row.id),
+        status: "sent",
+        destinationKind: String(row.destination_kind) as "dm" | "channel",
+        deliveryChannel: String(row.delivery_channel),
+        deliveryTs: String(row.delivery_ts),
+        replayed: true,
+      };
+    }
+    if (String(row.status) === "sending") {
+      // Another worker may be in flight; treat as conflict rather than double-post.
+      throw new Error("slack_idempotency_conflict");
+    }
+  }
+
+  await enforceOutboundCeilings(installation.id, principal.userId, destinationSlackId);
+
+  const vaultId = principal.activeVaultId || installation.vaultId;
+  const insert = await db.execute(sql`
+    INSERT INTO slack_outbound_messages (
+      installation_id, idempotency_key, origin, caller_user_id, account_id, vault_id,
+      session_id, run_id, tool_call_id, destination_kind, destination_slack_id,
+      person_id, mapping_id, body, body_hash, status, delivery_client_msg_id, attempt_count
+    ) VALUES (
+      ${installation.id}, ${idempotencyKey}, ${input.origin}, ${principal.userId}, ${principal.accountId}, ${vaultId},
+      ${input.sessionId ?? null}, ${input.runId ?? null}, ${input.toolCallId ?? null},
+      ${destinationKind}, ${destinationSlackId},
+      ${personId}, ${mappingId}, ${text}, ${bodyHash}, 'sending', ${deliveryClientMsgId}::uuid, 0
+    )
+    ON CONFLICT (installation_id, idempotency_key)
+    DO NOTHING
+    RETURNING id
+  `);
+
+  let outboundId: string;
+  if (insert.rows[0]) {
+    outboundId = String(insert.rows[0].id);
+  } else {
+    // Lost the insert race — re-read and return sent receipt or fail closed.
+    const raced = await db.execute(sql`
+      SELECT id, status, body_hash, delivery_channel, delivery_ts, destination_kind
+        FROM slack_outbound_messages
+       WHERE installation_id = ${installation.id}
+         AND idempotency_key = ${idempotencyKey}
+       LIMIT 1
+    `);
+    const row = raced.rows[0];
+    if (!row) throw new Error("slack_send_failed");
+    if (String(row.body_hash) !== bodyHash) throw new Error("slack_idempotency_conflict");
+    if (String(row.status) === "sent" && row.delivery_channel && row.delivery_ts) {
+      return {
+        id: String(row.id),
+        status: "sent",
+        destinationKind: String(row.destination_kind) as "dm" | "channel",
+        deliveryChannel: String(row.delivery_channel),
+        deliveryTs: String(row.delivery_ts),
+        replayed: true,
+      };
+    }
+    throw new Error("slack_idempotency_conflict");
+  }
+
+  // Dual kill switch immediately before provider dispatch.
+  if (!(await hasActiveModAccess(principal, "slack"))) {
+    await markOutboundBlocked(outboundId, "slack_mod_inactive");
+    throw new Error("slack_mod_inactive");
+  }
+  const live = await db.execute(sql`
+    SELECT enabled FROM slack_installations WHERE id = ${installation.id} LIMIT 1
+  `);
+  if (!live.rows[0]?.enabled) {
+    await markOutboundBlocked(outboundId, "slack_installation_disabled");
+    throw new Error("slack_installation_disabled");
+  }
+
+  let lastError = "slack_delivery_failed";
+  for (let attempt = 1; attempt <= OUTBOUND_MAX_ATTEMPTS; attempt += 1) {
+    await db.execute(sql`
+      UPDATE slack_outbound_messages
+         SET attempt_count = ${attempt}, status = 'sending', updated_at = NOW()
+       WHERE id = ${outboundId}
+    `);
+    try {
+      const credentials = await loadSlackCredentials(installation);
+      const receipt = await postSlackMessage(credentials, {
+        channel: destinationSlackId,
+        text,
+        clientMsgId: deliveryClientMsgId,
+      });
+      await db.execute(sql`
+        UPDATE slack_outbound_messages
+           SET status = 'sent', body = NULL, delivery_channel = ${receipt.channel},
+               delivery_ts = ${receipt.ts}, failure_code = NULL,
+               sent_at = NOW(), updated_at = NOW()
+         WHERE id = ${outboundId}
+      `);
+      outboundLog.info(
+        `sent outboundId=${outboundId} kind=${destinationKind} attempt=${attempt}`,
+      );
+      return {
+        id: outboundId,
+        status: "sent",
+        destinationKind,
+        deliveryChannel: receipt.channel,
+        deliveryTs: receipt.ts,
+        replayed: false,
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message.slice(0, 120) : "slack_delivery_failed";
+      outboundLog.warn(
+        `outbound attempt failed outboundId=${outboundId} attempt=${attempt} code=${lastError}`,
+      );
+      if (attempt < OUTBOUND_MAX_ATTEMPTS && isRetryableSlackProviderError(lastError)) {
+        await sleep(OUTBOUND_RETRY_BASE_MS * attempt);
+        continue;
+      }
+      break;
+    }
+  }
+
+  await db.execute(sql`
+    UPDATE slack_outbound_messages
+       SET status = 'failed', failure_code = ${lastError}, updated_at = NOW()
+     WHERE id = ${outboundId}
+  `);
+  // Expire failed body after 24h is retention-job territory; null immediately on permanent input-class fails.
+  if (
+    lastError === "slack_person_unaddressed"
+    || lastError === "slack_not_mapped"
+    || lastError === "slack_channel_unconfigured"
+    || lastError === "slack_channel_mismatch"
+  ) {
+    await db.execute(sql`
+      UPDATE slack_outbound_messages SET body = NULL, updated_at = NOW() WHERE id = ${outboundId}
+    `);
+  }
+  throw new Error(lastError.startsWith("slack_") ? lastError : "slack_delivery_failed");
+}
+
+async function enforceOutboundCeilings(
+  installationId: string,
+  callerUserId: string,
+  destinationSlackId: string,
+): Promise<void> {
+  const destWindow = await db.execute(sql`
+    SELECT created_at FROM slack_outbound_messages
+     WHERE installation_id = ${installationId}
+       AND destination_slack_id = ${destinationSlackId}
+       AND status IN ('sending','sent')
+     ORDER BY created_at DESC
+     LIMIT 1
+  `);
+  const lastDest = destWindow.rows[0]?.created_at
+    ? new Date(String(destWindow.rows[0].created_at)).getTime()
+    : 0;
+  if (lastDest && Date.now() - lastDest < OUTBOUND_DESTINATION_MIN_MS) {
+    throw new Error("slack_rate_limited");
+  }
+
+  const callerCount = await db.execute(sql`
+    SELECT COUNT(*)::integer AS count FROM slack_outbound_messages
+     WHERE caller_user_id = ${callerUserId}
+       AND status IN ('sending','sent')
+       AND created_at > NOW() - INTERVAL '10 minutes'
+  `);
+  if (Number(callerCount.rows[0]?.count ?? 0) >= OUTBOUND_CALLER_LIMIT) {
+    throw new Error("slack_quota");
+  }
+
+  const installCount = await db.execute(sql`
+    SELECT COUNT(*)::integer AS count FROM slack_outbound_messages
+     WHERE installation_id = ${installationId}
+       AND status IN ('sending','sent')
+       AND created_at > NOW() - INTERVAL '10 minutes'
+  `);
+  if (Number(installCount.rows[0]?.count ?? 0) >= OUTBOUND_INSTALLATION_LIMIT) {
+    throw new Error("slack_quota");
+  }
+}
+
+async function markOutboundBlocked(id: string, code: string): Promise<void> {
+  await db.execute(sql`
+    UPDATE slack_outbound_messages
+       SET status = 'blocked', failure_code = ${code}, body = NULL, updated_at = NOW()
+     WHERE id = ${id}
+  `);
+}
+
+function deterministicOutboundClientMsgId(installationId: string, idempotencyKey: string): string {
+  // UUID v5-style: SHA-1 of namespace+name, version/variant bits set. Stable across retries.
+  const ns = createHash("sha1").update(`slack-outbound:${installationId}`).digest();
+  const hash = createHash("sha1").update(ns).update(idempotencyKey).digest();
+  const bytes = Buffer.from(hash.subarray(0, 16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x50; // version 5
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function isRetryableSlackProviderError(code: string): boolean {
+  return (
+    code.includes("ratelimited")
+    || code.includes("rate_limited")
+    || code.includes("timeout")
+    || code.includes("http_5")
+    || code.includes("provider_fatal")
+    || code === "slack_provider_invalid_json"
+    || code === "slack_delivery_receipt_invalid"
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

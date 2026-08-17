@@ -11,7 +11,9 @@ export type ToolInvocationOrigin =
   | "timer"
   | "hook"
   | "http"
-  | "internal";
+  | "internal"
+  /** Slack-admitted DM/mention turns. Must never receive the slack tool. */
+  | "slack_ingress";
 
 export type TrustedEngineeringDelegation = "plan" | "workflow" | "child";
 
@@ -74,6 +76,7 @@ const INTERNAL_EXTERNAL_EFFECT_ALLOWLIST = new Set([
   "session:send_message",
   "phone_call:prepare",
   "phone_call:confirm",
+  "slack:send",
 ]);
 
 function actionOf(args: Record<string, unknown>): string | undefined {
@@ -151,6 +154,12 @@ export function authorizeToolInvocation(
 ): ToolAuthorityDecision {
   const origin = context.origin ?? "internal";
   const action = actionOf(args);
+
+  // Slack-ingress turns share processChatStream with web but must never call slack.send.
+  // Prompt injection on a channel mention must not become outbound DM authority.
+  if (origin === "slack_ingress" && toolName === "slack") {
+    return { allowed: false, reason: "slack_ingress_origin_denied" };
+  }
 
   if (
     toolName === "system"

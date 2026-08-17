@@ -1622,12 +1622,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     archiveDownloadable?: boolean;
   };
 
-  async function resolveAuthorityToolDefinitions(sessionId: string): Promise<ToolDefinition[]> {
+  async function resolveAuthorityToolDefinitions(
+    sessionId: string,
+    origin: "interactive" | "slack_ingress" = "interactive",
+  ): Promise<ToolDefinition[]> {
     const { filterToolSchemasForAuthority } = await import("../../agent-authority");
     const { requireCurrentPrincipal } = await import("../../principal-context");
     const { filterModToolSchemas } = await import("../../mods/mod-access");
     const authorityTools = filterToolSchemasForAuthority(getToolDefinitions(), {
-      origin: "interactive",
+      origin,
       sessionId,
     });
     const modScopedTools = await filterModToolSchemas(requireCurrentPrincipal(), authorityTools);
@@ -1638,13 +1641,16 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }));
   }
 
-  async function resolveInteractiveToolSet(sessionId: string): Promise<{
+  async function resolveInteractiveToolSet(
+    sessionId: string,
+    origin: "interactive" | "slack_ingress" = "interactive",
+  ): Promise<{
     definitions: ToolDefinition[];
     authorityCount: number;
     personaName: string;
     bundleCount: number;
   }> {
-    const authorityDefinitions = await resolveAuthorityToolDefinitions(sessionId);
+    const authorityDefinitions = await resolveAuthorityToolDefinitions(sessionId, origin);
     const { filterToolsForPersonaBundle } = await import("../../tool-registry");
     const { resolveSessionPersonaComposition } = await import("../../session-persona");
     const { persona, toolBundle } = await resolveSessionPersonaComposition(sessionId, { persistFallback: false });
@@ -1712,6 +1718,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       attempted: boolean;
       applied: boolean;
     },
+    toolOrigin: "interactive" | "slack_ingress" = "interactive",
   ): Promise<{
     messages: ExecutorMessage[];
     conversationHistory: ConversationHistoryMessage[];
@@ -1841,11 +1848,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
     // Authority decides what this session may call; persona configuration chooses
     // the initial working set. Long-tail schemas remain loadable through tools.get.
-    const interactiveToolSet = await resolveInteractiveToolSet(sessionId);
+    // toolOrigin comes from processChatStream so Slack-ingress omits the slack tool.
+    const interactiveToolSet = await resolveInteractiveToolSet(sessionId, toolOrigin);
     const toolDefs = interactiveToolSet.definitions;
     let authorityStubTools: ToolDefinition[] | undefined;
     try {
-      const authorityDefinitions = await resolveAuthorityToolDefinitions(sessionId);
+      const authorityDefinitions = await resolveAuthorityToolDefinitions(sessionId, toolOrigin);
       const hydratedNames = new Set(toolDefs.map((tool) => tool.name));
       authorityStubTools = authorityDefinitions.filter((def) => !hydratedNames.has(def.name));
     } catch (err) {
@@ -2192,6 +2200,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             contextBuildId,
             onCompactionActivity,
             { attempted: true, applied: true },
+            toolOrigin,
           );
         }
         const outcomeReason =
@@ -2263,6 +2272,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     refreshAfterPersonaSwitch?: Parameters<typeof agentExecutor.run>[0]["refreshAfterPersonaSwitch"],
     refreshToolSchema?: Parameters<typeof agentExecutor.run>[0]["refreshToolSchema"],
     clientId?: string,
+    toolOrigin: "interactive" | "slack_ingress" = "interactive",
   ): Promise<ExecutorRunResult> {
     const toolExecutor = async (name: string, args: Record<string, any>) => {
       const shouldTrackPersonaChange = name === "orient" && typeof args.persona !== "undefined";
@@ -2274,7 +2284,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         sessionKey,
         sessionId,
         clientId,
-        authority: { origin: "interactive" },
+        authority: { origin: toolOrigin },
       });
       const nextPersonaId = shouldTrackPersonaChange && !toolResult.error
         ? (await chatStorage.getSession(sessionId))?.personaId
@@ -2335,6 +2345,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     const lease = acceptedLease ?? chatRunLifecycle.begin(sessionId, sessionKey);
     const runId = `run-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const turnId = acceptedTurnId || `turn-${sessionId}-${lease.generation}`;
+    // Slack runner stamps clientTurnId/acceptedTurnId as slack:{event_id}. That is the
+    // first-class ingress origin label — never grant slack.send on these turns.
+    const toolOrigin: "interactive" | "slack_ingress" =
+      typeof acceptedTurnId === "string" && acceptedTurnId.startsWith("slack:")
+        ? "slack_ingress"
+        : "interactive";
     const assistantAttemptId = `${runId}-attempt-1`;
     if (sayAloud) setMeetingVisualizerState(sessionId, "turn", "thinking");
     const visualizerToolCalls = new Set<string>();
@@ -2803,6 +2819,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         lease.generation,
         runId,
         onCompactionActivity,
+        undefined,
+        toolOrigin,
       );
       chatRunLifecycle.assertCurrent(lease);
       const contextEndedAt = Date.now();
@@ -2891,7 +2909,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           }
         }
 
-        const refreshedToolSet = await resolveInteractiveToolSet(sessionId);
+        const refreshedToolSet = await resolveInteractiveToolSet(sessionId, toolOrigin);
         const refreshedContext = await assembleContext({
           profile: "chat",
           conversationHistory,
@@ -2925,7 +2943,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
       const refreshToolSchema: NonNullable<Parameters<typeof agentExecutor.run>[0]["refreshToolSchema"]> = async (toolName) => {
         chatRunLifecycle.assertCurrent(lease);
-        const authorityDefinitions = await resolveAuthorityToolDefinitions(sessionId);
+        const authorityDefinitions = await resolveAuthorityToolDefinitions(sessionId, toolOrigin);
         const schema = authorityDefinitions.find((tool) => tool.name === toolName) ?? null;
         chatLog.log(
           `tool schema hydration requested tool=${toolName} allowed=${!!schema} authorityCount=${authorityDefinitions.length} sessionId=${sessionId}`,
@@ -2956,6 +2974,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         refreshAfterPersonaSwitch,
         refreshToolSchema,
         clientId,
+        toolOrigin,
       );
       chatLog.log(
         `executor DONE sessionId=${sessionId} contentLen=${result.content?.length || 0} terminationReason=${result.terminationReason || "unknown"} abortReason=${result.abortReason || "none"} durationMs=${result.durationMs ?? "?"} iterations=${result.iterations}`,

@@ -12,7 +12,8 @@ export type ToolDomainOwner =
   | "communications"
   | "wellness"
   | "finance"
-  | "strategy";
+  | "strategy"
+  | "slack";
 
 export interface ToolDomainAdapter {
   id: string;
@@ -152,11 +153,34 @@ export const TOOL_DOMAIN_ADAPTERS: readonly ToolDomainAdapter[] = [
     artifactKinds: ["timer_run"],
     providerBoundaries: ["weather provider"],
   },
+  {
+    id: "slack",
+    owner: "slack",
+    tools: ["slack"],
+    authorizationDependencies: [
+      "agent-authority",
+      "principal-context",
+      "active Slack Mod",
+      "Slack storage",
+      "People Vault visibility",
+    ],
+    normalizationExtensions: ["outbound destination allowlist", "idempotency key"],
+    artifactKinds: [],
+    providerBoundaries: ["Slack Web API"],
+  },
 ] as const;
+
+const nativeSlackHandlers: ToolHandlerSource = {
+  async slack(args) {
+    const { slackToolHandler } = await import("../slack/tool");
+    return slackToolHandler(args);
+  },
+};
 
 const NATIVE_HANDLER_SOURCES: readonly ToolHandlerSource[] = [
   nativeInteractionHandlers,
   nativePlanningHandlers,
+  nativeSlackHandlers,
 ];
 
 export function composeToolDomainHandlers(

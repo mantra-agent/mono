@@ -1977,6 +1977,45 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
+  slack: {
+    description: "Outbound Slack delivery door owned by the Slack Mod. status returns provider-free readiness (inactive_mod | no_installation | disabled | unconfigured | ready). send posts one bot-attributed message to a mapped Person DM or the one allowlisted channel under explicit authority, with durable replay-safe receipts. Person Slack IDs are locators only — send still requires an active mapping. Slack-ingress turns cannot call this tool.",
+    category: "communication",
+    advertiseWhenUnready: true,
+    sideEffectDefault: 2,
+    sideEffectActions: { status: 0 },
+    parameters: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["status", "send"],
+          description: "status is readiness only; send is the only mutation.",
+        },
+        to: {
+          type: "string",
+          enum: ["person", "channel"],
+          description: "send destination kind. person = mapped DM; channel = the one allowlisted channel.",
+        },
+        personId: {
+          type: "string",
+          description: "Canonical Person id when to=person. Not a Slack U… id and not a User id.",
+        },
+        channelId: {
+          type: "string",
+          description: "Optional when to=channel. If present must equal the installation allowlisted C… id; omit to use that id.",
+        },
+        text: {
+          type: "string",
+          description: "Message body, 1–4000 Unicode characters after trim. No silent truncate, blocks, or files.",
+        },
+        idempotencyKey: {
+          type: "string",
+          description: "Required replay identity for send, 8–120 chars. Same key + same body returns the existing receipt; same key + different body fails closed.",
+        },
+      },
+      required: ["action"],
+    },
+  },
   tools: {
     description: "Discover authority-allowed tools and load callable schemas on demand. `list` summarizes allowed tools; interactive `get` returns full docs and hydrates that tool into the current run.",
     category: "system",
