@@ -209,14 +209,13 @@ function GlobalCompletionCalendar({
 }
 
 // Reflections and Gratitude own dedicated screens; only Learning stays embedded.
+// Journaling is a personal off-app practice — check circle logs like any other habit.
 const EXPANDABLE_ACTIVITIES = new Set(["learning"]);
 
-/** Journal activities completed only on their own screens — checkbox navigates, never toggles. */
+/** Entry-owned activities: checkbox navigates to the dedicated screen; never toggles from Habits. */
 const JOURNAL_NAV_TARGETS: Record<string, UiInteractionTarget> = {
   reflection: "navigation.reflections.open",
   reflections: "navigation.reflections.open",
-  journaling: "navigation.reflections.open",
-  journal: "navigation.reflections.open",
   gratitude: "navigation.gratitude.open",
 };
 

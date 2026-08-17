@@ -476,16 +476,15 @@ export async function archiveWellnessActivity(id: number): Promise<WellnessActiv
   return activity ?? null;
 }
 
-/** Activities whose checkmarks come only from dedicated journal screens. */
+/** Activities whose checkmarks come only from dedicated entry screens (not Habits toggle). */
 const JOURNAL_OWNED_ACTIVITY_NAMES = new Set([
   "gratitude",
   "reflection",
   "reflections",
-  "journaling",
-  "journal",
 ]);
 
-const REFLECTION_ACTIVITY_NAMES = new Set(["reflection", "reflections", "journaling", "journal"]);
+// Personal "Journaling" habit is off-app writing — log/unlog from Habits like any practice.
+const REFLECTION_ACTIVITY_NAMES = new Set(["reflection", "reflections"]);
 const GRATITUDE_ACTIVITY_NAMES = new Set(["gratitude"]);
 
 function isJournalOwnedActivityName(name: string | null | undefined): boolean {
