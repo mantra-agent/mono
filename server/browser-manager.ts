@@ -337,6 +337,33 @@ const WEB_TEST_STEP_TIMEOUT_MS = 7_000;
 const WEB_TEST_SCROLL_CLAMP = 4000;
 const WEB_TEST_KEY_SET = new Set<string>(WEB_TEST_KEYS);
 
+/**
+ * Closed CSS-only selector admission for web.test.
+ * Playwright `page.locator` also accepts engines (text=/xpath=/role=/…) and bare XPath;
+ * Spec + SECURITY require those to be unrepresentable at the parse boundary.
+ */
+const WEB_TEST_NON_CSS_SELECTOR =
+  /^(?:text|xpath|role|css|id|data-testid|internal|pierce|nth|has-text|has|and|or|chain|react|vue|layout)=/i;
+
+function assertCssOnlySelector(selector: string, label: string): void {
+  if (selector.length > WEB_TEST_SELECTOR_MAX) {
+    throw new WebTestError("input_invalid", `${label} max ${WEB_TEST_SELECTOR_MAX} characters`);
+  }
+  // Bare XPath (absolute or descendant-or-self).
+  if (selector.startsWith("//") || selector.startsWith("(//") || selector.startsWith("/")) {
+    throw new WebTestError(
+      "input_invalid",
+      `${label} must be a CSS selector (XPath is not allowed)`,
+    );
+  }
+  if (WEB_TEST_NON_CSS_SELECTOR.test(selector)) {
+    throw new WebTestError(
+      "input_invalid",
+      `${label} must be a CSS selector (Playwright engines text=/xpath=/role=/… are not allowed)`,
+    );
+  }
+}
+
 export class WebTestError extends Error {
   readonly outcome: WebTestOutcome;
   constructor(outcome: WebTestOutcome, message: string) {
@@ -452,9 +479,7 @@ export function parseWebTestSteps(raw: unknown): WebTestStep[] {
       case "tap": {
         requireOnly(["selector"]);
         const selector = nonEmptyString("selector");
-        if (selector.length > WEB_TEST_SELECTOR_MAX) {
-          throw new WebTestError("input_invalid", `steps[${i}].selector max ${WEB_TEST_SELECTOR_MAX} characters`);
-        }
+        assertCssOnlySelector(selector, `steps[${i}].selector`);
         steps.push(kind === "click" ? { kind: "click", selector } : { kind: "tap", selector });
         break;
       }
@@ -471,9 +496,7 @@ export function parseWebTestSteps(raw: unknown): WebTestStep[] {
         if (hasSelector) {
           requireOnly(["selector"]);
           const selector = nonEmptyString("selector");
-          if (selector.length > WEB_TEST_SELECTOR_MAX) {
-            throw new WebTestError("input_invalid", `steps[${i}].selector max ${WEB_TEST_SELECTOR_MAX} characters`);
-          }
+          assertCssOnlySelector(selector, `steps[${i}].selector`);
           steps.push({ kind: "scroll", selector });
         } else {
           requireOnly(["deltaX", "deltaY"]);
