@@ -19,6 +19,8 @@ export type ToolFailureCode =
   | "decision_input_invalid"
   // Library contract rejects (caller-correctable input)
   | "library_input_invalid"
+  // Gmail / email_cache contract rejects (caller-correctable input)
+  | "gmail_input_invalid"
   | "tool_authority_denied"
   | "build_mod_inactive"
   | "hook_name_conflict"

@@ -5,10 +5,37 @@ import {
 } from "../../connected-accounts";
 import { createLogger } from "../../log";
 import type { ToolHandler, ToolHandlerResult } from "../contracts";
+import { contractReject } from "../shared/failures";
 
 const toolExec = createLogger("ToolExec");
 
 export type GmailSubHandler = (args: Record<string, any>) => Promise<ToolHandlerResult>;
+
+/**
+ * email_messages.id is a positive integer PK. Hex Gmail provider ids and other
+ * non-integers must fail closed at the tool boundary — never reach SQL as NaN
+ * (22P02 / QUERY_CONTRACT_FAILED).
+ */
+export function parseCachedEmailMessageId(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && Number.isSafeInteger(value) && value > 0 ? value : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!/^\d+$/.test(trimmed)) return null;
+    const parsed = Number(trimmed);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
+export function rejectInvalidCachedEmailMessageId(raw: unknown): ToolHandlerResult {
+  return contractReject(
+    `Invalid message_id: expected a positive integer cache id (email_messages.id), got ${JSON.stringify(raw)}. Use the Cache ID from email_cache listings, not a Gmail provider hex id.`,
+    "gmail_input_invalid",
+    "message_id_not_integer",
+  );
+}
 
 export function createGmailHandler(handlers: Record<string, GmailSubHandler>): ToolHandler {
   return async (args) => {
