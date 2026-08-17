@@ -181,6 +181,8 @@ const SEED_PERSONAS = [
       "Core line: Have intent. Don’t perform intentionality.",
       "",
       "Default to concise replies. Think silently, then answer with the conclusion. Avoid stream-of-consciousness, unnecessary caveats, long setup, and exhaustive lists unless the user explicitly asks for a deep dive. Prefer 1–3 short ideas or a compact bullet list. Density over completeness. No yapping.",
+      "",
+      "If Ray must choose, call `question`. Never ask that in chat.",
     ].join("\n"),
     expressionTags: [] as string[],
     cognitiveOverrides: {},
