@@ -420,12 +420,14 @@ export async function registerGatewayRoutes(app: Express) {
 
   // Dedicated low-cadence endpoint for frontend browser telemetry summary.
   // Kept separate from /api/gateway/processes (2s poll) because getBrowserTelemetrySummary
-  // reads a bounded 24h window. The Performance page fetches this
+  // reads a bounded window. The Performance page fetches this
   // every 30s via a separate useQuery with refetchInterval 30_000.
   app.get("/api/gateway/frontend-experience", requireAuth, requirePermission("system:read"), async (req, res) => {
     try {
       const { getBrowserTelemetrySummary } = await import("../browser-telemetry-storage");
-      const summary = req.principal ? await getBrowserTelemetrySummary(req.principal, 24) : null;
+      const hoursRaw = Number(req.query.hours);
+      const hours = Number.isFinite(hoursRaw) ? hoursRaw : 24;
+      const summary = req.principal ? await getBrowserTelemetrySummary(req.principal, hours) : null;
       res.json({ frontendExperience: summary });
     } catch (err: any) {
       log.error("frontend-experience endpoint failed:", err);
@@ -433,10 +435,12 @@ export async function registerGatewayRoutes(app: Express) {
     }
   });
 
-  app.get("/api/gateway/context-health", requireAuth, requirePermission("system:read"), async (_req, res) => {
+  app.get("/api/gateway/context-health", requireAuth, requirePermission("system:read"), async (req, res) => {
     try {
       const { getContextHealthSummary } = await import("../context-health-storage");
-      res.json({ contextHealth: await getContextHealthSummary(24) });
+      const hoursRaw = Number(req.query.hours);
+      const hours = Number.isFinite(hoursRaw) ? hoursRaw : 24;
+      res.json({ contextHealth: await getContextHealthSummary(hours) });
     } catch (err: any) {
       log.error("context-health endpoint failed:", err);
       res.status(500).json({ error: err?.message || String(err) });
