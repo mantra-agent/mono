@@ -1329,12 +1329,18 @@ function DatesTab({ person, onUpdate }: { person: Person; onUpdate: () => void }
   const [newDate, setNewDate] = useState("");
   const [newRecurrence, setNewRecurrence] = useState<"annual" | "one-time">("annual");
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null);
-
-  const summaryInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const labelInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (effectiveShowAdd) summaryInputRef.current?.focus();
-  }, [effectiveShowAdd]);
+    if (showAdd) labelInputRef.current?.focus();
+  }, [showAdd]);
+
+  const resetAdd = () => {
+    setShowAdd(false);
+    setNewLabel("");
+    setNewDate("");
+    setNewRecurrence("annual");
+  };
 
   const addMutation = useMutation({
     mutationFn: async (data: { label: string; date: string; recurrence: "annual" | "one-time" }) => {
@@ -1343,15 +1349,18 @@ function DatesTab({ person, onUpdate }: { person: Person; onUpdate: () => void }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
-      setShowAdd(false);
-      setNewLabel("");
-      setNewDate("");
+      resetAdd();
       onUpdate();
     },
     onError: (err: Error) => {
       toast({ title: "Failed to add date", description: err.message, variant: "destructive" });
     },
   });
+
+  const submitAdd = () => {
+    if (!newLabel.trim() || !newDate || addMutation.isPending) return;
+    addMutation.mutate({ label: newLabel.trim(), date: newDate, recurrence: newRecurrence });
+  };
 
   const deleteMutation = useMutation({
     mutationFn: async (dateId: string) => {
@@ -1386,61 +1395,102 @@ function DatesTab({ person, onUpdate }: { person: Person; onUpdate: () => void }
 
   return (
     <div className="space-y-3" data-testid="dates-tab">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground">{sortedDates.length} date{sortedDates.length !== 1 ? "s" : ""}</span>
-        <Button variant="outline" size="sm" onClick={() => setShowAdd(!showAdd)} data-testid="button-add-date">
-          <Plus className="h-3.5 w-3.5 mr-1" /> Add
-        </Button>
-      </div>
-
-      {showAdd && (
-        <Card>
-          <CardContent className="pt-3 pb-2 space-y-2">
-            <div className="flex gap-2 flex-wrap">
-              <Input
-                value={newLabel}
-                onChange={(e) => setNewLabel(e.target.value)}
-                placeholder="e.g. Birthday"
-                className="flex-1 min-w-[120px]"
-                data-testid="input-date-label"
-              />
-              <Input
-                type="date"
-                value={newDate}
-                onChange={(e) => setNewDate(e.target.value)}
-                className="w-48"
-                data-testid="input-date-value"
-              />
-              <Select value={newRecurrence} onValueChange={(v) => setNewRecurrence(v as "annual" | "one-time")}>
-                <SelectTrigger className="w-28" data-testid="select-date-recurrence">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="annual">Annual</SelectItem>
-                  <SelectItem value="one-time">One-time</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex gap-1 justify-end">
-              <Button variant="ghost" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
-              <Button
-                size="sm"
-                onClick={() => addMutation.mutate({ label: newLabel, date: newDate, recurrence: newRecurrence })}
+      {showAdd ? (
+        <form
+          className="space-y-0.5 px-2 pb-2"
+          data-testid="form-add-date"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitAdd();
+          }}
+        >
+          <ProfileTreeRow
+            label="Label"
+            icon={<FileText className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            mobileLayout="inline"
+            testId="row-new-date-label"
+            actionContent={(
+              <button
+                type="submit"
                 disabled={!newLabel.trim() || !newDate || addMutation.isPending}
+                className="text-xs text-cta disabled:text-muted-foreground"
                 data-testid="button-save-date"
               >
-                Save
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+                {addMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}
+              </button>
+            )}
+          >
+            <Input
+              ref={labelInputRef}
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              placeholder="e.g. Birthday"
+              className="h-7 text-right text-xs"
+              data-testid="input-date-label"
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  submitAdd();
+                }
+                if (event.key === "Escape") resetAdd();
+              }}
+            />
+          </ProfileTreeRow>
+          <ProfileTreeRow
+            label="Date"
+            icon={<Calendar className="h-3.5 w-3.5" />}
+            hasValue={Boolean(newDate)}
+            showEmpty
+            mobileLayout="inline"
+            testId="row-new-date-value"
+          >
+            <Input
+              type="date"
+              value={newDate}
+              onChange={(e) => setNewDate(e.target.value)}
+              className="h-7 text-right text-xs"
+              data-testid="input-date-value"
+            />
+          </ProfileTreeRow>
+          <ProfileTreeRow
+            label="Recurrence"
+            icon={<RefreshCw className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            mobileLayout="inline"
+            testId="row-new-date-recurrence"
+          >
+            <Select value={newRecurrence} onValueChange={(v) => setNewRecurrence(v as "annual" | "one-time")}>
+              <SelectTrigger className="h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0" data-testid="select-date-recurrence">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="annual">Annual</SelectItem>
+                <SelectItem value="one-time">One-time</SelectItem>
+              </SelectContent>
+            </Select>
+          </ProfileTreeRow>
+          <div className="flex justify-end px-2 py-1">
+            <button type="button" className="text-xs text-muted-foreground" onClick={resetAdd}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setShowAdd(true)}
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
+          data-testid="button-add-date"
+        >
+          <Plus className="h-3.5 w-3.5 shrink-0" />
+          <span>Add Date</span>
+        </button>
       )}
 
-      {sortedDates.length === 0 ? (
-        <p className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-no-dates">
-          No dates yet.
-        </p>
-      ) : (
+      {sortedDates.length > 0 ? (
         <div className="space-y-1.5">
           {sortedDates.map((d) => {
             const dateObj = fromCivilDate(d.date);
@@ -1482,6 +1532,10 @@ function DatesTab({ person, onUpdate }: { person: Person; onUpdate: () => void }
             );
           })}
         </div>
+      ) : showAdd ? null : (
+        <p className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-no-dates">
+          No dates yet.
+        </p>
       )}
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
