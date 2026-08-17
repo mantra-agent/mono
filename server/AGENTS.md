@@ -923,9 +923,11 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 
 ### Decisions
 - `decisions` and `decision_updates` own Decision content and lifecycle; section/update references are transactionally projected into Life Addressing occurrences at the aggregate mutation boundary.
-- Deliberate relationships use constrained predicates over generic `address_links`; legacy `decision_links(target_type, target_id)` is dual-written/read only behind `DECISION_LINKS_COMPATIBILITY_ENABLED` and replay-safely points to its migrated `address_link_id`.
+- Open deliberation writes Data / Scenarios / Plan via section `append` (open-only concatenate) or `update` replace. `decision_updates` remain closed-only post-lock changelog — never the open path.
+- `lock` closes the existing open row and may apply judgment columns + shared provenance links (`decided_by` / `governed_by` / `triggered_by`). `record_judgment` mints a new closed judgment (Question answers / one-shot); do not call it to close an open row the room already owns.
+- Deliberate relationships use constrained predicates over generic `address_links`; legacy `decision_links(target_type, target_id)` is dual-written/read only behind `DECISION_LINKS_COMPATIBILITY_ENABLED` and replay-safely points to its migrated `address_link_id`. Tool `list_for_target` / `search` read that graph and principal-visible text.
 - The Decision/Strategy graph adapter keeps default Strategy roots flat, emits actors and artifacts, and exposes bounded move/assumption/end-condition/state topology only for explicitly selected Strategy addresses.
-- **Lifecycle:** open → closed (with traffic light: green/yellow/red). Updates are append-only.
+- **Lifecycle:** open → closed (with traffic light: green/yellow/red). Closed updates are append-only.
 - Key files: `decisions-storage.ts`, `decision-reference-index.ts`, `strategy/decision-strategy-graph-adapter.ts`
 
 ### Capabilities & Stories

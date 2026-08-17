@@ -18,6 +18,9 @@ function decisionClientErrorStatus(error: unknown): number | null {
   return status;
 }
 
+const AVAILABLE_ACTIONS =
+  "list, get, search, list_for_target, create, update, append, delete, lock, reopen, add_update, edit_update, delete_update, add_link, remove_link, record_judgment";
+
 /** Decision-domain adapter extracted from bridge-tools without changing storage, event, rich-text, or authority boundaries. */
 export const decisionsHandler: ToolHandler = async (args) => {
   const { decisionsStorage } = await import("../../decisions-storage");
@@ -81,6 +84,8 @@ export const decisionsHandler: ToolHandler = async (args) => {
     sourceToolCallId?: string;
     triggeredByAddress?: string;
     answerPayload?: Record<string, unknown>;
+    query?: string;
+    limit?: number;
   };
   const a = args as DecisionsArgs;
 
@@ -99,6 +104,34 @@ export const decisionsHandler: ToolHandler = async (args) => {
         if (list.length === 0) return { result: status ? `No ${status} decisions.` : "No decisions found." };
         return { result: `${list.length} decision(s):\n${list.map(summarize).join("\n\n")}` };
       }
+      case "search": {
+        const query = requireString(a.query, "query");
+        let status: "open" | "closed" | undefined;
+        if (a.status && a.status !== "all") {
+          if (!(decisionStatuses as readonly string[]).includes(a.status)) {
+            return stampDecisionReject({ result: `Invalid status: ${a.status}. Use open, closed, or all.`, error: true });
+          }
+          status = a.status as "open" | "closed";
+        }
+        const limit = typeof a.limit === "number" ? a.limit : undefined;
+        const list = await decisionsStorage.searchDecisions({ query, status, limit });
+        if (list.length === 0) return { result: `No decisions match "${query}".` };
+        return { result: `${list.length} decision(s) matching "${query}":\n${list.map(summarize).join("\n\n")}` };
+      }
+      case "list_for_target": {
+        const targetAddress = a.targetAddress
+          ?? (a.targetType && a.targetId !== undefined ? `@${a.targetType}:${String(a.targetId)}` : undefined);
+        if (!targetAddress) {
+          return stampDecisionReject({ result: "Missing required: targetAddress (or targetType + targetId)", error: true });
+        }
+        const list = await decisionsStorage.listDecisionsForTarget({
+          targetAddress: typeof a.targetAddress === "string" ? a.targetAddress : undefined,
+          targetType: typeof a.targetType === "string" ? a.targetType : undefined,
+          targetId: a.targetId !== undefined ? String(a.targetId) : undefined,
+        });
+        if (list.length === 0) return { result: `No decisions linked to ${targetAddress}.` };
+        return { result: `${list.length} decision(s) for ${targetAddress}:\n${list.map(summarize).join("\n\n")}` };
+      }
       case "get": {
         const id = requireString(a.id, "id");
         const d = await decisionsStorage.getDecision(id);
@@ -107,10 +140,11 @@ export const decisionsHandler: ToolHandler = async (args) => {
         const links = await decisionsStorage.listLinks(id);
         const sections = [
           summarize(d),
+          d.reasoning ? `\nReasoning:\n${d.reasoning}` : "",
           d.dataPlainText ? `\nData:\n${d.dataPlainText}` : "",
           d.scenariosPlainText ? `\nScenarios:\n${d.scenariosPlainText}` : "",
           d.planPlainText ? `\nPlan:\n${d.planPlainText}` : "",
-          links.length ? `\nLinks:\n${links.map(l => `  - ${l.targetType}:${l.targetId}`).join("\n")}` : "",
+          links.length ? `\nLinks:\n${links.map(l => `  - ${l.predicate} -> ${l.targetAddress}`).join("\n")}` : "",
           updates.length ? `\nUpdates (${updates.length}):\n${updates.map(u => `  - [${u.id}] ${u.createdAt.toISOString?.() ?? u.createdAt} ${u.content.slice(0, 200)}`).join("\n")}` : "",
         ].filter(Boolean).join("\n");
         return { result: sections };
@@ -177,6 +211,26 @@ export const decisionsHandler: ToolHandler = async (args) => {
         publish("update");
         return { result: `Updated decision ${row.id}.` };
       }
+      case "append": {
+        const id = requireString(a.id, "id");
+        const dataContent = typeof a.dataContent === "string" && a.dataContent.trim() ? a.dataContent : undefined;
+        const scenariosContent = typeof a.scenariosContent === "string" && a.scenariosContent.trim() ? a.scenariosContent : undefined;
+        const planContent = typeof a.planContent === "string" && a.planContent.trim() ? a.planContent : undefined;
+        if (!dataContent && !scenariosContent && !planContent) {
+          return stampDecisionReject({
+            result: "append requires at least one non-empty dataContent, scenariosContent, or planContent fragment",
+            error: true,
+          });
+        }
+        const row = await decisionsStorage.appendDecisionSections(id, { dataContent, scenariosContent, planContent });
+        publish("append");
+        const parts = [
+          dataContent ? "data" : null,
+          scenariosContent ? "scenarios" : null,
+          planContent ? "plan" : null,
+        ].filter(Boolean);
+        return { result: `Appended to decision ${row.id} (${parts.join(", ")}). status=${row.status}.` };
+      }
       case "delete": {
         const id = requireString(a.id, "id");
         const ok = await decisionsStorage.deleteDecision(id);
@@ -186,10 +240,40 @@ export const decisionsHandler: ToolHandler = async (args) => {
       }
       case "lock": {
         const id = requireString(a.id, "id");
-        const row = await decisionsStorage.lockDecision(id);
+        let trafficLight: "green" | "yellow" | "red" | undefined;
+        if (a.trafficLight !== undefined && a.trafficLight !== null) {
+          if (!(decisionTrafficLights as readonly string[]).includes(a.trafficLight)) {
+            return stampDecisionReject({ result: `Invalid trafficLight: ${a.trafficLight}. Use green, yellow, or red.`, error: true });
+          }
+          trafficLight = a.trafficLight as "green" | "yellow" | "red";
+        }
+        const principleRevisionIds = Array.isArray(a.principleRevisionIds)
+          ? a.principleRevisionIds.filter((pid: unknown): pid is string => typeof pid === "string" && pid.trim().length > 0)
+          : undefined;
+        const answerPayload = a.answerPayload && typeof a.answerPayload === "object" && !Array.isArray(a.answerPayload)
+          ? a.answerPayload as Record<string, unknown>
+          : undefined;
+        const ownerPersonRole = a.ownerPersonRole === "partner" || a.ownerPersonRole === "self" ? a.ownerPersonRole : undefined;
+        const row = await decisionsStorage.lockDecision(id, {
+          trafficLight,
+          description: typeof a.description === "string" ? a.description : undefined,
+          reasoning: typeof a.reasoning === "string" ? a.reasoning : undefined,
+          answerPayload,
+          ownerPersonRole,
+          principleRevisionIds,
+          sourceSessionId: typeof a.sourceSessionId === "string" ? a.sourceSessionId : undefined,
+          sourceToolCallId: typeof a.sourceToolCallId === "string" ? a.sourceToolCallId : undefined,
+          triggeredByAddress: typeof a.triggeredByAddress === "string" ? a.triggeredByAddress : undefined,
+        });
         if (!row) return stampDecisionReject({ result: `Decision ${id} not found`, error: true });
         publish("lock");
-        return { result: `Locked decision ${id}. trafficLight=${row.trafficLight ?? "green"}.` };
+        return {
+          result: [
+            `Locked decision ${id}. trafficLight=${row.trafficLight ?? "green"}.`,
+            row.reasoning ? `reasoning=${row.reasoning}` : null,
+            row.description ? `outcome=${row.description}` : null,
+          ].filter(Boolean).join("\n"),
+        };
       }
       case "reopen": {
         const id = requireString(a.id, "id");
@@ -205,7 +289,7 @@ export const decisionsHandler: ToolHandler = async (args) => {
         if (!d) return stampDecisionReject({ result: `Decision ${id} not found`, error: true });
         if (d.status !== "closed") {
           return stampDecisionReject({
-            result: `Decision ${id} is not closed; updates only allowed on closed decisions.`,
+            result: `Decision ${id} is open. Use append to add to Data/Scenarios/Plan, or update to replace a section. add_update is only for closed decisions.`,
             error: true,
           });
         }
@@ -245,7 +329,7 @@ export const decisionsHandler: ToolHandler = async (args) => {
       }
       default:
         return stampDecisionReject({
-          result: `Unknown decisions action: ${action}. Available: list, get, create, update, delete, lock, reopen, add_update, edit_update, delete_update, add_link, remove_link, record_judgment`,
+          result: `Unknown decisions action: ${action}. Available: ${AVAILABLE_ACTIONS}`,
           error: true,
         });
     }

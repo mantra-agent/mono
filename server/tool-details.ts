@@ -205,9 +205,9 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: 'List scenarios: { "action": "list_scenarios" }',
   },
   decisions: {
-    description: "Personal decision log — track open/closed strategic decisions with Data, Scenarios, and Plan sections, traffic-light status (closed only), append-only updates after lock, and links to strategies/projects. Actions: list, get, create, update, delete, lock, reopen, add_update, edit_update, delete_update, add_link, remove_link.",
-    whenToUse: "When the user wants to record a decision they're weighing, capture data/scenarios/plan, lock it once made, log post-decision updates, set its traffic-light status, or link it to a strategy or project.",
-    example: 'Create: { "action": "create", "title": "Hire designer", "description": "Should we bring on a senior designer in Q2?", "dataContent": "Budget $5k/mo", "scenariosContent": "Option A...", "planContent": "Next steps" }\nLock: { "action": "lock", "id": "..." }\nSet traffic light: { "action": "update", "id": "...", "trafficLight": "yellow" }',
+    description: "Personal decision log — open Decisions are live working surfaces (append Data/Scenarios/Plan), lock closes that same row with outcome/reasoning/traffic light, add_update is closed-only changelog, record_judgment mints a new closed judgment. Find with search and list_for_target.",
+    whenToUse: "Live deliberation on an open decision (append sections), honest close of that same id (lock with reasoning + trafficLight), post-lock notes (add_update), reverse lookup of what governs a person/project (list_for_target), or text find (search). Never use add_update on open rows or record_judgment to close an open row the room already owns.",
+    example: 'Append on open: { "action": "append", "id": "…", "dataContent": "Pros: deep domain.\\nCons: bandwidth risk." }\nLock with judgment: { "action": "lock", "id": "…", "trafficLight": "yellow", "reasoning": "Hire as contractor first", "description": "Proceed with 90-day contract" }\nlist_for_target: { "action": "list_for_target", "targetAddress": "@person:…" }\nSearch: { "action": "search", "query": "Miller hire" }',
   },
   rules: {
     description: RULES_TOOL_DESCRIPTION,
