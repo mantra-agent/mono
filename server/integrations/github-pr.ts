@@ -130,31 +130,123 @@ async function getGitHubAccessTokenForPath(path: string): Promise<string> {
   return source.token;
 }
 
-export async function gh<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const token = await getGitHubAccessTokenForPath(path);
-  const res = await fetch(`${GH_API}${path}`, {
-    method,
-    headers: {
-      ...GH_HEADERS_BASE,
-      Authorization: `Bearer ${token}`,
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  let parsed: unknown = null;
-  const text = await res.text();
-  if (text) {
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = text;
+/** Bounded attempts for the shared GitHub REST client (publish force-update included). */
+const GH_MAX_ATTEMPTS = 4;
+const GH_RETRY_BASE_MS = 750;
+const GH_RETRY_CAP_MS = 8_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Status codes GitHub (and intermediate edges) emit for short-lived capacity /
+ * gateway failures. 429 is included so we honor rate-limit Retry-After rather
+ * than failing a publish run on a brief quota blip. Permanent 4xx stay fail-closed.
+ */
+function isTransientGitHubStatus(status: number): boolean {
+  return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+/**
+ * GitHub occasionally returns a plain-language outage body ("No server is
+ * currently available…") that Publish previously surfaced as a hard
+ * fast_forward_live failure. Match that class of message even if status is odd.
+ */
+function isTransientGitHubMessage(message: string): boolean {
+  return /no server is currently available|service unavailable|bad gateway|gateway timeout|temporarily unavailable|try again later|server error/i.test(
+    message,
+  );
+}
+
+function retryDelayMs(res: Response | null, attempt: number): number {
+  if (res) {
+    const raw = res.headers.get("retry-after");
+    if (raw) {
+      const seconds = Number.parseInt(raw, 10);
+      if (Number.isFinite(seconds) && seconds >= 0) {
+        return Math.min(seconds * 1000, 15_000);
+      }
+      const until = Date.parse(raw);
+      if (Number.isFinite(until)) {
+        return Math.min(Math.max(0, until - Date.now()), 15_000);
+      }
     }
   }
-  if (!res.ok) {
+  return Math.min(GH_RETRY_BASE_MS * 2 ** attempt, GH_RETRY_CAP_MS);
+}
+
+/**
+ * Shared GitHub REST client. All publish/compare/ref mutations go through here.
+ * Transient gateway/outage responses and transport failures are retried with
+ * bounded exponential backoff so a brief GitHub blip cannot fail Fast-forward
+ * live. Auth, not-found, validation, and protection failures still fail closed
+ * on the first response.
+ */
+export async function gh<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const token = await getGitHubAccessTokenForPath(path);
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < GH_MAX_ATTEMPTS; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${GH_API}${path}`, {
+        method,
+        headers: {
+          ...GH_HEADERS_BASE,
+          Authorization: `Bearer ${token}`,
+          ...(body ? { "Content-Type": "application/json" } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    } catch (err) {
+      lastError = err;
+      if (attempt >= GH_MAX_ATTEMPTS - 1) break;
+      const wait = retryDelayMs(null, attempt);
+      log.warn(
+        `GitHub ${method} ${path} transport failure; retry ${attempt + 1}/${GH_MAX_ATTEMPTS - 1} in ${wait}ms: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      await sleep(wait);
+      continue;
+    }
+
+    let parsed: unknown = null;
+    const text = await res.text();
+    if (text) {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = text;
+      }
+    }
+
+    if (res.ok) {
+      return parsed as T;
+    }
+
     const msg = extractGitHubErrorMessage(parsed) ?? `GitHub ${method} ${path} failed (HTTP ${res.status})`;
-    throw new GitHubError(msg, res.status, parsed);
+    const transient = isTransientGitHubStatus(res.status) || isTransientGitHubMessage(msg);
+    if (transient && attempt < GH_MAX_ATTEMPTS - 1) {
+      const wait = retryDelayMs(res, attempt);
+      log.warn(
+        `GitHub ${method} ${path} transient HTTP ${res.status}; retry ${attempt + 1}/${GH_MAX_ATTEMPTS - 1} in ${wait}ms: ${msg.slice(0, 200)}`,
+      );
+      await sleep(wait);
+      continue;
+    }
+
+    const exhaustedSuffix =
+      transient && attempt > 0 ? ` (after ${attempt + 1} attempts)` : "";
+    throw new GitHubError(`${msg}${exhaustedSuffix}`, res.status, parsed);
   }
-  return parsed as T;
+
+  const detail = lastError instanceof Error ? lastError.message : String(lastError ?? "unknown transport failure");
+  throw new GitHubError(
+    `GitHub ${method} ${path} failed after ${GH_MAX_ATTEMPTS} attempts: ${detail}`,
+    503,
+  );
 }
 
 function shortSha(sha: string): string {
