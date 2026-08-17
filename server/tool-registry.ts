@@ -289,22 +289,47 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   web: {
-    description: "Search the web, fetch content from URLs, or run authenticated page verification tests with screenshots and structured evidence.",
+    description: "Search the web, fetch content from URLs, or run an authenticated interactive page test (navigate, click, tap, scroll, press, type, screenshot) with structured evidence.",
     category: "web",
     sideEffectDefault: 0,
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["search", "fetch", "test", "screenshot"], description: "Action. 'test' is the primary action for authenticated page verification + screenshot + structured evidence. 'screenshot' is a deprecated alias for 'test'." },
+        action: { type: "string", enum: ["search", "fetch", "test", "screenshot"], description: "Action. 'test' is one authenticated Chromium session: navigate/click/tap/scroll/press/type/screenshot. 'screenshot' is a deprecated alias for 'test'." },
         query: { type: "string", description: "Search query (search)" },
         count: { type: "number", description: "Number of results (search, default 10)" },
-        url: { type: "string", description: "URL to fetch (fetch)" },
+        url: { type: "string", description: "URL to fetch (fetch) or external entry URL (test)" },
         timeout: { type: "number", description: "Timeout in ms (fetch, default 15000)" },
         route: { type: "string", description: "App route path like '/memory' — resolves to localhost:PORT (test/screenshot)" },
         viewport: { type: "string", description: "Viewport preset: 'desktop' (1440x900), 'tablet' (768x1024), 'mobile' (375x812), or 'WxH' custom (test/screenshot)" },
         fullPage: { type: "boolean", description: "Capture full scrollable page height, capped at 4000px (test/screenshot)" },
-        delay: { type: "number", description: "Extra wait ms after networkidle before capture, default 2000 (test/screenshot)" },
+        delay: { type: "number", description: "Extra wait ms after networkidle before the closing frame, default 2000 (test/screenshot)" },
+        auth: {
+          type: "object",
+          description: "Optional browser-session auth. Omitted + local app → calling principal cookie. Omitted + external → photograph-only stranger. Named integration must carry browser-session capability (day-one: automation-auth).",
+          properties: {
+            integration: { type: "string", description: "Connector key with browser-session capability, e.g. automation-auth" },
+          },
+        },
+        steps: {
+          type: "array",
+          description: "Closed act sequence before the closing screenshot (max 8). Kinds: navigate, click, tap, scroll, press, type, screenshot. Empty/omitted = today's photograph-only path.",
+          items: {
+            type: "object",
+            properties: {
+              kind: { type: "string", enum: ["navigate", "click", "tap", "scroll", "press", "type", "screenshot"], description: "Act kind" },
+              route: { type: "string", description: "Local app route for navigate (same-origin)" },
+              url: { type: "string", description: "Absolute URL for navigate (must stay on entry origin)" },
+              selector: { type: "string", description: "CSS selector for click/tap/scroll-into-view (max 200)" },
+              deltaX: { type: "number", description: "Horizontal wheel delta for scroll (clamped ±4000)" },
+              deltaY: { type: "number", description: "Vertical wheel delta for scroll (clamped ±4000)" },
+              key: { type: "string", description: "Allowlisted key for press: Enter Escape Tab Space Backspace Delete Arrow* Home End" },
+              text: { type: "string", description: "Text for type" },
+            },
+            required: ["kind"],
+          },
+        },
       },
       required: ["action"],
     },

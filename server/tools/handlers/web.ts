@@ -324,9 +324,15 @@ export const webTools: Record<string, ToolHandler> = {
     const viewport = args.viewport as string | undefined;
     const fullPage = args.fullPage as boolean | undefined;
     const delay = args.delay as number | undefined;
+    const steps = args.steps;
+    const auth = args.auth;
 
     if (!route && !url) {
-      return { result: "Either 'route' or 'url' is required for screenshot action", error: true };
+      return {
+        result: "Either 'route' or 'url' is required for test action",
+        error: true,
+        failure: inputFailure("web_test_input_invalid", "route_or_url_required"),
+      };
     }
 
     let targetUrl: string;
@@ -339,36 +345,79 @@ export const webTools: Record<string, ToolHandler> = {
 
     try {
       const { screenshotPage } = await import("../../browser-manager");
-      const result = await screenshotPage(targetUrl, { viewport, fullPage, delay });
+      const result = await screenshotPage(targetUrl, {
+        viewport,
+        fullPage,
+        delay,
+        steps,
+        auth,
+      });
 
-      // Persist to object storage through the canonical verified-write path.
-      // Fail loudly if persistence cannot be verified so chat never embeds a
-      // dead /objects/ path.
-      const buffer = await readFile(result.path);
-      const fileName = `screenshot-${Date.now()}.png`;
-      let objectPath: string;
-      try {
-        ({ objectPath } = await objectStorageService.uploadObjectEntity(buffer, {
-          extension: ".png",
-          contentType: "image/png",
-          acl: { owner: "system", visibility: "public" },
-        }));
-      } catch (persistErr: unknown) {
-        const persistMsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+      const frameLines: string[] = [];
+      for (let i = 0; i < result.frames.length; i++) {
+        const frame = result.frames[i];
+        try {
+          const buffer = await readFile(frame.path);
+          const fileName = `screenshot-${frame.label || i}-${Date.now()}.png`;
+          const { objectPath } = await objectStorageService.uploadObjectEntity(buffer, {
+            extension: ".png",
+            contentType: "image/png",
+            acl: { owner: "system", visibility: "public" },
+          });
+          const downloadLink = `${objectPath}?name=${encodeURIComponent(fileName)}`;
+          const truncNote = frame.truncated ? " (truncated at 4000px height)" : "";
+          frameLines.push(
+            `![${frame.label || `frame-${i}`} ${frame.width}×${frame.height}](${downloadLink})\n[Download](${downloadLink})${truncNote}`,
+          );
+        } catch (persistErr: unknown) {
+          const persistMsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+          frameLines.push(
+            `Frame ${frame.label || i} captured (${frame.width}×${frame.height}) but persist failed: ${persistMsg}. Scratch: ${frame.path}`,
+          );
+        }
+      }
+
+      const stepLines =
+        result.steps.length === 0
+          ? ["steps: (none)"]
+          : result.steps.map(
+              (s) =>
+                `step ${s.index} ${s.kind}: ${s.status}${s.detail ? ` — ${s.detail}` : ""}`,
+            );
+
+      const stanza = [
+        `outcome: ${result.outcome}`,
+        `auth: ${result.authUsed}`,
+        `entry: ${result.entryUrl}`,
+        `final: ${result.finalUrl ?? "(none)"}`,
+        ...stepLines,
+        result.errorMessage ? `error: ${result.errorMessage}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      const body = frameLines.length > 0 ? `${stanza}\n\n${frameLines.join("\n\n")}` : stanza;
+
+      const correctable = new Set([
+        "input_invalid",
+        "step_failed",
+        "origin_escaped",
+        "auth_failed",
+      ]);
+      if (result.outcome === "ok") {
+        return { result: body };
+      }
+      if (correctable.has(result.outcome)) {
         return {
-          result: `Screenshot captured (${result.width}×${result.height}) but persisting to object storage failed: ${persistMsg}. Scratch copy at ${result.path}. Do not embed an /objects/ path for this capture.`,
+          result: body,
           error: true,
+          failure: inputFailure(`web_test_${result.outcome}`, result.errorMessage?.slice(0, 160)),
         };
       }
-      const downloadLink = `${objectPath}?name=${encodeURIComponent(fileName)}`;
-
-      const truncNote = result.truncated ? " (truncated at 4000px height)" : "";
-      return {
-        result: `![screenshot ${result.width}×${result.height}](${downloadLink})\n[Download](${downloadLink})${truncNote}`,
-      };
+      return { result: body, error: true };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      return { result: `Screenshot failed: ${msg}`, error: true };
+      return { result: `web.test failed: ${msg}`, error: true };
     }
   },
 };

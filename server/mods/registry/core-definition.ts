@@ -276,7 +276,7 @@ export const coreDefinition: CoreDefinition = {
         readinessKind: "secret",
         requiredAnySecrets: ["BRAVE_API_KEY", "BRAVE_SEARCH_API_KEY"],
       }),
-      integration("core.integration.automation-auth", "automation-auth", "available", ["automation"], {
+      integration("core.integration.automation-auth", "automation-auth", "available", ["automation", "browser-session"], {
         label: "Automation Auth",
         iconKey: "Shield",
         route: "automation-auth",
