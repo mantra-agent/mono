@@ -13,7 +13,7 @@ export function serveStatic(app: Express) {
     );
   }
 
-  // Vite hashed assets: immutable, cache forever
+  // Vite hashed assets: immutable, cache forever when present.
   app.use(
     "/assets",
     express.static(path.join(distPath, "assets"), {
@@ -21,6 +21,15 @@ export function serveStatic(app: Express) {
       immutable: true,
     }),
   );
+
+  // Missing hashed assets must 404 — never fall through to SPA HTML.
+  // Serving index.html as a module script is the producer of
+  // ROUTE_MODULE_LOAD_FAILED on stale/skewed chunk URLs (models-*.js etc.).
+  // no-cache so a transient miss is not sticky in the browser.
+  app.use("/assets", (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache");
+    res.status(404).type("text/plain").send("Not found");
+  });
 
   // All other static files: short cache with revalidation
   app.use(
