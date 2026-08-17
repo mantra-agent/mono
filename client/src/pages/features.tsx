@@ -28,7 +28,7 @@ import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { ReferenceText } from "@/components/references/reference-text";
 import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
-import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
+import { InlineLibraryPageEditor } from "@/components/library/inline-library-page";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -599,57 +599,60 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
             )}
           </ProfileTreeRow>
 
-          <div className="pt-1" data-testid={`feature-spec-${feature.id}`}>
-            <div className="mb-1 flex items-center justify-between gap-2 px-1">
-              <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-                <FileText className="h-3 w-3" />
-                Spec
-              </div>
-              {feature.spec_page_id ? (
-                <button
-                  type="button"
-                  className="text-[11px] text-muted-foreground hover:text-foreground"
-                  onClick={() => setEditingSpec((open) => !open)}
-                  data-testid={`button-edit-feature-spec-${feature.id}`}
-                >
-                  {editingSpec ? "Done" : "Change"}
-                </button>
-              ) : null}
-            </div>
-            {editingSpec || !feature.spec_page_id ? (
-              <div className="px-1">
-                <ReferencePicker
-                  types={["page"]}
-                  mode="single"
-                  variant="compact"
-                  dense
-                  placeholder="Spec page"
-                  value={specValue}
-                  onChange={(next) => {
-                    const pageId = next[0]?.id ?? null;
-                    if (pageId === (feature.spec_page_id ?? null)) {
-                      setEditingSpec(false);
-                      return;
-                    }
-                    update.mutate(
-                      { specPageId: pageId },
-                      { onSettled: () => setEditingSpec(false) },
-                    );
+          {/* Spec is one field row like Product/Status/Owner; page body expands under the row. */}
+          <ProfileTreeRow
+            label="Spec"
+            icon={<FileText className="h-3.5 w-3.5" />}
+            hasValue={Boolean(feature.spec_page_id) || editingSpec}
+            showEmpty
+            mobileLayout="inline"
+            testId={`feature-spec-${feature.id}`}
+            expandedContent={
+              feature.spec_page_id && !editingSpec ? (
+                <InlineLibraryPageEditor
+                  page={{
+                    id: feature.spec_page_id,
+                    title: "Spec",
+                    slug: feature.spec_page_id,
                   }}
-                  testId={`picker-feature-spec-${feature.id}`}
                 />
-              </div>
-            ) : (
-              <ExpandableLibraryPage
-                page={{
-                  id: feature.spec_page_id,
-                  title: "Spec",
-                  slug: feature.spec_page_id,
+              ) : undefined
+            }
+          >
+            {editingSpec || !feature.spec_page_id ? (
+              <ReferencePicker
+                types={["page"]}
+                mode="single"
+                variant="compact"
+                dense
+                placeholder="Spec page"
+                value={specValue}
+                onChange={(next) => {
+                  const pageId = next[0]?.id ?? null;
+                  if (pageId === (feature.spec_page_id ?? null)) {
+                    setEditingSpec(false);
+                    return;
+                  }
+                  update.mutate(
+                    { specPageId: pageId },
+                    { onSettled: () => setEditingSpec(false) },
+                  );
                 }}
-                className="px-1"
+                testId={`picker-feature-spec-${feature.id}`}
               />
+            ) : (
+              <button
+                type="button"
+                className="max-w-full truncate text-right"
+                onClick={() => setEditingSpec(true)}
+                data-testid={`button-edit-feature-spec-${feature.id}`}
+              >
+                <span className="pointer-events-none">
+                  <InlineReferenceText text={`@page:${feature.spec_page_id}`} />
+                </span>
+              </button>
             )}
-          </div>
+          </ProfileTreeRow>
 
           <div className="pt-2" data-testid={`feature-history-${feature.id}`}>
             <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
