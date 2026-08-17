@@ -107,7 +107,7 @@ import {
 } from "@/components/hierarchy-section-header";
 import { vaultTitleColor } from "@/lib/vault-title-color";
 import { IntegrationTreeSection } from "@/components/integrations/integration-tree-section";
-import { ModelConnectorSection } from "@/components/integrations/model-connector-section";
+import { ProviderConnectorPackage } from "@/components/integrations/provider-connector-package";
 import { usePlaidLink } from "react-plaid-link";
 import { Redirect, useLocation } from "wouter";
 
@@ -1198,312 +1198,6 @@ function VoiceBrowserSection() {
 
 
 
-
-
-function OpenAISubscriptionSection({ children }: { children?: React.ReactNode }) {
-  const { toast } = useToast();
-  const { hasPermission } = useAuth();
-  const canManageSystemIntegrations = hasPermission("system:write");
-
-  const { data: statusData, isLoading, refetch } = useQuery<{
-    connected: boolean;
-    email?: string;
-    label?: string;
-    hasTokens?: boolean;
-  }>({
-    queryKey: ["/api/openai-subscription/status"],
-    refetchInterval: 30000,
-  });
-
-  const disconnectMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/openai-subscription/disconnect");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/openai-subscription/status"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/models/available"] });
-      toast({ title: "ChatGPT account disconnected" });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to disconnect", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const [showUrlPaste, setShowUrlPaste] = useState(false);
-  const [pasteUrl, setPasteUrl] = useState("");
-  const [exchangeState, setExchangeState] = useState("");
-  const [isExchanging, setIsExchanging] = useState(false);
-
-  const exchangeCode = async (code: string, state: string) => {
-    setIsExchanging(true);
-    try {
-      const res = await fetch("/api/openai-subscription/oauth/exchange", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ code, state }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Exchange failed");
-      toast({ title: "ChatGPT account connected", description: data.email || "Success" });
-      refetch();
-      queryClient.invalidateQueries({ queryKey: ["/api/models/available"] });
-      setShowUrlPaste(false);
-      setPasteUrl("");
-    } catch (err: any) {
-      toast({ title: "Failed to connect", description: err.message, variant: "destructive" });
-    } finally {
-      setIsExchanging(false);
-    }
-  };
-
-  const handleConnect = async () => {
-    try {
-      if (!canManageSystemIntegrations) {
-        toast({ title: "Admin only", description: "Only admins can change system model integrations.", variant: "destructive" });
-        return;
-      }
-      const res = await fetch("/api/openai-subscription/oauth/start", { credentials: "include" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to start OAuth");
-      }
-      const { url, state } = await res.json();
-      setExchangeState(state);
-      const popup = window.open(url, "openai-subscription-oauth", "width=600,height=700,scrollbars=yes");
-      if (!popup) {
-        toast({ title: "Popup blocked", description: "Please allow popups and try again.", variant: "destructive" });
-        return;
-      }
-      let handled = false;
-      // Show the paste box after a short delay — the popup will land on
-      // localhost:1455 (connection refused) so the user needs to copy the URL.
-      const pasteTimer = setTimeout(() => {
-        if (!handled) setShowUrlPaste(true);
-      }, 4000);
-      const check = setInterval(() => {
-        if (handled) return;
-        try {
-          const popupUrl = popup.location.href;
-          if (popupUrl && popupUrl.includes("/auth/callback")) {
-            const params = new URL(popupUrl).searchParams;
-            const code = params.get("code");
-            const urlState = params.get("state");
-            if (code && urlState) {
-              handled = true;
-              clearInterval(check);
-              clearTimeout(pasteTimer);
-              popup.close();
-              exchangeCode(code, urlState);
-              return;
-            }
-          }
-        } catch (_e) { /* cross-origin, expected */ }
-        if (popup.closed && !handled) {
-          clearInterval(check);
-          clearTimeout(pasteTimer);
-          setShowUrlPaste(true);
-        }
-      }, 300);
-    } catch (err: any) {
-      toast({ title: "Failed to start OAuth", description: err.message, variant: "destructive" });
-    }
-  };
-
-  const handlePasteSubmit = () => {
-    try {
-      const url = new URL(pasteUrl.trim());
-      const code = url.searchParams.get("code");
-      const state = url.searchParams.get("state") || exchangeState;
-      if (!code) {
-        toast({ title: "Invalid URL", description: "No authorization code found in URL", variant: "destructive" });
-        return;
-      }
-      exchangeCode(code, state);
-    } catch {
-      toast({ title: "Invalid URL", description: "Please paste the full URL from the browser address bar", variant: "destructive" });
-    }
-  };
-
-  const connected = statusData?.connected ?? false;
-
-  return (
-    <div className="min-w-0" data-testid="card-openai-subscription">
-      <IntegrationTreeSection label="OpenAI Subscription" initialOpen={!connected} icon={<Bot className="h-3.5 w-3.5" />}>
-        <ProfileTreeRow label="Account" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">{statusData?.email || statusData?.label || "Not connected"}</span></ProfileTreeRow>
-        <ProfileTreeRow label="Status" icon={connected ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground" />} hasValue showEmpty>
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-            <span className={connected ? "text-active" : "text-muted-foreground"}>{isLoading ? "Loading" : connected ? "Connected" : "Not connected"}</span>
-            {isLoading ? (
-              <Skeleton className="h-5 w-16" />
-            ) : connected ? (
-              <Button variant="outline" size="sm" onClick={() => disconnectMutation.mutate()} disabled={disconnectMutation.isPending || !canManageSystemIntegrations} title={canManageSystemIntegrations ? undefined : "Admin only"} data-testid="button-disconnect-openai-subscription">
-                {disconnectMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                Disconnect
-              </Button>
-            ) : (
-              <Button variant="outline" size="sm" onClick={handleConnect} disabled={isExchanging || !canManageSystemIntegrations} title={canManageSystemIntegrations ? undefined : "Admin only"} data-testid="button-connect-openai-subscription">
-                {isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3" />}
-                {isExchanging ? "Connecting..." : "Connect"}
-              </Button>
-            )}
-            {!connected && showUrlPaste && (
-              <>
-                <Input value={pasteUrl} onChange={(e) => setPasteUrl(e.target.value)} placeholder="Paste callback URL" className="min-w-[10rem] flex-1 text-xs" data-testid="input-oauth-callback-url" />
-                <Button size="sm" onClick={handlePasteSubmit} disabled={!pasteUrl.trim() || isExchanging} data-testid="button-submit-oauth-url">{isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit"}</Button>
-              </>
-            )}
-          </div>
-        </ProfileTreeRow>
-        {!canManageSystemIntegrations && <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">Admin only</span></ProfileTreeRow>}
-        {children}
-      </IntegrationTreeSection>
-    </div>
-  );
-}
-
-function GrokSubscriptionSection({ children }: { children?: React.ReactNode }) {
-  const { toast } = useToast();
-  const { hasPermission } = useAuth();
-  const canManageSystemIntegrations = hasPermission("system:write");
-
-  const { data: statusData, isLoading, refetch } = useQuery<{
-    connected: boolean;
-    email?: string;
-    label?: string;
-    hasTokens?: boolean;
-  }>({
-    queryKey: ["/api/grok-subscription/status"],
-    refetchInterval: 30000,
-  });
-
-  const disconnectMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/grok-subscription/disconnect");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/grok-subscription/status"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/models/available"] });
-      toast({ title: "Grok account disconnected" });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to disconnect", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const [showUrlPaste, setShowUrlPaste] = useState(false);
-  const [pasteUrl, setPasteUrl] = useState("");
-  const [authUrl, setAuthUrl] = useState("");
-  const [exchangeState, setExchangeState] = useState("");
-  const [isExchanging, setIsExchanging] = useState(false);
-
-  const exchangeCode = async (code: string, state: string) => {
-    setIsExchanging(true);
-    try {
-      const res = await fetch("/api/grok-subscription/oauth/exchange", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ code, state }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Exchange failed");
-      toast({ title: "Grok account connected", description: data.email || "Success" });
-      refetch();
-      queryClient.invalidateQueries({ queryKey: ["/api/models/available"] });
-      setShowUrlPaste(false);
-      setPasteUrl("");
-    } catch (err: any) {
-      toast({ title: "Failed to connect", description: err.message, variant: "destructive" });
-    } finally {
-      setIsExchanging(false);
-    }
-  };
-
-  const handleConnect = async () => {
-    try {
-      if (!canManageSystemIntegrations) {
-        toast({ title: "Admin only", description: "Only admins can change system model integrations.", variant: "destructive" });
-        return;
-      }
-      const res = await fetch("/api/grok-subscription/oauth/start", { credentials: "include" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to start OAuth");
-      }
-      const { url, state } = await res.json();
-      setExchangeState(state);
-      setAuthUrl(url);
-      // xAI shows the authorization code on-page (its 127.0.0.1 redirect can never
-      // reach a remote server), so there is nothing to auto-detect — always reveal
-      // the paste box and a manual auth link. A blocked popup must never hide them.
-      setShowUrlPaste(true);
-      const popup = window.open(url, "grok-subscription-oauth", "width=600,height=700,scrollbars=yes");
-      if (!popup) {
-        toast({ title: "Popup blocked", description: "Use the “Open the xAI authorization page” link below, approve access, then paste the code.", variant: "default" });
-      }
-    } catch (err: any) {
-      toast({ title: "Failed to start OAuth", description: err.message, variant: "destructive" });
-    }
-  };
-
-  const handlePasteSubmit = () => {
-    const raw = pasteUrl.trim();
-    if (!raw) return;
-    try {
-      const url = new URL(raw);
-      const code = url.searchParams.get("code");
-      const state = url.searchParams.get("state") || exchangeState;
-      if (!code) {
-        toast({ title: "Invalid URL", description: "No authorization code found in URL", variant: "destructive" });
-        return;
-      }
-      exchangeCode(code, state);
-    } catch {
-      // Not a URL — treat the pasted value as a raw authorization code.
-      exchangeCode(raw, exchangeState);
-    }
-  };
-
-  const connected = statusData?.connected ?? false;
-
-  return (
-    <div className="min-w-0" data-testid="card-grok-subscription">
-      <IntegrationTreeSection label="Grok Subscription" initialOpen={!connected} icon={<Bot className="h-3.5 w-3.5" />}>
-        <ProfileTreeRow label="Account" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">{statusData?.email || statusData?.label || "Not connected"}</span></ProfileTreeRow>
-        <ProfileTreeRow label="Status" icon={connected ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground" />} hasValue showEmpty>
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-            <span className={connected ? "text-active" : "text-muted-foreground"}>{isLoading ? "Loading" : connected ? "Connected" : "Not connected"}</span>
-            {isLoading ? (
-              <Skeleton className="h-5 w-16" />
-            ) : connected ? (
-              <Button variant="outline" size="sm" onClick={() => disconnectMutation.mutate()} disabled={disconnectMutation.isPending || !canManageSystemIntegrations} title={canManageSystemIntegrations ? undefined : "Admin only"} data-testid="button-disconnect-grok-subscription">
-                {disconnectMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                Disconnect
-              </Button>
-            ) : (
-              <Button variant="outline" size="sm" onClick={handleConnect} disabled={isExchanging || !canManageSystemIntegrations} title={canManageSystemIntegrations ? undefined : "Admin only"} data-testid="button-connect-grok-subscription">
-                {isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3" />}
-                {isExchanging ? "Connecting..." : "Connect"}
-              </Button>
-            )}
-            {!connected && showUrlPaste && (
-              <>
-                <Input value={pasteUrl} onChange={(e) => setPasteUrl(e.target.value)} placeholder="Paste code" className="min-w-[10rem] flex-1 text-xs" data-testid="input-grok-oauth-callback-url" />
-                <Button size="sm" onClick={handlePasteSubmit} disabled={!pasteUrl.trim() || isExchanging} data-testid="button-submit-grok-oauth-url">{isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit"}</Button>
-                {authUrl && <a href={authUrl} target="_blank" rel="noreferrer" className="text-xs text-cta underline hover:text-active" data-testid="link-grok-oauth-authorize">Authorize</a>}
-              </>
-            )}
-          </div>
-        </ProfileTreeRow>
-        {!canManageSystemIntegrations && <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-muted-foreground">Admin only</span></ProfileTreeRow>}
-        {children}
-      </IntegrationTreeSection>
-    </div>
-  );
-}
 
 
 interface GooglePermissions {
@@ -5189,51 +4883,22 @@ function IntegrationDetail({ provider }: { provider: string }) {
       )}
 
       {provider === "anthropic" && (
-        <div className="min-w-0" data-testid="card-secret-anthropic">
-          <IntegrationTreeSection label="Anthropic API" initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
-            <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
-              <div className="min-w-0 w-full"><SecretsForSection section="anthropic" /></div>
-            </ProfileTreeRow>
-            <ModelConnectorSection provider="anthropic" title="Model mapping" nested />
-          </IntegrationTreeSection>
-        </div>
+        <ProviderConnectorPackage provider="anthropic" />
       )}
 
       {provider === "openai" && (
         <div className="space-y-4">
-          <OpenAISubscriptionSection>
-            <ModelConnectorSection provider="openai-subscription" title="Model mapping" nested />
-          </OpenAISubscriptionSection>
-          <div className="min-w-0" data-testid="card-secret-openai">
-            <IntegrationTreeSection label="OpenAI API" initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
-              <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
-                <div className="min-w-0 w-full"><SecretsForSection section="openai" /></div>
-              </ProfileTreeRow>
-              <ModelConnectorSection provider="openai" title="Model mapping" nested />
-            </IntegrationTreeSection>
-          </div>
+          <ProviderConnectorPackage provider="openai-subscription" />
+          <ProviderConnectorPackage provider="openai" />
         </div>
       )}
 
       {provider === "claude-cli" && (
-        <div className="min-w-0" data-testid="card-secret-claude-cli">
-          <IntegrationTreeSection label="Claude Code CLI" initialOpen icon={<Bot className="h-3.5 w-3.5" />}>
-            <ProfileTreeRow label="Credentials" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
-              <div className="min-w-0 w-full">
-                <SecretsForSection section="claude-cli" />
-              </div>
-            </ProfileTreeRow>
-            <ModelConnectorSection provider="claude-cli" title="Model mapping" nested />
-          </IntegrationTreeSection>
-        </div>
+        <ProviderConnectorPackage provider="claude-cli" />
       )}
 
       {provider === "grok" && (
-        <div className="space-y-4">
-          <GrokSubscriptionSection>
-            <ModelConnectorSection provider="grok-subscription" title="Model mapping" nested />
-          </GrokSubscriptionSection>
-        </div>
+        <ProviderConnectorPackage provider="grok-subscription" />
       )}
 
       {provider === "twitter" && (
