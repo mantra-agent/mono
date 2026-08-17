@@ -24,6 +24,8 @@ export type ToolFailureCode =
   | "integration_auth_failed"
   | "orient_persona_required"
   | "orient_no_session"
+  // Session tool contract rejects (caller-correctable input)
+  | "session_input_invalid"
   | "shell_policy_denied"
   | "python_execution_rejected"
   | "python_execution_timeout"

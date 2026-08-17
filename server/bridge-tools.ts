@@ -505,10 +505,10 @@ export async function handleCrossSessionMessage(
   const fromSessionId: string | undefined = args._sessionId;
   const content: string = (args.content ?? "").toString();
   if (!fromSessionId) {
-    return { result: "No active session — cross-session messaging requires an active conversation context.", error: true };
+    return contractReject("No active session — cross-session messaging requires an active conversation context.", "session_input_invalid");
   }
   if (!content.trim()) {
-    return { result: "Missing 'content' — message body cannot be empty.", error: true };
+    return contractReject("Missing 'content' — message body cannot be empty.", "session_input_invalid");
   }
 
   const storage = depsOverride?.storage || (await import("./chat-file-storage")).chatFileStorage;
@@ -527,7 +527,7 @@ export async function handleCrossSessionMessage(
 
   const caller = await sessFetch(fromSessionId);
   if (!caller) {
-    return { result: `Caller session ${fromSessionId} not found.`, error: true };
+    return contractReject(`Caller session ${fromSessionId} not found.`, "session_input_invalid");
   }
 
   let target: { id: string; parentSessionId?: string; sessionKey?: string | null; title?: string } | undefined;
@@ -535,22 +535,22 @@ export async function handleCrossSessionMessage(
   if (direction === "parent") {
     if (!caller.parentSessionId) {
       toolExec.warn(`[CrossSessionMsg] event=scope-reject from=${fromSessionId} direction=parent reason=no_parent`);
-      return { result: "This session has no parent to message.", error: true };
+      return contractReject("This session has no parent to message.", "session_input_invalid");
     }
     target = await sessFetch(caller.parentSessionId);
     if (!target) {
-      return { result: `Parent session ${caller.parentSessionId} not found.`, error: true };
+      return contractReject(`Parent session ${caller.parentSessionId} not found.`, "session_input_invalid");
     }
   } else if (direction === "child") {
     const toSessionId: string | undefined = args.toSessionId;
     const toSpawnReason: string | undefined = args.toSpawnReason;
     if (!toSessionId && !toSpawnReason) {
-      return { result: "Missing target — provide 'toSessionId' or 'toSpawnReason' to identify the child.", error: true };
+      return contractReject("Missing target — provide 'toSessionId' or 'toSpawnReason' to identify the child.", "session_input_invalid");
     }
     if (toSessionId) {
       target = await sessFetch(toSessionId);
       if (!target) {
-        return { result: `Target session ${toSessionId} not found.`, error: true };
+        return contractReject(`Target session ${toSessionId} not found.`, "session_input_invalid");
       }
     } else if (toSpawnReason) {
       // Resolve a child of the caller by spawn reason. Reuse
@@ -572,7 +572,7 @@ export async function handleCrossSessionMessage(
       }
       if (!matched) {
         toolExec.warn(`[CrossSessionMsg] event=scope-reject from=${fromSessionId} direction=child reason=spawn_reason_not_found spawnReason=${toSpawnReason}`);
-        return { result: `No child session matched spawn reason "${toSpawnReason}".`, error: true };
+        return contractReject(`No child session matched spawn reason "${toSpawnReason}".`, "session_input_invalid");
       }
       target = matched;
     }
@@ -580,30 +580,30 @@ export async function handleCrossSessionMessage(
     const toSessionId: string | undefined = args.toSessionId;
     const toSpawnReason: string | undefined = args.toSpawnReason;
     if (!toSessionId && !toSpawnReason) {
-      return { result: "Missing target — provide 'toSessionId' or 'toSpawnReason'.", error: true };
+      return contractReject("Missing target — provide 'toSessionId' or 'toSpawnReason'.", "session_input_invalid");
     }
     if (toSessionId) {
       target = await sessFetch(toSessionId);
       if (!target) {
-        return { result: `Target session ${toSessionId} not found.`, error: true };
+        return contractReject(`Target session ${toSessionId} not found.`, "session_input_invalid");
       }
     } else if (toSpawnReason) {
       target = await resolveSiblingBySpawnReason(caller, toSpawnReason, childrenFetch);
       if (!target) {
         toolExec.warn(`[CrossSessionMsg] event=scope-reject from=${fromSessionId} direction=sibling reason=spawn_reason_not_found spawnReason=${toSpawnReason}`);
-        return { result: `No sibling session matched spawn reason "${toSpawnReason}".`, error: true };
+        return contractReject(`No sibling session matched spawn reason "${toSpawnReason}".`, "session_input_invalid");
       }
     }
   }
 
   if (!target) {
-    return { result: "Could not resolve target session.", error: true };
+    return contractReject("Could not resolve target session.", "session_input_invalid");
   }
 
   const scope = validateCrossSessionScope(caller, target, direction);
   if (!scope.ok) {
     toolExec.warn(`[CrossSessionMsg] event=scope-reject from=${fromSessionId} to=${target.id} direction=${direction} reason=${scope.reason}`);
-    return { result: `Scope rejected: ${scope.reason}`, error: true };
+    return contractReject(`Scope rejected: ${scope.reason}`, "session_input_invalid");
   }
 
   const recentInbound = await inboundFetch(fromSessionId);
@@ -612,7 +612,7 @@ export async function handleCrossSessionMessage(
     toolExec.warn(
       `[CrossSessionMsg] event=chain-cap-abort from=${fromSessionId} fromRunId=${caller.spawnerSkillRun || "-"} to=${target.id} toRunId=${target.spawnerSkillRun || "-"} direction=${direction} chainId=${chain.chainId} depth=${chain.depth} cap=${chain.cap}`,
     );
-    return { result: chain.reason, error: true };
+    return contractReject(chain.reason, "session_input_invalid");
   }
 
   const { fromMessage, toMessage } = await storage.createCrossSessionMessage(
@@ -685,16 +685,16 @@ export async function handleAnySessionMessage(
   const content: string = (args.content ?? args.message ?? "").toString();
 
   if (!fromSessionId) {
-    return { result: "No active session — session messaging requires an active conversation context.", error: true };
+    return contractReject("No active session — session messaging requires an active conversation context.", "session_input_invalid");
   }
   if (!toSessionId) {
-    return { result: "Missing target — provide 'sessionId' or 'toSessionId'.", error: true };
+    return contractReject("Missing target — provide 'sessionId' or 'toSessionId'.", "session_input_invalid");
   }
   if (!content.trim()) {
-    return { result: "Missing 'content' — message body cannot be empty.", error: true };
+    return contractReject("Missing 'content' — message body cannot be empty.", "session_input_invalid");
   }
   if (toSessionId === fromSessionId) {
-    return { result: "Cannot message self.", error: true };
+    return contractReject("Cannot message self.", "session_input_invalid");
   }
 
   const storage = depsOverride?.storage || (await import("./chat-file-storage")).chatFileStorage;
@@ -704,10 +704,10 @@ export async function handleAnySessionMessage(
 
   const [caller, target] = await Promise.all([sessFetch(fromSessionId), sessFetch(toSessionId)]);
   if (!caller) {
-    return { result: `Caller session ${fromSessionId} not found.`, error: true };
+    return contractReject(`Caller session ${fromSessionId} not found.`, "session_input_invalid");
   }
   if (!target) {
-    return { result: `Target session ${toSessionId} not found.`, error: true };
+    return contractReject(`Target session ${toSessionId} not found.`, "session_input_invalid");
   }
 
   const { validateCrossSessionScope } = await import("./session-tree");
@@ -715,7 +715,7 @@ export async function handleAnySessionMessage(
   const scopedDirection = directions.find(direction => validateCrossSessionScope(caller, target, direction).ok);
   if (!scopedDirection) {
     toolExec.warn(`[CrossSessionMsg] event=scope-reject from=${fromSessionId} to=${target.id} direction=direct reason=not_direct_relative`);
-    return { result: "Direct session messaging is limited to a parent, child, or sibling in the same session tree.", error: true };
+    return contractReject("Direct session messaging is limited to a parent, child, or sibling in the same session tree.", "session_input_invalid");
   }
 
   const recentInbound = await inboundFetch(fromSessionId);
@@ -724,7 +724,7 @@ export async function handleAnySessionMessage(
     toolExec.warn(
       `[CrossSessionMsg] event=chain-cap-abort from=${fromSessionId} fromRunId=${caller.spawnerSkillRun || "-"} to=${target.id} toRunId=${target.spawnerSkillRun || "-"} direction=direct chainId=${chain.chainId} depth=${chain.depth} cap=${chain.cap}`,
     );
-    return { result: chain.reason, error: true };
+    return contractReject(chain.reason, "session_input_invalid");
   }
 
   const { fromMessage, toMessage } = await storage.createCrossSessionMessage(
@@ -1161,14 +1161,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (action === "message_sibling") return handleCrossSessionMessage(args, "sibling");
 
     const sessionId = args._sessionId;
-    if (!sessionId) return { result: "No active session — session tool requires an active conversation context.", error: true };
+    if (!sessionId) return contractReject("No active session — session tool requires an active conversation context.", "session_input_invalid");
 
     const { chatFileStorage } = await import("./chat-file-storage");
 
     if (action === "get") {
       const targetId = args.sessionId || sessionId;
       const conv = await chatFileStorage.getSession(targetId);
-      if (!conv) return { result: `Session "${targetId}" not found`, error: true };
+      if (!conv) return contractReject(`Session "${targetId}" not found`, "session_input_invalid");
       const parts = [
         `**Session: ${conv.title}** (id: ${conv.id})`,
         `Turn: ${conv.status === "streaming" ? "active" : "idle"} | Status: ${conv.status} | Type: ${conv.sessionType}`,
@@ -1190,39 +1190,39 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (action === "get_agenda" || action === "list_agenda") {
       const targetId = args.sessionId || sessionId;
       const conv = await chatFileStorage.getSession(targetId);
-      if (!conv) return { result: `Session "${targetId}" not found`, error: true };
+      if (!conv) return contractReject(`Session "${targetId}" not found`, "session_input_invalid");
       return { result: safeStringify({ sessionId: targetId, agenda: conv.agenda ?? null }, { label: "bridge.session.agenda" }) };
     }
 
     if (action === "set_agenda") {
       const targetId = args.sessionId || sessionId;
-      if (!Array.isArray(args.agenda)) return { result: "Missing 'agenda' items for set_agenda", error: true };
+      if (!Array.isArray(args.agenda)) return contractReject("Missing 'agenda' items for set_agenda", "session_input_invalid");
       try {
         const updated = await chatFileStorage.setSessionAgenda(targetId, args.agenda);
-        if (!updated?.agenda) return { result: `Session "${targetId}" not found`, error: true };
+        if (!updated?.agenda) return contractReject(`Session "${targetId}" not found`, "session_input_invalid");
         return { result: safeStringify({ sessionId: targetId, agenda: updated.agenda }, { label: "bridge.session.agenda.set" }) };
       } catch (err: unknown) {
-        return { result: `Invalid session agenda: ${err instanceof Error ? err.message : String(err)}`, error: true };
+        return contractReject(`Invalid session agenda: ${err instanceof Error ? err.message : String(err)}`, "session_input_invalid");
       }
     }
 
     if (action === "apply_agenda_template") {
       const targetId = args.sessionId || sessionId;
       const agendaId = typeof args.agendaId === "string" ? args.agendaId.trim() : "";
-      if (!agendaId) return { result: "Missing 'agendaId' for apply_agenda_template", error: true };
+      if (!agendaId) return contractReject("Missing 'agendaId' for apply_agenda_template", "session_input_invalid");
       const [{ agendaDefinitionStorage }, { instantiateAgendaDefinition }] = await Promise.all([
         import("./agenda-storage"),
         import("@shared/models/agendas"),
       ]);
       const definition = await agendaDefinitionStorage.get(agendaId);
-      if (!definition) return { result: `Agenda template "${agendaId}" not found`, error: true };
+      if (!definition) return contractReject(`Agenda template "${agendaId}" not found`, "session_input_invalid");
       try {
         const instantiated = instantiateAgendaDefinition(definition);
         const updated = await chatFileStorage.setSessionAgenda(targetId, instantiated.items);
-        if (!updated?.agenda) return { result: `Session "${targetId}" not found`, error: true };
+        if (!updated?.agenda) return contractReject(`Session "${targetId}" not found`, "session_input_invalid");
         return { result: safeStringify({ sessionId: targetId, appliedTemplate: { id: definition.id, name: definition.name }, agenda: updated.agenda }, { label: "bridge.session.agenda.apply" }) };
       } catch (err: unknown) {
-        return { result: `Invalid session agenda from template: ${err instanceof Error ? err.message : String(err)}`, error: true };
+        return contractReject(`Invalid session agenda from template: ${err instanceof Error ? err.message : String(err)}`, "session_input_invalid");
       }
     }
 
@@ -1238,7 +1238,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const targetId = args.sessionId || sessionId;
       const itemId = typeof args.itemId === "string" ? args.itemId.trim() : "";
       if (!itemId && action !== "complete_agenda_item") {
-        return { result: `Missing 'itemId' for ${action}`, error: true };
+        return contractReject(`Missing 'itemId' for ${action}`, "session_input_invalid");
       }
       const patch = agendaTransitionStatus
         ? {
@@ -1247,14 +1247,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           }
         : args.item;
       if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
-        return { result: "Missing sparse 'item' patch for update_agenda_item", error: true };
+        return contractReject("Missing sparse 'item' patch for update_agenda_item", "session_input_invalid");
       }
       if (agendaTransitionStatus === "complete" && (typeof args.resolution !== "string" || !args.resolution.trim())) {
-        return { result: "Missing 'resolution' for complete_agenda_item", error: true };
+        return contractReject("Missing 'resolution' for complete_agenda_item", "session_input_invalid");
       }
       try {
         const updated = await chatFileStorage.updateSessionAgendaItem(targetId, itemId || undefined, patch);
-        if (!updated?.agenda) return { result: `Session "${targetId}" has no agenda`, error: true };
+        if (!updated?.agenda) return contractReject(`Session "${targetId}" has no agenda`, "session_input_invalid");
         const resolvedItemId = itemId
           || updated.agenda.items.find((candidate) => candidate.status === "complete" && candidate.resolution === (typeof args.resolution === "string" ? args.resolution.trim() : undefined))?.id
           || updated.agenda.items.find((candidate) => candidate.status === "complete")?.id;
@@ -1263,7 +1263,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           : undefined;
         return { result: safeStringify({ sessionId: targetId, item, agenda: updated.agenda }, { label: "bridge.session.agenda.item" }) };
       } catch (err: unknown) {
-        return { result: `Invalid agenda item update: ${err instanceof Error ? err.message : String(err)}`, error: true };
+        return contractReject(`Invalid agenda item update: ${err instanceof Error ? err.message : String(err)}`, "session_input_invalid");
       }
     }
 
@@ -1275,7 +1275,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const requested = args.runStatus;
       const status = requested === "resolved" ? "saved" : requested;
       if (!status || !["saved", "failed"].includes(status)) {
-        return { result: "Missing or invalid 'runStatus' parameter. Must be resolved/saved or failed. Session lifecycle is stored in session.status.", error: true };
+        return contractReject("Missing or invalid 'runStatus' parameter. Must be resolved/saved or failed. Session lifecycle is stored in session.status.", "session_input_invalid");
       }
 
       // Defer terminal status while the executor is still live or tools are
@@ -1374,7 +1374,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (action === "search") {
       const startedAt = performance.now();
       const query = args.query?.trim();
-      if (!query) return { result: "Missing 'query' parameter for search", error: true };
+      if (!query) return contractReject("Missing 'query' parameter for search", "session_input_invalid");
       const importStartedAt = performance.now();
       let importMs = 0;
       const limit = Math.min(args.limit || 10, 50);
@@ -1461,7 +1461,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         });
         const { SessionSearchError } = await import("./chat-file-storage");
         if (error instanceof SessionSearchError) {
-          return { result: error.message, error: true };
+          return contractReject(error.message, "session_input_invalid");
         }
         return {
           result: "Session search is temporarily unavailable. Please try again.",
@@ -1480,14 +1480,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     if (action === "spawn_child") {
       const topicRaw: string | undefined = (args.topic ?? args.title ?? "").toString().trim();
-      if (!topicRaw) return { result: "Missing 'topic' (or 'title') for spawn_child", error: true };
+      if (!topicRaw) return contractReject("Missing 'topic' (or 'title') for spawn_child", "session_input_invalid");
       const reason: string | undefined = args.reason ? String(args.reason).trim() : undefined;
       const explicitSpawnReason: string | undefined = args.spawnReason ? String(args.spawnReason).trim() : undefined;
       const requestedDelegation = args.delegation === "engineering" ? "engineering" : "conversation";
       const { authorizeToolInvocation } = await import("./agent-authority");
       const delegationAuthority = authorizeToolInvocation("git", { action: "clone" }, args._authorityContext || {});
       if (requestedDelegation === "engineering" && !delegationAuthority.allowed) {
-        return { result: `Engineering child delegation denied: ${delegationAuthority.reason}`, error: true };
+        return contractReject(`Engineering child delegation denied: ${delegationAuthority.reason}`, "session_input_invalid");
       }
       // Children inherit the spawner's server-validated authority. The optional
       // delegation argument selects persona mode; it is not an authority token.
@@ -1503,14 +1503,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           ? (await import("./chat-file-storage")).normalizeSessionAgenda(args.agenda)
           : undefined;
       } catch (err: unknown) {
-        return { result: `Invalid child session agenda: ${err instanceof Error ? err.message : String(err)}`, error: true };
+        return contractReject(`Invalid child session agenda: ${err instanceof Error ? err.message : String(err)}`, "session_input_invalid");
       }
 
       if (await isSpecSkillSession(sessionId) && isSpecChildSpawnRequest(topicRaw, reason, explicitSpawnReason, spawnReason)) {
-        return {
-          result: "Guard blocked recursive spec child launch: this session is already the spec skill. Continue producing the current spec artifact instead of spawning another spec session.",
-          error: true,
-        };
+        return contractReject(
+          "Guard blocked recursive spec child launch: this session is already the spec skill. Continue producing the current spec artifact instead of spawning another spec session.",
+          "session_input_invalid",
+        );
       }
 
       try {
@@ -1636,11 +1636,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           ].join(" "),
         };
       } catch (err: any) {
-        return { result: `spawn_child failed: ${err?.message || err}`, error: true };
+        return contractReject(`spawn_child failed: ${err?.message || err}`, "session_input_invalid");
       }
     }
 
-    return { result: `Unknown session action: ${action}. Available: get, get_agenda, list_agenda, set_agenda, apply_agenda_template, update_agenda_item, complete_agenda_item, skip_agenda_item, defer_agenda_item, set_status, end, list, search, get_messages, spawn_child, send_message`, error: true };
+    return contractReject(`Unknown session action: ${action}. Available: get, get_agenda, list_agenda, set_agenda, apply_agenda_template, update_agenda_item, complete_agenda_item, skip_agenda_item, defer_agenda_item, set_status, end, list, search, get_messages, spawn_child, send_message`, "session_input_invalid");
   },
 
   async create_task(args) {
@@ -5081,23 +5081,23 @@ ${lines.join("\n")}` };
 
     if (action === "set_attention") {
       const sessionId = args.sessionId;
-      if (!sessionId) return { result: "Missing 'sessionId' parameter for set_attention action", error: true };
+      if (!sessionId) return contractReject("Missing 'sessionId' parameter for set_attention action", "session_input_invalid");
       try {
         const { chatFileStorage } = await import("./chat-file-storage");
         const conv = await chatFileStorage.getSession(sessionId);
-        if (!conv) return { result: `Session ${sessionId} not found`, error: true };
+        if (!conv) return contractReject(`Session ${sessionId} not found`, "session_input_invalid");
         const isPinned = (args.isPinned ?? args.needsAttention) !== false;
         await chatFileStorage.setSessionPinned(sessionId, isPinned);
         return { result: `Session ${sessionId} pin flag set to ${isPinned}` };
       } catch (err: any) {
-        return { result: `set_attention error: ${err.message}`, error: true };
+        return contractReject(`set_attention error: ${err.message}`, "session_input_invalid");
       }
     }
 
     const topic = args.topic?.trim();
     const message = args.message?.trim();
-    if (!topic) return { result: "Missing 'topic' parameter", error: true };
-    if (!message) return { result: "Missing 'message' parameter", error: true };
+    if (!topic) return contractReject("Missing 'topic' parameter", "session_input_invalid");
+    if (!message) return contractReject("Missing 'message' parameter", "session_input_invalid");
 
     try {
       const { chatFileStorage } = await import("./chat-file-storage");
@@ -5111,7 +5111,7 @@ ${lines.join("\n")}` };
           ? (await import("./chat-file-storage")).normalizeSessionAgenda(args.agenda)
           : undefined;
       } catch (err: unknown) {
-        return { result: `Invalid conversation agenda: ${err instanceof Error ? err.message : String(err)}`, error: true };
+        return contractReject(`Invalid conversation agenda: ${err instanceof Error ? err.message : String(err)}`, "session_input_invalid");
       }
 
       let convId: string;
