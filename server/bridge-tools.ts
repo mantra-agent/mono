@@ -8420,10 +8420,22 @@ ${refs}` : ""),
 
       if (action === "get_library_page" || action === "get") {
         const id = args.id;
-        if (!id) return { result: "Provide an id or slug.", error: true };
+        if (!id) {
+          return {
+            result: "Provide an id or slug.",
+            error: true,
+            failure: inputFailure("library_input_invalid", "missing_id"),
+          };
+        }
         const byId = await db.select().from(libraryPages).where(visibleLib(eq(libraryPages.id, id)));
         const page = byId[0] || (await db.select().from(libraryPages).where(visibleLib(eq(libraryPages.slug, id))))[0];
-        if (!page) return { result: `Library page "${id}" not found.` };
+        if (!page) {
+          return {
+            result: `Library page "${id}" not found.`,
+            error: true,
+            failure: inputFailure("library_input_invalid", "page_not_found"),
+          };
+        }
         const annotations = await db.select().from(libraryAnnotations).where(eq(libraryAnnotations.pageId, page.id));
         const annotationText = annotations.length > 0
           ? `\n\n**Agent Annotations:**\n${annotations.map(a => `- [${a.annotationType}] ${a.content}`).join("\n")}`
@@ -8626,15 +8638,39 @@ ${refs}` : ""),
 
       if (action === "edit_library_page" || action === "edit") {
         const id = args.id;
-        if (!id) return { result: "Provide an id or slug to edit.", error: true };
+        if (!id) {
+          return {
+            result: "Provide an id or slug to edit.",
+            error: true,
+            failure: inputFailure("library_input_invalid", "missing_id"),
+          };
+        }
         const oldString = args.old_string;
         const newString = args.new_string;
-        if (oldString === undefined) return { result: "Missing old_string", error: true };
-        if (newString === undefined) return { result: "Missing new_string", error: true };
+        if (oldString === undefined) {
+          return {
+            result: "Missing old_string",
+            error: true,
+            failure: inputFailure("library_input_invalid", "missing_old_string"),
+          };
+        }
+        if (newString === undefined) {
+          return {
+            result: "Missing new_string",
+            error: true,
+            failure: inputFailure("library_input_invalid", "missing_new_string"),
+          };
+        }
 
         const byId = await db.select().from(libraryPages).where(writableLib(eq(libraryPages.id, id)));
         const page = byId[0] || (await db.select().from(libraryPages).where(writableLib(eq(libraryPages.slug, id))))[0];
-        if (!page) return { result: `Library page "${id}" not found.`, error: true };
+        if (!page) {
+          return {
+            result: `Library page "${id}" not found.`,
+            error: true,
+            failure: inputFailure("library_input_invalid", "page_not_found"),
+          };
+        }
         if (
           args.surface !== undefined
           || args.surfaceDurationHours !== undefined
@@ -8642,21 +8678,41 @@ ${refs}` : ""),
           || args.surfaceSection !== undefined
         ) {
           const owned = await db.select({ id: libraryPages.id }).from(libraryPages).where(combineWithWritableScope(principal, libScopeColumns, eq(libraryPages.id, page.id))).limit(1);
-          if (!owned[0]) return { result: `Write access does not include surfacing "${id}".`, error: true };
+          if (!owned[0]) {
+            return {
+              result: `Write access does not include surfacing "${id}".`,
+              error: true,
+              failure: inputFailure("library_input_invalid", "surface_not_writable"),
+            };
+          }
         }
 
         const { tiptapToMarkdown } = await import("@shared/markdown-tiptap");
         const currentContent = page.plainTextContent || (page.content ? tiptapToMarkdown(page.content as any) : "");
-        if (!currentContent) return { result: `Library page "${id}" has no content to edit.`, error: true };
+        if (!currentContent) {
+          return {
+            result: `Library page "${id}" has no content to edit.`,
+            error: true,
+            failure: inputFailure("library_input_invalid", "empty_content"),
+          };
+        }
 
         const occurrences = currentContent.split(oldString).length - 1;
         if (occurrences === 0) {
-          return { result: `old_string not found in library page "${page.title}"`, error: true };
+          return {
+            result: `old_string not found in library page "${page.title}"`,
+            error: true,
+            failure: inputFailure("library_input_invalid", "old_string_not_found"),
+          };
         }
 
         const replaceAll = args.replace_all === true;
         if (occurrences > 1 && !replaceAll) {
-          return { result: `old_string found ${occurrences} times in "${page.title}". Use replace_all: true to replace all, or provide more context to make it unique.`, error: true };
+          return {
+            result: `old_string found ${occurrences} times in "${page.title}". Use replace_all: true to replace all, or provide more context to make it unique.`,
+            error: true,
+            failure: inputFailure("library_input_invalid", "old_string_ambiguous"),
+          };
         }
 
         const updatedContent = replaceAll ? currentContent.split(oldString).join(newString) : currentContent.replace(oldString, newString);
@@ -8758,16 +8814,100 @@ ${refs}` : ""),
       if (action === "link_pages") {
         const fromPageId = args.fromPageId || args.sourceId;
         const toPageId = args.toPageId || args.targetId;
-        if (!fromPageId || !toPageId) return { result: "Provide fromPageId and toPageId to link pages.", error: true };
-        const { requireCurrentPrincipal: getPrincipalForLink } = await import("./principal-context");
+        if (!fromPageId || !toPageId) {
+          return {
+            result: "Provide fromPageId and toPageId to link pages.",
+            error: true,
+            failure: inputFailure("library_input_invalid", "missing_link_endpoints"),
+          };
+        }
+        if (fromPageId === toPageId) {
+          return {
+            result: "fromPageId and toPageId must be different pages.",
+            error: true,
+            failure: inputFailure("library_input_invalid", "self_link"),
+          };
+        }
+
+        const resolveVisiblePageId = async (idOrSlug: string): Promise<string | null> => {
+          const byId = await db
+            .select({ id: libraryPages.id })
+            .from(libraryPages)
+            .where(visibleLib(eq(libraryPages.id, idOrSlug)))
+            .limit(1);
+          if (byId[0]) return byId[0].id;
+          const bySlug = await db
+            .select({ id: libraryPages.id })
+            .from(libraryPages)
+            .where(visibleLib(eq(libraryPages.slug, idOrSlug)))
+            .limit(1);
+          return bySlug[0]?.id ?? null;
+        };
+
+        const sourcePageId = await resolveVisiblePageId(String(fromPageId));
+        if (!sourcePageId) {
+          return {
+            result: `Source library page "${fromPageId}" not found.`,
+            error: true,
+            failure: inputFailure("library_input_invalid", "source_not_found"),
+          };
+        }
+        const targetPageId = await resolveVisiblePageId(String(toPageId));
+        if (!targetPageId) {
+          return {
+            result: `Target library page "${toPageId}" not found.`,
+            error: true,
+            failure: inputFailure("library_input_invalid", "target_not_found"),
+          };
+        }
+
+        const linkPrincipal = principal;
         const { ownedInsertValues: ownedInsertForLink } = await import("./scoped-storage");
-        const linkScopeColumns = { scope: libraryPageLinks.scope, ownerUserId: libraryPageLinks.ownerUserId, accountId: libraryPageLinks.accountId };
-        const [link] = await db.insert(libraryPageLinks).values({
-          sourcePageId: fromPageId,
-          targetPageId: toPageId,
-          ...ownedInsertForLink(getPrincipalForLink(), linkScopeColumns),
-        }).returning();
-        return { result: `Pages linked: ${fromPageId} → ${toPageId} (link id: ${link.id})` };
+        const linkScopeColumns = {
+          scope: libraryPageLinks.scope,
+          ownerUserId: libraryPageLinks.ownerUserId,
+          accountId: libraryPageLinks.accountId,
+        };
+        // uk_library_page_links is (source, target) only — retries and dual writers
+        // must converge without throwing. Match HTTP PATCH + library-link-graph.
+        const inserted = await db
+          .insert(libraryPageLinks)
+          .values({
+            sourcePageId,
+            targetPageId,
+            ...ownedInsertForLink(linkPrincipal, linkScopeColumns),
+            createdByUserId: linkPrincipal.userId ?? undefined,
+            updatedByUserId: linkPrincipal.userId ?? undefined,
+          })
+          .onConflictDoNothing()
+          .returning({ id: libraryPageLinks.id });
+
+        if (inserted[0]) {
+          return {
+            result: `Pages linked: ${sourcePageId} → ${targetPageId} (link id: ${inserted[0].id})`,
+          };
+        }
+
+        const [existing] = await db
+          .select({ id: libraryPageLinks.id })
+          .from(libraryPageLinks)
+          .where(
+            and(
+              eq(libraryPageLinks.sourcePageId, sourcePageId),
+              eq(libraryPageLinks.targetPageId, targetPageId),
+            ),
+          )
+          .limit(1);
+        if (existing) {
+          return {
+            result: `Pages already linked: ${sourcePageId} → ${targetPageId} (link id: ${existing.id})`,
+          };
+        }
+        return {
+          result: `Unable to link pages ${sourcePageId} → ${targetPageId}.`,
+          error: true,
+          failure: inputFailure("library_input_invalid", "link_not_created"),
+        };
       }
 
       if (action === "annotate") {
