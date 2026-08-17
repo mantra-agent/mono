@@ -15,9 +15,9 @@ voice/
 ├── prompt.ts             — System prompt assembly (cached), conversation messages, tool list, resolvePromptAndMessages
 ├── circuit-breaker.ts    — Circuit breaker, blocker wait, executor run detection (runtime capacity authority owns voice admission)
 ├── pipeline-log.ts       — Pipeline stage logging, turn forensics, completion summaries, expected-stage auditing
-├── turn-io.ts            — Coalescing, backpressure, cascade keepalive, stream chunk handler, timing constants
+├── turn-io.ts            — Presence writer, phrase assembler, hold-as-presence, stream chunk handler
 ├── turn-handlers.ts      — Success/abort/error handlers, runExecutorPhase (LLM agent wiring)
-├── types.ts              — Shared types: VoiceSession, VoiceMessage, TurnContext, SSEWriteState, BackpressureState
+├── types.ts              — Shared types: VoiceSession, VoiceMessage, TurnContext, PresenceState, SSEWriteState
 ├── tool-middleware.ts    — Voice-specific tool execution middleware
 ├── thinking-filter.ts    — Strips <thinking> blocks from streaming output
 ├── synthesis.ts          — Canonical portable speech synthesis for non-browser transports
@@ -27,7 +27,7 @@ voice/
 ├── sse-stream.ts         — Response SSE instrumentation
 ├── diagnostics.ts        — WebSocket routing + thinking persistence
 ├── transcript.ts         — Interim/final transcript fan-out
-├── keepalive.ts          — Cascade keepalive (re-exports calibration)
+├── keepalive.ts          — Soft/cascade buffer calibration re-export (hold cadence)
 └── index.ts              — Public custom-LLM engine surface
 ```
 
@@ -65,8 +65,16 @@ Uses per-iteration content model (`iterationResults[]`) with explicit `mergeIter
 
 Voice assistant persistence is replay-safe by canonical `turnId` and inserts the assistant row immediately after its matching user row. Provider callback completion order must never create a second assistant row for one logical turn or detach a response from the utterance that caused it.
 
-### Mid-turn TTS dispatch
-`turn-io.ts` owns the coalesce buffer and ElevenLabs SSE write. Soft flushes (80ms timer, first content) emit only completed sentence boundaries via `takeCompletedSpeakable` and always set `delta.flush=true` so ElevenLabs speaks finished progress during tool execution. Forced flushes (`pre_tool_call`, `turn_end`, overflow, guide introduction) empty the remainder with `flush=true`. Never stream unstable partial clauses with `flush=true`, and never withhold completed sentences until the turn ends.
+### Presence rooms (1:1 custom-LLM)
+`turn-io.ts` owns five rooms behind frozen ports (start/lease/finalize/callback/SSE/turn-identity unchanged):
+
+1. **Presence writer** — sole speakable SSE write. Every speakable uses `buildSSEChunk(..., flush=true)`. Sets `TurnContext.presence` (`speaking | holding | silent | reconnecting`). Unflushed non-speech never leaves the helper.
+2. **Phrase assembler** — soft flush (80ms timer, first content) emits only completed sentences via `takeCompletedSpeakable`. Forced empty only for `turn_end`, overflow, guide introduction. Tool start must not invent a period or force-chop; remainder survives tools.
+3. **Hold as presence** — flushed complete code-owned sentences (`One moment.`, `Still on it.`, `Working.`) on the cascade-safe window from `getSoftTimeoutBufferMs()` (after EL soft-timeout, before cascade). Holds are not transcript content, not `segmentChronology`. `fillerCount` / `lastFillerSentAt` are the hold counter. Unflushed `"... "` keepalive is unrepresentable.
+4. **Silent reconnect** — client keeps last live conversational visual until reconnect exhaustion; captions clear on retry; no user-facing degraded theater mid-retry.
+5. **Spine** — `session.id` + `turnId` + `assistantAttemptId` on flush/hold/SSE/reconnect events. Long-turn forensics promote to `info` when tools > 0, duration ≥ 10s, holds fired, or reconnect. No transcript bodies in diagnostics.
+
+SSE comments remain socket liveness only — never presence. EL `"One second. "` soft-timeout stays the first ~5s spoken bridge.
 
 ## When Working Here
 - The `VoiceSession` interface in `types.ts` is the source of truth

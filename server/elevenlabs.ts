@@ -313,23 +313,15 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
         cascade_timeout_seconds: 15,
         end_of_speech_silence_ms: 1000,
         interruption_sensitivity: 0.5,
-        // Division of labor between EL's soft_timeout_config and our custom
-        // cascade keepalive (server/voice-llm.ts: sendCascadeKeepalive /
-        // startKeepaliveTimer):
-        //   - EL native soft_timeout_config = UX FILLER. When the custom-LLM
-        //     SSE has been silent for `timeout_seconds`, EL plays `message`
-        //     ("One second. ") server-side so the user doesn't sit in dead
-        //     air. EL keeps waiting for the LLM. We do not write anything
-        //     for this to fire.
-        //   - Custom keepalive = CASCADE LIVENESS only. It writes "... " as
-        //     a real `delta.content` SSE chunk to reset EL's
-        //     `cascade_timeout_seconds` clock so long single LLM callbacks
-        //     don't drop with closeCode=1002. Because EL counts any content
-        //     chunk as "LLM is producing", the keepalive ALSO resets EL's
-        //     soft-timeout silence clock — therefore the keepalive's
-        //     first-fire threshold MUST land comfortably AFTER
-        //     `soft_timeout_config.timeout_seconds`, or it will suppress
-        //     the native filler. See getSoftTimeoutBufferMs() in voice-llm.ts.
+        // Division of labor between EL soft_timeout and Mantra presence holds
+        // (server/voice/turn-io.ts sendPresenceHold / getSoftTimeoutBufferMs):
+        //   - EL soft_timeout_config = first spoken bridge. After
+        //     `timeout_seconds` of custom-LLM silence, EL plays `message`
+        //     ("One second. ") server-side. We do not write content for this.
+        //   - Mantra presence hold = flushed complete hold sentences on the
+        //     cascade-safe window after soft-timeout and before cascade.
+        //     Holds reset cascade without unflushed "... " drips. First hold
+        //     must land after soft_timeout so it cannot suppress EL's line.
         soft_timeout_config: {
           timeout_seconds: 5,
           message: "One second. ",
