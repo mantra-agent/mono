@@ -8,6 +8,12 @@ import { getSessionsByArtifact } from "./session-artifacts";
 import { chatFileStorage } from "./chat-file-storage";
 import { eventBus } from "./event-bus";
 import { FEATURE_STAGES, FEATURE_STATUSES, type FeatureStage, type FeatureStatus } from "@shared/feature-pipeline";
+import {
+  featureRoomDeclaresAvailability,
+  projectFeatureAvailability,
+  resolveChangeShaForStamp,
+  roomDeclaresChangeShaIdentity,
+} from "./feature-availability";
 
 export { FEATURE_STAGES, FEATURE_STATUSES };
 
@@ -55,6 +61,7 @@ function historyNote(value: unknown, fallback: string): string {
 /**
  * Append one provenance row for a Feature stage/status change.
  * Sole writer lives inside featureStorage create/update/archive.
+ * Optional change_sha stamps when entering a room that declares identity: "change_sha".
  */
 async function appendHistory(args: {
   featureId: string;
@@ -65,19 +72,21 @@ async function appendHistory(args: {
   note: string;
   source: string;
   sessionId?: string | null;
+  changeSha?: string | null;
 }) {
   const p = principal();
   const ownership = ownedInsertValues(p, scopeColumns as any);
   const actorUserId = p.actorType === "user" ? p.userId : null;
   const sessionId = typeof args.sessionId === "string" && args.sessionId.trim() ? args.sessionId.trim() : null;
+  const changeSha = typeof args.changeSha === "string" && args.changeSha.trim() ? args.changeSha.trim().toLowerCase() : null;
   await db.execute(sql`
     INSERT INTO feature_history (
       feature_id, from_stage, to_stage, from_status, to_status, note, source,
-      actor_user_id, session_id, scope, owner_user_id, account_id
+      actor_user_id, session_id, scope, owner_user_id, account_id, change_sha
     ) VALUES (
       ${args.featureId}, ${args.fromStage}, ${args.toStage}, ${args.fromStatus}, ${args.toStatus},
       ${args.note}, ${args.source}, ${actorUserId}, ${sessionId},
-      ${ownership.scope}, ${ownership.ownerUserId}, ${ownership.accountId}
+      ${ownership.scope}, ${ownership.ownerUserId}, ${ownership.accountId}, ${changeSha}
     )
   `);
 }
@@ -93,7 +102,7 @@ export const featureStorage = {
     ].filter((condition): condition is Exclude<typeof condition, undefined> => condition !== undefined);
     const where = conditions.reduce<ReturnType<typeof sql>>((query, condition) => sql`${query} AND ${condition}`);
     const result = await db.execute(sql`SELECT f.*, p.name AS product_name FROM features f JOIN products p ON p.id = f.product_id WHERE ${where} ORDER BY f.stage, f.updated_at DESC LIMIT 500`);
-    return result.rows;
+    return projectFeatureAvailability(result.rows as Record<string, unknown>[]);
   },
   async get(id: string) {
     const rows = await this.list();
@@ -112,8 +121,17 @@ export const featureStorage = {
     const ownership = ownedInsertValues(p, { scope: sql`scope`, ownerUserId: sql`owner_user_id`, accountId: sql`account_id` } as any);
     const [row] = await db.execute(sql`INSERT INTO features (product_id, owner_person_id, spec_page_id, summary, description, stage, status, scope, owner_user_id, account_id) VALUES (${productId}, ${ownerPersonId}, ${specPageId}, ${summary}, ${description}, ${stage}, 'ready', ${ownership.scope}, ${ownership.ownerUserId}, ${ownership.accountId}) RETURNING *`).then(r => r.rows);
     if (row) {
+      const featureId = String((row as any).id);
+      let changeSha: string | null = null;
+      if (roomDeclaresChangeShaIdentity(stage)) {
+        changeSha = await resolveChangeShaForStamp({
+          featureId,
+          productId,
+          explicitChangeSha: input.changeSha ?? input.change_sha,
+        });
+      }
       await appendHistory({
-        featureId: String((row as any).id),
+        featureId,
         fromStage: null,
         toStage: stage,
         fromStatus: null,
@@ -121,8 +139,9 @@ export const featureStorage = {
         note: historyNote(input.historyNote ?? input.note, `Created Feature at ${stage}/ready`),
         source: typeof input.historySource === "string" && input.historySource.trim() ? input.historySource.trim() : "create",
         sessionId: input.sessionId,
+        changeSha,
       });
-      publishFeaturesChanged("created", String((row as any).id));
+      publishFeaturesChanged("created", featureId);
     }
     return row;
   },
@@ -159,6 +178,15 @@ export const featureStorage = {
       const fallback = stageChanged
         ? `Stage ${current.stage} → ${stage}${statusChanged ? ` (status ${current.status} → ${nextStatus})` : " (status reset to ready)"}`
         : `Status ${current.status} → ${nextStatus}`;
+      // Stamp merge SHA only when entering a room that declares identity: "change_sha".
+      let changeSha: string | null = null;
+      if (stageChanged && roomDeclaresChangeShaIdentity(stage)) {
+        changeSha = await resolveChangeShaForStamp({
+          featureId: id,
+          productId,
+          explicitChangeSha: input.changeSha ?? input.change_sha,
+        });
+      }
       await appendHistory({
         featureId: id,
         fromStage: String(current.stage),
@@ -170,10 +198,15 @@ export const featureStorage = {
           ? input.historySource.trim()
           : "update",
         sessionId: input.sessionId,
+        changeSha,
       });
     }
     if (row) publishFeaturesChanged("updated", id);
-    return row;
+    // Return projected availability so get/update consumers see the Play gate.
+    if (!row) return row;
+    if (!featureRoomDeclaresAvailability(String((row as any).stage))) return row;
+    const [projected] = await projectFeatureAvailability([row as Record<string, unknown>]);
+    return projected ?? row;
   },
   async archive(id: string, input: any = {}) {
     const p = principal();

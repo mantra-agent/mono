@@ -48,6 +48,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChildSessionBlock } from "@/components/inline-session-blocks";
 import { stripMessageTimestamp } from "@/components/chat-shared";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
@@ -85,6 +86,7 @@ import { isDurablyActiveSession } from "@shared/models/chat";
 
 const stages = FEATURE_STAGES;
 const statuses = FEATURE_STATUSES;
+type FeatureAvailabilityState = "on_stage" | "waiting" | "unknown";
 type Feature = {
   id: string;
   summary: string;
@@ -95,6 +97,8 @@ type Feature = {
   product_name?: string;
   owner_person_id?: string;
   spec_page_id?: string | null;
+  /** Server-projected Play gate. Omitted when the room did not declare a clock. */
+  availability?: { state: FeatureAvailabilityState };
 };
 type Product = { id: number; name: string };
 type Person = { id: string; name: string; cabinetLevel?: string };
@@ -874,26 +878,47 @@ const FeatureRow = memo(function FeatureRow({
                 </Button>
               </>
             ) : (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground/70 hover:bg-accent hover:text-foreground [&_svg]:size-3"
-                disabled={launch.isPending}
-                aria-label={`Play ${produceContract.actionLabel} for ${feature.summary}`}
-                title={produceContract.actionLabel}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  runPipelineLaunch("produce");
-                }}
-                data-testid={`button-feature-play-${feature.stage}-produce-${feature.id}`}
-              >
-                {produceLaunchPending ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Play className="h-3 w-3" />
-                )}
-              </Button>
+              (() => {
+                // Availability is room data on the row payload — never branch on stage name.
+                const availabilityState = feature.availability?.state;
+                const waitingOnStage = availabilityState === "waiting";
+                const playTooltip = waitingOnStage
+                  ? "Waiting on stage"
+                  : produceContract.actionLabel;
+                const playClass = waitingOnStage
+                  ? "h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground/40 hover:bg-accent hover:text-muted-foreground/70 [&_svg]:size-3"
+                  : "h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground/70 hover:bg-accent hover:text-foreground [&_svg]:size-3";
+                return (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={playClass}
+                        disabled={launch.isPending}
+                        aria-label={
+                          waitingOnStage
+                            ? `Waiting on stage — Play ${produceContract.actionLabel} for ${feature.summary}`
+                            : `Play ${produceContract.actionLabel} for ${feature.summary}`
+                        }
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          runPipelineLaunch("produce");
+                        }}
+                        data-testid={`button-feature-play-${feature.stage}-produce-${feature.id}`}
+                      >
+                        {produceLaunchPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Play className="h-3 w-3" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">{playTooltip}</TooltipContent>
+                  </Tooltip>
+                );
+              })()
             )}
           </div>
         )}
