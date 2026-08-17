@@ -548,6 +548,8 @@ export class FileTimerStorage {
       })
       .from(responsibilityRuns)
       .innerJoin(timers, eq(timers.id, responsibilityRuns.responsibilityId))
+      // validSchedulerTimerPredicate filters accounts.status — join required.
+      .leftJoin(accounts, eq(accounts.id, timers.accountId))
       .where(and(
         eq(responsibilityRuns.status, "deferred"),
         eq(responsibilityRuns.trigger, "scheduled"),
@@ -598,6 +600,8 @@ export class FileTimerStorage {
       metadata: responsibilityRuns.metadata,
     }).from(responsibilityRuns)
       .innerJoin(timers, eq(timers.id, responsibilityRuns.responsibilityId))
+      // validSchedulerTimerPredicate filters accounts.status — join required.
+      .leftJoin(accounts, eq(accounts.id, timers.accountId))
       .innerJoin(modInstallationResources, and(
         eq(modInstallationResources.resourceId, timers.id),
         eq(modInstallationResources.contributionId, "build.timer.post-acceptance-regression"),
