@@ -188,6 +188,43 @@ export class FilePrincipleStorage {
     return rowToPrinciple(rows[0]);
   }
 
+  /**
+   * Resolve a caller-supplied principle identity to the visible current principle.
+   * Accepts current revision id, principle id, or any historical revision id owned
+   * by a visible principle. Returns null when nothing visible matches.
+   */
+  async resolvePrincipleFromAnyId(id: string): Promise<Principle | null> {
+    const trimmed = id.trim();
+    if (!trimmed) return null;
+    const principal = requireCurrentUserPrincipal();
+    // Fast path: current revision or principle id via the ordinary list join.
+    const currentMatch = await db.select(currentPrincipleProjection)
+      .from(principles)
+      .innerJoin(principleRevisions, currentRevisionJoin())
+      .where(combineWithVisibleScope(
+        principal,
+        principlesScopeColumns,
+        sql`(${principles.id} = ${trimmed} OR ${principleRevisions.id} = ${trimmed})`,
+      ))
+      .limit(1);
+    if (currentMatch.length > 0) return rowToPrinciple(currentMatch[0]);
+
+    // Historical revision → heal to that principle's current projection.
+    const [historical] = await db.select({ principleId: principleRevisions.principleId })
+      .from(principleRevisions)
+      .innerJoin(principles, and(
+        eq(principles.id, principleRevisions.principleId),
+        combineWithVisibleScope(principal, principlesScopeColumns),
+      ))
+      .where(eq(principleRevisions.id, trimmed))
+      .limit(1);
+    if (!historical) {
+      log.log(`resolvePrincipleFromAnyId id=${trimmed} not-found`);
+      return null;
+    }
+    return this.getPrinciple(historical.principleId);
+  }
+
   async createPrinciple(input: {
     title: string;
     layer1: string;
