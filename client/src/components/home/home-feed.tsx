@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LibraryReminderPopover } from "@/components/library-reminder";
-import { ChevronRight, FileText, MessageSquare, MoreHorizontal, X } from "lucide-react";
+import { ChevronRight, FileText, Loader2, MessageSquare, MoreHorizontal, X } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
