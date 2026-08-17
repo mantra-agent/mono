@@ -7559,7 +7559,9 @@ ${refs}` : ""),
 
   async tasks(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = args.action;
-    if (!action) return { result: "Missing action parameter", error: true };
+    if (!action) {
+      return contractReject("Missing action parameter", "task_input_invalid", "missing");
+    }
     const sub: Record<string, (a: Record<string, any>) => Promise<ToolHandlerResult>> = {
       create: (a) => bridgeHandlers.create_task(a),
       complete: (a) => bridgeHandlers.complete_task(a),
@@ -7567,7 +7569,15 @@ ${refs}` : ""),
       update: (a) => bridgeHandlers.update_task(a),
     };
     const handler = sub[action];
-    if (!handler) return { result: `Unknown tasks action: ${action}. Available: create, complete, delete, update`, error: true };
+    if (!handler) {
+      // Caller misuse (e.g. action=get) is input, not an uncaught producer defect.
+      // Bare error:true left failureKind null → Executor TOOL_FAILED_TASKS red ERRORS.
+      return contractReject(
+        `Unknown tasks action: ${action}. Available: create, complete, delete, update`,
+        "task_input_invalid",
+        String(action),
+      );
+    }
     return handler(args);
   },
 
