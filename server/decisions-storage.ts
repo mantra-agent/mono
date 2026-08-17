@@ -185,12 +185,28 @@ export class DecisionsStorage {
         }
 
         const principles = await filePrincipleStorage.getPrinciples();
-        const selectedRevisionIds = [...new Set(input.principleRevisionIds ?? [])];
-        const selectedPrinciples = selectedRevisionIds.map((revisionId) => {
-          const principle = principles.find((candidate) => candidate.currentRevisionId === revisionId);
-          if (!principle) throw Object.assign(new Error(`Principle revision is not current or visible: ${revisionId}`), { status: 400 });
-          return principle;
-        });
+        const byCurrentRevisionId = new Map(principles.map((p) => [p.currentRevisionId, p]));
+        const byPrincipleId = new Map(principles.map((p) => [p.id, p]));
+        // Callers may pass current revision ids, principle ids (from context chips /
+        // "principle id:" labels), or historical revision ids. Resolve all three to
+        // the visible current principle so governed_by always pins the live revision.
+        const selectedPrinciples: typeof principles = [];
+        const seenPrincipleIds = new Set<string>();
+        for (const rawId of [...new Set(input.principleRevisionIds ?? [])]) {
+          let principle = byCurrentRevisionId.get(rawId) ?? byPrincipleId.get(rawId) ?? null;
+          if (!principle) {
+            principle = await filePrincipleStorage.resolvePrincipleFromAnyId(rawId);
+          }
+          if (!principle) {
+            throw Object.assign(
+              new Error(`Principle revision is not current or visible: ${rawId}`),
+              { status: 400 },
+            );
+          }
+          if (seenPrincipleIds.has(principle.id)) continue;
+          seenPrincipleIds.add(principle.id);
+          selectedPrinciples.push(principle);
+        }
         const people = input.ownerPersonRole ? await peopleStorage.listPeople() : [];
         const targetCabinetLevel = input.ownerPersonRole === "self" ? "agent" : "user";
         const ownerPerson = input.ownerPersonRole

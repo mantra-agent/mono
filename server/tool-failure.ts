@@ -15,6 +15,8 @@ export type ToolFailureCode =
   | "business_plan_internal"
   | "business_input_invalid"
   | "business_internal"
+  // Decisions contract rejects (caller-correctable input)
+  | "decision_input_invalid"
   | "tool_authority_denied"
   | "build_mod_inactive"
   | "hook_name_conflict"
