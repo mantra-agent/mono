@@ -5,6 +5,7 @@ import {
   Archive,
   Check,
   ChevronRight,
+  ClipboardCheck,
   FileText,
   FlaskConical,
   Hammer,
@@ -13,6 +14,7 @@ import {
   Loader2,
   Package,
   PenLine,
+  Play,
   Plus,
   SlidersHorizontal,
   User,
@@ -291,11 +293,35 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
   const update = useMutation({
     mutationFn: async (patch: Record<string, unknown>) => {
       const response = await apiRequest("PATCH", `/api/features/${feature.id}`, patch);
-      return response.json();
+      return response.json() as Promise<Feature>;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/features"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/features", feature.id, "history"] });
+    onSuccess: (row) => {
+      // Apply the returned row immediately so status chrome (needs_review unread)
+      // flips before the network refetch settles. Keep product_name from cache when
+      // the PATCH body does not join products.
+      if (row?.id) {
+        queryClient.setQueriesData<Feature[]>({ queryKey: ["/api/features"] }, (old) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((entry) =>
+            entry.id === row.id
+              ? {
+                  ...entry,
+                  summary: row.summary ?? entry.summary,
+                  description: row.description ?? entry.description,
+                  stage: row.stage ?? entry.stage,
+                  status: row.status ?? entry.status,
+                  product_id: row.product_id ?? entry.product_id,
+                  owner_person_id: row.owner_person_id ?? entry.owner_person_id,
+                  spec_page_id:
+                    row.spec_page_id !== undefined ? row.spec_page_id : entry.spec_page_id,
+                  product_name: row.product_name ?? entry.product_name,
+                }
+              : entry,
+          );
+        });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["/api/features"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/features", feature.id, "history"] });
     },
     onError: (error: unknown) =>
       toast({
@@ -386,6 +412,50 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
     : [];
 
   const needsReview = feature.status === "needs_review";
+  // Status chooses the job: needs_review → Review; otherwise Produce for this stage.
+  const pipelineJob = resolveFeaturePipelineJob(feature.status);
+  const pipelineContract = getFeatureJobContract(feature.stage, pipelineJob);
+  const launchPendingKey = `feature-${feature.id}-${feature.stage}-${pipelineJob}`;
+  const launchPending =
+    launch.isPending && launch.variables?.pendingKey === launchPendingKey;
+
+  const runPipelineLaunch = () => {
+    if (launch.isPending) return;
+    launch.mutate(
+      {
+        pendingKey: launchPendingKey,
+        title: `${pipelineContract.actionLabel}: ${feature.summary}`.slice(0, 80),
+        personaName: pipelineContract.persona,
+        message: composeFeatureLaunchMessage(
+          {
+            id: feature.id,
+            summary: feature.summary,
+            stage: feature.stage,
+            status: feature.status,
+            productName: feature.product_name,
+            productId: feature.product_id,
+            ownerPersonId: feature.owner_person_id,
+            specPageId: feature.spec_page_id,
+            description: feature.description,
+          },
+          pipelineJob,
+        ),
+        clientTurnSuffix: launchPendingKey,
+        errorTitle: `Could not start ${pipelineContract.actionLabel.toLowerCase()} session`,
+        // Stay on Features; session mounts under the row (mobile Focus would leave).
+        openFocus: false,
+      },
+      {
+        onSuccess: (session) => {
+          setLaunchedSessionId(session.id);
+          void queryClient.invalidateQueries({
+            queryKey: ["/api/features", feature.id, "sessions"],
+          });
+        },
+      },
+    );
+  };
+
   const commitTitle = () => {
     const next = titleDraft.trim();
     if (!next || next === feature.summary.trim()) {
@@ -454,6 +524,41 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
         mobileLayout="inline"
         valueLayout="compact"
         testId={`feature-row-${feature.id}`}
+        // Primary stage action sits immediately left of the expander so Produce /
+        // Review can fire without opening the overflow menu. Menu stays intact.
+        actionContent={(
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={cn(
+              "h-5 min-h-5 w-5 min-w-5 shrink-0 rounded [&_svg]:size-3",
+              needsReview
+                ? "text-foreground hover:bg-accent hover:text-foreground"
+                : "text-muted-foreground/70 hover:bg-accent hover:text-foreground",
+            )}
+            disabled={launch.isPending}
+            aria-label={
+              needsReview
+                ? `Review ${feature.summary}`
+                : `Play ${pipelineContract.actionLabel} for ${feature.summary}`
+            }
+            title={pipelineContract.actionLabel}
+            onClick={(event) => {
+              event.stopPropagation();
+              runPipelineLaunch();
+            }}
+            data-testid={`button-feature-play-${feature.stage}-${pipelineJob}-${feature.id}`}
+          >
+            {launchPending ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : needsReview ? (
+              <ClipboardCheck className="h-3 w-3" />
+            ) : (
+              <Play className="h-3 w-3" />
+            )}
+          </Button>
+        )}
         expandedContentClassName="px-2 pb-2 pl-2"
         expandedContent={(
           <div className="space-y-0.5">
@@ -689,53 +794,23 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
       )}
       menuContent={(
         <>
-          {(() => {
-            // Status chooses the job: needs_review → Review; otherwise Produce for this stage.
-            const job = resolveFeaturePipelineJob(feature.status);
-            const contract = getFeatureJobContract(feature.stage, job);
-            const pendingKey = `feature-${feature.id}-${feature.stage}-${job}`;
-            const pending = launch.isPending && launch.variables?.pendingKey === pendingKey;
-            return (
-              <DropdownMenuItem
-                disabled={launch.isPending}
-                onSelect={(event) => {
-                  event.preventDefault();
-                  launch.mutate(
-                    {
-                      pendingKey,
-                      title: `${contract.actionLabel}: ${feature.summary}`.slice(0, 80),
-                      personaName: contract.persona,
-                      message: composeFeatureLaunchMessage({
-                        id: feature.id,
-                        summary: feature.summary,
-                        stage: feature.stage,
-                        status: feature.status,
-                        productName: feature.product_name,
-                        productId: feature.product_id,
-                        ownerPersonId: feature.owner_person_id,
-                        specPageId: feature.spec_page_id,
-                        description: feature.description,
-                      }, job),
-                      clientTurnSuffix: pendingKey,
-                      errorTitle: `Could not start ${contract.actionLabel.toLowerCase()} session`,
-                      // Stay on Features; session mounts under the row (mobile Focus would leave).
-                      openFocus: false,
-                    },
-                    {
-                      onSuccess: (session) => {
-                        setLaunchedSessionId(session.id);
-                        queryClient.invalidateQueries({ queryKey: ["/api/features", feature.id, "sessions"] });
-                      },
-                    },
-                  );
-                }}
-                data-testid={`button-feature-launch-${feature.stage}-${job}-${feature.id}`}
-              >
-                {pending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <PenLine className="mr-2 h-3.5 w-3.5" />}
-                {contract.actionLabel}
-              </DropdownMenuItem>
-            );
-          })()}
+          <DropdownMenuItem
+            disabled={launch.isPending}
+            onSelect={(event) => {
+              event.preventDefault();
+              runPipelineLaunch();
+            }}
+            data-testid={`button-feature-launch-${feature.stage}-${pipelineJob}-${feature.id}`}
+          >
+            {launchPending ? (
+              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+            ) : needsReview ? (
+              <ClipboardCheck className="mr-2 h-3.5 w-3.5" />
+            ) : (
+              <Play className="mr-2 h-3.5 w-3.5" />
+            )}
+            {pipelineContract.actionLabel}
+          </DropdownMenuItem>
           <DropdownMenuSub>
             <DropdownMenuSubTrigger data-testid={`menu-feature-stage-${feature.id}`}>
               Stage
