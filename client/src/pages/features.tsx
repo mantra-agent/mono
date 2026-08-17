@@ -12,6 +12,7 @@ import {
   History,
   Lightbulb,
   Loader2,
+  MessageSquare,
   Package,
   PenLine,
   Play,
@@ -58,8 +59,10 @@ import { useToast } from "@/hooks/use-toast";
 import {
   FEATURE_STAGES,
   FEATURE_STATUSES,
+  composeFeatureDiscussMessage,
   composeFeatureLaunchMessage,
   formatFeatureStage,
+  getFeatureDiscussPersona,
   getFeatureJobContract,
   resolveFeaturePipelineJob,
   type FeatureStage,
@@ -419,6 +422,25 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
   const launchPending =
     launch.isPending && launch.variables?.pendingKey === launchPendingKey;
 
+  const featureLaunchContext = {
+    id: feature.id,
+    summary: feature.summary,
+    stage: feature.stage,
+    status: feature.status,
+    productName: feature.product_name,
+    productId: feature.product_id,
+    ownerPersonId: feature.owner_person_id,
+    specPageId: feature.spec_page_id,
+    description: feature.description,
+  };
+
+  const onLaunchSuccess = (session: { id: string }) => {
+    setLaunchedSessionId(session.id);
+    void queryClient.invalidateQueries({
+      queryKey: ["/api/features", feature.id, "sessions"],
+    });
+  };
+
   const runPipelineLaunch = () => {
     if (launch.isPending) return;
     launch.mutate(
@@ -426,33 +448,35 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
         pendingKey: launchPendingKey,
         title: `${pipelineContract.actionLabel}: ${feature.summary}`.slice(0, 80),
         personaName: pipelineContract.persona,
-        message: composeFeatureLaunchMessage(
-          {
-            id: feature.id,
-            summary: feature.summary,
-            stage: feature.stage,
-            status: feature.status,
-            productName: feature.product_name,
-            productId: feature.product_id,
-            ownerPersonId: feature.owner_person_id,
-            specPageId: feature.spec_page_id,
-            description: feature.description,
-          },
-          pipelineJob,
-        ),
+        message: composeFeatureLaunchMessage(featureLaunchContext, pipelineJob),
         clientTurnSuffix: launchPendingKey,
         errorTitle: `Could not start ${pipelineContract.actionLabel.toLowerCase()} session`,
         // Stay on Features; session mounts under the row (mobile Focus would leave).
         openFocus: false,
       },
+      { onSuccess: onLaunchSuccess },
+    );
+  };
+
+  const discussPendingKey = `feature-${feature.id}-discuss`;
+  const discussPending =
+    launch.isPending && launch.variables?.pendingKey === discussPendingKey;
+  const discussPersona = getFeatureDiscussPersona(feature.stage);
+
+  const runDiscussLaunch = () => {
+    if (launch.isPending) return;
+    launch.mutate(
       {
-        onSuccess: (session) => {
-          setLaunchedSessionId(session.id);
-          void queryClient.invalidateQueries({
-            queryKey: ["/api/features", feature.id, "sessions"],
-          });
-        },
+        pendingKey: discussPendingKey,
+        title: `Discuss: ${feature.summary}`.slice(0, 80),
+        personaName: discussPersona,
+        message: composeFeatureDiscussMessage(featureLaunchContext),
+        clientTurnSuffix: discussPendingKey,
+        errorTitle: "Could not start discussion",
+        // Stay on Features; session mounts under the row (mobile Focus would leave).
+        openFocus: false,
       },
+      { onSuccess: onLaunchSuccess },
     );
   };
 
@@ -810,6 +834,21 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
               <Play className="mr-2 h-3.5 w-3.5" />
             )}
             {pipelineContract.actionLabel}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={launch.isPending}
+            onSelect={(event) => {
+              event.preventDefault();
+              runDiscussLaunch();
+            }}
+            data-testid={`button-feature-discuss-${feature.id}`}
+          >
+            {discussPending ? (
+              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <MessageSquare className="mr-2 h-3.5 w-3.5" />
+            )}
+            Discuss
           </DropdownMenuItem>
           <DropdownMenuSub>
             <DropdownMenuSubTrigger data-testid={`menu-feature-stage-${feature.id}`}>
