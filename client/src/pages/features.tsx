@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Activity,
   Archive,
+  Check,
   ChevronRight,
   FileText,
   FlaskConical,
@@ -19,6 +20,7 @@ import {
 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
@@ -26,7 +28,19 @@ import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { ReferenceText } from "@/components/references/reference-text";
 import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
-import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { ChildSessionBlock } from "@/components/inline-session-blocks";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
@@ -265,8 +279,14 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
   const [editingOwner, setEditingOwner] = useState(false);
   const [editingSpec, setEditingSpec] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(feature.summary);
   /** Optimistic link after a row launch, before discovery/artifact indexing catches up. */
   const [launchedSessionId, setLaunchedSessionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!editingTitle) setTitleDraft(feature.summary);
+  }, [feature.summary, editingTitle]);
 
   const update = useMutation({
     mutationFn: async (patch: Record<string, unknown>) => {
@@ -365,18 +385,61 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
     ? [{ type: "page", id: feature.spec_page_id, label: feature.spec_page_id }]
     : [];
 
+  const needsReview = feature.status === "needs_review";
+  const commitTitle = () => {
+    const next = titleDraft.trim();
+    if (!next || next === feature.summary.trim()) {
+      setTitleDraft(feature.summary);
+      setEditingTitle(false);
+      return;
+    }
+    update.mutate({ summary: next }, { onSettled: () => setEditingTitle(false) });
+  };
+
   return (
     <ProfileTreeRow
       label={(
-        <span
-          className={cn(
-            "truncate",
-            isSessionInProgress && "text-active font-medium motion-safe:animate-pulse",
-          )}
-          data-testid={`text-feature-title-${feature.id}`}
-        >
-          {feature.summary}
-        </span>
+        editingTitle ? (
+          <Input
+            autoFocus
+            value={titleDraft}
+            onChange={(event) => setTitleDraft(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitTitle();
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setTitleDraft(feature.summary);
+                setEditingTitle(false);
+              }
+            }}
+            onBlur={commitTitle}
+            className="h-6 max-w-[min(100%,28rem)] border-0 bg-muted/40 px-1.5 text-sm shadow-none focus-visible:ring-1"
+            data-testid={`input-feature-title-${feature.id}`}
+          />
+        ) : (
+          <button
+            type="button"
+            className={cn(
+              "max-w-full truncate text-left text-sm",
+              isSessionInProgress && "text-active font-medium motion-safe:animate-pulse",
+              !isSessionInProgress && needsReview && "font-medium text-foreground",
+              !isSessionInProgress && !needsReview && "text-muted-foreground",
+            )}
+            onClick={(event) => {
+              event.stopPropagation();
+              setTitleDraft(feature.summary);
+              setEditingTitle(true);
+            }}
+            data-testid={`text-feature-title-${feature.id}`}
+          >
+            {feature.summary}
+          </button>
+        )
       )}
       icon={
         isSessionInProgress
@@ -459,38 +522,6 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
           </ProfileTreeRow>
 
           <ProfileTreeRow
-            label="Stage"
-            icon={<Activity className="h-3.5 w-3.5" />}
-            hasValue
-            showEmpty
-            mobileLayout="inline"
-            testId={`feature-stage-${feature.id}`}
-          >
-            <Select
-              value={feature.stage}
-              onValueChange={(stage) =>
-                update.mutate({
-                  stage,
-                  historyNote: `Manual stage change ${formatStage(feature.stage)} → ${formatStage(stage as FeatureStage)}`,
-                  historySource: "manual",
-                })
-              }
-              disabled={update.isPending}
-            >
-              <SelectTrigger className="h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0" data-testid={`select-feature-stage-${feature.id}`}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {stages.map((stage) => (
-                  <SelectItem key={stage} value={stage}>
-                    {formatStage(stage)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </ProfileTreeRow>
-
-          <ProfileTreeRow
             label="Status"
             icon={<Activity className="h-3.5 w-3.5" />}
             hasValue
@@ -565,48 +596,57 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
             )}
           </ProfileTreeRow>
 
-          <ProfileTreeRow
-            label="Spec"
-            icon={<FileText className="h-3.5 w-3.5" />}
-            hasValue={Boolean(feature.spec_page_id) || editingSpec}
-            showEmpty
-            mobileLayout="inline"
-            testId={`feature-spec-${feature.id}`}
-          >
+          <div className="pt-1" data-testid={`feature-spec-${feature.id}`}>
+            <div className="mb-1 flex items-center justify-between gap-2 px-1">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                <FileText className="h-3 w-3" />
+                Spec
+              </div>
+              {feature.spec_page_id ? (
+                <button
+                  type="button"
+                  className="text-[11px] text-muted-foreground hover:text-foreground"
+                  onClick={() => setEditingSpec((open) => !open)}
+                  data-testid={`button-edit-feature-spec-${feature.id}`}
+                >
+                  {editingSpec ? "Done" : "Change"}
+                </button>
+              ) : null}
+            </div>
             {editingSpec || !feature.spec_page_id ? (
-              <ReferencePicker
-                types={["page"]}
-                mode="single"
-                variant="compact"
-                dense
-                placeholder="Spec page"
-                value={specValue}
-                onChange={(next) => {
-                  const pageId = next[0]?.id ?? null;
-                  if (pageId === (feature.spec_page_id ?? null)) {
-                    setEditingSpec(false);
-                    return;
-                  }
-                  update.mutate(
-                    { specPageId: pageId },
-                    { onSettled: () => setEditingSpec(false) },
-                  );
-                }}
-                testId={`picker-feature-spec-${feature.id}`}
-              />
+              <div className="px-1">
+                <ReferencePicker
+                  types={["page"]}
+                  mode="single"
+                  variant="compact"
+                  dense
+                  placeholder="Spec page"
+                  value={specValue}
+                  onChange={(next) => {
+                    const pageId = next[0]?.id ?? null;
+                    if (pageId === (feature.spec_page_id ?? null)) {
+                      setEditingSpec(false);
+                      return;
+                    }
+                    update.mutate(
+                      { specPageId: pageId },
+                      { onSettled: () => setEditingSpec(false) },
+                    );
+                  }}
+                  testId={`picker-feature-spec-${feature.id}`}
+                />
+              </div>
             ) : (
-              <button
-                type="button"
-                className="max-w-full truncate text-right"
-                onClick={() => setEditingSpec(true)}
-                data-testid={`button-edit-feature-spec-${feature.id}`}
-              >
-                <span className="pointer-events-none">
-                  <InlineReferenceText text={`@page:${feature.spec_page_id}`} />
-                </span>
-              </button>
+              <ExpandableLibraryPage
+                page={{
+                  id: feature.spec_page_id,
+                  title: "Spec",
+                  slug: feature.spec_page_id,
+                }}
+                className="px-1"
+              />
             )}
-          </ProfileTreeRow>
+          </div>
 
           {activeSessionMeta ? (
             <div className="pt-1.5" data-testid={`feature-active-session-${feature.id}`}>
@@ -697,6 +737,37 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
               </DropdownMenuItem>
             );
           })()}
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger data-testid={`menu-feature-stage-${feature.id}`}>
+              Stage
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-44">
+              <DropdownMenuRadioGroup
+                value={feature.stage}
+                onValueChange={(stage) => {
+                  if (stage === feature.stage) return;
+                  update.mutate({
+                    stage,
+                    historyNote: `Manual stage change ${formatStage(feature.stage)} → ${formatStage(stage as FeatureStage)}`,
+                    historySource: "manual",
+                  });
+                }}
+              >
+                {stages.map((stage) => (
+                  <DropdownMenuRadioItem
+                    key={stage}
+                    value={stage}
+                    data-testid={`menu-feature-stage-${stage}-${feature.id}`}
+                  >
+                    <span className="mr-2 inline-flex h-3.5 w-3.5 items-center justify-center text-muted-foreground">
+                      {STAGE_ICONS[stage]}
+                    </span>
+                    {formatStage(stage)}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
           <DropdownMenuItem
             onSelect={() =>
               apiRequest("POST", `/api/features/${feature.id}/archive`, { confirm: true }).then(() => {
@@ -725,6 +796,8 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
 export default function FeaturesPage() {
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
+  /** Empty set = all products. Non-empty = only those product ids. */
+  const [productFilter, setProductFilter] = useState<Set<number>>(() => new Set());
   const features = useQuery<Feature[]>({
     queryKey: ["/api/features", search],
     queryFn: async () => {
@@ -736,22 +809,92 @@ export default function FeaturesPage() {
   const people = useQuery<{ people: Person[] }>({ queryKey: ["/api/people"] });
   const currentPerson = people.data?.people.find((person) => person.cabinetLevel === "user") ?? null;
   const productList = products.data ?? [];
+  const filteredFeatures = useMemo(() => {
+    const rows = features.data ?? [];
+    if (productFilter.size === 0) return rows;
+    return rows.filter((row) => productFilter.has(row.product_id));
+  }, [features.data, productFilter]);
   const grouped = useMemo(
-    () => stages.map((stage) => ({ stage, rows: (features.data ?? []).filter((row) => row.stage === stage) })),
-    [features.data],
+    () => stages.map((stage) => ({ stage, rows: filteredFeatures.filter((row) => row.stage === stage) })),
+    [filteredFeatures],
   );
+  const toggleProductFilter = (productId: number, checked: boolean) => {
+    setProductFilter((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(productId);
+      else next.delete(productId);
+      return next;
+    });
+  };
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className={HIERARCHY_TREE_STACK_CLASS} data-testid="features-page">
-          <HierarchySearchInput
-            value={search}
-            onChange={setSearch}
-            inputTestId="input-search-features"
-            clearTestId="button-clear-feature-search"
-            ariaLabel="Search features"
-          />
+          <div className="mb-1 flex items-center gap-1.5">
+            <div className="min-w-0 flex-1 [&>div]:mb-0">
+              <HierarchySearchInput
+                value={search}
+                onChange={setSearch}
+                inputTestId="input-search-features"
+                clearTestId="button-clear-feature-search"
+                ariaLabel="Search features"
+              />
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn(
+                    "h-7 shrink-0 gap-1.5 px-2 text-xs",
+                    productFilter.size > 0 && "border-foreground/40",
+                  )}
+                  data-testid="button-features-mixer"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  Mixer
+                  {productFilter.size > 0 ? (
+                    <span className="rounded bg-muted px-1 text-[10px] tabular-nums text-muted-foreground">
+                      {productFilter.size}
+                    </span>
+                  ) : null}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger data-testid="menu-features-product-filter">
+                    Product
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="w-52">
+                    <DropdownMenuItem
+                      onSelect={(event) => {
+                        event.preventDefault();
+                        setProductFilter(new Set());
+                      }}
+                      data-testid="menu-features-product-all"
+                    >
+                      <span className="mr-2 flex h-3.5 w-3.5 items-center justify-center">
+                        {productFilter.size === 0 ? <Check className="h-3.5 w-3.5" /> : null}
+                      </span>
+                      All products
+                    </DropdownMenuItem>
+                    {productList.map((product) => (
+                      <DropdownMenuCheckboxItem
+                        key={product.id}
+                        checked={productFilter.has(product.id)}
+                        onCheckedChange={(checked) => toggleProductFilter(product.id, checked === true)}
+                        onSelect={(event) => event.preventDefault()}
+                        data-testid={`menu-features-product-${product.id}`}
+                      >
+                        {product.name}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
           {creating ? (
             <NewFeature
               products={productList}
