@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Calendar as CalendarIcon,
   ChevronRight,
@@ -835,28 +836,40 @@ export default function CalendarPage() {
               data-testid="input-search-schedule"
             />
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Schedule range" data-testid="button-schedule-range">
-                <SlidersHorizontal className="h-3.5 w-3.5" />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" aria-label="Schedule range" data-testid="button-schedule-range">
+                      <SlidersHorizontal className="h-3.5 w-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-28">
+                    {(["day", "week", "month"] as ScheduleMode[]).map(mode => (
+                      <DropdownMenuItem
+                        key={mode}
+                        onClick={() => setView(mode)}
+                        className={cn("text-xs", view === mode && "font-semibold text-foreground")}
+                        data-testid={`menu-schedule-${mode}`}
+                      >
+                        {mode.toUpperCase()}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Schedule range</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => navigate("/schedule/new")} aria-label="New event" data-testid="button-new-event">
+                <Plus className="h-3.5 w-3.5" />
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-28">
-              {(["day", "week", "month"] as ScheduleMode[]).map(mode => (
-                <DropdownMenuItem
-                  key={mode}
-                  onClick={() => setView(mode)}
-                  className={cn("text-xs", view === mode && "font-semibold text-foreground")}
-                  data-testid={`menu-schedule-${mode}`}
-                >
-                  {mode.toUpperCase()}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => navigate("/schedule/new")} title="New event" data-testid="button-new-event">
-            <Plus className="h-3.5 w-3.5" />
-          </Button>
+            </TooltipTrigger>
+            <TooltipContent>New event</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
