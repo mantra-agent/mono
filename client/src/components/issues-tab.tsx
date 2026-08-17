@@ -261,7 +261,7 @@ function IssueTreeRow({
               )}
             </button>
           </TooltipTrigger>
-          <TooltipContent side="right" className="text-xs">
+          <TooltipContent side="right">
             {STATUS_LABELS[status]}
           </TooltipContent>
         </Tooltip>

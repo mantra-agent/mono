@@ -272,6 +272,10 @@ Hosting credentials and environment configuration belong to Platform Environment
 
 `client/src/components/ui/dropdown-menu.tsx` is the canonical action-menu primitive and MUST be used for action menus. Consumers declare one Radix-compatible action tree; desktop renders pointer-friendly Radix flyouts while mobile renders the same hierarchy as an inset Universal Picker-style panel with drill-in submenus and Back. The mobile panel is black, thin-bordered, small-radius, handle-free, shadow-free, and uses dense single-line rows with quiet 14px icons and full-width selected states; the shared presenter measures the real trigger, opens in the larger adjacent viewport region, and owns one scroll boundary so every action remains reachable. Do not import raw Radix dropdown primitives, create local menu renderers, branch on mobile at call sites, or introduce a parallel responsive-menu component. `PopoverContent`, `SelectContent`/`SelectItem`, `ContextMenuContent`/items, and inline `Command` lists share its compact menu/picker grammar; task dialogs, workflow modals, tooltips, and hover cards do not. The Design screen's **Responsive action menus** playground is the canonical implementation example and must stay aligned with `DESIGN.md` § Action menus.
 
+### Glass Tooltips
+
+`client/src/components/ui/tooltip.tsx` is the only hover-label primitive. `TooltipContent` already paints `GLASS_SURFACE_CLASS` — the navbar glass is the default, not a special case. Do not invent a local tooltip, restyle a popover into a label, or use native `title=` as designed hover chrome. Children on glass use `text-white` / `text-white/70`, never canvas muted/foreground tokens. Width, `side`, and `align` only. Chart series popovers stay on `ChartTooltipContent`. The Design screen's **Glass tooltips** playground must stay aligned with `DESIGN.md` § Tooltips.
+
 ### Universal Reference Picker
 
 One control for `@anything`. Do not invent local typeaheads for tags, people, pages, goals, or other linkable objects.
@@ -282,7 +286,7 @@ One control for `@anything`. Do not invent local typeaheads for tags, people, pa
 - **Field / menu control:** `client/src/components/references/reference-picker.tsx` (`ReferencePicker`). Support `types`, multi/single, inline/menu, and tag create when needed.
 - **Chat:** `useMentionAutocomplete` + `MentionPopover` consume the same search path and rows.
 - **Tags only:** `UniversalTagPicker` is a thin `types:['tag']` facade over `ReferencePicker`. Prefer `ReferencePicker` for new work.
-- **Design:** interactive playground lives under Build → Design → References (§13).
+- **Design:** interactive playground lives under Build → Design → References (§15). The glass tooltip playground is §14.
 
 ### Dashboard activity heatmaps
 

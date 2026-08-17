@@ -8,6 +8,7 @@ import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -147,10 +148,15 @@ function UserPresence({ presence, showLabels = false }: { presence: ClientPresen
   return (
     <div className="flex flex-wrap items-center justify-end gap-1" aria-label={`Connected clients: ${kinds.map((kind) => KIND_LABEL[kind]).join(", ")}`}>
       {kinds.map((kind) => (
-        <span key={kind} className={cn("flex items-center justify-center rounded-md border border-border bg-background/80 text-muted-foreground", showLabels ? "h-7 gap-1.5 px-2 text-xs" : "h-7 w-7")} title={`${KIND_LABEL[kind]} connected`}>
-          <PresenceIcon kind={kind} />
-          {showLabels ? KIND_LABEL[kind] : null}
-        </span>
+        <Tooltip key={kind}>
+          <TooltipTrigger asChild>
+            <span className={cn("flex items-center justify-center rounded-md border border-border bg-background/80 text-muted-foreground", showLabels ? "h-7 gap-1.5 px-2 text-xs" : "h-7 w-7")}>
+              <PresenceIcon kind={kind} />
+              {showLabels ? KIND_LABEL[kind] : null}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{`${KIND_LABEL[kind]} connected`}</TooltipContent>
+        </Tooltip>
       ))}
     </div>
   );
@@ -652,7 +658,14 @@ export default function UsersAdminPage() {
           </button>
           <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate pr-6 text-muted-foreground">{user.email}</span>
-          {user.identityIncomplete ? <span className="shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive" title="Identity foundation incomplete — this account is missing its personal workspace and cannot fully sign in">Setup incomplete</span> : null}
+          {user.identityIncomplete ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive">Setup incomplete</span>
+              </TooltipTrigger>
+              <TooltipContent>Identity foundation incomplete — this account is missing its personal workspace and cannot fully sign in</TooltipContent>
+            </Tooltip>
+          ) : null}
           {user.presence.length > 0 ? <UserPresence presence={user.presence} /> : null}
           {canWrite && currentUser?.id !== user.id ? <DropdownMenu modal={false}><DropdownMenuTrigger asChild><button type="button" className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100" aria-label={`More actions for ${user.email}`} onClick={(event) => event.stopPropagation()}><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteUser(user)}><Trash2 className="mr-2 h-4 w-4" />Delete user</DropdownMenuItem></DropdownMenuContent></DropdownMenu> : null}
         </div>

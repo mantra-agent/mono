@@ -292,9 +292,9 @@ function ModelTierBadge({ model }: { model: string | null }) {
           <Icon className="h-2.5 w-2.5" />
         </span>
       </TooltipTrigger>
-      <TooltipContent side="top" className="text-xs">
+      <TooltipContent side="top">
         <span className="font-medium">{label}</span>
-        <span className="text-muted-foreground ml-1.5">{shortModel}</span>
+        <span className="ml-1.5 text-white/70">{shortModel}</span>
       </TooltipContent>
     </Tooltip>
   );
@@ -2649,12 +2649,12 @@ function StreamingTierBadge({
           )}
         </span>
       </TooltipTrigger>
-      <TooltipContent side="top" className="text-xs">
+      <TooltipContent side="top">
         {autoTier && (
-          <span className="text-muted-foreground mr-1">Auto &rarr;</span>
+          <span className="mr-1 text-white/70">Auto &rarr;</span>
         )}
         <span className="font-medium">{label}</span>
-        <span className="text-muted-foreground ml-1.5">{shortModel}</span>
+        <span className="ml-1.5 text-white/70">{shortModel}</span>
       </TooltipContent>
     </Tooltip>
   );
@@ -3531,7 +3531,7 @@ export const ChatTurn = memo(function ChatTurn({
                   <PersonaIcon className="h-2.5 w-2.5" />
                 </span>
               </TooltipTrigger>
-              <TooltipContent side="top" className="text-xs">
+              <TooltipContent side="top">
                 {personaLabel}
               </TooltipContent>
             </Tooltip>

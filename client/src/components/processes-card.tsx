@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Hash, Clock, Pause, Play, RotateCcw, AlertTriangle, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -207,30 +208,44 @@ export function ProcessesCard() {
                   {(canPause || canRestart) && (
                     <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
                       {canPause && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          title="Pause"
-                          disabled={actionMutation.isPending}
-                          onClick={() => actionMutation.mutate({ processId: proc.id, action: "pause" })}
-                          data-testid={`button-pause-${proc.id}`}
-                        >
-                          <Pause className="h-3.5 w-3.5" />
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                aria-label="Pause"
+                                disabled={actionMutation.isPending}
+                                onClick={() => actionMutation.mutate({ processId: proc.id, action: "pause" })}
+                                data-testid={`button-pause-${proc.id}`}
+                              >
+                                <Pause className="h-3.5 w-3.5" />
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>Pause</TooltipContent>
+                        </Tooltip>
                       )}
                       {canRestart && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          title={isPaused ? "Resume" : "Restart"}
-                          disabled={actionMutation.isPending}
-                          onClick={() => actionMutation.mutate({ processId: proc.id, action: "restart" })}
-                          data-testid={`button-restart-${proc.id}`}
-                        >
-                          {isPaused ? <Play className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                aria-label={isPaused ? "Resume" : "Restart"}
+                                disabled={actionMutation.isPending}
+                                onClick={() => actionMutation.mutate({ processId: proc.id, action: "restart" })}
+                                data-testid={`button-restart-${proc.id}`}
+                              >
+                                {isPaused ? <Play className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>{isPaused ? "Resume" : "Restart"}</TooltipContent>
+                        </Tooltip>
                       )}
                     </div>
                   )}

@@ -132,7 +132,7 @@ function GoalNode({ data }: NodeProps) {
           />
         </div>
       </TooltipTrigger>
-      <TooltipContent side="bottom" className="max-w-[250px] text-xs" data-testid={`tooltip-goal-${goal.id}`}>
+      <TooltipContent side="bottom" className="max-w-[250px]" data-testid={`tooltip-goal-${goal.id}`}>
         <p>{descriptionText}</p>
       </TooltipContent>
     </Tooltip>

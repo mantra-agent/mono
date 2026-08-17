@@ -45,7 +45,7 @@ export function SimpleCheckCircle({
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>{cautionIcon}</TooltipTrigger>
-            <TooltipContent side="right" className="text-xs">{tooltip}</TooltipContent>
+            <TooltipContent side="right">{tooltip}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
       );
