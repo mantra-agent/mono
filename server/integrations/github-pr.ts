@@ -130,31 +130,123 @@ async function getGitHubAccessTokenForPath(path: string): Promise<string> {
   return source.token;
 }
 
+/** Max attempts for a single GitHub API call, including the first try. */
+const GH_TRANSIENT_MAX_ATTEMPTS = 4;
+/** Base backoff before the first retry; doubles each attempt (500ms → 1s → 2s). */
+const GH_TRANSIENT_BASE_DELAY_MS = 500;
+/** Cap so a stuck provider cannot hold a publish stage open for minutes. */
+const GH_TRANSIENT_MAX_DELAY_MS = 4_000;
+
+/**
+ * GitHub capacity / edge blips that did not commit the mutation. Safe to
+ * retry even for PATCH/POST because the request never reached a durable
+ * writer (classic "No server is currently available to service your request").
+ * 429 is intentionally excluded — rate-limit handling belongs to callers that
+ * can honor long Retry-After windows without blocking a human publish path.
+ */
+function isTransientGitHubStatus(status: number): boolean {
+  return status === 502 || status === 503 || status === 504;
+}
+
+function isTransientGitHubMessage(message: string): boolean {
+  return /no server is currently available|service unavailable|bad gateway|gateway timeout|temporarily unavailable/i.test(
+    message,
+  );
+}
+
+function parseRetryAfterMs(header: string | null): number | null {
+  if (!header) return null;
+  const asSeconds = Number(header);
+  if (Number.isFinite(asSeconds) && asSeconds >= 0) {
+    return Math.min(Math.round(asSeconds * 1000), GH_TRANSIENT_MAX_DELAY_MS);
+  }
+  const asDate = Date.parse(header);
+  if (!Number.isNaN(asDate)) {
+    const delta = asDate - Date.now();
+    if (delta > 0) return Math.min(delta, GH_TRANSIENT_MAX_DELAY_MS);
+  }
+  return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function backoffDelayMs(attemptIndex: number, retryAfterMs: number | null): number {
+  if (retryAfterMs != null) return retryAfterMs;
+  const exp = GH_TRANSIENT_BASE_DELAY_MS * 2 ** attemptIndex;
+  return Math.min(exp, GH_TRANSIENT_MAX_DELAY_MS);
+}
+
+/**
+ * Single GitHub REST boundary for publish/PR helpers. Retries only clear
+ * provider capacity failures (502/503/504 and matching body text) so a
+ * one-shot blip cannot fail Publish's `fast_forward_live` stage while a
+ * manual main→live PR still succeeds seconds later.
+ */
 export async function gh<T>(method: string, path: string, body?: unknown): Promise<T> {
   const token = await getGitHubAccessTokenForPath(path);
-  const res = await fetch(`${GH_API}${path}`, {
-    method,
-    headers: {
-      ...GH_HEADERS_BASE,
-      Authorization: `Bearer ${token}`,
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  let parsed: unknown = null;
-  const text = await res.text();
-  if (text) {
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < GH_TRANSIENT_MAX_ATTEMPTS; attempt++) {
     try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = text;
+      const res = await fetch(`${GH_API}${path}`, {
+        method,
+        headers: {
+          ...GH_HEADERS_BASE,
+          Authorization: `Bearer ${token}`,
+          ...(body ? { "Content-Type": "application/json" } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      let parsed: unknown = null;
+      const text = await res.text();
+      if (text) {
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          parsed = text;
+        }
+      }
+      if (!res.ok) {
+        const msg =
+          extractGitHubErrorMessage(parsed) ?? `GitHub ${method} ${path} failed (HTTP ${res.status})`;
+        const transient =
+          isTransientGitHubStatus(res.status) || isTransientGitHubMessage(msg);
+        if (transient && attempt < GH_TRANSIENT_MAX_ATTEMPTS - 1) {
+          const delayMs = backoffDelayMs(attempt, parseRetryAfterMs(res.headers.get("retry-after")));
+          log.warn(
+            `GitHub ${method} ${path} transient HTTP ${res.status}; retry ${attempt + 1}/${GH_TRANSIENT_MAX_ATTEMPTS - 1} in ${delayMs}ms`,
+            { message: msg.slice(0, 200) },
+          );
+          await sleep(delayMs);
+          continue;
+        }
+        throw new GitHubError(msg, res.status, parsed);
+      }
+      if (attempt > 0) {
+        log.log(`GitHub ${method} ${path} succeeded after ${attempt} transient retr${attempt === 1 ? "y" : "ies"}`);
+      }
+      return parsed as T;
+    } catch (err) {
+      lastError = err;
+      if (err instanceof GitHubError) throw err;
+      // Network / DNS / connection reset before a response — same retry class.
+      if (attempt < GH_TRANSIENT_MAX_ATTEMPTS - 1) {
+        const delayMs = backoffDelayMs(attempt, null);
+        const detail = err instanceof Error ? err.message : String(err);
+        log.warn(
+          `GitHub ${method} ${path} transport failure; retry ${attempt + 1}/${GH_TRANSIENT_MAX_ATTEMPTS - 1} in ${delayMs}ms`,
+          { message: detail.slice(0, 200) },
+        );
+        await sleep(delayMs);
+        continue;
+      }
+      throw err instanceof Error ? err : new Error(String(err));
     }
   }
-  if (!res.ok) {
-    const msg = extractGitHubErrorMessage(parsed) ?? `GitHub ${method} ${path} failed (HTTP ${res.status})`;
-    throw new GitHubError(msg, res.status, parsed);
-  }
-  return parsed as T;
+
+  throw lastError instanceof Error ? lastError : new Error(`GitHub ${method} ${path} failed after retries`);
 }
 
 function shortSha(sha: string): string {
