@@ -43,6 +43,7 @@ export interface Business {
   marketPageId: string | null;
   icpPageId: string | null;
   activationPageId: string | null;
+  moatPageId: string | null;
   dataRoomUrl: string | null;
   status: string;
   isPlatformInstrument: boolean;
@@ -83,6 +84,7 @@ export async function ensureBusinessesSchema(): Promise<void> {
       market_page_id text,
       icp_page_id text,
       activation_page_id text,
+      moat_page_id text,
       data_room_url text,
       status text NOT NULL DEFAULT 'active',
       is_platform_instrument boolean NOT NULL DEFAULT false,
@@ -105,6 +107,7 @@ export async function ensureBusinessesSchema(): Promise<void> {
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS market_page_id text`);
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS icp_page_id text`);
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS activation_page_id text`);
+  await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS moat_page_id text`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_businesses_owner ON businesses(owner_user_id, account_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_businesses_scope_owner ON businesses(scope, owner_user_id)`);
 
@@ -177,6 +180,7 @@ function hydrate(row: BusinessRow, vaultIds: string[]): Business {
     marketPageId: row.marketPageId ?? null,
     icpPageId: row.icpPageId ?? null,
     activationPageId: row.activationPageId ?? null,
+    moatPageId: row.moatPageId ?? null,
     dataRoomUrl: row.dataRoomUrl ?? null,
     status: row.status,
     isPlatformInstrument: row.isPlatformInstrument,
@@ -248,6 +252,7 @@ export const businessStorage = {
         marketPageId: input.marketPageId ?? null,
         icpPageId: input.icpPageId ?? null,
         activationPageId: input.activationPageId ?? null,
+        moatPageId: input.moatPageId ?? null,
         dataRoomUrl: input.dataRoomUrl ?? null,
         status: "active",
         createdByUserId: principal.userId,
@@ -306,6 +311,7 @@ export const businessStorage = {
     if (patch.marketPageId !== undefined) updates.marketPageId = patch.marketPageId;
     if (patch.icpPageId !== undefined) updates.icpPageId = patch.icpPageId;
     if (patch.activationPageId !== undefined) updates.activationPageId = patch.activationPageId;
+    if (patch.moatPageId !== undefined) updates.moatPageId = patch.moatPageId;
     if (patch.dataRoomUrl !== undefined) updates.dataRoomUrl = patch.dataRoomUrl;
     if (patch.status !== undefined) updates.status = patch.status;
 

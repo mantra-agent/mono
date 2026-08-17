@@ -32,6 +32,7 @@ export const businesses = pgTable(
     marketPageId: text("market_page_id"),
     icpPageId: text("icp_page_id"),
     activationPageId: text("activation_page_id"),
+    moatPageId: text("moat_page_id"),
     // User-configured external destination for the Business data room. The
     // server mutation boundary accepts HTTPS URLs only.
     dataRoomUrl: text("data_room_url"),
@@ -98,6 +99,7 @@ export const businessCreateSchema = z.object({
   marketPageId: z.string().min(1).nullable().optional(),
   icpPageId: z.string().min(1).nullable().optional(),
   activationPageId: z.string().min(1).nullable().optional(),
+  moatPageId: z.string().min(1).nullable().optional(),
   dataRoomUrl: z.string().url().max(2048).refine((value) => new URL(value).protocol === "https:", "Data Room URL must use HTTPS").nullable().optional(),
   vaultIds: z.array(z.string().min(1)).max(64).optional(),
 });
@@ -119,6 +121,7 @@ export const businessPatchSchema = z
     marketPageId: z.string().min(1).nullable().optional(),
     icpPageId: z.string().min(1).nullable().optional(),
     activationPageId: z.string().min(1).nullable().optional(),
+    moatPageId: z.string().min(1).nullable().optional(),
     dataRoomUrl: z.string().url().max(2048).refine((value) => new URL(value).protocol === "https:", "Data Room URL must use HTTPS").nullable().optional(),
     status: businessStatusSchema.optional(),
   })
