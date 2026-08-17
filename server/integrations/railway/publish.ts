@@ -7,7 +7,7 @@ import {
   RailwayApiError,
 } from "./client";
 import { resolvePlatformEnvironment, type ResolvedPlatformEnvironment } from "../../platform-environment-resolver";
-import { getEnvironmentBuildLifecycleConfig } from "../../platforms/build-lifecycle-service";
+import { getInfrastructureBuildLifecycleConfig } from "../../platforms/build-lifecycle-service";
 import { environmentSourceBindings } from "@shared/models/platforms";
 import { db } from "../../db";
 import { eq } from "drizzle-orm";
@@ -648,11 +648,15 @@ export async function checkPrereqs(
   }
 
   try {
+    // Lifecycle + bindings are infrastructure identity, not UI visibility.
+    // Resume after a Live self-promotion restart has no user principal / vault
+    // set; principal-scoped getEnvironmentBuildLifecycleConfig would return null
+    // and falsely report "no enabled build lifecycle" for a row that exists.
     const [sourceEnvironment, targetEnvironment, sourceLifecycle, targetLifecycle, sourceBinding, targetBinding] = await Promise.all([
       resolvePlatformEnvironment(sourcePlatformEnvironmentId),
       resolvePlatformEnvironment(targetPlatformEnvironmentId),
-      getEnvironmentBuildLifecycleConfig(sourcePlatformEnvironmentId),
-      getEnvironmentBuildLifecycleConfig(targetPlatformEnvironmentId),
+      getInfrastructureBuildLifecycleConfig(sourcePlatformEnvironmentId),
+      getInfrastructureBuildLifecycleConfig(targetPlatformEnvironmentId),
       getSourceBinding(sourcePlatformEnvironmentId),
       getSourceBinding(targetPlatformEnvironmentId),
     ]);
@@ -676,26 +680,26 @@ export async function checkPrereqs(
       result.reason = "Source and target Platform Environments must reference the same GitHub repository.";
       return result;
     }
-    if (!sourceLifecycle?.config?.enabled) {
+    if (!sourceLifecycle?.enabled) {
       result.reason = `Source Platform Environment ${sourcePlatformEnvironmentId} has no enabled build lifecycle.`;
       return result;
     }
-    if (!targetLifecycle?.config?.enabled) {
+    if (!targetLifecycle?.enabled) {
       result.reason = `Target Platform Environment ${targetPlatformEnvironmentId} has no enabled build lifecycle.`;
       return result;
     }
-    if (sourceLifecycle.config.providerKind !== "railway" || targetLifecycle.config.providerKind !== "railway") {
+    if (sourceLifecycle.providerKind !== "railway" || targetLifecycle.providerKind !== "railway") {
       result.reason = "Production publishing currently requires Railway lifecycle providers for both environments.";
       return result;
     }
-    const targetDeployPolicy = objectRecord(targetLifecycle.config.deployPolicy);
-    const targetGatePolicy = objectRecord(targetLifecycle.config.gatePolicy);
+    const targetDeployPolicy = objectRecord(targetLifecycle.deployPolicy);
+    const targetGatePolicy = objectRecord(targetLifecycle.gatePolicy);
     if (
       targetDeployPolicy.mode !== "manual_promote" ||
       targetDeployPolicy.requireApproval !== true ||
       targetDeployPolicy.sourceBranch !== sourceBinding.branch ||
       targetDeployPolicy.targetBranch !== targetBinding.branch ||
-      targetLifecycle.config.authMode !== "platform_binding" ||
+      targetLifecycle.authMode !== "platform_binding" ||
       targetGatePolicy.requireHumanApproval !== true
     ) {
       result.reason =
