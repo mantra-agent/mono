@@ -200,12 +200,18 @@ function shouldIncludeForPercentile(kind: string, visibility: string | null): bo
   return visibility !== "hidden";
 }
 
-function exceedsBrowserBudget(kind: string, value: number): boolean {
+function exceedsBrowserBudget(kind: string, name: string, value: number): boolean {
   if (kind === "navigation") return value > BROWSER_TELEMETRY_BUDGETS.navigation.p95Ms;
   if (kind === "long_task") return value > BROWSER_TELEMETRY_BUDGETS.longTaskP95Ms;
   if (kind === "frame_contention") return value > BROWSER_TELEMETRY_BUDGETS.frameContentionP95Ms;
   if (kind === "transport_gap") return value > BROWSER_TELEMETRY_BUDGETS.transportGapP95Ms;
   if (kind === "event_loop_responsiveness") return value > BROWSER_TELEMETRY_BUDGETS.eventLoopResponsivenessP95Ms;
+  if (kind === "features") {
+    if (name === "list_fetch") return value > BROWSER_TELEMETRY_BUDGETS.features.listFetchP95Ms;
+    if (name === "first_paint") return value > BROWSER_TELEMETRY_BUDGETS.features.firstPaintP95Ms;
+    if (name === "session_match") return value > BROWSER_TELEMETRY_BUDGETS.features.sessionMatchP95Ms;
+    if (name === "expand") return value > BROWSER_TELEMETRY_BUDGETS.features.expandP95Ms;
+  }
   return false;
 }
 
@@ -317,7 +323,7 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
     .filter((row) =>
       shouldIncludeForPercentile(row.kind, row.visibility)
       && isCompletedNavigationSample(row.kind, row.metadata)
-      && exceedsBrowserBudget(row.kind, Number(row.value)))
+      && exceedsBrowserBudget(row.kind, row.name, Number(row.value)))
     .slice(0, 20)
     .map((row) => ({
       kind: row.kind,

@@ -87,6 +87,15 @@ subscribe by sessionId via WS and receive snapshots + deltas.
 
 App-shell consumers of live Session state must read `SessionActivityProvider` through `useSessionStreams` plus `useSessionStreamState`; they must not call `useSessionSubscription` and create another logical subscription or browser-recovery owner. Bounded descendant renderers may use the single-session fallback only when their Session is not present in the provider-owned live set.
 
+## Features page performance
+
+`/features` must stay smooth under many humming pipeline sessions. Rules:
+
+- One page-level `["/api/sessions"]` query; never re-query sessions inside each `FeatureRow`.
+- Session match uses an active-pipeline shortlist + optional linked-session fetch. Linked `/api/features/:id/sessions` is enabled only when the row launched a session, a title might match an active session, or the row is expanded — never N fan-out because some other Feature is humming.
+- History (`/api/features/:id/history`) is expand-only (`ProfileTreeRow.onOpenChange`).
+- `FeatureRow` is `memo`ized. Browser telemetry kind `features` records `list_fetch`, `first_paint`, `session_match`, `expand`, `row_count`, `active_sessions` through `recordBrowserTelemetry`.
+
 ## Browser navigation telemetry
 
 `client/src/lib/navigation-trace.ts` is the single in-memory correlation boundary for SPA navigation evidence. History intent, route Suspense/lazy settlement, React Query activity, destination commit, main-thread evidence, and bounded session-stream pressure feed one terminal trace; only that terminal trace enters `browser_performance_telemetry`. Never persist per milestone, query event, frame, or stream delta, and never capture query keys or stream content. The readiness gate tracks only genuine initial loads (`query.state.status === "pending"`); background refetches and interval pollers must not hold a navigation trace open.
