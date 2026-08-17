@@ -587,18 +587,24 @@ export function QuestionWidget({
             testId={`question-option-${prompt.toolCallId}-other`}
             onSelect={toggleOther}
           />
-          {otherSelected && (
-            <textarea
-              autoFocus
-              value={otherText}
-              onChange={(event) => setOtherText(event.target.value)}
-              disabled={controlsDisabled}
-              rows={2}
-              placeholder="Add your answer"
-              className="ml-[26px] mt-1 w-[calc(100%-26px)] resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
-              data-testid={`question-other-text-${prompt.toolCallId}`}
-            />
-          )}
+          {/* Other is structural: row + textarea always render. Closed option sets are unrepresentable. */}
+          <textarea
+            value={otherText}
+            onChange={(event) => {
+              const next = event.target.value;
+              setOtherText(next);
+              // Typing into the hatch selects Other; single mode stays XOR with authored options.
+              if (next.trim()) {
+                setOtherSelected(true);
+                if (isSingle) setSelected([]);
+              }
+            }}
+            disabled={controlsDisabled}
+            rows={2}
+            placeholder="Add your answer"
+            className="ml-[26px] mt-1 w-[calc(100%-26px)] resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
+            data-testid={`question-other-text-${prompt.toolCallId}`}
+          />
         </div>
       </div>
       {prompt.allowResponseReasoning ? (
