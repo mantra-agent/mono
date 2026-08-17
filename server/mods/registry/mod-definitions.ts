@@ -97,14 +97,33 @@ const build: ModDefinition = {
     ],
     integrations: [
       integration("build.integration.github", "github", "available", ["source"], {
+        label: "GitHub",
+        iconKey: "GitBranch",
+        route: "github",
+        detailSurface: "github",
+        statusFields: ["github"],
+        ownsTitle: true,
+        requiredPermissions: ["system:read"],
         readinessKind: "provider-connection",
         connectionProvider: "github",
       }),
       integration("build.integration.expo", "expo", "available", ["mobile-build"], {
+        label: "Expo Mobile",
+        iconKey: "Smartphone",
+        route: "expo",
+        detailSurface: "expo",
+        statusFields: ["expo"],
+        requiredPermissions: ["system:read"],
         readinessKind: "secret",
         requiredSecrets: ["EXPO_ACCESS_TOKEN"],
       }),
       integration("build.integration.sentry", "sentry", "available", ["error-tracking"], {
+        label: "Sentry",
+        iconKey: "Shield",
+        route: "sentry",
+        detailSurface: "sentry",
+        statusFields: ["sentry"],
+        requiredPermissions: ["system:read"],
         readinessKind: "secret",
         requiredAnySecrets: ["SENTRY_DSN", "EXPO_PUBLIC_SENTRY_DSN"],
         requiredSecrets: ["SENTRY_AUTH_TOKEN", "SENTRY_ORG", "SENTRY_PROJECT"],
@@ -242,7 +261,16 @@ const wellness: ModDefinition = {
         "wellness",
       ),
     ],
-    integrations: [integration("wellness.integration.oura", "oura", "available", ["health-metrics"])],
+    integrations: [
+      integration("wellness.integration.oura", "oura", "available", ["health-metrics"], {
+        label: "Oura Ring",
+        iconKey: "Activity",
+        route: "oura",
+        detailSurface: "oura",
+        statusFields: ["oura"],
+        audience: "primary",
+      }),
+    ],
     metricAdapters: [metricAdapter("wellness.metric-adapter.oura", "oura", ["health"], "wellness.metrics")],
     // Cadence Timers materialize through wellness-managed-resources under installation ownership.
     timers: [
@@ -312,10 +340,23 @@ const finance: ModDefinition = {
     clientRoutes: [clientRoute("finance.route.finance", "/finance", "finance")],
     integrations: [
       integration("finance.integration.plaid", "plaid", "available", ["transactions", "balances", "liabilities", "investments"], {
+        label: "Plaid",
+        iconKey: "Landmark",
+        route: "plaid",
+        detailSurface: "plaid",
+        statusFields: ["plaid"],
+        requiredPermissions: ["system:read"],
         readinessKind: "secret",
         requiredSecrets: ["PLAID_CLIENT_ID"],
       }),
       integration("finance.integration.quickbooks", "quickbooks", "available", ["accounting"], {
+        label: "QuickBooks",
+        iconKey: "Landmark",
+        route: "quickbooks",
+        detailSurface: "quickbooks",
+        healthField: "quickbooksHealthy",
+        statusFields: ["quickbooks"],
+        requiredPermissions: ["system:read"],
         readinessKind: "oauth-account",
         oauthProvider: "quickbooks",
       }),
@@ -337,7 +378,17 @@ const slack: ModDefinition = {
   compatibility: { minimumCoreVersion: MIN_CORE },
   requiresCore: ["agent", "integration-custody", "ui-composition"],
   contributions: {
-    integrations: [integration("slack.integration.slack", "slack", "available", ["dm", "explicit-mention"])],
+    integrations: [
+      integration("slack.integration.slack", "slack", "available", ["dm", "explicit-mention"], {
+        label: "Slack",
+        iconKey: "MessageSquare",
+        route: "slack",
+        detailSurface: "slack",
+        statusFields: ["slack"],
+        ownsTitle: true,
+        requiredPermissions: ["system:read"],
+      }),
+    ],
     serverRouteGroups: [serverRouteGroupRef("slack.routes.api", "slack.api")],
   },
 };

@@ -254,6 +254,11 @@ function validateContribution(owner: string, c: AnyContribution, ctx: Contributi
       break;
     case "integration":
       requireKey("connector", c.connectorKey, c.id, ctx);
+      requireKey("icon", c.iconKey, c.id, ctx);
+      if (!c.label || !c.label.trim()) push(`Integration "${c.id}" is missing label.`);
+      if (c.route && !c.detailSurface) {
+        push(`Integration "${c.id}" has a route but no detailSurface.`);
+      }
       break;
     case "workflow":
       requireKey("workflow", c.workflowKey, c.id, ctx);

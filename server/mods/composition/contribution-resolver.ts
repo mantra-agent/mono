@@ -428,6 +428,14 @@ function compose(
                 ? "ready"
                 : "setup-required",
             sourceMod: bundle.owner,
+            label: contribution.label,
+            iconKey: contribution.iconKey,
+            audience: contribution.audience,
+            ...(contribution.route ? { route: contribution.route } : {}),
+            ...(contribution.detailSurface ? { detailSurface: contribution.detailSurface } : {}),
+            ...(contribution.healthField ? { healthField: contribution.healthField } : {}),
+            ...(contribution.statusFields?.length ? { statusFields: contribution.statusFields } : {}),
+            ...(contribution.ownsTitle ? { ownsTitle: true } : {}),
           });
           break;
         case "onboarding":
