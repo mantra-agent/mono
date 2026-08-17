@@ -5,7 +5,6 @@ import {
   Archive,
   Check,
   ChevronRight,
-  ClipboardCheck,
   FileText,
   FlaskConical,
   Hammer,
@@ -17,7 +16,9 @@ import {
   PenLine,
   Play,
   Plus,
+  Search,
   SlidersHorizontal,
+  Sparkles,
   User,
   Wrench,
 } from "lucide-react";
@@ -57,6 +58,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
+  FEATURE_PIPELINE,
   FEATURE_STAGES,
   FEATURE_STATUSES,
   composeFeatureDiscussMessage,
@@ -64,7 +66,6 @@ import {
   formatFeatureStage,
   getFeatureDiscussPersona,
   getFeatureJobContract,
-  resolveFeaturePipelineJob,
   type FeatureStage,
   type FeatureStatus,
 } from "@shared/feature-pipeline";
@@ -415,12 +416,18 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
     : [];
 
   const needsReview = feature.status === "needs_review";
-  // Status chooses the job: needs_review → Review; otherwise Produce for this stage.
-  const pipelineJob = resolveFeaturePipelineJob(feature.status);
-  const pipelineContract = getFeatureJobContract(feature.stage, pipelineJob);
-  const launchPendingKey = `feature-${feature.id}-${feature.stage}-${pipelineJob}`;
-  const launchPending =
-    launch.isPending && launch.variables?.pendingKey === launchPendingKey;
+  // Ready/in_progress → Produce (Play). needs_review splits into AI Review launch
+  // and human Check-to-advance; Produce is no longer the primary review-row control.
+  const produceContract = getFeatureJobContract(feature.stage, "produce");
+  const reviewContract = getFeatureJobContract(feature.stage, "review");
+  const nextStageOnPass = FEATURE_PIPELINE[feature.stage].nextStageOnPass;
+  const canApprove = needsReview && nextStageOnPass !== null;
+  const produceLaunchKey = `feature-${feature.id}-${feature.stage}-produce`;
+  const reviewLaunchKey = `feature-${feature.id}-${feature.stage}-review`;
+  const produceLaunchPending =
+    launch.isPending && launch.variables?.pendingKey === produceLaunchKey;
+  const reviewLaunchPending =
+    launch.isPending && launch.variables?.pendingKey === reviewLaunchKey;
 
   const featureLaunchContext = {
     id: feature.id,
@@ -441,16 +448,18 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
     });
   };
 
-  const runPipelineLaunch = () => {
+  const runPipelineLaunch = (job: "produce" | "review") => {
     if (launch.isPending) return;
+    const contract = getFeatureJobContract(feature.stage, job);
+    const pendingKey = `feature-${feature.id}-${feature.stage}-${job}`;
     launch.mutate(
       {
-        pendingKey: launchPendingKey,
-        title: `${pipelineContract.actionLabel}: ${feature.summary}`.slice(0, 80),
-        personaName: pipelineContract.persona,
-        message: composeFeatureLaunchMessage(featureLaunchContext, pipelineJob),
-        clientTurnSuffix: launchPendingKey,
-        errorTitle: `Could not start ${pipelineContract.actionLabel.toLowerCase()} session`,
+        pendingKey,
+        title: `${contract.actionLabel}: ${feature.summary}`.slice(0, 80),
+        personaName: contract.persona,
+        message: composeFeatureLaunchMessage(featureLaunchContext, job),
+        clientTurnSuffix: pendingKey,
+        errorTitle: `Could not start ${contract.actionLabel.toLowerCase()} session`,
         // Stay on Features; session mounts under the row (mobile Focus would leave).
         openFocus: false,
       },
@@ -478,6 +487,16 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
       },
       { onSuccess: onLaunchSuccess },
     );
+  };
+
+  /** Human approve: advance stage (status resets to ready). Terminal rooms stay put. */
+  const approveToNextStage = () => {
+    if (!canApprove || !nextStageOnPass || update.isPending) return;
+    update.mutate({
+      stage: nextStageOnPass,
+      historyNote: `Human approved ${formatStage(feature.stage)} → ${formatStage(nextStageOnPass)}`,
+      historySource: "manual",
+    });
   };
 
   const commitTitle = () => {
@@ -548,40 +567,87 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
         mobileLayout="inline"
         valueLayout="compact"
         testId={`feature-row-${feature.id}`}
-        // Primary stage action sits immediately left of the expander so Produce /
-        // Review can fire without opening the overflow menu. Menu stays intact.
+        // Ready: Play (Produce). needs_review: AI Review (left) + human Check (right).
+        // Check advances stage; AI Review launches the opposite-seat session.
         actionContent={(
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className={cn(
-              "h-5 min-h-5 w-5 min-w-5 shrink-0 rounded [&_svg]:size-3",
-              needsReview
-                ? "text-foreground hover:bg-accent hover:text-foreground"
-                : "text-muted-foreground/70 hover:bg-accent hover:text-foreground",
-            )}
-            disabled={launch.isPending}
-            aria-label={
-              needsReview
-                ? `Review ${feature.summary}`
-                : `Play ${pipelineContract.actionLabel} for ${feature.summary}`
-            }
-            title={pipelineContract.actionLabel}
-            onClick={(event) => {
-              event.stopPropagation();
-              runPipelineLaunch();
-            }}
-            data-testid={`button-feature-play-${feature.stage}-${pipelineJob}-${feature.id}`}
-          >
-            {launchPending ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : needsReview ? (
-              <ClipboardCheck className="h-3 w-3" />
+          <div className="flex shrink-0 items-center justify-end">
+            {needsReview ? (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="relative h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground/70 hover:bg-accent hover:text-foreground [&_svg]:size-3"
+                  disabled={launch.isPending}
+                  aria-label={`AI review ${feature.summary}`}
+                  title={`AI ${reviewContract.actionLabel}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    runPipelineLaunch("review");
+                  }}
+                  data-testid={`button-feature-ai-review-${feature.stage}-${feature.id}`}
+                >
+                  {reviewLaunchPending ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <>
+                      <Search className="h-3 w-3" />
+                      <Sparkles className="absolute right-0.5 top-0.5 h-1.5 w-1.5 text-foreground" />
+                    </>
+                  )}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 [&_svg]:size-3"
+                  disabled={!canApprove || update.isPending}
+                  aria-label={
+                    canApprove
+                      ? `Approve ${feature.summary} to ${formatStage(nextStageOnPass!)}`
+                      : `No next stage for ${formatStage(feature.stage)}`
+                  }
+                  title={
+                    canApprove
+                      ? `Approve → ${formatStage(nextStageOnPass!)}`
+                      : "No next stage"
+                  }
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    approveToNextStage();
+                  }}
+                  data-testid={`button-feature-approve-${feature.stage}-${feature.id}`}
+                >
+                  {update.isPending ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Check className="h-3 w-3" />
+                  )}
+                </Button>
+              </>
             ) : (
-              <Play className="h-3 w-3" />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground/70 hover:bg-accent hover:text-foreground [&_svg]:size-3"
+                disabled={launch.isPending}
+                aria-label={`Play ${produceContract.actionLabel} for ${feature.summary}`}
+                title={produceContract.actionLabel}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  runPipelineLaunch("produce");
+                }}
+                data-testid={`button-feature-play-${feature.stage}-produce-${feature.id}`}
+              >
+                {produceLaunchPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Play className="h-3 w-3" />
+                )}
+              </Button>
             )}
-          </Button>
+          </div>
         )}
         expandedContentClassName="px-2 pb-2 pl-2"
         expandedContent={(
@@ -818,23 +884,61 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
       )}
       menuContent={(
         <>
-          <DropdownMenuItem
-            disabled={launch.isPending}
-            onSelect={(event) => {
-              event.preventDefault();
-              runPipelineLaunch();
-            }}
-            data-testid={`button-feature-launch-${feature.stage}-${pipelineJob}-${feature.id}`}
-          >
-            {launchPending ? (
-              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-            ) : needsReview ? (
-              <ClipboardCheck className="mr-2 h-3.5 w-3.5" />
-            ) : (
-              <Play className="mr-2 h-3.5 w-3.5" />
-            )}
-            {pipelineContract.actionLabel}
-          </DropdownMenuItem>
+          {needsReview ? (
+            <>
+              <DropdownMenuItem
+                disabled={launch.isPending}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  runPipelineLaunch("review");
+                }}
+                data-testid={`button-feature-launch-${feature.stage}-review-${feature.id}`}
+              >
+                {reviewLaunchPending ? (
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <span className="relative mr-2 inline-flex h-3.5 w-3.5 items-center justify-center">
+                    <Search className="h-3.5 w-3.5" />
+                    <Sparkles className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5" />
+                  </span>
+                )}
+                AI {reviewContract.actionLabel}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!canApprove || update.isPending}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  approveToNextStage();
+                }}
+                data-testid={`button-feature-menu-approve-${feature.stage}-${feature.id}`}
+              >
+                {update.isPending ? (
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Check className="mr-2 h-3.5 w-3.5" />
+                )}
+                {canApprove
+                  ? `Approve → ${formatStage(nextStageOnPass!)}`
+                  : "Approve (no next stage)"}
+              </DropdownMenuItem>
+            </>
+          ) : (
+            <DropdownMenuItem
+              disabled={launch.isPending}
+              onSelect={(event) => {
+                event.preventDefault();
+                runPipelineLaunch("produce");
+              }}
+              data-testid={`button-feature-launch-${feature.stage}-produce-${feature.id}`}
+            >
+              {produceLaunchPending ? (
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Play className="mr-2 h-3.5 w-3.5" />
+              )}
+              {produceContract.actionLabel}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             disabled={launch.isPending}
             onSelect={(event) => {
