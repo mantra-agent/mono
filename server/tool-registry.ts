@@ -2181,6 +2181,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         historyNote: { type: "string", description: "Required why-note when update_feature changes status; recommended on every stage/status change. Recorded on feature_history." },
         historySource: { type: "string", description: "Optional provenance source label for feature_history (e.g. smoke, review, manual)." },
         sessionId: { type: "string", description: "Optional session id stamped onto feature_history when a pipeline job mutates the Feature." },
+        changeSha: { type: "string", description: "Merge commit SHA to stamp on feature_history when stage advances into a room that declares identity change_sha (today: Test). Prefer the merge commit already written to merged_pull_requests — never the PR head, never a historyNote parse. Develop Review pass should supply this on the stage write." },
         toStage: { type: "string", enum: ["idea", "spec", "develop", "test", "calibrate", "maintain", "deprecate"], description: "Filter list_feature_history by destination stage" },
         toStatus: { type: "string", enum: ["ready", "in_progress", "needs_review"], description: "Filter list_feature_history by destination status" },
         fromStage: { type: "string", enum: ["idea", "spec", "develop", "test", "calibrate", "maintain", "deprecate"], description: "Filter list_feature_history by prior stage" },

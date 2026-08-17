@@ -43,12 +43,33 @@ export interface FeaturePipelineJobContract {
   outcomes: string[];
 }
 
+/** Optional room clock. The table is the switch — no stage-name branches in the row. */
+export type FeatureAvailabilityClock = "product_stage_environment";
+export type FeatureAvailabilityIdentity = "change_sha";
+
+export interface FeaturePipelineAvailability {
+  clock: FeatureAvailabilityClock;
+  identity: FeatureAvailabilityIdentity;
+}
+
+/** Derived Play gate on GET /api/features. Client never derives commit identity. */
+export type FeatureAvailabilityState = "on_stage" | "waiting" | "unknown";
+
+export interface FeatureAvailabilityProjection {
+  state: FeatureAvailabilityState;
+}
+
 export interface FeaturePipelineStage {
   stage: FeatureStage;
   /** Build-v1 analog this room is modeled on. */
   buildAnalog: string;
   /** Next stage on Review pass. Null means stay (maintain keep-alive or deprecate terminal). */
   nextStageOnPass: FeatureStage | null;
+  /**
+   * Optional availability clock for this room. Today only Test declares one.
+   * Rooms without this render Play as before; the Features row must not branch on stage name.
+   */
+  availability?: FeaturePipelineAvailability;
   produce: FeaturePipelineJobContract;
   review: FeaturePipelineJobContract;
 }
@@ -184,27 +205,36 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
         "blocked: merge or authority gate; residual named; stage unchanged",
       ],
     },
-    review: reviewJob({
-      producePersona: "Engineer",
-      artifactName: "merged implementation evidence",
-      passOutcome: "stage test / ready",
-    }),
+    review: {
+      ...reviewJob({
+        producePersona: "Engineer",
+        artifactName: "merged implementation evidence",
+        passOutcome: "stage test / ready",
+      }),
+      evidenceRequirements: [
+        "For each rejection, cite the exact artifact statement and the exact named governing-standard provision it violates.",
+        "Unsupported preferences, newly discovered concerns, and uncited best practices are not rejection grounds.",
+        "On pass stage write to Test, stamp `changeSha` (the merge commit SHA already written to merged_pull_requests — never the PR head, never a historyNote parse) via platforms.update_feature so Test can join Stage.",
+      ],
+    },
   },
   test: {
     stage: "test",
     buildAnalog: "Implementation Review",
     nextStageOnPass: "calibrate",
+    availability: { clock: "product_stage_environment", identity: "change_sha" },
     produce: {
       actionLabel: "Smoke",
       persona: "Engineer",
       purpose:
         "Binary works-proof on stage. Confirm the stage environment built, carries the change, and that an authenticated click-path proves the Feature works. Not quality, taste, design, or UX — that is Calibrate Produce (Tune).",
       entryCriteria: [
+        "Read the Feature's projected `availability` from get/list (on_stage | waiting | unknown). Do not rediscover Stage or invent commit identity on the client or in ad hoc Railway calls.",
         "Identify the target stage environment and the change under test from the Feature and its develop evidence.",
         "Use automated authenticated session tooling against stage. Do not substitute a passing build or lifecycle progress for a click-path.",
       ],
       evidenceRequirements: [
-        "Stage build/deploy evidence that the change is present.",
+        "Stage build/deploy evidence that the change is present (prefer projected availability on_stage plus click-path).",
         "Authenticated login + click-path evidence that the Feature path completes.",
         "Record pass/fail only. Do not write qualitative product judgment here.",
       ],
@@ -509,7 +539,8 @@ ${body}
 - Context is the Feature. Load @feature, its status, its history (\`list_feature_history\`), its spec page, Product context artifacts, and repository evidence as the job requires.
 - Every Feature stage/status mutation must include a \`historyNote\` explaining why. History is the provenance of how the Feature got here.
 - Personas: Visionary produces idea. Architect produces spec and maintain. Engineer produces develop, test (Smoke), calibrate, and deprecate. Review is always the opposite seat (Visionary/Architect → Engineer; Engineer → Architect).
-- Test Produce is Smoke: binary works-proof on stage (build present, change present, authenticated click-path). Smoke fail kicks the Feature back to develop/ready with the broken path on history. Qualitative judgment is Calibrate Produce (Tune) only — spec-vs-implementation, design/UX, goals of the spec, and KPI check-in when measurable.
+- Test Produce is Smoke: binary works-proof on stage (build present, change present, authenticated click-path). Read projected Feature \`availability\` (on_stage | waiting | unknown) instead of rediscovering Stage. Smoke fail kicks the Feature back to develop/ready with the broken path on history. Qualitative judgment is Calibrate Produce (Tune) only — spec-vs-implementation, design/UX, goals of the spec, and KPI check-in when measurable.
+- Develop Review pass into Test must stamp \`changeSha\` (merge commit, not PR head) on the stage write so Test can join Stage's activeCommitSha.
 - Never merge to live or publish production. Promotion remains independently authorized.
 `;
 }

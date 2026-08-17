@@ -54,4 +54,8 @@ export async function ensureFeatureSchema(pool: Pool): Promise<void> {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_feature_history_feature_created ON feature_history(feature_id, created_at DESC)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_feature_history_scope_owner ON feature_history(scope, owner_user_id, account_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_feature_history_to_stage ON feature_history(to_stage, created_at DESC)`);
+  // Stamped merge commit when stage advances into a room that declares identity: "change_sha".
+  // Provenance-only — never a features.change_sha column. featureStorage.appendHistory is sole writer.
+  await pool.query(`ALTER TABLE feature_history ADD COLUMN IF NOT EXISTS change_sha TEXT`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_feature_history_change_sha ON feature_history(feature_id, change_sha) WHERE change_sha IS NOT NULL`);
 }
