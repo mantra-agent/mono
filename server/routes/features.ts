@@ -21,8 +21,23 @@ export function registerFeatureRoutes(app: Express): void {
       res.json(rows);
     } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : "Feature session history failed" }); }
   });
+  app.get("/api/features/:id/history", requirePermission("build:read"), async (req, res) => {
+    try {
+      const rows = await featureStorage.listHistory(id.parse(req.params.id), {
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+        toStage: typeof req.query.toStage === "string" ? req.query.toStage : undefined,
+        toStatus: typeof req.query.toStatus === "string" ? req.query.toStatus : undefined,
+        fromStage: typeof req.query.fromStage === "string" ? req.query.fromStage : undefined,
+        fromStatus: typeof req.query.fromStatus === "string" ? req.query.fromStatus : undefined,
+      });
+      if (!rows) return res.status(404).json({ error: "Feature not found" });
+      res.json(rows);
+    } catch (error) {
+      res.status((error as any)?.status ?? 500).json({ error: error instanceof Error ? error.message : "Feature history failed" });
+    }
+  });
   app.patch("/api/features/:id", requirePermission("build:write"), async (req, res) => { try { const row = await featureStorage.update(id.parse(req.params.id), req.body); row ? res.json(row) : res.status(404).json({ error: "Feature not found" }); } catch (e) { res.status((e as any)?.status ?? 400).json({ error: e instanceof Error ? e.message : "Feature update failed" }); } });
-  app.post("/api/features/:id/archive", requirePermission("build:write"), async (req, res) => { try { confirm.parse(req.body); const row = await featureStorage.archive(id.parse(req.params.id)); row ? res.json(row) : res.status(404).json({ error: "Feature not found" }); } catch (e) { res.status((e as any)?.status ?? 400).json({ error: e instanceof Error ? e.message : "Feature archive failed" }); } });
+  app.post("/api/features/:id/archive", requirePermission("build:write"), async (req, res) => { try { confirm.parse(req.body); const row = await featureStorage.archive(id.parse(req.params.id), req.body); row ? res.json(row) : res.status(404).json({ error: "Feature not found" }); } catch (e) { res.status((e as any)?.status ?? 400).json({ error: e instanceof Error ? e.message : "Feature archive failed" }); } });
   app.delete("/api/features/:id", requirePermission("build:write"), async (req, res) => { try { confirm.parse(req.body); res.json({ success: await featureStorage.permanentlyDelete(id.parse(req.params.id), true) }); } catch (e) { res.status((e as any)?.status ?? 400).json({ error: e instanceof Error ? e.message : "Feature deletion failed" }); } });
   app.put("/api/features/:id/kpi", requirePermission("build:write"), async (req, res) => { try { res.json(await featureStorage.linkKpi(id.parse(req.params.id), String(req.body.kpiAddress), String(req.body.idempotencyKey))); } catch (e) { res.status((e as any)?.status ?? 400).json({ error: e instanceof Error ? e.message : "KPI link failed" }); } });
   app.delete("/api/features/:id/kpi/:linkId", requirePermission("build:write"), async (req, res) => { try { res.json(await featureStorage.unlinkKpi(id.parse(req.params.id), req.params.linkId)); } catch (e) { res.status((e as any)?.status ?? 400).json({ error: e instanceof Error ? e.message : "KPI unlink failed" }); } });

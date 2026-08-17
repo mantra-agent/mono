@@ -210,12 +210,13 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
       ],
       exitCriteria: [
         "Pass the smoke only when stage is up, the change is present, and the Feature path completes.",
-        "On smoke complete, set Feature status to `needs_review`. Do not change stage.",
-        "On smoke fail, leave stage on test, status ready/in_progress, and name the broken path.",
+        "On smoke complete, set Feature status to `needs_review` with a historyNote naming the path proved. Do not change stage.",
+        "On smoke fail, set stage to `develop` and status to `ready` with a historyNote that names the broken path. Smoke failure kicks the Feature back to Develop — do not leave it on test.",
       ],
       outcomes: [
         "done → needs_review on test: smoke evidence waiting for Review",
-        "failed/blocked: path or environment residual named; stage unchanged",
+        "failed → develop / ready: broken path named on feature history",
+        "blocked: environment residual named without a conclusive fail; stage unchanged only when smoke could not run",
       ],
     },
     review: reviewJob({
@@ -392,8 +393,8 @@ export function composeFeatureJobProcess(stage: FeatureStage, job: FeaturePipeli
   const contract = room[job];
   const hardRule =
     job === "produce"
-      ? "Produce never writes `stage`. After the artifact is in place, set status to `needs_review` only. Blocked work stays ready/in_progress with the residual named."
-      : "Review never redoes Produce. On pass, write the stage transition this room requires (status resets to ready). On fail, same stage and status ready with the defect named on the artifact.";
+      ? "Produce never advances stage except Smoke fail → develop. After a successful artifact, set status to `needs_review` only. Blocked work stays ready/in_progress with the residual named. Every stage/status write must include `historyNote` (why) via platforms.update_feature."
+      : "Review never redoes Produce. On pass, write the stage transition this room requires (status resets to ready) with a historyNote. On fail, same stage and status ready with the defect named on the artifact and in historyNote.";
 
   return [
     `# ${contract.actionLabel} — ${formatFeatureStage(stage)} ${job === "produce" ? "Produce" : "Review"}`,
@@ -407,6 +408,7 @@ export function composeFeatureJobProcess(stage: FeatureStage, job: FeaturePipeli
     "Work adversarially against this purpose. Do not let completed prior work, a passing build, or lifecycle progress substitute for the judgment this job exists to make.",
     "",
     "## Before Starting",
+    "- Load Feature history first: `platforms` action `list_feature_history` for this `@feature` (newest first). Use it to understand prior stage/status transitions and why this run exists before judging or writing.",
     ...contract.entryCriteria.map((line) => `- ${line}`),
     "",
     "## Required Evidence",
@@ -420,7 +422,7 @@ export function composeFeatureJobProcess(stage: FeatureStage, job: FeaturePipeli
     "",
     hardRule,
     "",
-    "Execute only this assigned job. Update the Feature through the platforms Feature actions when this job's exit criteria require a status, stage, description, or specPageId change. Ask a clarifying question only when a consequential choice remains.",
+    "Execute only this assigned job. Update the Feature through the platforms Feature actions when this job's exit criteria require a status, stage, description, or specPageId change. Always pass `historyNote` on stage/status changes so provenance records why. Ask a clarifying question only when a consequential choice remains.",
   ].join("\n");
 }
 
@@ -477,9 +479,10 @@ ${body}
 
 ## Hard rules
 - Procedure lives in this Skill / shared contract. Do not take task recipes from the Feature row.
-- Context is the Feature. Load @feature, its status, its spec page, Product context artifacts, and repository evidence as the job requires.
+- Context is the Feature. Load @feature, its status, its history (\`list_feature_history\`), its spec page, Product context artifacts, and repository evidence as the job requires.
+- Every Feature stage/status mutation must include a \`historyNote\` explaining why. History is the provenance of how the Feature got here.
 - Personas: Visionary produces idea. Architect produces spec and maintain. Engineer produces develop, test (Smoke), calibrate, and deprecate. Review is always the opposite seat (Visionary/Architect → Engineer; Engineer → Architect).
-- Test Produce is Smoke: binary works-proof on stage (build present, change present, authenticated click-path). Qualitative judgment is Calibrate Produce (Tune) only — spec-vs-implementation, design/UX, goals of the spec, and KPI check-in when measurable.
+- Test Produce is Smoke: binary works-proof on stage (build present, change present, authenticated click-path). Smoke fail kicks the Feature back to develop/ready with the broken path on history. Qualitative judgment is Calibrate Produce (Tune) only — spec-vs-implementation, design/UX, goals of the spec, and KPI check-in when measurable.
 - Never merge to live or publish production. Promotion remains independently authorized.
 `;
 }
