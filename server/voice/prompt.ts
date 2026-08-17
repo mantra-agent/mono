@@ -5,7 +5,7 @@
 import type { Response } from "express";
 import type { VoiceSession, VoiceMessage, TurnContext } from "./types";
 import { writeVoiceJournal, publishVoiceDiagnostic } from "./session";
-import { buildSSEChunk, isResponseAlive, sendSSEComment } from "./sse";
+import { isResponseAlive, sendSSEComment } from "./sse";
 import { logPipelineStage } from "./pipeline-log";
 import { persistUserMessage } from "./persistence";
 import { accessVoiceChat, voiceChatAccessError } from "./chat-owner";
@@ -283,8 +283,9 @@ export async function resolvePromptAndMessages(
     if (res.socket) res.socket.setNoDelay(true);
     log.debug(`turn ${currentTurn} EARLY_SSE_HEADERS sent before context assembly session=${session.id}`);
   }
-  let preemptiveCascadeTimer: ReturnType<typeof setTimeout> | null = null;
   if (res) {
+    // Spec: unflushed "... " is unrepresentable. Pre-context liveness is SSE comments only;
+    // EL soft-timeout owns the first spoken bridge once the custom-LLM stream is open.
     sendSSEComment(res, "keepalive", session.id);
     preContextKeepaliveTimer = setInterval(() => {
       if (!isResponseAlive(res) || turnAbort?.signal.aborted) {
@@ -293,22 +294,8 @@ export async function resolvePromptAndMessages(
       }
       sendSSEComment(res, "keepalive", session.id);
     }, PRE_CONTEXT_KEEPALIVE_INTERVAL_MS);
-    preemptiveCascadeTimer = setTimeout(() => {
-      preemptiveCascadeTimer = null;
-      if (!isResponseAlive(res) || turnAbort?.signal.aborted) return;
-      try {
-        const chunk = buildSSEChunk(ctx.chatId, ctx.created, "... ");
-        res.write(chunk);
-        if (!ctx.firstChunk.sentAt) ctx.firstChunk.sentAt = Date.now();
-        log.debug(`turn ${currentTurn} PRE_CONTEXT_CASCADE_KEEPALIVE sent session=${session.id}`);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        log.warn(`turn ${currentTurn} PRE_CONTEXT_CASCADE_KEEPALIVE failed: ${msg} session=${session.id}`);
-      }
-    }, 1500);
   }
   const systemPrompt = await getSystemPrompt(session, ctx, conversationMessages);
-  if (preemptiveCascadeTimer) { clearTimeout(preemptiveCascadeTimer); preemptiveCascadeTimer = null; }
   if (preContextKeepaliveTimer) { clearInterval(preContextKeepaliveTimer); preContextKeepaliveTimer = null; }
   if (res) log.debug(`turn ${currentTurn} PRE_CONTEXT_KEEPALIVE stopped — context assembly complete session=${session.id}`);
   const systemPromptBytes = Buffer.byteLength(systemPrompt, "utf-8");

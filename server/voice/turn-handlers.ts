@@ -317,11 +317,10 @@ export async function runExecutorPhase(
         }
         if (event.type === "tool_call") {
           const toolName = event.toolName || "?";
+          // Spec: tool start must not invent a period or force-chop an unfinished clause.
+          // Soft flush completed speakables only; remainder survives across the tool.
           if (ctx.coalesceBuf.value) {
-            const endsClean = /[.!?]\s*$/.test(ctx.coalesceBuf.value);
-            if (!endsClean && ctx.coalesceBuf.value.trim().length > 0) ctx.coalesceBuf.value += ". ";
-            else if (endsClean && !/\s$/.test(ctx.coalesceBuf.value)) ctx.coalesceBuf.value += " ";
-            flushCoalesceBuffer("pre_tool_call", true);
+            flushCoalesceBuffer("pre_tool_call", false);
           }
           ctx.toolCallActive = true;
           toolStartAt = Date.now();

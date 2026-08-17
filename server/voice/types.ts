@@ -26,6 +26,9 @@ export interface VoiceToolCall {
 
 export type VoiceToolMode = "standard" | "none";
 
+/** Per-turn presence discriminant — sole source for hold / speak / silent. */
+export type PresenceState = "speaking" | "holding" | "silent" | "reconnecting";
+
 export interface VoiceSession {
   id: string;
   chatSessionId: string | null;
@@ -120,10 +123,17 @@ export interface TurnContext {
   chatId: string;
   created: number;
   turnEndCause: string;
+  /** One presence discriminant for the turn — produced only at the speakable write helper. */
+  presence: PresenceState;
+  /** Hold counter (spoken hold sentences). Not model content. */
   fillerCount: number;
   fillerTimer: ReturnType<typeof setInterval> | null;
   lastContentSentAt: number;
   lastFillerSentAt: number;
+  /** Clock for hold cadence: last flushed speakable (model sentence or hold). */
+  lastFlushedSpeakableAt: number;
+  /** Monotonic id of last flushed speakable for duplicate-word spine proof. */
+  lastFlushedSpeakableId: number;
   lastWriteAt: number;
   firstLlmDeltaAt: number | null;
   thinkingSuppressedChars: number;
@@ -133,6 +143,7 @@ export interface TurnContext {
   toolCallChronologyCount: number;
   toolCallActive: boolean;
   contentDroppedPublished: boolean;
+  /** @deprecated presence clocks — retained for log compatibility only */
   lastAudibleDeltaAt: number;
   audibleDeltaCount: number;
   keepalivesSent: number;

@@ -133,8 +133,8 @@ export function sendBriefAck(
       "X-Accel-Buffering": "no",
     });
   }
-  const bufferWord = "... ";
-  const contentChunk = buildSSEChunk(chatId, created, bufferWord);
+  // Spec: unflushed "... " is unrepresentable. Brief terminal acks use a flushed hold sentence.
+  const contentChunk = buildSSEChunk(chatId, created, "One moment. ", null, true);
   let ok = true;
   try {
     res.write(contentChunk);
@@ -193,7 +193,7 @@ export function sendErrorResponse(
       object: "chat.completion.chunk",
       created: Math.floor(Date.now() / 1000),
       model: "xyz-voice",
-      choices: [{ index: 0, delta: { content: "... " }, finish_reason: "stop" }],
+      choices: [{ index: 0, delta: { content: "One moment. ", flush: true }, finish_reason: "stop" }],
     };
     trackedWrite(`data: ${JSON.stringify(errorChunk)}\n\n`, "error_chunk");
     trackedWrite("data: [DONE]\n\n", "done_error");

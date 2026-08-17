@@ -1,15 +1,12 @@
-// Pure helper for computing the cascade-keepalive's first-fire threshold
-// (extracted from voice-llm.ts so it can be unit-tested without dragging in
-// the full voice-llm module graph and its top-level intervals).
+// Pure helper for the presence-hold cascade-safe window
+// (first Mantra hold after EL soft-timeout, before cascade).
 //
-// See server/voice-llm.ts (sendCascadeKeepalive / startKeepaliveTimer) and
+// See server/voice/turn-io.ts (sendPresenceHold / startKeepaliveTimer) and
 // server/elevenlabs.ts (soft_timeout_config) for the division of labor:
-//   - EL native soft_timeout_config = UX FILLER ("One second.")
-//   - Custom keepalive               = CASCADE LIVENESS only
-// The keepalive sends a delta.content chunk which would suppress EL's
-// soft-timeout filler if it fires inside the soft window, so the threshold
-// must land strictly between soft_timeout_config.timeout_seconds and
-// cascade_timeout_seconds.
+//   - EL native soft_timeout_config = first spoken bridge ("One second.")
+//   - Mantra presence hold          = flushed complete hold sentences on this window
+// The hold must land strictly after soft_timeout_config.timeout_seconds and
+// before cascade_timeout_seconds so it cannot suppress EL's first line.
 
 export const KEEPALIVE_SAFETY_MARGIN_MS = 3_000;
 

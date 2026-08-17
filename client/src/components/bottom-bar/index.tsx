@@ -98,7 +98,11 @@ function getLastAssistantText(content: StreamingContent | null): string {
 function getVoiceInputPlaceholder(voiceSession: NonNullable<ReturnType<typeof useVoiceSessionOptional>> | null): string {
   if (!voiceSession) return "Listening…";
   if (voiceSession.status === "connecting") return "Connecting voice…";
-  if (voiceSession.status === "reconnecting") return "Reconnecting voice…";
+  // Silent reconnect: keep ordinary listening/speaking placeholder until exhaustion.
+  if (voiceSession.status === "reconnecting") {
+    if (voiceSession.agentMode === "speaking") return "Agent speaking…";
+    return voiceSession.userSpeaking ? "Hearing you…" : "Listening…";
+  }
   if (voiceSession.status === "ending") return "Ending voice…";
   if (voiceSession.agentMode === "speaking") return "Agent speaking…";
   return voiceSession.userSpeaking ? "Hearing you…" : "Listening…";

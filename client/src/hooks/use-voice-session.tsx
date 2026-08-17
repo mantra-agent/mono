@@ -1044,8 +1044,10 @@ export function VoiceSessionProvider({
       log.debug("VOICE:RECONNECT:TRIGGERED", { source, attempt, maxAttempts: maxReconnectAttempts });
       phoneDiag(`reconnect_scheduled_${source}`, { attempt, ...context });
       emitVoiceDiag("reconnect_attempt", `Connection lost — ${disconnectReason}. Attempt ${attempt}/${maxReconnectAttempts}`, "active");
+      // Spec: silent reconnect — keep last live conversational status/visual until exhaustion.
+      // Internal retry flag only; do not map to orb "degraded" or "Reconnecting voice…".
       setVoiceThinking(false);
-      setStatus("reconnecting");
+      clearVoiceCaption();
       setPhasePersisted(false);
 
       const delay = Math.min(1000 * attempt, 3000);
@@ -1134,7 +1136,7 @@ export function VoiceSessionProvider({
       const persistedErrorMsg = "Voice session ended unexpectedly. Your conversation has been saved.";
       cleanupSession(`${source}-max-reached`, persistedErrorMsg);
     }
-  }, [toast, phoneDiag, cleanupSession, emitVoiceDiag]);
+  }, [toast, phoneDiag, cleanupSession, emitVoiceDiag, clearVoiceCaption]);
 
   const handleVoiceDisconnect = useCallback((sessionStartTs: number, details?: Record<string, unknown>) => {
     const elapsed = Date.now() - sessionStartTs;
@@ -2246,7 +2248,13 @@ export function VoiceSessionProvider({
   const latestMessage = transcript.length > 0 ? transcript[transcript.length - 1] : null;
 
   const visualState = useMemo<AgentVisualState>(() => {
-    if (status === "reconnecting") return "degraded";
+    // In-progress reconnect is not user-facing degraded theater while attempts remain.
+    if (status === "reconnecting") {
+      if (agentMode === "speaking") return "speaking";
+      if (activeVoiceToolCount > 0) return "tool_call";
+      if (voiceThinking) return "thinking";
+      return "listening";
+    }
     if (status !== "active") return "idle";
     if (agentMode === "speaking") return "speaking";
     if (activeVoiceToolCount > 0) return "tool_call";

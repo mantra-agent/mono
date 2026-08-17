@@ -1,9 +1,11 @@
 /**
- * Voice turn I/O handlers — coalescing, backpressure management,
- * cascade keepalive, and stream chunk processing.
+ * Voice turn I/O — presence writer, phrase assembler, hold-as-presence.
+ *
+ * Presence is one discriminant produced only at the speakable write helper.
+ * Unflushed non-speech never leaves this module onto the SSE wire.
  */
 import type { Response } from "express";
-import type { VoiceSession, TurnContext } from "./types";
+import type { PresenceState, VoiceSession, TurnContext } from "./types";
 import { buildSSEChunk, isResponseAlive, createTrackedWrite } from "./sse";
 import { publishVoiceDiagnostic } from "./session";
 import { createLogger } from "../log";
@@ -17,7 +19,8 @@ const log = createLogger("VoiceTurnIO");
 
 export const COALESCE_BUFFER_MAX_BYTES = 4096;
 
-const AUDIBLE_KEEPALIVE_THRESHOLD_MS = 6_500;
+/** Code-owned hold sentences. Rotate. Never LLM-generated. Never "... ". */
+const HOLD_SENTENCES = ["One moment.", "Still on it.", "Working."] as const;
 
 /**
  * Split completed speakable prose from an unstable trailing fragment.
@@ -44,9 +47,15 @@ export function getCascadeTimeoutMs(): number {
   return getVerifiedCascadeTimeoutSeconds() * 1000;
 }
 
+/** Poll slightly faster than the hold window so a hold lands near the cascade-safe instant. */
+export function getPresenceHoldCheckIntervalMs(): number {
+  const windowMs = getSoftTimeoutBufferMs();
+  return Math.max(1_000, Math.min(2_000, Math.floor(windowMs / 3)));
+}
+
+/** @deprecated alias — hold cadence uses getSoftTimeoutBufferMs, not a 1–1.5s drip. */
 export function getKeepaliveCheckIntervalMs(): number {
-  const cascadeMs = getCascadeTimeoutMs();
-  return Math.max(1_000, Math.min(1_500, Math.floor(cascadeMs / 4)));
+  return getPresenceHoldCheckIntervalMs();
 }
 
 let keepaliveBufferWarningLogged = false;
@@ -65,6 +74,15 @@ export function getSoftTimeoutBufferMs(): number {
   );
 }
 
+function spineIds(session: VoiceSession, ctx: TurnContext): string {
+  return `session=${session.id} turnId=${ctx.turnId} assistantAttemptId=${ctx.assistantAttemptId}`;
+}
+
+function setPresence(ctx: TurnContext, next: PresenceState): void {
+  if (ctx.presence === next) return;
+  ctx.presence = next;
+}
+
 // ── Turn IO Handlers ─────────────────────────────────────────────────────
 
 export interface TurnIOHandlers {
@@ -72,8 +90,11 @@ export interface TurnIOHandlers {
   stopFillerTimer: (reason: string) => void;
   flushCoalesceBuffer: (trigger?: string, flush?: boolean) => void;
   trackContentDelivery: () => void;
-  sendCascadeKeepalive: () => void;
+  /** Emit a flushed hold sentence when the cascade-safe window has elapsed. */
+  sendPresenceHold: () => void;
   startKeepaliveTimer: () => void;
+  /** @deprecated removed — unflushed ellipsis keepalive is unrepresentable. */
+  sendCascadeKeepalive: () => void;
 }
 
 export function createTurnIOHandlers(
@@ -93,9 +114,9 @@ export function createTurnIOHandlers(
     if (ctx.fillerTimer) {
       clearInterval(ctx.fillerTimer);
       ctx.fillerTimer = null;
-      log.log(`turn ${currentTurn} KEEPALIVE_TIMER_STOP reason=${reason} session=${session.id}`);
+      log.log(`turn ${currentTurn} PRESENCE_HOLD_TIMER_STOP reason=${reason} ${spineIds(session, ctx)}`);
     } else {
-      log.debug(`turn ${currentTurn} KEEPALIVE_TIMER_STOP skipped=not_running reason=${reason} session=${session.id}`);
+      log.debug(`turn ${currentTurn} PRESENCE_HOLD_TIMER_STOP skipped=not_running reason=${reason} ${spineIds(session, ctx)}`);
     }
   };
 
@@ -115,110 +136,209 @@ export function createTurnIOHandlers(
     ctx.lastRealContentAt.ts = now;
   };
 
+  /**
+   * Presence writer — sole path for speakable SSE.
+   * Every speakable uses flush=true. Holds are not transcript content.
+   */
+  const writeSpeakable = (
+    content: string,
+    kind: "model" | "hold",
+    trigger: string,
+  ): boolean => {
+    if (!content) return false;
+    if (!isResponseAlive(res)) {
+      log.warn(
+        `CONTENT_DROPPED_DEAD_RESPONSE location=writeSpeakable kind=${kind} trigger=${trigger} contentBytes=${content.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
+      );
+      if (!ctx.contentDroppedPublished) {
+        ctx.contentDroppedPublished = true;
+        publishVoiceDiagnostic(
+          session,
+          "content_dropped",
+          `Content dropped — response dead (${content.length} bytes)`,
+          { turn: currentTurn, status: "error" },
+          ctx,
+        );
+      }
+      return false;
+    }
+
+    const now = Date.now();
+    const sincePriorFlushed = now - ctx.lastFlushedSpeakableAt;
+    ctx.lastFlushedSpeakableId += 1;
+    const speakableId = ctx.lastFlushedSpeakableId;
+    ctx.lastFlushedSpeakableAt = now;
+    ctx.lastContentSentAt = now;
+    ctx.lastContentAt.ts = now;
+    ctx.lastAudibleDeltaAt = now;
+    session.inflightChunksDelivered++;
+    const sessionGap = now - session.lastDataDeliveryAt;
+    if (sessionGap > session.longestDataGapMs) session.longestDataGapMs = sessionGap;
+    session.lastDataDeliveryAt = now;
+
+    if (kind === "model") {
+      setPresence(ctx, "speaking");
+      ctx.chunkCounter.count++;
+      ctx.responseSize.total += content.length;
+      if (ctx.firstChunk.sentAt === null) ctx.firstChunk.sentAt = now;
+      if (ctx.firstRealContentAt.ts === null) ctx.firstRealContentAt.ts = now;
+      ctx.lastRealContentAt.ts = now;
+      // Scan backwards past system entries to find the last content entry to merge into.
+      let lastContentIdx = -1;
+      for (let i = ctx.segmentChronology.length - 1; i >= 0; i--) {
+        const entry = ctx.segmentChronology[i];
+        if (entry.s === "content") { lastContentIdx = i; break; }
+        if (entry.s === "tool") break;
+      }
+      if (lastContentIdx >= 0) {
+        (ctx.segmentChronology[lastContentIdx] as { s: "content"; c: string }).c += content;
+      } else {
+        ctx.segmentChronology.push({ s: "content", c: content });
+      }
+      log.info(
+        `turn ${currentTurn} PHRASE_FLUSH trigger=${trigger} forceTts=true chars=${content.length} remainder=${ctx.coalesceBuf.value.length} speakableId=${speakableId} ${spineIds(session, ctx)}`,
+      );
+    } else {
+      setPresence(ctx, "holding");
+      ctx.fillerCount++;
+      ctx.lastFillerSentAt = now;
+      // Holds are presence, not content — never segmentChronology / transcript.
+      log.info(
+        `turn ${currentTurn} PRESENCE_HOLD fillerCount=${ctx.fillerCount} sinceLastFlushedSpeakable=${sincePriorFlushed}ms speakableId=${speakableId} ${spineIds(session, ctx)}`,
+      );
+    }
+
+    const ok = trackedWrite(
+      buildSSEChunk(ctx.chatId, ctx.created, content, null, true),
+      kind === "hold" ? `presence_hold_${ctx.fillerCount}` : `coalesced_${ctx.coalesceFlushCount}`,
+    );
+    log.debug(
+      `turn ${currentTurn} SSE_WRITE kind=${kind} speakableId=${speakableId} ok=${ok} ${spineIds(session, ctx)}`,
+    );
+    return ok;
+  };
+
+  /**
+   * Phrase assembler — soft flush emits completed sentences only.
+   * Forced flush allowed for turn_end, overflow, guide_introduction — not tool start.
+   */
   const flushCoalesceBuffer = (trigger?: string, flush: boolean = false): void => {
     if (!ctx.coalesceBuf.value) return;
     if (!isResponseAlive(res)) {
-      log.warn(`CONTENT_DROPPED_DEAD_RESPONSE location=flushCoalesceBuffer trigger=${trigger} contentBytes=${ctx.coalesceBuf.value.length} turn=${currentTurn} session=${session.id}`);
+      log.warn(
+        `CONTENT_DROPPED_DEAD_RESPONSE location=flushCoalesceBuffer trigger=${trigger} contentBytes=${ctx.coalesceBuf.value.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
+      );
       if (!ctx.contentDroppedPublished) {
         ctx.contentDroppedPublished = true;
-        publishVoiceDiagnostic(session, "content_dropped", `Content dropped — response dead (${ctx.coalesceBuf.value.length} bytes)`, { turn: currentTurn, status: "error" }, ctx);
+        publishVoiceDiagnostic(
+          session,
+          "content_dropped",
+          `Content dropped — response dead (${ctx.coalesceBuf.value.length} bytes)`,
+          { turn: currentTurn, status: "error" },
+          ctx,
+        );
       }
       return;
     }
 
-    // Soft flushes (timer / first content) emit only completed sentences and always
-    // set delta.flush so ElevenLabs speaks them during tool work. Forced flushes
-    // (pre_tool_call, turn_end, overflow, guide) empty the buffer entirely.
+    const forceEmpty = flush === true
+      && (trigger === "turn_end" || trigger === "overflow" || trigger === "guide_introduction" || trigger === "drain");
+
     let content: string;
-    let forceTtsFlush = flush;
-    if (flush) {
+    if (forceEmpty) {
       content = ctx.coalesceBuf.value;
       ctx.coalesceBuf.value = "";
     } else {
+      // Soft path (timer, first content) and any other force request that is not
+      // a named forced trigger — including legacy pre_tool_call — keep remainder.
       const split = takeCompletedSpeakable(ctx.coalesceBuf.value);
-      if (!split.speakable) return;
+      if (!split.speakable) {
+        if (trigger === "pre_tool_call") {
+          log.debug(
+            `turn ${currentTurn} PHRASE_HOLD_ACROSS_TOOL remainder=${ctx.coalesceBuf.value.length} ${spineIds(session, ctx)}`,
+          );
+        }
+        return;
+      }
       content = split.speakable;
       ctx.coalesceBuf.value = split.remainder;
-      forceTtsFlush = true;
     }
 
     ctx.coalesceFlushCount++;
-    ctx.chunkCounter.count++;
-    ctx.responseSize.total += content.length;
-    if (ctx.firstChunk.sentAt === null) ctx.firstChunk.sentAt = Date.now();
-    trackContentDelivery();
-    // Scan backwards past system entries to find the last content entry to merge into.
-    // Tool entries are intentional content breaks — stop scanning if we hit one.
-    let lastContentIdx = -1;
-    for (let i = ctx.segmentChronology.length - 1; i >= 0; i--) {
-      const entry = ctx.segmentChronology[i];
-      if (entry.s === "content") { lastContentIdx = i; break; }
-      if (entry.s === "tool") break;
-    }
-    if (lastContentIdx >= 0) {
-      (ctx.segmentChronology[lastContentIdx] as { s: "content"; c: string }).c += content;
-    } else {
-      ctx.segmentChronology.push({ s: "content", c: content });
-    }
-    log.debug(
-      `turn ${currentTurn} COALESCE_FLUSH trigger=${trigger || "unspecified"} forceTts=${forceTtsFlush} chars=${content.length} remainder=${ctx.coalesceBuf.value.length} session=${session.id}`,
-    );
-    trackedWrite(buildSSEChunk(ctx.chatId, ctx.created, content, null, forceTtsFlush), `coalesced_${ctx.coalesceFlushCount}`);
+    writeSpeakable(content, "model", trigger || "unspecified");
   };
 
-  const sendCascadeKeepalive = (): void => {
+  const sendPresenceHold = (): void => {
     if (!isResponseAlive(res)) {
-      log.warn(`CONTENT_DROPPED_DEAD_RESPONSE location=sendCascadeKeepalive turn=${currentTurn} session=${session.id}`);
+      log.warn(`CONTENT_DROPPED_DEAD_RESPONSE location=sendPresenceHold turn=${currentTurn} ${spineIds(session, ctx)}`);
       return;
     }
-    const bufferWord = "... ";
-    const chunk = buildSSEChunk(ctx.chatId, ctx.created, bufferWord);
-    try {
-      res.write(chunk);
-      const now = Date.now();
-      ctx.lastContentAt.ts = now;
-      ctx.lastContentSentAt = now;
-      const sessionGap = now - session.lastDataDeliveryAt;
-      if (sessionGap > session.longestDataGapMs) session.longestDataGapMs = sessionGap;
-      session.lastDataDeliveryAt = now;
-      ctx.keepalivesSent++;
-      ctx.lastKeepaliveAt = now;
-      session.inflightChunksDelivered++;
-      log.debug(`turn ${currentTurn} CASCADE_KEEPALIVE sent #${ctx.keepalivesSent} sinceTurnStart=${now - ctx.turnStart}ms sinceAudible=${now - ctx.lastAudibleDeltaAt}ms session=${session.id}`);
-    } catch (e: any) {
-      log.warn(`turn ${currentTurn} CASCADE_KEEPALIVE write failed: ${e.message} session=${session.id}`);
-    }
+    const sentence = HOLD_SENTENCES[ctx.fillerCount % HOLD_SENTENCES.length]!;
+    // Trailing space matches EL speakable chunk habit; sentence is complete.
+    writeSpeakable(`${sentence} `, "hold", "presence_hold");
+  };
+
+  /** Demolished: unflushed "... " is unrepresentable. Kept as no-op for stray callers. */
+  const sendCascadeKeepalive = (): void => {
+    log.debug(`turn ${currentTurn} CASCADE_KEEPALIVE rejected=unrepresentable ${spineIds(session, ctx)}`);
   };
 
   const startKeepaliveTimer = (): void => {
     if (ctx.fillerTimer) {
-      log.debug(`turn ${currentTurn} KEEPALIVE_TIMER_START skipped=already_running session=${session.id}`);
+      log.debug(`turn ${currentTurn} PRESENCE_HOLD_TIMER_START skipped=already_running ${spineIds(session, ctx)}`);
       return;
     }
-    const turnKeepaliveStart = Date.now();
-    const sinceSessionLastData = turnKeepaliveStart - session.lastDataDeliveryAt;
-    log.debug(`turn ${currentTurn} KEEPALIVE_TIMER_START softTimeoutBuffer=${getSoftTimeoutBufferMs()}ms checkInterval=${getKeepaliveCheckIntervalMs()}ms cascadeTimeout=${getCascadeTimeoutMs()}ms sinceSessionLastData=${sinceSessionLastData}ms session=${session.id}`);
+    const holdWindowMs = getSoftTimeoutBufferMs();
+    const checkIntervalMs = getPresenceHoldCheckIntervalMs();
+    log.debug(
+      `turn ${currentTurn} PRESENCE_HOLD_TIMER_START holdWindow=${holdWindowMs}ms checkInterval=${checkIntervalMs}ms cascadeTimeout=${getCascadeTimeoutMs()}ms ${spineIds(session, ctx)}`,
+    );
     ctx.fillerTimer = setInterval(() => {
       const now = Date.now();
-      const sinceTurnStart = now - turnKeepaliveStart;
-      const sinceLastContent = now - ctx.lastContentSentAt;
-      const sinceAudible = now - ctx.lastAudibleDeltaAt;
+      const sinceFlushed = now - ctx.lastFlushedSpeakableAt;
       if (!isResponseAlive(res)) {
-        log.warn(`turn ${currentTurn} KEEPALIVE_TICK response_dead sinceLastContent=${sinceLastContent}ms sinceAudible=${sinceAudible}ms sinceTurnStart=${sinceTurnStart}ms — self-terminating session=${session.id}`);
-        publishVoiceDiagnostic(session, "keepalive_dead", `Keepalive detected dead response — self-terminating`, { turn: currentTurn, status: "error", elapsedMs: sinceTurnStart }, ctx);
+        log.warn(
+          `turn ${currentTurn} PRESENCE_HOLD_TICK response_dead sinceFlushed=${sinceFlushed}ms — self-terminating ${spineIds(session, ctx)}`,
+        );
+        publishVoiceDiagnostic(
+          session,
+          "keepalive_dead",
+          `Presence hold detected dead response — self-terminating`,
+          { turn: currentTurn, status: "error", elapsedMs: now - ctx.turnStart },
+          ctx,
+        );
         stopFillerTimer("response_dead");
         return;
       }
-      if (sinceAudible >= AUDIBLE_KEEPALIVE_THRESHOLD_MS) {
-        log.debug(`turn ${currentTurn} KEEPALIVE_TICK action=keepalive sinceTurnStart=${sinceTurnStart}ms sinceAudible=${sinceAudible}ms threshold=${AUDIBLE_KEEPALIVE_THRESHOLD_MS}ms audibleDeltas=${ctx.audibleDeltaCount} session=${session.id}`);
-        sendCascadeKeepalive();
+
+      // Hold only after cascade-safe silence on flushed speakables, and not while
+      // the model is still streaming incomplete clauses (lastAudibleDeltaAt = last model delta).
+      const sinceModelDelta = now - ctx.lastAudibleDeltaAt;
+      const shouldHold = sinceFlushed >= holdWindowMs
+        && (ctx.toolCallActive || sinceModelDelta >= holdWindowMs);
+
+      if (shouldHold) {
+        log.debug(
+          `turn ${currentTurn} PRESENCE_HOLD_TICK action=hold sinceFlushed=${sinceFlushed}ms window=${holdWindowMs}ms toolActive=${ctx.toolCallActive} ${spineIds(session, ctx)}`,
+        );
+        sendPresenceHold();
       } else {
-        log.debug(`turn ${currentTurn} KEEPALIVE_TICK action=skip sinceAudible=${sinceAudible}ms threshold=${AUDIBLE_KEEPALIVE_THRESHOLD_MS}ms sinceTurnStart=${sinceTurnStart}ms session=${session.id}`);
+        log.debug(
+          `turn ${currentTurn} PRESENCE_HOLD_TICK action=skip sinceFlushed=${sinceFlushed}ms window=${holdWindowMs}ms toolActive=${ctx.toolCallActive} ${spineIds(session, ctx)}`,
+        );
       }
-    }, getKeepaliveCheckIntervalMs());
+    }, checkIntervalMs);
   };
 
-  return { trackedWrite, stopFillerTimer, flushCoalesceBuffer, trackContentDelivery, sendCascadeKeepalive, startKeepaliveTimer };
+  return {
+    trackedWrite,
+    stopFillerTimer,
+    flushCoalesceBuffer,
+    trackContentDelivery,
+    sendPresenceHold,
+    startKeepaliveTimer,
+    sendCascadeKeepalive,
+  };
 }
 
 // ── Stream Chunk Handler ─────────────────────────────────────────────────
@@ -254,7 +374,9 @@ export function createStreamChunkHandler(
       ? assembler.cancel(turnKey, reason)
       : assembler.close(turnKey, reason);
     if (outcome.outcome === "closed") {
-      log.info(`voice_output_closed session=${session.id} turn=${currentTurn} turnKey=${turnKey} reason=${reason} fragments=${outcome.turn.rawFragments.length} degraded=${outcome.turn.degraded}`);
+      log.info(
+        `voice_output_closed session=${session.id} turn=${currentTurn} turnKey=${turnKey} reason=${reason} fragments=${outcome.turn.rawFragments.length} degraded=${outcome.turn.degraded} turnId=${ctx.turnId} assistantAttemptId=${ctx.assistantAttemptId}`,
+      );
     }
   };
 
@@ -297,6 +419,9 @@ export function createStreamChunkHandler(
       }
       return;
     }
+    log.debug(
+      `turn ${currentTurn} MODEL_DELTA_ACCEPTED chars=${content.length} sequence=${sequence - 1} turnId=${ctx.turnId} assistantAttemptId=${ctx.assistantAttemptId} session=${session.id}`,
+    );
     ctx.lastAudibleDeltaAt = now;
     ctx.audibleDeltaCount++;
     ctx.coalesceBuf.value += content;

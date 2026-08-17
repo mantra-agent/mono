@@ -38,7 +38,14 @@ export function logPipelineStage(
   log.debug(`turn ${ctx.currentTurn} TURN_PIPELINE stage=${stage} elapsed=${Date.now() - pipelineStart}ms${extra ? " " + extra : ""} session=${session.id}`);
 }
 
-export function logTurnForensics(ctx: TurnContext, session: VoiceSession): void {
+function shouldPromoteTurnSpine(ctx: TurnContext, session: VoiceSession, toolCount = 0, durationMs = 0): boolean {
+  return toolCount > 0
+    || durationMs >= 10_000
+    || ctx.fillerCount > 0
+    || session.isReconnect === true;
+}
+
+export function logTurnForensics(ctx: TurnContext, session: VoiceSession, toolCount = 0): void {
   const now = Date.now();
   const elapsed = now - ctx.turnStart;
   const sinceLastContent = ctx.lastContentAt.ts !== null ? now - ctx.lastContentAt.ts : -1;
@@ -46,7 +53,13 @@ export function logTurnForensics(ctx: TurnContext, session: VoiceSession): void 
   const sinceLastContentSent = now - ctx.lastContentSentAt;
   const sinceLastWrite = now - ctx.lastWriteAt;
   const sinceSessionLastData = now - session.lastDataDeliveryAt;
-  log.debug(`turn ${ctx.currentTurn} TURN_FORENSICS session=${session.id} cause=${ctx.turnEndCause} elapsed=${elapsed}ms chunks=${ctx.chunkCounter.count} bytes=${ctx.responseSize.total} firstContentAt=${ctx.firstChunk.sentAt !== null ? ctx.firstChunk.sentAt - ctx.turnStart : -1}ms firstRealContentAt=${ctx.firstRealContentAt.ts !== null ? ctx.firstRealContentAt.ts - ctx.turnStart : -1}ms lastRealContentAt=${ctx.lastRealContentAt.ts !== null ? ctx.lastRealContentAt.ts - ctx.turnStart : -1}ms sinceLastContent=${sinceLastContent}ms sinceLastReal=${sinceLastReal}ms sinceLastContentSent=${sinceLastContentSent}ms sinceLastWrite=${sinceLastWrite}ms sinceSessionLastData=${sinceSessionLastData}ms longestGap=${ctx.longestContentGapMs}ms longestSessionGap=${session.longestDataGapMs}ms fillerCount=${ctx.fillerCount} tool=${ctx.currentToolName || "none"} sessionChunksDelivered=${session.inflightChunksDelivered}`);
+  const sinceLastFlushed = now - ctx.lastFlushedSpeakableAt;
+  const line = `turn ${ctx.currentTurn} TURN_FORENSICS session=${session.id} turnId=${ctx.turnId} assistantAttemptId=${ctx.assistantAttemptId} presence=${ctx.presence} cause=${ctx.turnEndCause} elapsed=${elapsed}ms chunks=${ctx.chunkCounter.count} bytes=${ctx.responseSize.total} firstContentAt=${ctx.firstChunk.sentAt !== null ? ctx.firstChunk.sentAt - ctx.turnStart : -1}ms firstRealContentAt=${ctx.firstRealContentAt.ts !== null ? ctx.firstRealContentAt.ts - ctx.turnStart : -1}ms lastRealContentAt=${ctx.lastRealContentAt.ts !== null ? ctx.lastRealContentAt.ts - ctx.turnStart : -1}ms sinceLastContent=${sinceLastContent}ms sinceLastReal=${sinceLastReal}ms sinceLastContentSent=${sinceLastContentSent}ms sinceLastWrite=${sinceLastWrite}ms sinceSessionLastData=${sinceSessionLastData}ms sinceLastFlushedSpeakable=${sinceLastFlushed}ms longestGap=${ctx.longestContentGapMs}ms longestSessionGap=${session.longestDataGapMs}ms fillerCount=${ctx.fillerCount} lastSpeakableId=${ctx.lastFlushedSpeakableId} tool=${ctx.currentToolName || "none"} sessionChunksDelivered=${session.inflightChunksDelivered}`;
+  if (shouldPromoteTurnSpine(ctx, session, toolCount, elapsed)) {
+    log.info(line);
+  } else {
+    log.debug(line);
+  }
   if (ctx.turnEndCause === "aborted_superseded" || ctx.turnEndCause === "cancelled_superseded") {
     session.totalAbortedTurns++;
   } else if (ctx.chunkCounter.count > 0) {
@@ -65,6 +78,12 @@ export function logTurnSummary(
   const avgCharsPerFlush = ctx.coalesceFlushCount > 0 ? Math.round(ctx.responseSize.total / ctx.coalesceFlushCount) : 0;
   const llmTtft = ctx.firstLlmDeltaAt !== null ? ctx.firstLlmDeltaAt - ctx.turnStart : -1;
   const voiceRunCount = getActiveVoiceRunCount();
-  log.log(`turn ${ctx.currentTurn} COMPLETE session=${session.id} duration=${turnDuration}ms model=${result.model} iterations=${result.iterations} tools=${result.toolCalls.length} chunks=${ctx.chunkCounter.count} responseSize=${ctx.responseSize.total} flushes=${ctx.coalesceFlushCount} avgCharsPerFlush=${avgCharsPerFlush} drainWaits=${ctx.bp.drainWaits} bpBytes=${ctx.bp.totalBytes} firstChunk=${firstChunkElapsed}ms llmTtft=${llmTtft}ms thinkingSuppressed=${ctx.thinkingSuppressedChars}chars/${ctx.thinkingSuppressedMs}ms fillers=${ctx.fillerCount} voiceRuns=${voiceRunCount} circuitBreaker=${session.circuitBreakerActive}`);
-  logTurnForensics(ctx, session);
+  const toolCount = result.toolCalls.length;
+  const line = `turn ${ctx.currentTurn} COMPLETE session=${session.id} turnId=${ctx.turnId} assistantAttemptId=${ctx.assistantAttemptId} presence=${ctx.presence} duration=${turnDuration}ms model=${result.model} iterations=${result.iterations} tools=${toolCount} chunks=${ctx.chunkCounter.count} responseSize=${ctx.responseSize.total} flushes=${ctx.coalesceFlushCount} avgCharsPerFlush=${avgCharsPerFlush} drainWaits=${ctx.bp.drainWaits} bpBytes=${ctx.bp.totalBytes} firstChunk=${firstChunkElapsed}ms llmTtft=${llmTtft}ms thinkingSuppressed=${ctx.thinkingSuppressedChars}chars/${ctx.thinkingSuppressedMs}ms fillers=${ctx.fillerCount} lastSpeakableId=${ctx.lastFlushedSpeakableId} voiceRuns=${voiceRunCount} circuitBreaker=${session.circuitBreakerActive}`;
+  if (shouldPromoteTurnSpine(ctx, session, toolCount, turnDuration)) {
+    log.info(line);
+  } else {
+    log.log(line);
+  }
+  logTurnForensics(ctx, session, toolCount);
 }
