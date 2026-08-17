@@ -409,7 +409,7 @@ export const TOOLS: Record<string, ToolMeta> = {
       properties: {
         action: { type: "string", enum: ["status", "issues", "issue", "events", "latest_event", "uptime", "sync_availability", "resolve", "unresolve", "ignore"], description: "Action" },
         issueId: { type: "string", description: "Sentry issue ID (required for issue, events, latest_event, resolve, unresolve, ignore)" },
-        query: { type: "string", description: "Sentry search query (issues, default: is:unresolved)" },
+        query: { type: "string", description: "Sentry issue search query (default: is:unresolved). Space-separated terms are implicit AND. Boolean OR/AND operators are not supported; use key:[value1,value2] for multi-value match." },
         sort: { type: "string", description: "Sort order for issues: date, new, freq, user (default: date)" },
         limit: { type: "number", description: "Max results (issues default 25 max 100, for events default 10 max 100)" },
         full: { type: "boolean", description: "Include full event body with stacktrace (events, default true)" },

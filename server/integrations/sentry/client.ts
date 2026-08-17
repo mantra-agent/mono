@@ -15,11 +15,14 @@ const SENTRY_API_BASE = "https://sentry.io/api/0";
 export class SentryApiError extends Error {
   status: number;
   details?: unknown;
-  constructor(message: string, status = 500, details?: unknown) {
+  /** Stable machine code for known caller-correctable failures. */
+  code?: string;
+  constructor(message: string, status = 500, details?: unknown, code?: string) {
     super(message);
     this.name = "SentryApiError";
     this.status = status;
     this.details = details;
+    if (code) this.code = code;
   }
 }
 
@@ -43,6 +46,30 @@ export function isSentryConfigured(
 }
 
 export { resolveSentryDsn };
+
+/**
+ * Sentry issue search does not support Boolean OR/AND operators. Space-separated
+ * terms are implicit AND; multi-value OR uses key:[a,b]. Standalone OR/AND tokens
+ * produce HTTP 400 from the issues endpoint.
+ */
+const ISSUE_SEARCH_BOOLEAN_OPERATOR = /(?:^|[\s(])(?:OR|AND)(?:$|[\s)])/;
+
+export function assertValidIssueSearchQuery(query: string): void {
+  if (!ISSUE_SEARCH_BOOLEAN_OPERATOR.test(query)) return;
+  throw new SentryApiError(
+    "Sentry issue search does not support Boolean OR/AND. Use space-separated terms (implicit AND) or key:[value1,value2] for multi-value match.",
+    400,
+    { reason: "boolean_operators_unsupported", query: query.slice(0, 200) },
+    "invalid_search_query",
+  );
+}
+
+function isKnownInvalidSearchDetail(detail: string | null | undefined): boolean {
+  if (!detail) return false;
+  return /Boolean statements containing\s*"?(?:OR|AND)"?/i.test(detail)
+    || /Boolean statements containing .* are not supported in this search/i.test(detail)
+    || /Error parsing search query/i.test(detail);
+}
 
 type SentryFetchOptions = RequestInit & {
   /**
@@ -81,6 +108,19 @@ async function sentryFetch(
       return res;
     }
     const detail = await readBoundedProviderBody(res).catch(() => null);
+    // Known-invalid issue search shapes are caller input, not integration defects.
+    if (res.status === 400 && isKnownInvalidSearchDetail(detail)) {
+      log.debug(`Sentry API invalid search query: ${res.status} ${res.statusText}`, {
+        path,
+        detailPreview: detail?.slice(0, 300) || undefined,
+      });
+      throw new SentryApiError(
+        `Sentry API ${res.status}: invalid search query`,
+        res.status,
+        detail,
+        "invalid_search_query",
+      );
+    }
     log.error(`Sentry API error: ${res.status} ${res.statusText}`, {
       detailPreview: detail?.slice(0, 500) || undefined,
     });
@@ -139,8 +179,10 @@ export async function fetchIssues(
   project: string,
   options: { query?: string; sort?: string; limit?: number } = {}
 ): Promise<SentryIssue[]> {
+  const query = options.query ?? "is:unresolved";
+  assertValidIssueSearchQuery(query);
   const params = new URLSearchParams();
-  params.set("query", options.query ?? "is:unresolved");
+  params.set("query", query);
   if (options.sort) params.set("sort", options.sort);
   params.set("limit", String(Math.min(100, Math.max(1, options.limit ?? 25))));
 
