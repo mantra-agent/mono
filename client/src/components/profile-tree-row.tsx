@@ -30,6 +30,7 @@ export function ProfileTreeRow({
   defaultOpen = false,
   mobileLayout = "stacked",
   valueLayout = "default",
+  onOpenChange,
 }: {
   label: ReactNode;
   icon?: ReactNode;
@@ -46,8 +47,14 @@ export function ProfileTreeRow({
   mobileLayout?: "stacked" | "inline";
   /** Controls inline label/value allocation; `compact` lets labels use remaining width. */
   valueLayout?: "default" | "compact";
+  /** Fires when expand open state changes (collapsed ↔ expanded). */
+  onOpenChange?: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    onOpenChange?.(next);
+  };
 
   if (!hasValue && !showEmpty) return null;
 
@@ -85,7 +92,7 @@ export function ProfileTreeRow({
   const stackedNoValueGrid = inlineNoValueGrid;
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
+    <Collapsible open={open} onOpenChange={handleOpenChange} data-testid={testId}>
       <div className="group last:border-b-0">
         <div
           className={cn(

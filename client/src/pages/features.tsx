@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -55,6 +55,7 @@ import {
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { recordBrowserTelemetry } from "@/lib/browser-telemetry";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -162,6 +163,78 @@ function formatHistoryWhen(iso: string): string {
 function isActivePipelineSession(session: ChatSession | undefined | null): boolean {
   if (!session) return false;
   return isDurablyActiveSession(session) || session.status === "streaming";
+}
+
+function bucketDuration(ms: number): string {
+  if (ms < 250) return "under_250ms";
+  if (ms < 1_000) return "250ms_1s";
+  if (ms < 3_000) return "1s_3s";
+  if (ms < 10_000) return "3s_10s";
+  return "over_10s";
+}
+
+function recordFeaturesTelemetry(
+  name: string,
+  value: number,
+  unit: "ms" | "count" = "ms",
+  metadata?: Record<string, unknown>,
+): void {
+  if (!Number.isFinite(value) || value < 0) return;
+  recordBrowserTelemetry({
+    kind: "features",
+    name,
+    value,
+    unit,
+    routeKey: "/features",
+    bucket: unit === "ms" ? bucketDuration(value) : undefined,
+    metadata,
+  });
+}
+
+/**
+ * Resolve the live pipeline session for one Feature without scanning the full
+ * session catalog. Callers pass the page-level active-session shortlist.
+ */
+function resolveActiveFeatureSession(args: {
+  featureId: string;
+  summary: string;
+  linkedSessions: FeatureSessionLink[];
+  launchedSessionId: string | null;
+  sessionsById: Map<string, ChatSession>;
+  activePipelineSessions: ChatSession[];
+}): ChatSession | null {
+  const startedAt = performance.now();
+  const candidates = new Map<string, ChatSession>();
+  for (const link of args.linkedSessions) {
+    const session = args.sessionsById.get(link.sessionId);
+    if (session && isActivePipelineSession(session)) candidates.set(session.id, session);
+  }
+  if (args.launchedSessionId) {
+    const launched = args.sessionsById.get(args.launchedSessionId);
+    if (launched && isActivePipelineSession(launched)) candidates.set(launched.id, launched);
+  }
+  // Title match covers the gap before @feature discovery indexes the launch message.
+  // Only active sessions are candidates — never O(features × all sessions).
+  const summary = args.summary.trim();
+  if (summary) {
+    for (const session of args.activePipelineSessions) {
+      if (!session.title?.includes(summary)) continue;
+      candidates.set(session.id, session);
+    }
+  }
+  const active = [...candidates.values()].sort(
+    (a, b) => Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt),
+  );
+  const elapsed = performance.now() - startedAt;
+  // Sample expensive matches only; keep ambient noise low.
+  if (elapsed >= 8 || Math.random() < 0.05) {
+    recordFeaturesTelemetry("session_match", elapsed, "ms", {
+      featureId: args.featureId,
+      candidateCount: candidates.size,
+      activeSessionPool: args.activePipelineSessions.length,
+    });
+  }
+  return active[0] ?? null;
 }
 
 function NewFeature({
@@ -279,7 +352,17 @@ function NewFeature({
   );
 }
 
-function FeatureRow({ feature, products }: { feature: Feature; products: Product[] }) {
+const FeatureRow = memo(function FeatureRow({
+  feature,
+  products,
+  sessionsById,
+  activePipelineSessions,
+}: {
+  feature: Feature;
+  products: Product[];
+  sessionsById: Map<string, ChatSession>;
+  activePipelineSessions: ChatSession[];
+}) {
   const { toast } = useToast();
   const launch = useSessionLaunch();
   const [editingOwner, setEditingOwner] = useState(false);
@@ -287,6 +370,8 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
   const [editingDescription, setEditingDescription] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(feature.summary);
+  /** Expand open — history fetches only when true (lazy). */
+  const [rowExpanded, setRowExpanded] = useState(false);
   /** Optimistic link after a row launch, before discovery/artifact indexing catches up. */
   const [launchedSessionId, setLaunchedSessionId] = useState<string | null>(null);
 
@@ -335,57 +420,62 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
       }),
   });
 
+  // Linked-session fetch is gated: title-match against the active shortlist,
+  // an optimistic launch on this row, or expand (for explicit discovery links).
+  // Never fan out /sessions to every Feature just because one elsewhere is humming.
+  const titleMightMatchActive = useMemo(() => {
+    const summary = feature.summary.trim();
+    if (!summary || activePipelineSessions.length === 0) return false;
+    return activePipelineSessions.some((session) => session.title?.includes(summary));
+  }, [activePipelineSessions, feature.summary]);
+  const sessionsQueryEnabled =
+    Boolean(launchedSessionId) || titleMightMatchActive || rowExpanded;
   const { data: linkedSessions = [] } = useQuery<FeatureSessionLink[]>({
     queryKey: ["/api/features", feature.id, "sessions"],
     queryFn: async () => {
       const response = await apiRequest("GET", `/api/features/${feature.id}/sessions`);
       return response.json();
     },
-    staleTime: 5_000,
+    enabled: sessionsQueryEnabled,
+    staleTime: 15_000,
   });
 
+  // History is expand-only — collapsed rows must not each hit /history.
   const { data: historyRows = [] } = useQuery<FeatureHistoryRow[]>({
     queryKey: ["/api/features", feature.id, "history"],
     queryFn: async () => {
+      const startedAt = performance.now();
       const response = await apiRequest("GET", `/api/features/${feature.id}/history?limit=30`);
-      return response.json();
+      const rows = (await response.json()) as FeatureHistoryRow[];
+      recordFeaturesTelemetry("expand", performance.now() - startedAt, "ms", {
+        featureId: feature.id,
+        historyCount: rows.length,
+      });
+      return rows;
     },
-    staleTime: 5_000,
+    enabled: rowExpanded,
+    staleTime: 30_000,
   });
 
-  const { data: allSessions = [] } = useQuery<ChatSession[]>({
-    queryKey: ["/api/sessions"],
-  });
-
-  const sessionsById = useMemo(() => {
-    const map = new Map<string, ChatSession>();
-    for (const session of allSessions) map.set(session.id, session);
-    return map;
-  }, [allSessions]);
-
-  const activeSession = useMemo(() => {
-    const candidates = new Map<string, ChatSession>();
-    for (const link of linkedSessions) {
-      const session = sessionsById.get(link.sessionId);
-      if (session) candidates.set(session.id, session);
-    }
-    if (launchedSessionId) {
-      const launched = sessionsById.get(launchedSessionId);
-      if (launched) candidates.set(launched.id, launched);
-    }
-    // Title match covers the gap before @feature discovery indexes the launch message.
-    const summary = feature.summary.trim();
-    if (summary) {
-      for (const session of allSessions) {
-        if (!session.title?.includes(summary)) continue;
-        candidates.set(session.id, session);
-      }
-    }
-    const active = [...candidates.values()]
-      .filter((session) => isActivePipelineSession(session))
-      .sort((a, b) => Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt));
-    return active[0] ?? null;
-  }, [allSessions, feature.summary, launchedSessionId, linkedSessions, sessionsById]);
+  const activeSession = useMemo(
+    () =>
+      resolveActiveFeatureSession({
+        featureId: feature.id,
+        summary: feature.summary,
+        linkedSessions,
+        launchedSessionId,
+        sessionsById,
+        activePipelineSessions,
+      }),
+    [
+      activePipelineSessions,
+      feature.id,
+      feature.summary,
+      launchedSessionId,
+      linkedSessions,
+      sessionsById,
+    ],
+  );
 
   const isSessionInProgress = Boolean(activeSession);
 
@@ -396,6 +486,10 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
       setLaunchedSessionId(null);
     }
   }, [launchedSessionId, sessionsById]);
+
+  const handleRowOpenChange = useCallback((open: boolean) => {
+    setRowExpanded(open);
+  }, []);
 
   const activeSessionMeta: ChildSessionBlockMeta | null = activeSession
     ? {
@@ -649,6 +743,7 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
             )}
           </div>
         )}
+        onOpenChange={handleRowOpenChange}
         expandedContentClassName="px-2 pb-2 pl-2"
         expandedContent={(
           <div className="space-y-0.5">
@@ -1017,22 +1112,45 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
       ) : null}
     </div>
   );
-}
+});
 
 export default function FeaturesPage() {
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
   /** Empty set = all products. Non-empty = only those product ids. */
   const [productFilter, setProductFilter] = useState<Set<number>>(() => new Set());
+  const mountStartedAtRef = useRef(
+    typeof performance !== "undefined" ? performance.now() : Date.now(),
+  );
+  const firstPaintRecordedRef = useRef(false);
+
   const features = useQuery<Feature[]>({
     queryKey: ["/api/features", search],
     queryFn: async () => {
-      const response = await apiRequest("GET", `/api/features${search ? `?search=${encodeURIComponent(search)}` : ""}`);
-      return response.json();
+      const startedAt = performance.now();
+      const response = await apiRequest(
+        "GET",
+        `/api/features${search ? `?search=${encodeURIComponent(search)}` : ""}`,
+      );
+      const rows = (await response.json()) as Feature[];
+      recordFeaturesTelemetry("list_fetch", performance.now() - startedAt, "ms", {
+        rowCount: rows.length,
+        searched: Boolean(search),
+      });
+      recordFeaturesTelemetry("row_count", rows.length, "count", {
+        searched: Boolean(search),
+      });
+      return rows;
     },
+    staleTime: 15_000,
   });
   const products = useQuery<Product[]>({ queryKey: ["/api/products"] });
   const people = useQuery<{ people: Person[] }>({ queryKey: ["/api/people"] });
+  // One page-level sessions subscription — rows never each re-query /api/sessions.
+  const sessions = useQuery<ChatSession[]>({
+    queryKey: ["/api/sessions"],
+    staleTime: 10_000,
+  });
   const currentPerson = people.data?.people.find((person) => person.cabinetLevel === "user") ?? null;
   const productList = products.data ?? [];
   const filteredFeatures = useMemo(() => {
@@ -1044,6 +1162,46 @@ export default function FeaturesPage() {
     () => stages.map((stage) => ({ stage, rows: filteredFeatures.filter((row) => row.stage === stage) })),
     [filteredFeatures],
   );
+
+  const sessionsById = useMemo(() => {
+    const map = new Map<string, ChatSession>();
+    for (const session of sessions.data ?? []) map.set(session.id, session);
+    return map;
+  }, [sessions.data]);
+
+  // Shortlist of live pipeline sessions for title-match without O(N×M) scans.
+  const activePipelineSessions = useMemo(
+    () => (sessions.data ?? []).filter((session) => isActivePipelineSession(session)),
+    [sessions.data],
+  );
+
+  useEffect(() => {
+    if (firstPaintRecordedRef.current) return;
+    if (features.isLoading || sessions.isLoading) return;
+    firstPaintRecordedRef.current = true;
+    const elapsed = performance.now() - mountStartedAtRef.current;
+    recordFeaturesTelemetry("first_paint", elapsed, "ms", {
+      rowCount: filteredFeatures.length,
+      activeSessionCount: activePipelineSessions.length,
+    });
+    recordFeaturesTelemetry("active_sessions", activePipelineSessions.length, "count", {
+      rowCount: filteredFeatures.length,
+    });
+  }, [
+    activePipelineSessions.length,
+    features.isLoading,
+    filteredFeatures.length,
+    sessions.isLoading,
+  ]);
+
+  // Keep active-session count fresh while humming without spamming first_paint.
+  useEffect(() => {
+    if (!firstPaintRecordedRef.current) return;
+    recordFeaturesTelemetry("active_sessions", activePipelineSessions.length, "count", {
+      rowCount: filteredFeatures.length,
+    });
+  }, [activePipelineSessions.length, filteredFeatures.length]);
+
   const toggleProductFilter = (productId: number, checked: boolean) => {
     setProductFilter((prev) => {
       const next = new Set(prev);
@@ -1147,7 +1305,12 @@ export default function FeaturesPage() {
                 {rows.length ? (
                   rows.map((feature, index) => (
                     <HierarchyTreeRow key={feature.id} continues={index < rows.length - 1} connectorAnchor="first-row-center">
-                      <FeatureRow feature={feature} products={productList} />
+                      <FeatureRow
+                        feature={feature}
+                        products={productList}
+                        sessionsById={sessionsById}
+                        activePipelineSessions={activePipelineSessions}
+                      />
                     </HierarchyTreeRow>
                   ))
                 ) : (

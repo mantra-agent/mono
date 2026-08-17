@@ -305,6 +305,12 @@ function frontendMetricBudget(frontend: BrowserTelemetrySummary, kind: string, n
   if (kind === "long_task") return frontend.budgets.longTaskP95Ms;
   if (kind === "event_loop_responsiveness") return frontend.budgets.eventLoopResponsivenessP95Ms;
   if (kind === "frame_contention") return frontend.budgets.frameContentionP95Ms;
+  if (kind === "features") {
+    if (name === "list_fetch") return frontend.budgets.features.listFetchP95Ms;
+    if (name === "first_paint") return frontend.budgets.features.firstPaintP95Ms;
+    if (name === "session_match") return frontend.budgets.features.sessionMatchP95Ms;
+    if (name === "expand") return frontend.budgets.features.expandP95Ms;
+  }
   return Number.POSITIVE_INFINITY;
 }
 
@@ -385,6 +391,12 @@ function formatMetricTitle(kind: string, name: string): string {
     "graph:first_interactive": "First interactive",
     "graph:init_task": "Init task",
     "graph:layout_settled": "Layout settled",
+    "features:list_fetch": "List fetch",
+    "features:first_paint": "First paint",
+    "features:session_match": "Session match",
+    "features:active_sessions": "Active sessions",
+    "features:row_count": "Row count",
+    "features:expand": "Expand",
   };
   if (titles[key]) return titles[key];
   // Fallback: measurement name only — never re-prefix the kind (section already names the domain).
