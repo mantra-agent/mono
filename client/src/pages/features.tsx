@@ -7,6 +7,7 @@ import {
   FileText,
   FlaskConical,
   Hammer,
+  History,
   Lightbulb,
   Loader2,
   Package,
@@ -72,6 +73,19 @@ type FeatureSessionLink = {
   evidenceType: "explicit" | "discovered";
   createdAt?: string | null;
 };
+type FeatureHistoryRow = {
+  id: string;
+  feature_id: string;
+  from_stage: FeatureStage | null;
+  to_stage: FeatureStage;
+  from_status: FeatureStatus | null;
+  to_status: FeatureStatus;
+  note: string;
+  source: string;
+  actor_user_id?: string | null;
+  session_id?: string | null;
+  created_at: string;
+};
 
 /** Same chrome as expanded Project summary — bordered card frame, capped height. */
 const FEATURE_DESCRIPTION_FRAME_CLASS =
@@ -95,6 +109,34 @@ const STAGE_ICONS: Record<FeatureStage, ReactNode> = {
 
 function formatStage(stage: FeatureStage) {
   return formatFeatureStage(stage);
+}
+
+function formatHistoryTransition(row: FeatureHistoryRow): string {
+  const fromStage = row.from_stage ? formatFeatureStage(row.from_stage) : "—";
+  const toStage = formatFeatureStage(row.to_stage);
+  const fromStatus = row.from_status ? STATUS_LABELS[row.from_status] : "—";
+  const toStatus = STATUS_LABELS[row.to_status];
+  if (row.from_stage !== row.to_stage && row.from_status !== row.to_status) {
+    return `${fromStage}/${fromStatus} → ${toStage}/${toStatus}`;
+  }
+  if (row.from_stage !== row.to_stage) {
+    return `${fromStage} → ${toStage}`;
+  }
+  if (row.from_status !== row.to_status) {
+    return `${fromStatus} → ${toStatus}`;
+  }
+  return `${toStage}/${toStatus}`;
+}
+
+function formatHistoryWhen(iso: string): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return iso;
+  return new Date(ms).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function isActivePipelineSession(session: ChatSession | undefined | null): boolean {
@@ -233,6 +275,7 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/features"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/features", feature.id, "history"] });
     },
     onError: (error: unknown) =>
       toast({
@@ -246,6 +289,15 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
     queryKey: ["/api/features", feature.id, "sessions"],
     queryFn: async () => {
       const response = await apiRequest("GET", `/api/features/${feature.id}/sessions`);
+      return response.json();
+    },
+    staleTime: 5_000,
+  });
+
+  const { data: historyRows = [] } = useQuery<FeatureHistoryRow[]>({
+    queryKey: ["/api/features", feature.id, "history"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", `/api/features/${feature.id}/history?limit=30`);
       return response.json();
     },
     staleTime: 5_000,
@@ -416,7 +468,13 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
           >
             <Select
               value={feature.stage}
-              onValueChange={(stage) => update.mutate({ stage })}
+              onValueChange={(stage) =>
+                update.mutate({
+                  stage,
+                  historyNote: `Manual stage change ${formatStage(feature.stage)} → ${formatStage(stage as FeatureStage)}`,
+                  historySource: "manual",
+                })
+              }
               disabled={update.isPending}
             >
               <SelectTrigger className="h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0" data-testid={`select-feature-stage-${feature.id}`}>
@@ -442,7 +500,13 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
           >
             <Select
               value={feature.status}
-              onValueChange={(status) => update.mutate({ status })}
+              onValueChange={(status) =>
+                update.mutate({
+                  status,
+                  historyNote: `Manual status change ${STATUS_LABELS[feature.status]} → ${STATUS_LABELS[status as FeatureStatus]}`,
+                  historySource: "manual",
+                })
+              }
               disabled={update.isPending}
             >
               <SelectTrigger className="h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0" data-testid={`select-feature-status-${feature.id}`}>
@@ -552,6 +616,38 @@ function FeatureRow({ feature, products }: { feature: Feature; products: Product
               />
             </div>
           ) : null}
+
+          <div className="pt-2" data-testid={`feature-history-${feature.id}`}>
+            <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+              <History className="h-3 w-3" />
+              History
+            </div>
+            {historyRows.length === 0 ? (
+              <p className="px-1 text-xs text-muted-foreground/50">No stage or status changes yet.</p>
+            ) : (
+              <ul className="max-h-48 space-y-1.5 overflow-y-auto px-1">
+                {historyRows.map((row) => (
+                  <li
+                    key={row.id}
+                    className="rounded-md border border-border/20 bg-muted/20 px-2 py-1.5"
+                    data-testid={`feature-history-row-${row.id}`}
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-xs font-medium text-foreground">
+                        {formatHistoryTransition(row)}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-muted-foreground/70">
+                        {formatHistoryWhen(row.created_at)}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                      {row.note}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       )}
       menuContent={(

@@ -33,6 +33,45 @@ async function assertProduct(id: number, writable: boolean) {
   return result.product;
 }
 
+function historyNote(value: unknown, fallback: string): string {
+  if (typeof value === "string" && value.trim()) {
+    const trimmed = value.trim();
+    if (trimmed.length > 2000) throw Object.assign(new Error("History note is too long"), { status: 400 });
+    return trimmed;
+  }
+  return fallback;
+}
+
+/**
+ * Append one provenance row for a Feature stage/status change.
+ * Sole writer lives inside featureStorage create/update/archive.
+ */
+async function appendHistory(args: {
+  featureId: string;
+  fromStage: string | null;
+  toStage: string;
+  fromStatus: string | null;
+  toStatus: string;
+  note: string;
+  source: string;
+  sessionId?: string | null;
+}) {
+  const p = principal();
+  const ownership = ownedInsertValues(p, scopeColumns as any);
+  const actorUserId = p.actorType === "user" ? p.userId : null;
+  const sessionId = typeof args.sessionId === "string" && args.sessionId.trim() ? args.sessionId.trim() : null;
+  await db.execute(sql`
+    INSERT INTO feature_history (
+      feature_id, from_stage, to_stage, from_status, to_status, note, source,
+      actor_user_id, session_id, scope, owner_user_id, account_id
+    ) VALUES (
+      ${args.featureId}, ${args.fromStage}, ${args.toStage}, ${args.fromStatus}, ${args.toStatus},
+      ${args.note}, ${args.source}, ${actorUserId}, ${sessionId},
+      ${ownership.scope}, ${ownership.ownerUserId}, ${ownership.accountId}
+    )
+  `);
+}
+
 export const featureStorage = {
   async list(input: { productId?: number; includeArchived?: boolean; search?: string } = {}) {
     const p = principal();
@@ -62,6 +101,18 @@ export const featureStorage = {
     const description = input.description === undefined ? "" : optionalText(input.description, "Description", 10000);
     const ownership = ownedInsertValues(p, { scope: sql`scope`, ownerUserId: sql`owner_user_id`, accountId: sql`account_id` } as any);
     const [row] = await db.execute(sql`INSERT INTO features (product_id, owner_person_id, spec_page_id, summary, description, stage, status, scope, owner_user_id, account_id) VALUES (${productId}, ${ownerPersonId}, ${specPageId}, ${summary}, ${description}, ${stage}, 'ready', ${ownership.scope}, ${ownership.ownerUserId}, ${ownership.accountId}) RETURNING *`).then(r => r.rows);
+    if (row) {
+      await appendHistory({
+        featureId: String((row as any).id),
+        fromStage: null,
+        toStage: stage,
+        fromStatus: null,
+        toStatus: "ready",
+        note: historyNote(input.historyNote ?? input.note, `Created Feature at ${stage}/ready`),
+        source: typeof input.historySource === "string" && input.historySource.trim() ? input.historySource.trim() : "create",
+        sessionId: input.sessionId,
+      });
+    }
     return row;
   },
   async update(id: string, input: any) {
@@ -81,10 +132,57 @@ export const featureStorage = {
       productId = nextProductId;
     }
     const reset = stage !== current.stage;
-    const result = await db.execute(sql`UPDATE features SET product_id=${productId}, summary=${summary}, description=${description}, owner_person_id=${owner}, spec_page_id=${spec}, stage=${stage}, status=${reset ? "ready" : status}, updated_at=CURRENT_TIMESTAMP WHERE id=${id} AND owner_user_id=${p.userId} AND account_id=${p.accountId} AND archived_at IS NULL RETURNING *`);
-    return result.rows[0];
+    const nextStatus = reset ? "ready" : status;
+    const stageChanged = stage !== current.stage;
+    const statusChanged = nextStatus !== current.status;
+    if ((stageChanged || statusChanged) && !(typeof input.historyNote === "string" && input.historyNote.trim()) && !(typeof input.note === "string" && input.note.trim())) {
+      // Prefer an explicit why-note on stage/status mutations. Fall back only for
+      // mechanical stage-reset from a bare stage write so existing clients still work.
+      if (!stageChanged) {
+        throw Object.assign(new Error("historyNote is required when status changes"), { status: 400 });
+      }
+    }
+    const result = await db.execute(sql`UPDATE features SET product_id=${productId}, summary=${summary}, description=${description}, owner_person_id=${owner}, spec_page_id=${spec}, stage=${stage}, status=${nextStatus}, updated_at=CURRENT_TIMESTAMP WHERE id=${id} AND owner_user_id=${p.userId} AND account_id=${p.accountId} AND archived_at IS NULL RETURNING *`);
+    const row = result.rows[0];
+    if (row && (stageChanged || statusChanged)) {
+      const fallback = stageChanged
+        ? `Stage ${current.stage} → ${stage}${statusChanged ? ` (status ${current.status} → ${nextStatus})` : " (status reset to ready)"}`
+        : `Status ${current.status} → ${nextStatus}`;
+      await appendHistory({
+        featureId: id,
+        fromStage: String(current.stage),
+        toStage: stage,
+        fromStatus: String(current.status),
+        toStatus: nextStatus,
+        note: historyNote(input.historyNote ?? input.note, fallback),
+        source: typeof input.historySource === "string" && input.historySource.trim()
+          ? input.historySource.trim()
+          : "update",
+        sessionId: input.sessionId,
+      });
+    }
+    return row;
   },
-  async archive(id: string) { const p = principal(); const result = await db.execute(sql`UPDATE features SET archived_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=${id} AND owner_user_id=${p.userId} AND account_id=${p.accountId} AND archived_at IS NULL RETURNING *`); return result.rows[0]; },
+  async archive(id: string, input: any = {}) {
+    const p = principal();
+    const current = await this.get(id);
+    if (!current) return undefined;
+    const result = await db.execute(sql`UPDATE features SET archived_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=${id} AND owner_user_id=${p.userId} AND account_id=${p.accountId} AND archived_at IS NULL RETURNING *`);
+    const row = result.rows[0];
+    if (row) {
+      await appendHistory({
+        featureId: id,
+        fromStage: String(current.stage),
+        toStage: String(current.stage),
+        fromStatus: String(current.status),
+        toStatus: String(current.status),
+        note: historyNote(input.historyNote ?? input.note, "Archived Feature"),
+        source: "archive",
+        sessionId: input.sessionId,
+      });
+    }
+    return row;
+  },
   async permanentlyDelete(id: string, confirmation: boolean) { if (confirmation !== true) throw Object.assign(new Error("Permanent deletion requires confirm=true"), { status: 400 }); const p = principal(); const result = await db.execute(sql`DELETE FROM features WHERE id=${id} AND owner_user_id=${p.userId} AND account_id=${p.accountId} RETURNING id`); return !!result.rows[0]; },
   async linkKpi(id: string, kpiAddress: string, idempotencyKey: string) {
     const p = principal(); const feature = await this.get(id); if (!feature) throw Object.assign(new Error("Feature not found"), { status: 404 });
@@ -117,5 +215,46 @@ export const featureStorage = {
         : null;
     }));
     return [...explicit, ...discovered].filter((row): row is NonNullable<typeof row> => row !== null);
+  },
+  /**
+   * Append-only stage/status provenance for one Feature.
+   * Newest first. Optional filters for stage/status query.
+   */
+  async listHistory(
+    id: string,
+    input: {
+      limit?: number;
+      toStage?: string;
+      toStatus?: string;
+      fromStage?: string;
+      fromStatus?: string;
+    } = {},
+  ) {
+    const p = principal();
+    const feature = await this.get(id);
+    if (!feature) return undefined;
+    const limit = Number.isInteger(input.limit) && (input.limit as number) > 0
+      ? Math.min(input.limit as number, 200)
+      : 50;
+    const conditions = [
+      sql`h.feature_id = ${id}`,
+      p.actorType === "system"
+        ? sql`TRUE`
+        : sql`(h.scope = 'global' OR (h.owner_user_id = ${p.userId} AND h.account_id = ${p.accountId}))`,
+      input.toStage ? sql`h.to_stage = ${enumValue(input.toStage, FEATURE_STAGES, "toStage")}` : undefined,
+      input.toStatus ? sql`h.to_status = ${enumValue(input.toStatus, FEATURE_STATUSES, "toStatus")}` : undefined,
+      input.fromStage ? sql`h.from_stage = ${enumValue(input.fromStage, FEATURE_STAGES, "fromStage")}` : undefined,
+      input.fromStatus ? sql`h.from_status = ${enumValue(input.fromStatus, FEATURE_STATUSES, "fromStatus")}` : undefined,
+    ].filter((condition): condition is Exclude<typeof condition, undefined> => condition !== undefined);
+    const where = conditions.reduce<ReturnType<typeof sql>>((query, condition) => sql`${query} AND ${condition}`);
+    const result = await db.execute(sql`
+      SELECT h.id, h.feature_id, h.from_stage, h.to_stage, h.from_status, h.to_status,
+             h.note, h.source, h.actor_user_id, h.session_id, h.created_at
+      FROM feature_history h
+      WHERE ${where}
+      ORDER BY h.created_at DESC
+      LIMIT ${limit}
+    `);
+    return result.rows;
   },
 };
