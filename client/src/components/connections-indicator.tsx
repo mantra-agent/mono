@@ -1,6 +1,7 @@
 import { Glasses, Globe2, Smartphone } from "lucide-react";
 import { useMemo } from "react";
 import { useClientPresence } from "@/hooks/use-client-presence";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { ClientPresenceKind } from "@shared/client-presence";
 
@@ -58,14 +59,17 @@ export function ConnectionsIndicator({ emptyText, className }: ConnectionsIndica
       data-testid="connections-indicator"
     >
       {orderedKinds.map((kind) => (
-        <span
-          key={kind}
-          className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground bg-background/80"
-          title={KIND_LABEL[kind]}
-          data-testid={`connection-icon-${kind}`}
-        >
-          <PresenceIcon kind={kind} />
-        </span>
+        <Tooltip key={kind}>
+          <TooltipTrigger asChild>
+            <span
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground bg-background/80"
+              data-testid={`connection-icon-${kind}`}
+            >
+              <PresenceIcon kind={kind} />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{KIND_LABEL[kind]}</TooltipContent>
+        </Tooltip>
       ))}
     </div>
   );

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { createLogger } from "@/lib/logger";
 import {
   loadPdfJs,
@@ -137,18 +138,24 @@ function ToolbarButton({
   children: ReactNode;
 }) {
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      className="h-11 w-11 shrink-0 text-muted-foreground hover:text-foreground"
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      {children}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 shrink-0 text-muted-foreground hover:text-foreground"
+            aria-label={label}
+            disabled={disabled}
+            onClick={onClick}
+          >
+            {children}
+          </Button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 

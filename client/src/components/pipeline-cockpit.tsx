@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { cn } from "@/lib/utils";
 
@@ -305,38 +306,51 @@ function PipelineActionButton({
     </>
   );
 
+  const tooltip = action.tooltip ?? action.label;
   if (action.href) {
     return (
-      <Button
-        asChild
-        size={size}
-        variant={variant}
-        disabled={action.disabled}
-        data-testid={action.testId}
-        className={className}
-        title={action.tooltip ?? action.label}
-        aria-label={action.label}
-      >
-        <a href={action.href} target="_blank" rel="noopener noreferrer">
-          {content}
-        </a>
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex">
+            <Button
+              asChild
+              size={size}
+              variant={variant}
+              disabled={action.disabled}
+              data-testid={action.testId}
+              className={className}
+              aria-label={action.label}
+            >
+              <a href={action.href} target="_blank" rel="noopener noreferrer">
+                {content}
+              </a>
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{tooltip}</TooltipContent>
+      </Tooltip>
     );
   }
 
   return (
-    <Button
-      size={size}
-      variant={variant}
-      onClick={action.onClick}
-      disabled={action.disabled || action.pending}
-      data-testid={action.testId}
-      className={className}
-      title={action.tooltip ?? action.label}
-      aria-label={action.label}
-    >
-      {content}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">
+          <Button
+            size={size}
+            variant={variant}
+            onClick={action.onClick}
+            disabled={action.disabled || action.pending}
+            data-testid={action.testId}
+            className={className}
+            aria-label={action.label}
+          >
+            {content}
+          </Button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
   );
 }
 

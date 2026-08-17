@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -528,36 +529,51 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
             </Badge>
           )}
           <div className="flex items-center gap-1.5 ml-auto">
-            <Button
-              size="icon"
-              variant={paused ? "secondary" : "ghost"}
-              onClick={() => setPaused(!paused)}
-              className="h-7 w-7"
-              title={paused ? "Resume live updates" : "Pause live updates"}
-              data-testid="button-pause-logs"
-            >
-              {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={handleCopy}
-              className="h-7 w-7"
-              title="Copy logs"
-              data-testid="button-copy-logs"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={handleDownload}
-              className="h-7 w-7"
-              title="Download logs"
-              data-testid="button-download-logs"
-            >
-              <Download className="h-3.5 w-3.5" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant={paused ? "secondary" : "ghost"}
+                  onClick={() => setPaused(!paused)}
+                  className="h-7 w-7"
+                  aria-label={paused ? "Resume live updates" : "Pause live updates"}
+                  data-testid="button-pause-logs"
+                >
+                  {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{paused ? "Resume live updates" : "Pause live updates"}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={handleCopy}
+                  className="h-7 w-7"
+                  aria-label="Copy logs"
+                  data-testid="button-copy-logs"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Copy logs</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={handleDownload}
+                  className="h-7 w-7"
+                  aria-label="Download logs"
+                  data-testid="button-download-logs"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Download logs</TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </div>

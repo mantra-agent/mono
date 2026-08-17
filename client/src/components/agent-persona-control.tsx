@@ -213,11 +213,11 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
             </button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
-        <TooltipContent side="right" className="text-xs">
+        <TooltipContent side="right">
           <span className="inline-flex items-center gap-1">
             {showPinnedIcon && (
               <Pin
-                className="h-3 w-3 shrink-0 text-foreground"
+                className="h-3 w-3 shrink-0 text-white"
                 fill="currentColor"
                 aria-label="Pinned"
               />

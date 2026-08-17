@@ -167,25 +167,30 @@ function GlobalCompletionCalendar({
               }
               const info = cellInfo(day);
               const showStar = info.pct > 80;
+              const cellLabel = `${day.date}: ${day.count} completed wellness activities${info.pct > 0 ? ` (${info.pct}% of maximum)` : ""}`;
               return (
-                <button
-                  key={`cell-${wi}-${di}`}
-                  type="button"
-                  data-testid={`cal-cell-${day.date}`}
-                  title={`${day.date}: ${day.count} completed wellness activities${info.pct > 0 ? ` (${info.pct}% of maximum)` : ""}`}
-                  onClick={() => onSelectDate(day.date)}
-                  style={info.style}
-                  className={`relative block ${cellClass} appearance-none rounded-[3px] border-0 p-0 ${info.className} ${day.date === today ? "ring-1 ring-foreground/60" : ""} hover:ring-1 hover:ring-foreground/60 transition-shadow`}
-                >
-                  {showStar && (
-                    <Heart
-                      data-testid={`cal-cell-star-${day.date}`}
-                      className="absolute inset-0 m-auto h-3.5 w-3.5 text-white drop-shadow-sm"
-                      fill="currentColor"
-                      strokeWidth={1.5}
-                    />
-                  )}
-                </button>
+                <Tooltip key={`cell-${wi}-${di}`}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid={`cal-cell-${day.date}`}
+                      aria-label={cellLabel}
+                      onClick={() => onSelectDate(day.date)}
+                      style={info.style}
+                      className={`relative block ${cellClass} appearance-none rounded-[3px] border-0 p-0 ${info.className} ${day.date === today ? "ring-1 ring-foreground/60" : ""} hover:ring-1 hover:ring-foreground/60 transition-shadow`}
+                    >
+                      {showStar && (
+                        <Heart
+                          data-testid={`cal-cell-star-${day.date}`}
+                          className="absolute inset-0 m-auto h-3.5 w-3.5 text-white drop-shadow-sm"
+                          fill="currentColor"
+                          strokeWidth={1.5}
+                        />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{cellLabel}</TooltipContent>
+                </Tooltip>
               );
             })}
           </div>
@@ -544,15 +549,19 @@ function InlineEditableText({
   }
 
   return (
-    <span
-      data-testid={`text-${field}-${activityId}`}
-      className={`cursor-pointer hover:bg-muted/50 rounded px-0.5 -mx-0.5 transition-colors ${className ?? ""}`}
-      style={style}
-      onClick={() => { setEditing(true); setLocalValue(value); }}
-      title="Click to edit"
-    >
-      {value || <span className="text-muted-foreground/50 italic">{placeholder ?? "—"}</span>}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          data-testid={`text-${field}-${activityId}`}
+          className={`cursor-pointer hover:bg-muted/50 rounded px-0.5 -mx-0.5 transition-colors ${className ?? ""}`}
+          style={style}
+          onClick={() => { setEditing(true); setLocalValue(value); }}
+        >
+          {value || <span className="text-muted-foreground/50 italic">{placeholder ?? "—"}</span>}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>Click to edit</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -616,14 +625,18 @@ function InlineEditableNumber({
 
   const display = value != null ? `${value}${suffix ?? ""}` : "—";
   return (
-    <span
-      data-testid={`text-${field}-${activityId}`}
-      className={`cursor-pointer hover:bg-muted/50 rounded px-0.5 -mx-0.5 transition-colors ${className ?? ""}`}
-      onClick={() => { setEditing(true); setLocalValue(String(value ?? "")); }}
-      title="Click to edit"
-    >
-      {display}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          data-testid={`text-${field}-${activityId}`}
+          className={`cursor-pointer hover:bg-muted/50 rounded px-0.5 -mx-0.5 transition-colors ${className ?? ""}`}
+          onClick={() => { setEditing(true); setLocalValue(String(value ?? "")); }}
+        >
+          {display}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>Click to edit</TooltipContent>
+    </Tooltip>
   );
 }
 

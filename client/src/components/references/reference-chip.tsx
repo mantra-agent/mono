@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useReferenceLabel } from "@/hooks/use-reference-label";
 import { useOptionalTaskModal } from "@/contexts/task-modal-context";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
@@ -77,7 +78,6 @@ export function ReferenceChip({
         className,
       )}
       style={!isDegraded && color ? { color } : undefined}
-      title={tooltip}
       aria-label={iconOnly ? label : undefined}
       data-testid={`reference-${resolved.ref.type}-${resolved.ref.id}`}
     >
@@ -95,8 +95,8 @@ export function ReferenceChip({
     </span>
   );
 
-  if (resolved.href && resolved.status === "resolved") {
-    return (
+  const chip =
+    resolved.href && resolved.status === "resolved" ? (
       <a
         href={resolved.href}
         className={cn(
@@ -109,8 +109,14 @@ export function ReferenceChip({
       >
         {content}
       </a>
+    ) : (
+      content
     );
-  }
 
-  return content;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{chip}</TooltipTrigger>
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
+  );
 }

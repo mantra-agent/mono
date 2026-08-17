@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 export interface ActivityHeatmapDay {
   date: string;
@@ -109,24 +110,28 @@ export function ActivityHeatmap({ days, marker, onSelectDate, valueLabel }: Acti
                   : false;
               const MarkerIcon = marker?.icon;
               return (
-                <button
-                  key={day.date}
-                  type="button"
-                  title={`${day.date}: ${day.value} ${valueLabel}`}
-                  onClick={() => onSelectDate?.(day.date)}
-                  style={{ backgroundColor: heatmapFillColor(percent) }}
-                  className={`relative block h-5 w-5 shrink-0 appearance-none rounded-[3px] border-0 p-0 transition-shadow hover:ring-1 hover:ring-foreground/60 ${day.date === latestDate ? "ring-1 ring-foreground/60" : ""}`}
-                  data-testid={`heatmap-cell-${day.date}`}
-                >
-                  {showMarker && MarkerIcon && (
-                    <MarkerIcon
-                      aria-hidden="true"
-                      className="absolute inset-0 m-auto h-3.5 w-3.5 text-white drop-shadow-sm"
-                      fill={marker.filled ? "currentColor" : "none"}
-                      strokeWidth={1.5}
-                    />
-                  )}
-                </button>
+                <Tooltip key={day.date}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={`${day.date}: ${day.value} ${valueLabel}`}
+                      onClick={() => onSelectDate?.(day.date)}
+                      style={{ backgroundColor: heatmapFillColor(percent) }}
+                      className={`relative block h-5 w-5 shrink-0 appearance-none rounded-[3px] border-0 p-0 transition-shadow hover:ring-1 hover:ring-foreground/60 ${day.date === latestDate ? "ring-1 ring-foreground/60" : ""}`}
+                      data-testid={`heatmap-cell-${day.date}`}
+                    >
+                      {showMarker && MarkerIcon && (
+                        <MarkerIcon
+                          aria-hidden="true"
+                          className="absolute inset-0 m-auto h-3.5 w-3.5 text-white drop-shadow-sm"
+                          fill={marker.filled ? "currentColor" : "none"}
+                          strokeWidth={1.5}
+                        />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{`${day.date}: ${day.value} ${valueLabel}`}</TooltipContent>
+                </Tooltip>
               );
             })}
           </div>

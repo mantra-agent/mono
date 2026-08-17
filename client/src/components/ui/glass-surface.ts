@@ -1,5 +1,5 @@
 /**
- * Canonical glass treatment for toast + modal decision surfaces.
+ * Canonical glass treatment for toast, tooltip, and modal decision surfaces.
  *
  * Sheen layers (`before` / `after`) must paint *under* content. They use
  * negative z-index inside an isolated stacking context so every consumer —

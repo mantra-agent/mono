@@ -3854,6 +3854,54 @@ function DesignResponsiveMenuPlayground() {
   );
 }
 
+function DesignTooltipPlayground() {
+  return (
+    <div className="space-y-4 rounded-md border border-border/30 bg-muted/10 p-4">
+      <div className="space-y-1">
+        <div className="text-sm font-medium">Glass tooltips</div>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Hover labels use the same glass as toasts and modal decision surfaces.
+          One primitive: <span className="font-mono text-foreground">TooltipContent</span>.
+          The collapsed navbar is the live reference.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="outline" size="sm">
+              Hover me
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Sessions, people, and work</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="Refresh">
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Refresh</TooltipContent>
+        </Tooltip>
+      </div>
+      <ul className="space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+        <li>
+          <span className="text-foreground">Surface:</span>{" "}
+          <span className="font-mono text-foreground">GLASS_SURFACE_CLASS</span>
+          , white / white-soft text, compact padding.
+        </li>
+        <li>
+          <span className="text-foreground">Copy:</span> a short label or one quiet clause.
+        </li>
+        <li>
+          <span className="text-foreground">Forbidden:</span> native{" "}
+          <span className="font-mono">title=</span>, popover restyles, canvas{" "}
+          <span className="font-mono">text-muted-foreground</span> on glass.
+        </li>
+      </ul>
+    </div>
+  );
+}
+
 /** Interactive Design playground for the universal @ picker. */
 function DesignReferencePlayground() {
   const [anything, setAnything] = useState<ReferencePickerValue[]>([]);
@@ -4985,6 +5033,14 @@ export function DesignTab() {
 
         <DesignSection
           number="14"
+          eyebrow="Tooltips"
+          title="Glass hover labels"
+        >
+          <DesignTooltipPlayground />
+        </DesignSection>
+
+        <DesignSection
+          number="15"
           eyebrow="References"
           title="Typed reference links"
         >
@@ -5079,7 +5135,7 @@ export function DesignTab() {
         </DesignSection>
 
         <DesignSection
-          number="15"
+          number="16"
           eyebrow="Scrollbars"
           title="Invisible until scrolling"
         >
@@ -5143,7 +5199,7 @@ export function DesignTab() {
           </div>
         </DesignSection>
 
-        <DesignSection number="16" eyebrow="Guardrails" title="Do and don't">
+        <DesignSection number="17" eyebrow="Guardrails" title="Do and don't">
           <div className="grid gap-4 @lg:grid-cols-2">
             <DoDontCard kind="do" title="Do use the system">
               <div className="space-y-3">
@@ -5180,7 +5236,7 @@ export function DesignTab() {
         </DesignSection>
 
         <DesignSection
-          number="17"
+          number="18"
           eyebrow="Access"
           title="Accessibility exemplars"
         >
@@ -5234,7 +5290,7 @@ export function DesignTab() {
         </DesignSection>
 
         <DesignSection
-          number="18"
+          number="19"
           eyebrow="Doctrine"
           title="Design roles and scopes"
         >
@@ -5290,7 +5346,7 @@ export function DesignTab() {
         </DesignSection>
 
         <DesignSection
-          number="19"
+          number="20"
           eyebrow="Audit"
           title="Application suite rubric"
         >

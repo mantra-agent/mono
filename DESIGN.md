@@ -9,7 +9,7 @@
 
 **Zero Interface.** The best possible interface is no interface. The second best is the theoretical minimum that matters at any given moment. Not a dashboard, not a form. A dynamic surface, generated just-in-time for whatever matters most. Every design decision is measured against this: does it move toward the theoretical minimum, or does it add surface area the user must manage?
 
-**Dark Canvas, Trees for UI, Glass for Modals.** The background is the interface. `bg-background` (pure black in dark mode) is the default canvas. Route and embedded UIs sit directly on that canvas and organize objects through the canonical Hierarchy Tree: compact rows, nesting, disclosure, selection, and structural separators. Do not use Cards as page, dashboard, settings, detail, or object-grouping containers. Every modal decision surface uses `MODAL_GLASS_SURFACE_CLASS`, the same canonical glass format as toasts: translucent warm-dark gradient, white structural edge and highlights, deep shadow, and `backdrop-blur-xl`. Glass sheen layers paint under content (`isolate` + negative z-index), and modal copy uses white / white-soft text — never canvas `text-muted-foreground` on glass. Preserve the standard black overlay behind the modal; glass replaces only the modal surface. Borders are structural separators (`border-b border-border/20`), not decoration.
+**Dark Canvas, Trees for UI, Glass for Modals and Tooltips.** The background is the interface. `bg-background` (pure black in dark mode) is the default canvas. Route and embedded UIs sit directly on that canvas and organize objects through the canonical Hierarchy Tree: compact rows, nesting, disclosure, selection, and structural separators. Do not use Cards as page, dashboard, settings, detail, or object-grouping containers. Every modal decision surface uses `MODAL_GLASS_SURFACE_CLASS`, the same canonical glass format as toasts and tooltips: translucent warm-dark gradient, white structural edge and highlights, deep shadow, and `backdrop-blur-xl`. Hover labels use that same glass through `TooltipContent`. Glass sheen layers paint under content (`isolate` + negative z-index), and glass copy uses white / white-soft text — never canvas `text-muted-foreground` on glass. Preserve the standard black overlay behind the modal; glass replaces only the modal surface. Borders are structural separators (`border-b border-border/20`), not decoration.
 
 **Clarity Above All.** Remove everything that isn't essential. Every element on screen earns its place through utility, orientation, or delight. Maximize Tufte's data-ink ratio. If removing an element changes nothing about comprehension, it shouldn't be there.
 
@@ -176,12 +176,14 @@ Background color is structural first, semantic only when the surface is literall
 - **Route and embedded UIs**: Content sits directly on the canvas. Object sets and structured data use the canonical Hierarchy Tree, not Cards.
 - **Grouping**: Use tree sections, indentation, quiet rails, row expansion, and structural borders. Do not create a Card merely to establish visual separation.
 - **Modal surfaces**: Every modal, alert dialog, modal sheet, and modal drawer uses `MODAL_GLASS_SURFACE_CLASS`. It is the exact shared toast glass format: translucent warm-dark gradient, white structural edge/highlights, deep shadow, `overflow-hidden`, `min-w-0`, `backdrop-blur-xl`, and sheen layers stacked *under* content via `isolate` + `before/after:-z-10`. Modal titles use `text-white`; descriptions and secondary copy use `text-white/70`. Do not put canvas `text-muted-foreground` on glass — it washes out. Keep the standard black overlay behind it; do not replace the overlay or black canvas with glass.
+- **Hover labels**: Every designed tooltip uses `TooltipContent`, which already paints `GLASS_SURFACE_CLASS`. Same glass family, compact `rounded-xl` padding, white / white-soft text. Native `title=` is leftover chrome, not a second language.
 - **Editable fields (settings, secrets, credentials, object detail)**: These are TreeView rows, not cards and not standalone `Input`+`Button` forms. Compose `ProfileDetailSection` (the collapsible group header) with `ProfileTreeRow` (one row per field): label + icon on the left, the value or an inline right-aligned input as the row's child, and any rotate/clear/destructive action in the `menuContent` hover overflow menu. When a field is being edited, open the input inline beneath or within the row — never in a `rounded-lg border bg-card` box. The canonical live references are the SOURCE section on the environment detail page and the Secrets screen; the pattern is demonstrated on the in-app Design page under Components → "Edit fields".
 
 | Role | Token/class | Use | Forbidden |
 |---|---|---|---|
 | Page canvas | `background` / `bg-background` | Full page, root panels, terminal/log canvases. **Default surface for all content.** | — |
 | Modal decision surface | `MODAL_GLASS_SURFACE_CLASS` | Dialogs, alert dialogs, modal sheets, modal drawers, and custom modal surfaces. Preserve the black overlay behind it. Content sits above glass sheen; use white / white-soft text. | `bg-background`, `bg-card`, one-off gradients, removing/replacing the black overlay, sheen over text, or canvas `text-muted-foreground` on glass |
+| Hover label | `TooltipContent` / `GLASS_SURFACE_CLASS` | Navbar, icon-only controls, heatmap cells, presence marks, and other designed hover labels. Compact glass, white / white-soft text. | Native `title=`, popover restyles, `bg-popover`, canvas `text-muted-foreground` on glass |
 | Passive inset | `muted` / `bg-muted` | Code, metadata wells, disabled zones, quiet nested areas | Selected state, CTA emphasis, alerts |
 | Hover/selected chrome | `accent` / `bg-accent` | Transient hover, selected navigation rows, neutral UI chrome | Persistent semantic callouts |
 | Primary CTA fill | `cta` / `bg-cta` | The one primary action button or equivalent decisive control | Background tints, panels, generic icons, badges, decorative examples |
@@ -493,6 +495,20 @@ Chat is an explicit exception. Its Mantra mark and conversation prompt are part 
 - The Design screen's **Responsive action menus** playground is the canonical visual and interaction example. Any change to action-menu behavior must update that example and this section together.
 - The same compact grammar governs menus, selectors, and action/selection popovers: content-sized surfaces, `p-1` framing, compact single-line rows, quiet 14px icons, restrained radius and shadow, and bounded overflow. Explicit picker width may grow for search/results; task dialogs, workflow modals, tooltips, and hover cards are separate patterns and must not be compressed into this grammar.
 
+### Tooltips
+
+Hover labels are glass. One primitive, one surface.
+
+- **MUST use** `Tooltip` / `TooltipTrigger` / `TooltipContent` from `client/src/components/ui/tooltip.tsx`. Do not invent a local tooltip, restyle a popover into a label, or use the browser `title` attribute as designed hover chrome.
+- `TooltipContent` owns the surface: `GLASS_SURFACE_CLASS`, white / white-soft text, compact `rounded-xl` padding, `text-xs`. Same glass family as toasts and modal decision surfaces — translucent warm-dark gradient, white structural edge, deep shadow, `backdrop-blur-xl`.
+- Canonical live reference: collapsed navbar / nav descriptions (`SemanticNavButton` in `app-sidebar.tsx`). The Design screen's **Glass tooltips** playground is the visual example. Any change to tooltip surface must update that example and this section together.
+- Copy is a short label or one quiet clause. Not a paragraph, not a second surface, not a menu.
+- Children on glass use `text-white` / `text-white/70`. Never canvas `text-muted-foreground` or `text-foreground` — they wash out.
+- Do not restyle `TooltipContent` with `bg-popover`, `bg-background`, `bg-card`, or canvas text tokens. Width, `side`, and `align` only.
+- Icon-only controls, heatmap cells, presence marks, and other designed hover labels keep `aria-label` on the control and show the glass tooltip as the visual.
+- Truncated visible text may use the same glass tooltip for the full string. It must not use native `title` chrome.
+- Not this pattern: chart series popovers (`ChartTooltipContent` on a non-tree canvas), action menus, hover cards that are not labels, modal copy.
+
 ### Inputs
 
 - Inputs use tokenized border, background, focus ring, and placeholder color.
@@ -614,6 +630,7 @@ Scrollbars are structural. They should indicate containment and scrollability wi
 | Use motion for continuity | Use motion as ornament |
 | Use references as typed links | Render durable objects as plain text |
 | Compose shared primitives | Invent local one-off widgets |
+| Use glass `TooltipContent` for hover labels | Use native `title=` or a restyled popover as a tooltip |
 
 ## Anti-patterns
 
@@ -625,6 +642,7 @@ Avoid these unless Ray explicitly chooses a local exception:
 - `max-w-* mx-auto` on page shells.
 - Non-canonical references.
 - Hover-only actions with no keyboard path.
+- Native `title=` used as a designed hover label.
 - Motion that delays the user's next action.
 
 ## LEGACY
