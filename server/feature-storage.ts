@@ -6,12 +6,22 @@ import { createAddressLink, listAddressLinks, listReferenceOccurrences, retireAd
 import { getVisibleProduct, getWritableProduct } from "./platforms/platform-access";
 import { getSessionsByArtifact } from "./session-artifacts";
 import { chatFileStorage } from "./chat-file-storage";
+import { eventBus } from "./event-bus";
 import { FEATURE_STAGES, FEATURE_STATUSES, type FeatureStage, type FeatureStatus } from "@shared/feature-pipeline";
 
 export { FEATURE_STAGES, FEATURE_STATUSES };
 
 const scopeColumns = { scope: sql`scope`, ownerUserId: sql`owner_user_id`, accountId: sql`account_id` };
 function principal() { return requireCurrentPrincipal(); }
+
+/** Push Features list consumers (UI + context) to refetch after a durable mutation. */
+function publishFeaturesChanged(action: "created" | "updated" | "archived" | "deleted", featureId: string): void {
+  eventBus.publish({
+    category: "system",
+    event: "data:features_changed",
+    payload: { source: "features", action, featureId },
+  });
+}
 function text(value: unknown, label: string, max: number): string {
   if (typeof value !== "string" || !value.trim() || value.trim().length > max) throw Object.assign(new Error(`${label} is required`), { status: 400 });
   return value.trim();
@@ -112,6 +122,7 @@ export const featureStorage = {
         source: typeof input.historySource === "string" && input.historySource.trim() ? input.historySource.trim() : "create",
         sessionId: input.sessionId,
       });
+      publishFeaturesChanged("created", String((row as any).id));
     }
     return row;
   },
@@ -161,6 +172,7 @@ export const featureStorage = {
         sessionId: input.sessionId,
       });
     }
+    if (row) publishFeaturesChanged("updated", id);
     return row;
   },
   async archive(id: string, input: any = {}) {
@@ -180,10 +192,18 @@ export const featureStorage = {
         source: "archive",
         sessionId: input.sessionId,
       });
+      publishFeaturesChanged("archived", id);
     }
     return row;
   },
-  async permanentlyDelete(id: string, confirmation: boolean) { if (confirmation !== true) throw Object.assign(new Error("Permanent deletion requires confirm=true"), { status: 400 }); const p = principal(); const result = await db.execute(sql`DELETE FROM features WHERE id=${id} AND owner_user_id=${p.userId} AND account_id=${p.accountId} RETURNING id`); return !!result.rows[0]; },
+  async permanentlyDelete(id: string, confirmation: boolean) {
+    if (confirmation !== true) throw Object.assign(new Error("Permanent deletion requires confirm=true"), { status: 400 });
+    const p = principal();
+    const result = await db.execute(sql`DELETE FROM features WHERE id=${id} AND owner_user_id=${p.userId} AND account_id=${p.accountId} RETURNING id`);
+    const deleted = !!result.rows[0];
+    if (deleted) publishFeaturesChanged("deleted", id);
+    return deleted;
+  },
   async linkKpi(id: string, kpiAddress: string, idempotencyKey: string) {
     const p = principal(); const feature = await this.get(id); if (!feature) throw Object.assign(new Error("Feature not found"), { status: 404 });
     const links = await listAddressLinks(p, { sourceAddress: `@feature:${id}`, predicates: ["intended_benefit"], lifecycle: "active", limit: 10 });

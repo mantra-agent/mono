@@ -33,6 +33,9 @@ const INVALIDATION_MAP: Record<string, string[][]> = {
   "data:library_changed": [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library/unread"], ["/api/library/index"]],
   "data:product_composition_changed": [["/api/mods"], ["/api/product-composition?modality=web"], ["/api/home/feed"]],
   "data:home_changed": [["/api/home/feed"]],
+  // Feature stage/status mutations (HTTP + Agent tools) so the Features tree
+  // flips unread/review chrome without a manual reload.
+  "data:features_changed": [["/api/features"]],
   "chat.autonomous.started": [["/api/sessions"]],
   "chat.autonomous.completed": [["/api/sessions"]],
   "chat.autonomous.failed": [["/api/sessions"]],
