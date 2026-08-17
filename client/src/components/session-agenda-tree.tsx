@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronRight,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { useAgendaDiscussion } from "@/hooks/use-agenda-discussion";
 import { buildSessionAgendaDiscussionMessage } from "@/lib/agenda-discussion";
@@ -47,6 +48,73 @@ import type {
   SessionAgendaItem,
   SessionAgendaItemStatus,
 } from "@shared/models/chat";
+
+const AGENDA_SECTION_OPEN_KEY = "mantra.session.agenda-section-open.v1";
+const MAX_PRINCIPALS = 12;
+const MAX_SESSIONS_PER_PRINCIPAL = 64;
+
+type SessionOpenMap = Record<string, boolean>;
+type PrincipalOpenMap = Record<string, SessionOpenMap>;
+
+function readOpenMap(): PrincipalOpenMap {
+  try {
+    const raw = window.localStorage.getItem(AGENDA_SECTION_OPEN_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+    const principals: PrincipalOpenMap = {};
+    for (const [principalKey, value] of Object.entries(parsed).slice(-MAX_PRINCIPALS)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const sessions: SessionOpenMap = {};
+      for (const [sessionKey, open] of Object.entries(value).slice(-MAX_SESSIONS_PER_PRINCIPAL)) {
+        if (typeof open === "boolean") sessions[sessionKey] = open;
+      }
+      principals[principalKey] = sessions;
+    }
+    return principals;
+  } catch {
+    return {};
+  }
+}
+
+function readAgendaSectionOpen(
+  principalKey: string | null,
+  sessionId: string,
+): boolean | null {
+  if (!principalKey) return null;
+  const value = readOpenMap()[principalKey]?.[sessionId];
+  return typeof value === "boolean" ? value : null;
+}
+
+function persistAgendaSectionOpen(
+  principalKey: string,
+  sessionId: string,
+  open: boolean,
+): void {
+  try {
+    const current = readOpenMap();
+    const sessions = {
+      ...(current[principalKey] ?? {}),
+      [sessionId]: open,
+    };
+    const boundedSessions = Object.fromEntries(
+      Object.entries(sessions).slice(-MAX_SESSIONS_PER_PRINCIPAL),
+    );
+    delete current[principalKey];
+    current[principalKey] = boundedSessions;
+    const boundedPrincipals = Object.fromEntries(
+      Object.entries(current).slice(-MAX_PRINCIPALS),
+    );
+    window.localStorage.setItem(AGENDA_SECTION_OPEN_KEY, JSON.stringify(boundedPrincipals));
+  } catch {
+    // Browser storage is optional chrome. Agenda remains usable without it.
+  }
+}
+
+function defaultAgendaSectionOpen(allItemsComplete: boolean): boolean {
+  return !allItemsComplete;
+}
 
 interface SessionAgendaTreeProps {
   sessionId: string;
@@ -172,7 +240,16 @@ export function SessionAgendaTree({
   const items = agenda?.items ?? [];
   const hasItems = items.length > 0;
   const allItemsComplete = hasItems && items.every((item) => item.status === "complete");
-  const [open, setOpen] = useState(() => !allItemsComplete);
+  const { user, principal } = useAuth();
+  const principalKey = useMemo(() => {
+    if (!user?.id || !principal?.accountId) return null;
+    return `${principal.accountId}:${user.id}`;
+  }, [principal?.accountId, user?.id]);
+  const [open, setOpenState] = useState(() => {
+    const stored = readAgendaSectionOpen(principalKey, sessionId);
+    if (stored !== null) return stored;
+    return defaultAgendaSectionOpen(allItemsComplete);
+  });
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const discussMutation = useAgendaDiscussion();
   const queryClient = useQueryClient();
@@ -192,12 +269,20 @@ export function SessionAgendaTree({
   });
 
   useEffect(() => {
-    if (hasItems) setOpen(!allItemsComplete);
-  }, [allItemsComplete, hasItems, sessionId]);
+    if (!hasItems) return;
+    const stored = readAgendaSectionOpen(principalKey, sessionId);
+    setOpenState(stored !== null ? stored : defaultAgendaSectionOpen(allItemsComplete));
+  }, [allItemsComplete, hasItems, principalKey, sessionId]);
+
+  const setOpen = useCallback((next: boolean) => {
+    setOpenState(next);
+    if (principalKey) persistAgendaSectionOpen(principalKey, sessionId, next);
+  }, [principalKey, sessionId]);
 
   if (!hasItems) return null;
 
-  const currentItemId = items.find((item) => item.status === "open")?.id;
+  const currentItem = items.find((item) => item.status === "open") ?? null;
+  const currentItemId = currentItem?.id;
 
   return (
     <div className="min-w-0 border-b border-border/20 p-2" data-testid="session-agenda-tree">
@@ -251,6 +336,21 @@ export function SessionAgendaTree({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+        {!open && currentItem && (
+          <div
+            className={cn(
+              HIERARCHY_SESSION_ROW_CLASS,
+              "min-w-0 bg-accent font-medium text-foreground",
+            )}
+            data-testid="agenda-active-step-preview"
+            aria-label={`Current agenda step: ${currentItem.title}`}
+          >
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">
+              <AgendaStatusIcon status={currentItem.status} current />
+            </span>
+            <span className="min-w-0 flex-1 truncate">{currentItem.title}</span>
+          </div>
+        )}
         <CollapsibleContent>
           <div className="min-w-0">
             {items.map((item, index) => (
