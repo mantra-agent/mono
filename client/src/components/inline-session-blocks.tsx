@@ -118,12 +118,24 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   const { data: childSession, isLoading: childSessionLoading, isFetching: childSessionFetching } = useQuery<ChildSessionPayload>({
     queryKey: ["/api/sessions", meta.childSessionId],
     enabled: !deleted,
-    refetchInterval: (childSession) => (
-      childSession.state.data?.status === "streaming" ||
-      childStream?.status === "streaming" ||
-      childStream?.runActive ||
-      expanded
-    ) ? 3000 : false,
+    // Parent-supplied live stream is the real-time path. Skip the 3s poll while
+    // collapsed with a live stream so N parallel Features don't each hammer
+    // /api/sessions/:id. Expanded still polls slowly for durable message hydration.
+    refetchInterval: (query) => {
+      const parentLive =
+        Boolean(childStream) &&
+        (childStream!.status === "streaming" || childStream!.runActive);
+      if (parentLive && !expanded) return false;
+      if (parentLive && expanded) return 10_000;
+      return (
+        query.state.data?.status === "streaming" ||
+        childStream?.status === "streaming" ||
+        childStream?.runActive ||
+        expanded
+      )
+        ? 3000
+        : false;
+    },
   });
 
   const cachedSessions = queryClient.getQueryData<import("@shared/models/chat").ChatSession[]>(["/api/sessions"]);

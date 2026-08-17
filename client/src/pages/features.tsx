@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import {
   Activity,
   Archive,
@@ -48,8 +49,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { ChildSessionBlock } from "@/components/inline-session-blocks";
+import { stripMessageTimestamp } from "@/components/chat-shared";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
 import { useSessionLaunch } from "@/hooks/use-session-launch";
+import {
+  useSessionSubscriptions,
+  useSessionStreamState,
+  type SessionStreamState,
+  type SessionStreamStore,
+} from "@/hooks/use-session-subscription";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -166,6 +174,96 @@ function isActivePipelineSession(session: ChatSession | undefined | null): boole
   if (!session) return false;
   return isDurablyActiveSession(session) || session.status === "streaming";
 }
+
+/** One-line live preview from stream segments — no SegmentStream mount. */
+function latestStreamPreviewLine(stream: SessionStreamState | null | undefined, fallback?: string | null): string {
+  const segments = stream?.streamingContent?.segments;
+  if (segments && segments.length > 0) {
+    for (let i = segments.length - 1; i >= 0; i -= 1) {
+      const segment = segments[i];
+      if (segment.type !== "content" || !segment.content) continue;
+      const lines = stripMessageTimestamp(segment.content)
+        .split("\n")
+        .map((line) => line.trim().replace(/\s+/g, " "))
+        .filter(Boolean);
+      const text = lines[lines.length - 1];
+      if (text) return text;
+    }
+  }
+  const summary = (fallback ?? "").trim();
+  if (summary) {
+    const lines = stripMessageTimestamp(summary)
+      .split("\n")
+      .map((line) => line.trim().replace(/\s+/g, " "))
+      .filter(Boolean);
+    return lines[lines.length - 1] || "Starting...";
+  }
+  return "Starting...";
+}
+
+/**
+ * Collapsed Features strip: live title + one-line preview from the page-level
+ * stream store. Full ChildSessionBlock (SegmentStream) mounts only on expand.
+ */
+const FeatureActiveSessionStrip = memo(function FeatureActiveSessionStrip({
+  meta,
+  streamStore,
+  wsConnected,
+}: {
+  meta: ChildSessionBlockMeta;
+  streamStore: SessionStreamStore;
+  wsConnected: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const stream = useSessionStreamState(streamStore, meta.childSessionId, wsConnected);
+  const title = meta.role || meta.childSessionId;
+  const preview = latestStreamPreviewLine(stream, meta.summary);
+  const href = `/session?c=${encodeURIComponent(meta.childSessionId)}`;
+
+  if (expanded) {
+    return (
+      <div className="px-2 pb-1.5 pl-8" data-testid={`feature-active-session-${meta.childSessionId}`}>
+        <ChildSessionBlock
+          meta={meta}
+          childStream={stream}
+          defaultExpanded
+        />
+        <button
+          type="button"
+          className="mt-1 text-[11px] text-muted-foreground hover:text-foreground"
+          onClick={() => setExpanded(false)}
+          data-testid={`button-collapse-feature-session-${meta.childSessionId}`}
+        >
+          Collapse transcript
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="cursor-pointer border border-border/60 bg-muted/20 rounded-md my-1 mx-2 ml-8 px-3 py-2"
+      onClick={() => setExpanded(true)}
+      data-testid={`feature-active-session-strip-${meta.childSessionId}`}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <ActiveStatusSpinner className="h-3.5 w-3.5 shrink-0" />
+        <Link
+          href={href}
+          className="min-w-0 flex-1 truncate text-sm text-active animate-pulse hover:underline underline-offset-2"
+          onClick={(event) => event.stopPropagation()}
+          title="Open session"
+        >
+          {title}
+        </Link>
+        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      </div>
+      <div className="mt-1 min-h-5 truncate pl-5 text-xs leading-5 text-muted-foreground">
+        {preview}
+      </div>
+    </div>
+  );
+});
 
 function bucketDuration(ms: number): string {
   if (ms < 250) return "under_250ms";
@@ -359,11 +457,16 @@ const FeatureRow = memo(function FeatureRow({
   products,
   sessionsById,
   activePipelineSessions,
+  streamStore,
+  streamWsConnected,
 }: {
   feature: Feature;
   products: Product[];
   sessionsById: Map<string, ChatSession>;
   activePipelineSessions: ChatSession[];
+  /** Page-level multiplexed stream store — real-time without N subscriptions. */
+  streamStore: SessionStreamStore;
+  streamWsConnected: boolean;
 }) {
   const { toast } = useToast();
   const launch = useSessionLaunch();
@@ -721,7 +824,7 @@ const FeatureRow = memo(function FeatureRow({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="relative h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-cta hover:bg-accent hover:text-active [&_svg]:size-3"
+                  className="relative h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-cta hover:bg-accent hover:text-active"
                   disabled={launch.isPending}
                   aria-label={`AI review ${feature.summary}`}
                   title={`AI ${reviewContract.actionLabel}`}
@@ -734,10 +837,11 @@ const FeatureRow = memo(function FeatureRow({
                   {reviewLaunchPending ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
-                    <>
+                    <span className="relative inline-flex h-3 w-3 items-center justify-center">
                       <Search className="h-3 w-3" />
-                      <Sparkles className="absolute right-0.5 top-0.5 h-1.5 w-1.5 text-cta" />
-                    </>
+                      {/* Tiny badge on glass corner — must not inherit button [&_svg]:size-*. */}
+                      <Sparkles className="pointer-events-none absolute -right-px -top-px !h-1.5 !w-1.5 text-cta" strokeWidth={2.5} />
+                    </span>
                   )}
                 </Button>
                 <Button
@@ -1060,7 +1164,7 @@ const FeatureRow = memo(function FeatureRow({
                 ) : (
                   <span className="relative mr-2 inline-flex h-3.5 w-3.5 items-center justify-center text-cta">
                     <Search className="h-3.5 w-3.5" />
-                    <Sparkles className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 text-cta" />
+                    <Sparkles className="pointer-events-none absolute -right-px -top-px h-1.5 w-1.5 text-cta" strokeWidth={2.5} />
                   </span>
                 )}
                 AI {reviewContract.actionLabel}
@@ -1169,12 +1273,11 @@ const FeatureRow = memo(function FeatureRow({
       )}
       />
       {activeSessionMeta ? (
-        <div className="px-2 pb-1.5 pl-8" data-testid={`feature-active-session-${feature.id}`}>
-          <ChildSessionBlock
-            meta={activeSessionMeta}
-            defaultExpanded={false}
-          />
-        </div>
+        <FeatureActiveSessionStrip
+          meta={activeSessionMeta}
+          streamStore={streamStore}
+          wsConnected={streamWsConnected}
+        />
       ) : null}
     </div>
   );
@@ -1239,6 +1342,17 @@ export default function FeaturesPage() {
   const activePipelineSessions = useMemo(
     () => (sessions.data ?? []).filter((session) => isActivePipelineSession(session)),
     [sessions.data],
+  );
+
+  // One multiplexed WS subscription for every live pipeline session on the page.
+  // Rows read from the shared store — no per-row useSessionSubscription.
+  const activePipelineSessionIds = useMemo(
+    () => activePipelineSessions.map((session) => session.id),
+    [activePipelineSessions],
+  );
+  const { store: featureStreamStore, wsConnected: featureStreamWsConnected } = useSessionSubscriptions(
+    activePipelineSessionIds,
+    { owner: "features-page" },
   );
 
   useEffect(() => {
@@ -1376,6 +1490,8 @@ export default function FeaturesPage() {
                         products={productList}
                         sessionsById={sessionsById}
                         activePipelineSessions={activePipelineSessions}
+                        streamStore={featureStreamStore}
+                        streamWsConnected={featureStreamWsConnected}
                       />
                     </HierarchyTreeRow>
                   ))
