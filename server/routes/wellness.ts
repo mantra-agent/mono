@@ -476,9 +476,53 @@ export async function archiveWellnessActivity(id: number): Promise<WellnessActiv
   return activity ?? null;
 }
 
-export async function logWellnessActivity(activityId: number, opts?: { notes?: string; completedAt?: Date }): Promise<WellnessLog | { duplicate: true }> {
+/** Activities whose checkmarks come only from dedicated journal screens. */
+const JOURNAL_OWNED_ACTIVITY_NAMES = new Set([
+  "gratitude",
+  "reflection",
+  "reflections",
+  "journaling",
+  "journal",
+]);
+
+const REFLECTION_ACTIVITY_NAMES = new Set(["reflection", "reflections", "journaling", "journal"]);
+const GRATITUDE_ACTIVITY_NAMES = new Set(["gratitude"]);
+
+function isJournalOwnedActivityName(name: string | null | undefined): boolean {
+  return JOURNAL_OWNED_ACTIVITY_NAMES.has((name ?? "").trim().toLowerCase());
+}
+
+async function logJournalOwnedActivity(
+  activityId: number,
+  completedAt: Date,
+): Promise<WellnessLog | { duplicate: true }> {
+  return logWellnessActivity(activityId, { completedAt, allowJournalOwned: true });
+}
+
+async function findActivitiesByNames(names: Set<string>): Promise<WellnessActivity[]> {
+  const activities = await queryWellnessActivities();
+  return activities.filter((a) => names.has(a.name.toLowerCase()));
+}
+
+export async function logWellnessActivity(
+  activityId: number,
+  opts?: { notes?: string; completedAt?: Date; allowJournalOwned?: boolean },
+): Promise<WellnessLog | { duplicate: true }> {
   const notes = opts?.notes ?? null;
   const completedAt = opts?.completedAt;
+
+  if (!opts?.allowJournalOwned) {
+    const [activity] = await db
+      .select({ name: wellnessActivities.name })
+      .from(wellnessActivities)
+      .where(and(eq(wellnessActivities.id, activityId), visibleActivity()))
+      .limit(1);
+    if (activity && isJournalOwnedActivityName(activity.name)) {
+      throw new Error(
+        `${activity.name} can only be completed from its dedicated screen after you write that day's entry`,
+      );
+    }
+  }
 
   if (completedAt) {
     const dateStr = userDateStr(completedAt);
@@ -742,7 +786,35 @@ export async function seedMetricLinks(): Promise<void> {
   }
 }
 
-export async function deleteWellnessLog(logId: number): Promise<boolean> {
+async function assertNotManualJournalLogMutation(
+  activityId: number,
+  opts?: { allowJournalOwned?: boolean },
+): Promise<void> {
+  if (opts?.allowJournalOwned) return;
+  const [activity] = await db
+    .select({ name: wellnessActivities.name })
+    .from(wellnessActivities)
+    .where(and(eq(wellnessActivities.id, activityId), visibleActivity()))
+    .limit(1);
+  if (activity && isJournalOwnedActivityName(activity.name)) {
+    throw new Error(
+      `${activity.name} can only be completed from its dedicated screen after you write that day's entry`,
+    );
+  }
+}
+
+export async function deleteWellnessLog(
+  logId: number,
+  opts?: { allowJournalOwned?: boolean },
+): Promise<boolean> {
+  const [existing] = await db
+    .select({ activityId: wellnessLogs.activityId })
+    .from(wellnessLogs)
+    .where(writableLog(eq(wellnessLogs.id, logId)))
+    .limit(1);
+  if (!existing) return false;
+  await assertNotManualJournalLogMutation(existing.activityId, opts);
+
   const result = await db
     .delete(wellnessLogs)
     .where(writableLog(eq(wellnessLogs.id, logId)))
@@ -750,7 +822,12 @@ export async function deleteWellnessLog(logId: number): Promise<boolean> {
   return result.length > 0;
 }
 
-export async function deleteWellnessLogByDate(activityId: number, dateStr: string): Promise<boolean> {
+export async function deleteWellnessLogByDate(
+  activityId: number,
+  dateStr: string,
+  opts?: { allowJournalOwned?: boolean },
+): Promise<boolean> {
+  await assertNotManualJournalLogMutation(activityId, opts);
   const { start: startOfDay, end: endOfDay } = userDayBounds(dateStr);
   const result = await db
     .delete(wellnessLogs)
@@ -893,11 +970,10 @@ export async function upsertGratitudeEntry(content: string, date?: string): Prom
     entry = inserted;
   }
 
-  const activities = await queryWellnessActivities();
-  const gratitudeActivity = activities.find(a => a.name.toLowerCase() === "gratitude");
-  if (gratitudeActivity) {
-    const completedAt = userNoon(dateStr);
-    await logWellnessActivity(gratitudeActivity.id, { completedAt });
+  const gratitudeActivities = await findActivitiesByNames(GRATITUDE_ACTIVITY_NAMES);
+  const completedAt = userNoon(dateStr);
+  for (const activity of gratitudeActivities) {
+    await logJournalOwnedActivity(activity.id, completedAt);
   }
 
   return entry;
@@ -930,10 +1006,9 @@ export async function deleteGratitudeEntry(date: string): Promise<boolean> {
 
   if (result.length === 0) return false;
 
-  const activities = await queryWellnessActivities();
-  const gratitudeActivity = activities.find(a => a.name.toLowerCase() === "gratitude");
-  if (gratitudeActivity) {
-    await deleteWellnessLogByDate(gratitudeActivity.id, date);
+  const gratitudeActivities = await findActivitiesByNames(GRATITUDE_ACTIVITY_NAMES);
+  for (const activity of gratitudeActivities) {
+    await deleteWellnessLogByDate(activity.id, date, { allowJournalOwned: true });
   }
 
   return true;
@@ -1033,11 +1108,10 @@ export async function upsertReflectionEntry(content: string, date?: string): Pro
     entry = inserted;
   }
 
-  const activities = await queryWellnessActivities();
-  const reflectionActivity = activities.find(a => a.name.toLowerCase() === "reflection");
-  if (reflectionActivity) {
-    const completedAt = userNoon(dateStr);
-    await logWellnessActivity(reflectionActivity.id, { completedAt });
+  const reflectionActivities = await findActivitiesByNames(REFLECTION_ACTIVITY_NAMES);
+  const completedAt = userNoon(dateStr);
+  for (const activity of reflectionActivities) {
+    await logJournalOwnedActivity(activity.id, completedAt);
   }
 
   return entry;
@@ -1070,10 +1144,9 @@ export async function deleteReflectionEntry(date: string): Promise<boolean> {
 
   if (result.length === 0) return false;
 
-  const activities = await queryWellnessActivities();
-  const reflectionActivity = activities.find(a => a.name.toLowerCase() === "reflection");
-  if (reflectionActivity) {
-    await deleteWellnessLogByDate(reflectionActivity.id, date);
+  const reflectionActivities = await findActivitiesByNames(REFLECTION_ACTIVITY_NAMES);
+  for (const activity of reflectionActivities) {
+    await deleteWellnessLogByDate(activity.id, date, { allowJournalOwned: true });
   }
 
   return true;
@@ -1414,6 +1487,9 @@ export async function registerWellnessRoutes(app: Express) {
       }
       res.json(result);
     } catch (error: any) {
+      if (typeof error?.message === "string" && error.message.includes("dedicated screen")) {
+        return res.status(400).json({ error: error.message });
+      }
       log.error("log activity error:", error.message);
       res.status(500).json({ error: error.message });
     }
@@ -1427,6 +1503,9 @@ export async function registerWellnessRoutes(app: Express) {
       if (!deleted) return res.status(404).json({ error: "No log found for that date" });
       res.json({ ok: true });
     } catch (error: any) {
+      if (typeof error?.message === "string" && error.message.includes("dedicated screen")) {
+        return res.status(400).json({ error: error.message });
+      }
       log.error("delete log by date error:", error.message);
       res.status(500).json({ error: error.message });
     }
@@ -1440,6 +1519,9 @@ export async function registerWellnessRoutes(app: Express) {
       if (!deleted) return res.status(404).json({ error: "Log not found" });
       res.json({ ok: true });
     } catch (error: any) {
+      if (typeof error?.message === "string" && error.message.includes("dedicated screen")) {
+        return res.status(400).json({ error: error.message });
+      }
       log.error("delete log error:", error.message);
       res.status(500).json({ error: error.message });
     }

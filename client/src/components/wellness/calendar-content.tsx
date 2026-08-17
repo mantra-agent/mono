@@ -25,9 +25,14 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useState, useCallback, useRef, useMemo, useContext, createContext, useEffect } from "react";
+import { useLocation } from "wouter";
 import { useTimezone } from "@/hooks/use-timezone";
 import { ActivityDetailView } from "./activity-detail-view";
 import { ActivityHeartbeatSparkline, type WellnessLogEntry } from "./heartbeat-timeline";
+import {
+  getUiInteractionTargetHref,
+  type UiInteractionTarget,
+} from "@shared/ui-interaction";
 
 function formatLocalDate(d: Date, timezone?: string): string {
   if (timezone) {
@@ -198,6 +203,18 @@ function GlobalCompletionCalendar({
   );
 }
 
+// Reflections and Gratitude own dedicated screens; only Learning stays embedded.
+const EXPANDABLE_ACTIVITIES = new Set(["learning"]);
+
+/** Journal activities completed only on their own screens — checkbox navigates, never toggles. */
+const JOURNAL_NAV_TARGETS: Record<string, UiInteractionTarget> = {
+  reflection: "navigation.reflections.open",
+  reflections: "navigation.reflections.open",
+  journaling: "navigation.reflections.open",
+  journal: "navigation.reflections.open",
+  gratitude: "navigation.gratitude.open",
+};
+
 function HeatmapDayDialog({
   date,
   activities,
@@ -209,6 +226,7 @@ function HeatmapDayDialog({
 }) {
   const tz = useCalendarTimezone();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const open = date !== null;
 
   const { data: dayLogs } = useQuery<WellnessLogEntry[]>({
@@ -286,6 +304,7 @@ function HeatmapDayDialog({
                     const pending =
                       (logMutation.isPending && logMutation.variables?.activityId === a.id) ||
                       (unlogMutation.isPending && unlogMutation.variables?.activityId === a.id);
+                    const journalNavTarget = JOURNAL_NAV_TARGETS[a.name.toLowerCase()];
                     return (
                       <label
                         key={a.id}
@@ -298,6 +317,12 @@ function HeatmapDayDialog({
                           disabled={pending || !date}
                           onCheckedChange={(v) => {
                             if (!date) return;
+                            if (journalNavTarget) {
+                              // Journal checks come only from a real entry on the dedicated screen.
+                              onClose();
+                              setLocation(getUiInteractionTargetHref(journalNavTarget));
+                              return;
+                            }
                             if (v) logMutation.mutate({ activityId: a.id, d: date });
                             else unlogMutation.mutate({ activityId: a.id, d: date });
                           }}
@@ -758,9 +783,6 @@ function JournalExpansion({ type }: { type: JournalType }) {
   );
 }
 
-// Reflections and Gratitude now own dedicated screens; only Learning stays embedded.
-const EXPANDABLE_ACTIVITIES = new Set(["learning"]);
-
 function ActivityRow({
   activity,
   logs,
@@ -774,7 +796,11 @@ function ActivityRow({
   const [expanded, setExpanded] = useState(false);
   const { toast } = useToast();
   const tz = useCalendarTimezone();
-  const isExpandable = EXPANDABLE_ACTIVITIES.has(activity.name.toLowerCase());
+  const [, setLocation] = useLocation();
+  const activityKey = activity.name.toLowerCase();
+  const isExpandable = EXPANDABLE_ACTIVITIES.has(activityKey);
+  const journalNavTarget = JOURNAL_NAV_TARGETS[activityKey];
+  const isJournalNav = Boolean(journalNavTarget);
 
   const logMutation = useMutation({
     mutationFn: async (date?: string) => {
@@ -868,16 +894,28 @@ function ActivityRow({
         data-testid={`row-activity-${activity.id}`}
         className="group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full select-none transition-colors overflow-hidden hover:bg-accent/70"
       >
-        {/* Check circle — toggles expansion for expandable, logs for others */}
+        {/* Check circle — journal rows navigate; Learning expands; others log/unlog */}
         <span className="shrink-0 flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
             data-testid={`button-log-${activity.id}`}
+            aria-label={
+              isJournalNav
+                ? `Open ${activity.name}`
+                : activity.doneToday
+                  ? `Unlog ${activity.name}`
+                  : `Log ${activity.name}`
+            }
             className={activity.doneToday
               ? "h-4 w-4 rounded-full border border-success bg-transparent text-success inline-flex items-center justify-center transition-colors hover:bg-success/10"
               : "h-4 w-4 rounded-full border border-input bg-transparent inline-flex items-center justify-center transition-colors hover:border-success hover:bg-success/10"}
-            disabled={!isExpandable && (logCooldown || logMutation.isPending || unlogMutation.isPending)}
+            disabled={!isExpandable && !isJournalNav && (logCooldown || logMutation.isPending || unlogMutation.isPending)}
             onClick={() => {
+              if (isJournalNav && journalNavTarget) {
+                // Checked state comes only from a real same-day entry on the dedicated screen.
+                setLocation(getUiInteractionTargetHref(journalNavTarget));
+                return;
+              }
               if (isExpandable) {
                 setExpanded((prev) => !prev);
               } else if (activity.doneToday) {
