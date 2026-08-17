@@ -6365,10 +6365,53 @@ ${refs}` : ""),
         explicitEvent,
       });
     } catch (err) {
+      const { inputFailure, transientFailure, internalFailure } = await import("./tool-failure");
       if (err instanceof MeetingJoinError) {
-        return { result: err.message, error: true };
+        const message = err.message;
+        const lower = message.toLowerCase();
+        if (
+          lower.includes("doesn't look like") ||
+          lower.includes("paste the meeting") ||
+          lower.includes("no meeting url")
+        ) {
+          return { result: message, error: true, failure: inputFailure("meeting_input_invalid", message.slice(0, 160)) };
+        }
+        if (
+          lower.includes("not configured") ||
+          lower.includes("no public base url") ||
+          lower.includes("recall.ai is not configured")
+        ) {
+          return {
+            result: message,
+            error: true,
+            failure: inputFailure("integration_not_configured", "recall"),
+          };
+        }
+        if (
+          lower.includes("could not confirm") ||
+          lower.includes("without lifecycle") ||
+          lower.includes("retry once")
+        ) {
+          return {
+            result: message,
+            error: true,
+            failure: transientFailure("meeting_provider_transient", message.slice(0, 160)),
+          };
+        }
+        return {
+          result: message,
+          error: true,
+          failure: internalFailure("meeting_join_failed", message.slice(0, 160)),
+        };
       }
-      return { result: `Meeting join failed: ${err instanceof Error ? err.message : String(err)}`, error: true };
+      return {
+        result: `Meeting join failed: ${err instanceof Error ? err.message : String(err)}`,
+        error: true,
+        failure: internalFailure(
+          "meeting_join_failed",
+          err instanceof Error ? err.message.slice(0, 160) : String(err).slice(0, 160),
+        ),
+      };
     }
 
     return {
