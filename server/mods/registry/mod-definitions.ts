@@ -269,8 +269,9 @@ const wellness: ModDefinition = {
         iconKey: "Activity",
         route: "oura",
         detailSurface: "oura",
-        statusFields: ["oura"],
         audience: "primary",
+        readinessKind: "oauth-account",
+        oauthProvider: "oura",
       }),
     ],
     metricAdapters: [
