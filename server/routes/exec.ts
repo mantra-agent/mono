@@ -438,9 +438,8 @@ export function registerExecRoutes(app: Express): void {
       const opportunity = await opportunityStorage.get(id, currentPrincipal(req));
       if (!opportunity) return res.status(404).json({ error: "Opportunity not found" });
 
-      // Cover letters and resumes require a job description to target.
-      if ((kind === "cover_letter" || kind === "resume") && !opportunity.jdText?.trim()) {
-        return res.status(400).json({ error: "This opportunity has no job description. Paste the JD into the opportunity before generating." });
+      if (kind === "cover_letter" || kind === "resume") {
+        return res.status(410).json({ error: "Resume and cover-letter generation is retired." });
       }
 
       // Reject concurrent generation for the same slot.

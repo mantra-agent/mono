@@ -885,7 +885,7 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 - **Server-owned provisioning:** `ensureArtifactSlot()` resolves or creates the Library hierarchy (Opportunities root → Company → artifact page) before spawning the skill session. This prevents race conditions on page creation
 - **Skill spawning:** POST `/api/exec/opportunities/:id/artifacts/:kind/generate` → provisions slot → builds preContext → `executeAutonomousSkillRun()` → navigates client to skill session
 - **Concurrency guard:** Checks for active skill session before allowing generation (prevents duplicate runs)
-- **3 artifact generators:** research (opportunity mode: web research → Library page), cover-letter (structured content → Library + DOCX), resume (3-phase gap analysis → Library + DOCX)
+- **1 live artifact generator:** research (opportunity mode: web research → Library page). Resume and cover-letter skills are retired.
 - **Metrics bank:** Verified quantified accomplishments (metric name, value, optional experienceId link). Resume skill pulls ONLY from metrics bank — never fabricates numbers
 - **DOCX rendering:** `render_artifact_docx` bridge tool action validates content against zod schema, renders via docx package with BRAND tokens, writes to object storage
 
@@ -893,8 +893,7 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 - Experience scope fields are auto-healed on boot — DDL adds columns if missing, backfills title=domain
 - Artifact DOCX files live in object storage at `artifacts/{filename}`
 - The opportunity_library_pages physical table still exists in DB (legacy) but is unused — opportunityArtifacts replaced it
-- Resume skill requires the Resume Design Standard Library page at runtime
-- Cover letter and resume skills validate output against zod schemas before DOCX generation — malformed content fails gracefully
+- Resume and cover-letter generation is retired; leftover slots and DOCX helpers remain until the opportunity feature is removed.
 
 ---
 

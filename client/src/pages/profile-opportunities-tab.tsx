@@ -515,7 +515,7 @@ interface ArtifactSlot {
   generatedAt: string | null;
 }
 
-function ArtifactRail({ opportunityId, jdText }: { opportunityId: number; jdText: string | null }) {
+function ArtifactRail({ opportunityId }: { opportunityId: number }) {
   const { toast } = useToast();
   const { data: artifacts = [], refetch } = useQuery<ArtifactSlot[]>({
     queryKey: ["/api/exec/opportunities", opportunityId, "artifacts"],
@@ -534,8 +534,8 @@ function ArtifactRail({ opportunityId, jdText }: { opportunityId: number; jdText
   }, [artifacts]);
 
   const generate = async (kind: ArtifactKind) => {
-    if (kind !== "research" && !jdText?.trim()) {
-      toast({ title: "Job description required", description: "Paste the JD before generating a cover letter or resume.", variant: "destructive" });
+    if (kind !== "research") {
+      toast({ title: "Generation retired", description: "Cover letter and resume generation is no longer available.", variant: "destructive" });
       return;
     }
     setGenerating(kind);
@@ -941,7 +941,7 @@ function OpportunityDetail({
               icon={<FileText className="h-3.5 w-3.5" />}
               hasValue
               showEmpty
-              expandedContent={<ArtifactRail opportunityId={opportunity.id} jdText={form.jdText} />}
+              expandedContent={<ArtifactRail opportunityId={opportunity.id} />}
               testId="row-opportunity-artifacts"
             >
               <span>Resume · Cover letter · Research</span>

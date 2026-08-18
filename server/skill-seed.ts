@@ -18,7 +18,6 @@ import {
   CANONICAL_AFFIRM_SKILL_ID,
   CANONICAL_DAILY_BRIEF_SKILL_ID,
   CANONICAL_REGRESSION_SKILL_ID,
-  CANONICAL_SCAN_SKILL_ID,
   SKILL_NAME_ALIASES,
 } from "./skill-identities";
 
@@ -506,7 +505,6 @@ export async function seedSkillPersonaRecommendations(): Promise<void> {
     "sleep",
     "goal-manager",
     "streamline",
-    "scan",
     "draft",
   ] as const;
   const leftoverTemplates = await db
@@ -849,47 +847,9 @@ export async function verifyRequiredSkills(): Promise<void> {
   }
 }
 
-export async function migrateCanonicalScanToolGate(): Promise<void> {
-  const [existing] = await db
-    .select({
-      id: skills.id,
-      version: skills.version,
-      process: skills.process,
-      checklist: skills.checklist,
-    })
-    .from(skills)
-    .where(and(eq(skills.id, CANONICAL_SCAN_SKILL_ID), eq(skills.name, "scan")));
-  if (!existing || compareSkillVersions(existing.version, "1.2") !== -1) return;
-  if (!existing.process.includes('Call `news(action: "scan")` immediately.')) {
-    log.warn(`Skipped canonical scan tool-gate migration from ${existing.version}: expected news.scan contract was not found`);
-    return;
-  }
-  const checklist = Array.isArray(existing.checklist) ? [...existing.checklist] as Array<Record<string, unknown>> : [];
-  const requiredCheck = "Calls news.scan without an independent scan-run preflight";
-  const requiredIndex = checklist.findIndex((item) => item?.check === requiredCheck);
-  if (requiredIndex < 0) {
-    log.warn(`Skipped canonical scan tool-gate migration from ${existing.version}: expected checklist item was not found`);
-    return;
-  }
-  checklist[requiredIndex] = {
-    ...checklist[requiredIndex],
-    kind: "tool_invoked",
-    tool: "news",
-    action: "scan",
-  };
-  const updated = await db
-    .update(skills)
-    .set({ checklist, version: "1.2", updatedAt: new Date() })
-    .where(and(eq(skills.id, existing.id), eq(skills.version, existing.version)))
-    .returning({ id: skills.id });
-  if (updated.length > 0) {
-    log.info(`Migrated canonical scan skill ${existing.version} → 1.2 with deterministic news.scan terminal gate`);
-  }
-}
-
 export async function deprecateRetiredBuiltinSkills(): Promise<void> {
   // Preserve compatibility rows through the rollback window, but make them inert.
-  const retired = ["consolidate", "integrate"];
+  const retired = ["consolidate", "integrate", "scan", "cover-letter", "resume"];
   for (const name of retired) {
     const [existing] = await db.select({ id: skills.id, status: skills.status }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
     if (existing && existing.status !== "deprecated") {

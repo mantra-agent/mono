@@ -3836,7 +3836,6 @@ export async function runSchemaBootstrap(
       verifyRequiredSkills,
       migrateSkillRenames,
       migrateLegacyPromptOverrides,
-      migrateCanonicalScanToolGate,
       deprecateRetiredBuiltinSkills,
       migrateSkillProcessUpdates,
       migrateSentryRecentChangelistGate,
@@ -3850,10 +3849,8 @@ export async function runSchemaBootstrap(
     await seedBuiltinSkills();
     await migrateLegacySkillPersonaPreferences();
     await migrateLegacyPromptOverrides();
-    // Mod-owned code skills (scan, Reliability Sentinel) are not lattice seats;
-    // their monotonic clause gates stay code-owned. deprecate/refresh operate on
-    // non-customized rows only.
-    await migrateCanonicalScanToolGate();
+    // Reliability Sentinel is not a lattice seat; its monotonic clause gates
+    // stay code-owned. deprecate/refresh operate on non-customized rows only.
     await deprecateRetiredBuiltinSkills();
     await migrateSkillProcessUpdates();
     await migrateSentryRecentChangelistGate();
