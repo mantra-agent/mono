@@ -2839,3 +2839,17 @@ Git clone crosses B03/B08 and F11 over A08/S0-S2: it invokes a credentialed exte
 **Deterministic controls:** Identity tables remain the sole source. Accounts count `status = active` only. Users count distinct users with a membership on an active (`status = active`) Account — Account status is the sole lifecycle discriminant, since users carry no archived/suspended field, so a user whose only Accounts are archived or suspended is excluded. Slugs stay off the Forecast catalog (`paying-accounts`, `users`, `new-users`) and off presence adapters (`current-users`, `active-users`). Overlay is query-time and writes no `metric_samples`. Existing Metrics authorization, platform-instrument gate, and Business visibility remain independent. Model Starting Accounts / Starting Users stay unbound.
 
 **Evidence:** `server/identity-metrics.ts`, `server/metrics-storage.ts`, `server/AGENTS.md` Metrics integrity boundary. **Residual risk:** identity stock is not a commercial cohort. Binding it later still requires a paying-account object that does not exist.
+
+## 11.36 Holder vault erasure, August 18, 2026
+
+**Status:** Closed in source; production build required before release. **Severity:** High without controls; Low residual. **Owner:** Identity and Data / Trust and Safety. **SLA:** Immediate.
+
+**Assets/data:** A01 authenticated holder identity, A04/A06 Vault identity, S2/S3 vault-owned Library pages, Sessions, meetings, work, people last-membership, goals, plans, platforms/products, email/finance cache, vault-prefixed object bytes, A07 erase receipts.
+
+**Flows and trust boundaries:** authenticated browser `/account` Trust and Safety → `POST /api/vaults/:id/permanent-delete` → `permanentlyDeleteVault` → owner-scoped domain deletes → vault row delete → last-vault remint through `ensureUserIdentityFoundation`. Replay uses `vault_erase_receipts` only.
+
+**Threat:** An Agent, timer, or other non-holder origin could erase a vault; archive or account wipe could be overloaded into a silent second wipe; a retried POST could run the cascade twice or invent a second receipt store (STRIDE tampering/repudiation/denial of service; DATA-01/IAM-01).
+
+**Deterministic controls:** Session-source human Principal only (`actorType=user`, `source=session`, no impersonation). Typed confirmation `DELETE`. One Core service; `DELETE /api/vaults/:id` remains archive; `deleteAccountPermanently` remains identity close. Domain owners destroy their rows; last-membership people/projects are destroyed only when this vault is the last remaining membership. Logs emit vault id and remint flag only. Residual copies named in the spec — provider mailboxes, Brain snapshots, Instance/vNext mind — stay out of this verb.
+
+**Evidence:** `server/vault-permanent-delete.ts`, `server/routes/vault-routes.ts`, `server/migrations/ensure-vault-erase-receipts.ts`, `client/src/pages/user-details.tsx`, this finding. **Residual risk:** Object storage and PostgreSQL are not one transaction; prefix deletes are best-effort after the vault row is gone. Provider and Brain copies remain until their owners grow a wipe.

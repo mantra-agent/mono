@@ -404,6 +404,19 @@ export class GoalStorage {
     return updated;
   }
 
+  /** Owner-scoped vault list for permanent vault erase. Includes dormant and period-hidden goals. */
+  async listGoalsInVault(vaultId: string): Promise<GoalIndexEntry[]> {
+    const docs = await documentStorage.getDocumentsByType("goal");
+    const entries: GoalIndexEntry[] = [];
+    for (const doc of docs) {
+      const raw = doc.metadata as any;
+      if (!raw || !raw.id || !raw.shortName) continue;
+      const { goal } = this.migrateGoal(raw);
+      if (goal.vaultId === vaultId) entries.push(this.toIndexEntry(goal));
+    }
+    return entries;
+  }
+
   async deleteGoal(id: string): Promise<void> {
     await documentStorage.deleteDocument("goal", id);
     this.invalidateCache();

@@ -14,6 +14,7 @@ import {
   getVaultR2MigrationStatus,
   startVaultR2Migration,
 } from "../object_storage/vault-migration";
+import { permanentlyDeleteVault, VaultPermanentDeleteError } from "../vault-permanent-delete";
 
 const log = createLogger("VaultRoutes");
 
@@ -68,14 +69,14 @@ export function registerVaultRoutes(app: Express) {
         return res.status(401).json({ error: "Authentication required" });
       }
 
+      const includeArchived = req.query.includeArchived === "1" || req.query.includeArchived === "true";
       const allVaults = await db
         .select()
         .from(vaults)
         .where(
-          and(
-            eq(vaults.accountId, principal.accountId),
-            eq(vaults.isArchived, false),
-          ),
+          includeArchived
+            ? eq(vaults.accountId, principal.accountId)
+            : and(eq(vaults.accountId, principal.accountId), eq(vaults.isArchived, false)),
         )
         .orderBy(vaults.position, vaults.createdAt);
 
@@ -403,6 +404,43 @@ export function registerVaultRoutes(app: Express) {
         error: error instanceof Error ? error.message : String(error),
       });
       res.status(500).json({ error: "Failed to update vault" });
+    }
+  });
+
+  const permanentDeleteBody = z.object({
+    confirmation: z.string(),
+    idempotencyKey: z.string().min(1),
+  });
+
+  /**
+   * POST /api/vaults/:id/permanent-delete — holder-only vault erase.
+   * Separate verb from DELETE archive and from admin identity close.
+   */
+  app.post("/api/vaults/:id/permanent-delete", async (req, res) => {
+    try {
+      const principal = getPrincipal(req);
+      const parsed = permanentDeleteBody.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "confirmation and idempotencyKey are required" });
+      }
+      const result = await permanentlyDeleteVault(principal, {
+        vaultId: req.params.id,
+        confirmation: parsed.data.confirmation,
+        idempotencyKey: parsed.data.idempotencyKey,
+      });
+      res.json(result);
+    } catch (error: unknown) {
+      if (error instanceof VaultPermanentDeleteError) {
+        return res.status(error.status).json({ error: error.message, code: error.code });
+      }
+      if (error && typeof error === "object" && "status" in error) {
+        const statusError = error as { status: number; message: string };
+        return res.status(statusError.status).json({ error: statusError.message });
+      }
+      log.error("POST /api/vaults/:id/permanent-delete failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: "Failed to permanently delete vault" });
     }
   });
 

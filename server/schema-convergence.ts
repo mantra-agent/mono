@@ -46,6 +46,8 @@ export async function convergeBootSchema(): Promise<void> {
         await addObjectAclsTable();
         await ensureToolOutputAdmissionsTable();
         await ensureVaults();
+        const { ensureVaultEraseReceiptsTable } = await import("./migrations/ensure-vault-erase-receipts");
+        await ensureVaultEraseReceiptsTable();
       },
     },
     {
