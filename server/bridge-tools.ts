@@ -4546,12 +4546,10 @@ ${lines.join("\n")}` };
           if (!skill) return { result: `Skill "${identifier}" not found`, error: true };
           const parts = [
             `**${skill.name}** (id: ${skill.id})`,
-            `Status: ${skill.status} | Version: ${skill.version} | Session Type: ${skill.sessionType || "default (autonomous)"}`,
+            `Status: ${skill.status} | Version: ${skill.version} | System: ${skill.sessionType === "agent" ? "off" : "on"}`,
           ];
           if (skill.description) parts.push(`Description: ${skill.description}`);
           parts.push(`\nProcess:\n${skill.process}`);
-          if (skill.whenToUse) parts.push(`\nWhen To Use:\n${skill.whenToUse}`);
-          if (skill.outputSpec) parts.push(`Output Spec:\n${skill.outputSpec}`);
           const deterministicTools = Array.isArray(skill.checklist)
             ? (skill.checklist as Array<{ kind?: unknown; tool?: unknown; action?: unknown }>)
                 .filter((c) => !!c && c.kind === "tool_invoked" && typeof c.tool === "string")
@@ -4574,8 +4572,8 @@ ${lines.join("\n")}` };
             name: args.name,
             description: args.description || "",
             process: args.process,
-            whenToUse: args.whenToUse || "",
-            outputSpec: args.outputSpec || "",
+            whenToUse: "",
+            outputSpec: "",
             qualityCriteria: "",
             checklist: Array.isArray(args.checklist) ? args.checklist : [],
             ...(args.scoreThreshold !== undefined ? { scoreThreshold: normalizeScoreThreshold(args.scoreThreshold) } : {}),
@@ -4591,7 +4589,7 @@ ${lines.join("\n")}` };
           const existing = await storage.getSkill(id);
           if (!existing) return { result: `Skill "${id}" not found`, error: true };
           const updates: Record<string, unknown> = {};
-          for (const key of ["name", "description", "process", "whenToUse", "outputSpec", "status", "version", "sessionType"]) {
+          for (const key of ["name", "description", "process", "status", "version", "sessionType"]) {
             if (args[key] !== undefined) updates[key] = args[key];
           }
           if (args.checklist !== undefined) {
@@ -4614,7 +4612,7 @@ ${lines.join("\n")}` };
           const newString = args.new_string;
           if (oldString === undefined) return { result: "Missing old_string", error: true };
           if (newString === undefined) return { result: "Missing new_string", error: true };
-          const editableFields = ["process", "outputSpec", "description", "whenToUse"];
+          const editableFields = ["process", "description"];
           const field = (args.field as string) || "process";
           if (!editableFields.includes(field)) {
             return { result: `Invalid field "${field}". Editable fields: ${editableFields.join(", ")}`, error: true };

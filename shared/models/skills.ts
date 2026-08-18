@@ -235,6 +235,9 @@ export const insertSkillSchema = createInsertSchema(skills).omit({
   status: z.enum(skillStatuses).default("draft"),
   version: z.string().default("1.0"),
   sessionType: z.enum(sessionTypes).nullable().optional(),
+  whenToUse: z.string().optional().default(""),
+  outputSpec: z.string().optional().default(""),
+  addToMemory: z.boolean().optional().default(true),
   checklist: z.array(checklistItemSchema).optional().default([]),
   scoreThreshold: z.number().min(0).max(1).nullable().optional(),
   references: z.array(z.object({

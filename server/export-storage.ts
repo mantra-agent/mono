@@ -398,9 +398,9 @@ async function genSkills(dir: string): Promise<{ count: number }> {
   let count = 0;
   try {
     const skills = await db.execute(
-      sql`SELECT name, description, process, when_to_use, output_spec, quality_criteria, checklist,
-               category, activity, version, status, pinned_to_context, created_at
-          FROM skills ORDER BY category, name`
+      sql`SELECT name, description, process, quality_criteria, checklist,
+               version, status, pinned_to_context, created_at
+          FROM skills ORDER BY name`
     );
     for (const s of skills.rows as any[]) {
       const name = safeName(s.name ?? "skill");
@@ -417,15 +417,12 @@ async function genSkills(dir: string): Promise<{ count: number }> {
       } catch {}
       const md =
         `# ${s.name ?? "Skill"}\n\n` +
-        `**Category:** ${s.category ?? ""}\n` +
         `**Version:** ${s.version ?? "1"}\n` +
         `**Status:** ${s.status ?? "draft"}\n` +
         (s.pinned_to_context ? `**Pinned:** yes\n` : "") +
         "\n" +
         (s.description ? `## Description\n\n${s.description}\n\n` : "") +
-        (s.when_to_use ? `## When to Use\n\n${s.when_to_use}\n\n` : "") +
         (s.process ? `## Process\n\n${s.process}\n\n` : "") +
-        (s.output_spec ? `## Output Spec\n\n${s.output_spec}\n\n` : "") +
         checklistMd +
         (s.quality_criteria ? `## Quality Criteria (legacy)\n\n${s.quality_criteria}\n` : "");
       await writeFile(dir, `skills/${name}.md`, md);

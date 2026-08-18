@@ -25,12 +25,26 @@ const log = createLogger("SkillRoutes");
 
 interface ImportResult { name: string; action: string; error?: string }
 
-const updateSkillSchema = insertSkillSchema.omit({ references: true }).partial().extend({
-  references: insertSkillSchema.shape.references.optional(),
-});
+const updateSkillSchema = insertSkillSchema
+  .omit({ references: true, whenToUse: true, outputSpec: true, addToMemory: true })
+  .partial()
+  .extend({
+    references: insertSkillSchema.shape.references.optional(),
+  });
 
 function stripSkillForExport(skill: Skill & { references?: SkillReference[]; trustScore?: number }) {
-  const { id, createdAt, updatedAt, successCount, failureCount, trustScore, ...rest } = skill;
+  const {
+    id,
+    createdAt,
+    updatedAt,
+    successCount,
+    failureCount,
+    trustScore,
+    whenToUse: _whenToUse,
+    outputSpec: _outputSpec,
+    addToMemory: _addToMemory,
+    ...rest
+  } = skill;
   const stripped: Record<string, unknown> = { ...rest };
   if (rest.references) {
     stripped.references = rest.references.map((r) => ({ name: r.name, content: r.content }));

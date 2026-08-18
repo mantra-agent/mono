@@ -129,14 +129,11 @@ function downloadJson(data: unknown, filename: string) {
 const SKILL_FIELD_LABELS: Record<string, string> = {
   name: "Name",
   description: "Description",
-  whenToUse: "When to use",
   process: "Process",
-  outputSpec: "Output spec",
   checklist: "Checklist",
   scoreThreshold: "Score threshold",
-  sessionType: "Session type",
+  sessionType: "System",
   recommendedPersonaTemplateId: "Persona",
-  addToMemory: "Add to memory",
   pinnedToContext: "Pinned",
   references: "References",
 };
@@ -148,14 +145,11 @@ function skillCurrentPayload(skill: SkillWithReferences): Record<string, unknown
   return {
     name: skill.name,
     description: skill.description,
-    whenToUse: skill.whenToUse,
     process: skill.process,
-    outputSpec: skill.outputSpec,
     checklist: skill.checklist ?? [],
     scoreThreshold: skill.scoreThreshold ?? null,
     sessionType: skill.sessionType ?? null,
     recommendedPersonaTemplateId: skill.recommendedPersonaTemplateId ?? null,
-    addToMemory: skill.addToMemory,
     pinnedToContext: skill.pinnedToContext,
     references: [...skill.references]
       .map((r) => ({ name: r.name, content: r.content }))
@@ -1036,11 +1030,8 @@ function SkillEditor({
   const [description, setDescription] = useState(skill?.description ?? "");
   const [writeCategory, setWriteCategory] = useState<SkillWriteCategory>((skill?.writeCategory as SkillWriteCategory) || "read-only");
   const [inputs, setInputs] = useState<SkillInputType[]>((skill?.inputs as SkillInputType[]) ?? []);
-  const [whenToUse, setWhenToUse] = useState(skill?.whenToUse ?? "");
   const [process, setProcess] = useState(skill?.process ?? "");
-  const [outputSpec, setOutputSpec] = useState(skill?.outputSpec ?? "");
   const [checklist, setChecklist] = useState<ChecklistItem[]>(Array.isArray(skill?.checklist) ? skill.checklist as ChecklistItem[] : []);
-  const [addToMemory, setAddToMemory] = useState(skill?.addToMemory !== false);
   const [sessionType, setSessionType] = useState<string>(skill?.sessionType || "agent");
   const [personaChoice, setPersonaChoice] = useState<number | "recommended">("recommended");
   const personaTouchedRef = useRef(false);
@@ -1053,11 +1044,8 @@ function SkillEditor({
     setDescription(skill.description);
     setWriteCategory(skill.writeCategory as SkillWriteCategory);
     setInputs(skill.inputs as SkillInputType[]);
-    setWhenToUse(skill.whenToUse);
     setProcess(skill.process);
-    setOutputSpec(skill.outputSpec);
     setChecklist(Array.isArray(skill.checklist) ? skill.checklist as ChecklistItem[] : []);
-    setAddToMemory(skill.addToMemory !== false);
     setSessionType(skill.sessionType || "agent");
     setVersion(skill.version);
     setReferences(skill.references.map((ref) => ({ name: ref.name, content: ref.content })));
@@ -1135,12 +1123,9 @@ function SkillEditor({
       authority: skill?.authority || "full",
       writeCategory,
       inputs,
-      whenToUse,
       process,
-      outputSpec,
       qualityCriteria: skill?.qualityCriteria || "",
       checklist: validChecklist,
-      addToMemory,
       sessionType,
       status: skill?.status || "draft",
       version,
@@ -1213,25 +1198,14 @@ function SkillEditor({
             </SelectContent>
           </Select>
         </ProfileTreeRow>
-        <ProfileTreeRow label="Session" hasValue showEmpty mobileLayout="inline" testId="row-skill-session">
-          <Select value={sessionType || "agent"} onValueChange={setSessionType}>
-            <SelectTrigger className={FIELD_SELECT_TRIGGER_CLASS} data-testid="select-session-type">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="agent">Agent</SelectItem>
-              <SelectItem value="autonomous">Auto</SelectItem>
-            </SelectContent>
-          </Select>
-        </ProfileTreeRow>
-        <ProfileTreeRow label="Memory" hasValue showEmpty mobileLayout="inline" testId="row-skill-memory">
+        <ProfileTreeRow label="System" hasValue showEmpty mobileLayout="inline" testId="row-skill-system">
           <button
             type="button"
-            onClick={() => setAddToMemory((current) => !current)}
+            onClick={() => setSessionType((current) => current === "autonomous" ? "agent" : "autonomous")}
             className="text-xs text-right"
-            data-testid="toggle-add-to-memory"
+            data-testid="toggle-skill-system"
           >
-            {addToMemory ? "On" : "Off"}
+            {sessionType === "autonomous" ? "On" : "Off"}
           </button>
         </ProfileTreeRow>
         <ProfileTreeRow
@@ -1264,14 +1238,8 @@ function SkillEditor({
         <ProfileTreeRow label="Description" hasValue={Boolean(description.trim())} showEmpty mobileLayout="stacked" testId="row-skill-description">
           <Textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What this skill does and when to use it..." className="min-h-[60px] text-xs" data-testid="input-description" />
         </ProfileTreeRow>
-        <ProfileTreeRow label="When to Use" hasValue={Boolean(whenToUse.trim())} showEmpty mobileLayout="stacked" testId="row-skill-when-to-use">
-          <Textarea value={whenToUse} onChange={(event) => setWhenToUse(event.target.value)} placeholder="Conditions that indicate this skill matches a task..." className="min-h-[60px] text-xs" data-testid="input-when-to-use" />
-        </ProfileTreeRow>
         <ProfileTreeRow label="Process" hasValue={Boolean(process.trim())} showEmpty mobileLayout="stacked" testId="row-skill-process">
           <Textarea value={process} onChange={(event) => setProcess(event.target.value)} placeholder="Step-by-step workflow..." className="min-h-20 text-xs" data-testid="input-process" />
-        </ProfileTreeRow>
-        <ProfileTreeRow label="Output Spec" hasValue={Boolean(outputSpec.trim())} showEmpty mobileLayout="stacked" testId="row-skill-output-spec">
-          <Textarea value={outputSpec} onChange={(event) => setOutputSpec(event.target.value)} placeholder="What it produces and where each output goes..." className="min-h-[60px] text-xs" data-testid="input-output-spec" />
         </ProfileTreeRow>
       </ProfileDetailSection>
       <ProfileDetailSection
@@ -1390,7 +1358,7 @@ function SkillEditor({
         <Button
           size="sm"
           onClick={handleSubmit}
-          disabled={isPending || !name || !description || !whenToUse || !process || !outputSpec}
+          disabled={isPending || !name || !description || !process}
           data-testid="button-save-skill"
         >
           {isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}

@@ -1806,7 +1806,7 @@ export const TOOLS: Record<string, ToolMeta> = {
       properties: {
         action: { type: "string", enum: ["list", "get", "create", "update", "edit", "set_persona", "delete", "search", "run", "runs", "scores"], description: "list: show all skills. get: read full skill details by name including structured checklist. create: add a new skill. update: modify an existing skill by id (wholesale field replacement). edit: surgical find/replace within one text field (default 'process') without resending the whole field — mirrors edit_library_page. set_persona: set or clear the current user's persona override for a skill. delete: remove a user-created skill by id. search: find skills by query string. run: spawn an autonomous skill execution by skill ID. runs: get recent skill_runs (status, duration, pass rate, timestamps) for a skill by name — matches the dashboard Run History panel. scores: get scoring history from skill_runs." },
         id: { type: "string", description: "Skill UUID (update, edit, delete)" },
-        field: { type: "string", enum: ["process", "outputSpec", "description", "whenToUse"], description: "Text field to surgically edit (edit, default 'process')." },
+        field: { type: "string", enum: ["process", "description"], description: "Text field to surgically edit (edit, default 'process')." },
         old_string: { type: "string", description: "Exact text to find in the target field (edit)." },
         new_string: { type: "string", description: "Replacement text; empty string deletes the matched text (edit)." },
         replace_all: { type: "boolean", description: "Replace all occurrences (edit, default false). Required when old_string appears more than once." },
@@ -1814,12 +1814,10 @@ export const TOOLS: Record<string, ToolMeta> = {
         query: { type: "string", description: "Search query (search action)" },
         description: { type: "string", description: "Skill description (create/update)" },
         process: { type: "string", description: "Skill process/instructions (create/update)" },
-        outputSpec: { type: "string", description: "Output specification (create/update)" },
-
         checklist: { type: "array", items: { type: "object", properties: { check: { type: "string" }, weight: { type: "number" }, kind: { type: "string", enum: ["judgment", "tool_invoked", "child_skill_invoked"], description: "Evaluation kind. Default 'judgment' is LLM-scored. 'tool_invoked' requires a successful tool/action invocation. 'child_skill_invoked' requires an exact fresh child SkillRun from this parent run to succeed." }, tool: { type: "string", description: "Tool name for kind 'tool_invoked'. Validated against the tool registry at write time." }, action: { type: "string", description: "Optional exact action required for kind 'tool_invoked'. Validated against the named tool's action enum." }, skill: { type: "string", description: "Required child Skill name for kind 'child_skill_invoked'." } }, required: ["check"] }, description: "Structured quality checklist for scoring (create/update). The checklist is the single quality spec: judgment items are LLM-evaluated; 'tool_invoked' and 'child_skill_invoked' items are evaluated structurally and gate terminal status — a failed one marks the run and its launching timer 'degraded'." },
         scoreThreshold: { type: "number", description: "Minimum checklist pass rate 0-1 (create/update). A scored run below this reconciles the skill run and its launching timer run to 'degraded'. Pass null to clear." },
         version: { type: "string", description: "Version string (create/update)" },
-        sessionType: { type: "string", enum: ["autonomous", "agent"], description: "Session type for this skill's runs (create/update). 'agent' surfaces runs as visible conversations alongside user sessions; 'autonomous' (default) files them under SYSTEM sessions." },
+        sessionType: { type: "string", enum: ["autonomous", "agent"], description: "System session switch (create/update). 'autonomous' files runs under SYSTEM; 'agent' is a visible conversation." },
         personaId: { type: ["number", "null"], description: "Persona ID for set_persona. Pass null to clear the override and use the product recommendation." },
         preContext: { type: "string", description: "Optional pre-context string to pass to the skill run (run)" },
         wait: { type: "boolean", description: "If true (default), wait for the skill run to complete before returning. If false, fire-and-forget. (run)" },
