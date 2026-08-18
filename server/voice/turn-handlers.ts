@@ -101,7 +101,8 @@ export async function handleAbortedTurn(
 
   await persistOrphanedTurnData(session, currentTurn, "ABORTED", ctx);
   trackedWrite("data: [DONE]\n\n", "done_aborted");
-  res.end();
+  const port = session.activeWriteRes ?? res;
+  if (!port.writableEnded) port.end();
 }
 
 // ── handleTurnError ──────────────────────────────────────────────────────
@@ -126,8 +127,9 @@ export async function handleTurnError(
     });
 
     await persistOrphanedTurnData(session, currentTurn, "CANCELLED", ctx);
-    if (res.headersSent) { trackedWrite("data: [DONE]\n\n", "done_cancelled"); res.end(); }
-    else { res.status(200).end(); }
+    const port = session.activeWriteRes ?? res;
+    if (port.headersSent) { trackedWrite("data: [DONE]\n\n", "done_cancelled"); if (!port.writableEnded) port.end(); }
+    else { port.status(200).end(); }
     traceInflightDoneResolved(session, "executeVoiceTurnBody.cancelledSuperseded", currentTurn);
     resolveDone();
     return;

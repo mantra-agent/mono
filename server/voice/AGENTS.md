@@ -70,11 +70,11 @@ Voice assistant persistence is replay-safe by canonical `turnId` and inserts the
 
 1. **Presence writer** — sole speakable SSE write. Every speakable uses `buildSSEChunk(..., flush=true)`. Sets `TurnContext.presence` (`speaking | holding | silent | reconnecting`). Unflushed non-speech never leaves the helper.
 2. **Phrase assembler** — soft flush (80ms timer, first content) emits only completed sentences via `takeCompletedSpeakable`. Forced empty only for `turn_end`, overflow, guide introduction. Tool start must not invent a period or force-chop; remainder survives tools.
-3. **Hold as presence** — flushed complete code-owned sentences (`One moment.`, `Still on it.`, `Working.`) on the cascade-safe window from `getSoftTimeoutBufferMs()` (after EL soft-timeout, before cascade). Holds are not transcript content, not `segmentChronology`. `fillerCount` / `lastFillerSentAt` are the hold counter. Unflushed `"... "` keepalive is unrepresentable.
+3. **Hold as presence** — silent. Comment-only ticks on the cascade-safe window. No spoken filler (`One moment.`, `One second.`, `Still on it.`, `Working.`). Unflushed `"... "` and unflushed `" "` role-chunks are unrepresentable.
 4. **Silent reconnect** — client keeps last live conversational visual until reconnect exhaustion; captions clear on retry; no user-facing degraded theater mid-retry.
 5. **Spine** — `session.id` + `turnId` + `assistantAttemptId` on flush/hold/SSE/reconnect events. Long-turn forensics promote to `info` when tools > 0, duration ≥ 10s, holds fired, or reconnect. No transcript bodies in diagnostics.
 
-SSE comments remain socket liveness only — never presence. EL `"One second. "` soft-timeout stays the first ~5s spoken bridge.
+SSE comments remain socket liveness only — never presence. One utterance owns one generator; `VoiceSession.activeWriteRes` is a hot-swappable write port. Same-utterance custom-LLM POSTs attach; they must not increment `turnCount` or abort the generator. EL soft-timeout spoken filler is off.
 
 ## When Working Here
 - The `VoiceSession` interface in `types.ts` is the source of truth

@@ -289,7 +289,7 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
           custom_llm: {
             url: callbackUrl,
             model_id: "xyz-voice",
-            cascade_timeout_seconds: 15,
+            cascade_timeout_seconds: 30,
           },
           tool_ids: [],
           tools: [{
@@ -310,23 +310,11 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
       turn: {
         mode: "turn",
         turn_timeout: 60,
-        cascade_timeout_seconds: 15,
+        cascade_timeout_seconds: 30,
         end_of_speech_silence_ms: 1000,
         interruption_sensitivity: 0.5,
-        // Division of labor between EL soft_timeout and Mantra presence holds
-        // (server/voice/turn-io.ts sendPresenceHold / getSoftTimeoutBufferMs):
-        //   - EL soft_timeout_config = first spoken bridge. After
-        //     `timeout_seconds` of custom-LLM silence, EL plays `message`
-        //     ("One second. ") server-side. We do not write content for this.
-        //   - Mantra presence hold = flushed complete hold sentences on the
-        //     cascade-safe window after soft-timeout and before cascade.
-        //     Holds reset cascade without unflushed "... " drips. First hold
-        //     must land after soft_timeout so it cannot suppress EL's line.
-        soft_timeout_config: {
-          timeout_seconds: 5,
-          message: "One second. ",
-          use_llm_generated_message: false,
-        },
+        // Spoken fillers are gone. Continuity is attach-not-abort + comment liveness.
+        // Omit soft_timeout_config so EL does not speak "One second."
       },
     },
     platform_settings: {
@@ -471,7 +459,8 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
       const rawSoftTimeout = softTimeoutConfig?.timeout_seconds;
       const effectiveSoftTimeout = rawSoftTimeout != null ? Number(rawSoftTimeout) : undefined;
       if (effectiveSoftTimeout == null || effectiveSoftTimeout <= 0) {
-        log.error(`setupAgentCallbackUrl: SOFT TIMEOUT MISMATCH — expected positive timeout_seconds (e.g. 5) but agent reports ${rawSoftTimeout ?? "(not set)"} (parsed=${effectiveSoftTimeout}). Soft timeout may not be enabled. Set it manually via the ElevenLabs dashboard. Keeping verifiedSoftTimeoutSeconds=${verifiedSoftTimeoutSeconds}s for keepalive calibration.`);
+        verifiedSoftTimeoutSeconds = 0;
+        log.debug(`setupAgentCallbackUrl: SOFT TIMEOUT DISABLED — agent reports ${rawSoftTimeout ?? "(not set)"}. Spoken filler is off; comment liveness + attach-not-abort own continuity.`);
       } else {
         verifiedSoftTimeoutSeconds = effectiveSoftTimeout;
         log.debug(`setupAgentCallbackUrl: SOFT TIMEOUT VERIFIED at ${verifiedSoftTimeoutSeconds}s — keepalive first-fire threshold will sit between this and cascade timeout (${verifiedCascadeTimeoutSeconds}s)`);
