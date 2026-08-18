@@ -104,6 +104,18 @@ const PERIOD_OPTIONS: { value: string; label: string }[] = [
   { value: "all", label: "All time" },
 ];
 
+type CostRouterFilter = "all" | "legacy" | string;
+
+interface CostRouterOption {
+  id: string;
+  name: string;
+}
+
+function costQuerySuffix(period: string, timezone: string, routerId: CostRouterFilter, extra = ""): string {
+  const params = new URLSearchParams({ period, tz: timezone, routerId });
+  return `${params.toString()}${extra}`;
+}
+
 function hierarchyMatchesQuery(parts: Array<string | null | undefined>, query: string): boolean {
   if (!query) return true;
   const haystack = parts.filter(Boolean).join(" ").toLowerCase();
@@ -541,6 +553,7 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
   const [groupBy, setGroupBy] = useState<GroupBy>("hierarchy");
   const [chartMetric, setChartMetric] = useState<ChartMetric>("tokens");
   const [searchQuery, setSearchQuery] = useState("");
+  const [routerId, setRouterId] = useState<CostRouterFilter>("all");
 
   const { data: inferenceDebug } = useQuery<{ enabled: boolean }>({
     queryKey: ["/api/settings/inference-debug"],
@@ -565,13 +578,24 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
     period !== "today" ||
     groupBy !== "hierarchy" ||
     chartMetric !== "tokens" ||
+    routerId !== "all" ||
     (inferenceDebug?.enabled ?? false);
+
+  const { data: routersData } = useQuery<{ routers: CostRouterOption[] }>({
+    queryKey: ["/api/routers"],
+    queryFn: async () => {
+      const res = await fetch("/api/routers");
+      if (!res.ok) throw new Error("Failed to fetch routers");
+      return res.json();
+    },
+    enabled: reportsAllAccounts,
+  });
 
   const { data: summaryData, isLoading: summaryLoading } =
     useQuery<InferenceSummaryResponse>({
-      queryKey: ["/api/inference/summary", period, chartGroupBy, timezone],
+      queryKey: ["/api/inference/summary", period, chartGroupBy, timezone, routerId],
       queryFn: async () => {
-        const res = await fetch(`/api/inference/summary?period=${period}&groupBy=${chartGroupBy}&tz=${encodeURIComponent(timezone)}`);
+        const res = await fetch(`/api/inference/summary?${costQuerySuffix(period, timezone, routerId, `&groupBy=${chartGroupBy}`)}`);
         if (!res.ok) throw new Error("Failed to fetch summary");
         return res.json();
       },
@@ -580,9 +604,9 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
 
   const { data: hierarchyData } =
     useQuery<HierarchyResponse>({
-      queryKey: ["/api/inference/summary/hierarchy", period, timezone],
+      queryKey: ["/api/inference/summary/hierarchy", period, timezone, routerId],
       queryFn: async () => {
-        const res = await fetch(`/api/inference/summary/hierarchy?period=${period}&tz=${encodeURIComponent(timezone)}`);
+        const res = await fetch(`/api/inference/summary/hierarchy?${costQuerySuffix(period, timezone, routerId)}`);
         if (!res.ok) throw new Error("Failed to fetch hierarchy");
         return res.json();
       },
@@ -788,6 +812,28 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52">
                 <DropdownMenuSub>
+                  <DropdownMenuSubTrigger data-testid="menu-cost-router">Router</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup value={routerId} onValueChange={setRouterId}>
+                      <DropdownMenuRadioItem value="all" data-testid="menu-cost-router-all">
+                        All routers
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="legacy" data-testid="menu-cost-router-legacy">
+                        Legacy (unstamped)
+                      </DropdownMenuRadioItem>
+                      {(routersData?.routers ?? []).map((router) => (
+                        <DropdownMenuRadioItem
+                          key={router.id}
+                          value={router.id}
+                          data-testid={`menu-cost-router-${router.id}`}
+                        >
+                          {router.name}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
                   <DropdownMenuSubTrigger data-testid="menu-cost-period">Period</DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
                     <DropdownMenuRadioGroup value={period} onValueChange={setPeriod}>
@@ -861,6 +907,14 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
                 {summaryLoading ? "…" : formatCost(summary?.totalCost || 0)}
                 <span className="ml-2 text-xs text-muted-foreground">
                   {reportsAllAccounts ? "All accounts" : "This account"}
+                  {routerId !== "all" ? (
+                    <span>
+                      {" · "}
+                      {routerId === "legacy"
+                        ? "Legacy"
+                        : (routersData?.routers.find((router) => router.id === routerId)?.name ?? "Router")}
+                    </span>
+                  ) : null}
                 </span>
               </span>
             </ProfileTreeRow>
