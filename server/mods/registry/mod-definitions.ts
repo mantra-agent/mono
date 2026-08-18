@@ -271,7 +271,15 @@ const wellness: ModDefinition = {
         audience: "primary",
       }),
     ],
-    metricAdapters: [metricAdapter("wellness.metric-adapter.oura", "oura", ["health"], "wellness.metrics")],
+    metricAdapters: [
+      metricAdapter("wellness.metric-adapter.oura", "oura", ["health"], "wellness.metrics"),
+      metricAdapter(
+        "wellness.metric-adapter.completions",
+        "wellness",
+        ["wellness-completions"],
+        "wellness.metrics",
+      ),
+    ],
     // Cadence Timers materialize through wellness-managed-resources under installation ownership.
     timers: [
       timerTemplateRef("wellness.timer.weekly-reflection", "weekly-reflection"),

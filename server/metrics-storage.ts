@@ -20,6 +20,7 @@ import {
   type MetricSampleCreate,
   type MetricCollection,
   type MetricCoverage,
+  type MetricSeries,
   type MetricUpdate,
   type StandingObjectiveKey,
 } from "@shared/models/metrics";
@@ -39,6 +40,11 @@ import {
 import { getCurrentPrincipal } from "./principal-context";
 import { eventBus } from "./event-bus";
 import { visibleBusinessPredicate, writableBusinessPredicate } from "./business-vault-access";
+import {
+  canReadPlatformMetrics,
+  isPlatformMetric,
+  PRODUCT_METRIC_SLUGS,
+} from "./metrics/metric-adapters";
 
 const metricScope: ScopeColumns = {
   scope: metrics.scope,
@@ -128,25 +134,34 @@ const CURRENT_METRIC_DEFINITIONS = [
 
 const IDENTITY_STOCK_SLUGS = new Set<string>(["accounts", "registered-users"]);
 
+function isProductCurrentSlug(slug: string): boolean {
+  return PRODUCT_METRIC_SLUGS.has(slug);
+}
+
 function virtualCurrentMetric(
   businessId: string,
   definition: (typeof CURRENT_METRIC_DEFINITIONS)[number],
   sample: MetricSample,
 ): Metric {
   const now = new Date().toISOString();
+  const product = isProductCurrentSlug(definition.slug);
   return {
     id: `metric_current_${businessId}_${definition.slug.replace(/-/g, "_")}`,
-    ownerKind: "account",
-    ownerId: sample.accountId,
+    ownerKind: product ? "platform" : "account",
+    ownerId: product ? null : sample.accountId,
     businessId,
     name: definition.name,
     slug: definition.slug,
-    description: "Current product data resolved from its owning system.",
+    description: product
+      ? "Platform product quantity resolved from its owning system."
+      : "Principal-scoped quantity resolved from its owning system.",
     unit: definition.unit,
     direction: "higher_is_better",
     samplePeriod: "custom",
     adapterKind: "internal",
-    adapterConfig: { key: definition.slug, mode: "query" },
+    adapterConfig: product
+      ? { key: definition.slug, mode: "query", adapterKey: "product" }
+      : { key: definition.slug, mode: "query", adapterKey: "meetings" },
     status: "active",
     scope: "user",
     ownerUserId: null,
@@ -225,6 +240,8 @@ async function overlayIdentityStockSample(metric: Metric): Promise<Metric> {
   if (!IDENTITY_STOCK_SLUGS.has(metric.slug) || !metric.businessId) return metric;
   const principal = getCurrentPrincipal();
   if (!principal?.accountId) return metric;
+  // Identity stocks are platform product metrics — never overlay without users:read.
+  if (!canReadPlatformMetrics(principal)) return metric;
   const [business] = await db.select({
     id: businesses.id,
     isPlatformInstrument: businesses.isPlatformInstrument,
@@ -294,18 +311,36 @@ export async function ensurePlatformBusinessMetrics(
 
   for (const definition of definitions) {
     const id = `metric_${definition.key.replace(/-/g, "_")}_${owner.business_id}`;
+    const product = PRODUCT_METRIC_SLUGS.has(definition.key);
+    const adapterConfig = product
+      ? { key: definition.key, adapterKey: "product" }
+      : { key: definition.key };
     await db.execute(sql`
       INSERT INTO metrics (
         id, business_id, name, slug, description, unit, direction, sample_period, adapter_kind,
-        adapter_config, status, scope, owner_user_id, account_id, vault_id, created_by_user_id
+        adapter_config, status, scope, owner_user_id, account_id, vault_id, created_by_user_id,
+        owner_kind, owner_id
       ) VALUES (
         ${id}, ${owner.business_id}, ${definition.name}, ${definition.key}, ${definition.description}, ${definition.unit},
         ${definition.direction ?? "higher_is_better"}, ${definition.samplePeriod ?? "custom"}, 'internal',
-        ${JSON.stringify({ key: definition.key })}::jsonb, 'active', 'user', ${owner.owner_user_id},
-        ${owner.account_id}, ${owner.vault_id ?? null}, ${owner.owner_user_id}
+        ${JSON.stringify(adapterConfig)}::jsonb, 'active', 'user', ${owner.owner_user_id},
+        ${owner.account_id}, ${owner.vault_id ?? null}, ${owner.owner_user_id},
+        ${product ? "platform" : "account"}, ${product ? null : owner.account_id}
       )
       ON CONFLICT DO NOTHING
     `);
+    if (product) {
+      await db.execute(sql`
+        UPDATE metrics
+        SET owner_kind = 'platform',
+            owner_id = NULL,
+            adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify({ adapterKey: "product" })}::jsonb,
+            updated_at = NOW()
+        WHERE id = ${id}
+          AND (owner_kind IS DISTINCT FROM 'platform'
+            OR COALESCE(adapter_config->>'adapterKey', '') IS DISTINCT FROM 'product')
+      `);
+    }
   }
 
   const slugs = definitions.map((definition) => definition.key);
@@ -384,6 +419,7 @@ export async function upsertInternalPeriodSample(input: InternalPeriodSampleInpu
 export const metricsStorage = {
   async list(query?: string, businessId?: string, range?: { start: Date; end: Date }): Promise<Metric[]> {
     const principal = currentPrincipal();
+    const allowPlatform = canReadPlatformMetrics(principal);
     const needle = query?.trim();
     const filter = and(
       businessId ? eq(metrics.businessId, businessId) : undefined,
@@ -392,6 +428,10 @@ export const metricsStorage = {
         ilike(metrics.description, `%${needle}%`),
         ilike(metrics.slug, `%${needle}%`),
       ) : undefined,
+      // Engine gate: never advertise platform product rows without users:read.
+      allowPlatform
+        ? undefined
+        : sql`(${metrics.ownerKind} IS DISTINCT FROM 'platform' AND ${metrics.slug} NOT IN ('hours-used','active-users','current-users','new-users','accounts','registered-users','shipped-prs'))`,
     );
     const rows = await db
       .select({ metric: metrics })
@@ -401,7 +441,9 @@ export const metricsStorage = {
 
     const out: Metric[] = [];
     for (const { metric } of rows) {
-      out.push(await overlayIdentityStockSample(mapMetric(metric, await latestSampleFor(metric.id, range))));
+      const mapped = mapMetric(metric, await latestSampleFor(metric.id, range));
+      if (isPlatformMetric(mapped) && !allowPlatform) continue;
+      out.push(await overlayIdentityStockSample(mapped));
     }
     return out;
   },
@@ -414,7 +456,11 @@ export const metricsStorage = {
       .where(combineWithVisibleScope(principal, metricScope, eq(metrics.id, id)))
       .limit(1);
     if (!result?.metric) throw Object.assign(new Error("Metric not found"), { status: 404 });
-    return overlayIdentityStockSample(mapMetric(result.metric, await latestSampleFor(result.metric.id)));
+    const mapped = mapMetric(result.metric, await latestSampleFor(result.metric.id));
+    if (isPlatformMetric(mapped) && !canReadPlatformMetrics(principal)) {
+      throw Object.assign(new Error("Metric not found"), { status: 404 });
+    }
+    return overlayIdentityStockSample(mapped);
   },
 
   async create(input: MetricCreate): Promise<Metric> {
@@ -504,6 +550,10 @@ export const metricsStorage = {
     coverage: { status: "provisional" | "finalized"; finalizesAt: string };
   }> {
     const principal = currentPrincipal();
+    if (!canReadPlatformMetrics(principal)) {
+      // Product current-range is platform-wide Mantra ops — fail closed as not found.
+      throw Object.assign(new Error("Metric not found"), { status: 404 });
+    }
     const [business] = await db.select({ id: businesses.id, isPlatformInstrument: businesses.isPlatformInstrument })
       .from(businesses)
       .where(visibleBusinessPredicate(principal, eq(businesses.id, businessId)))
@@ -518,6 +568,7 @@ export const metricsStorage = {
       import("./identity-metrics"),
     ]);
     const [usage, work, identity] = await Promise.all([
+      // Platform-wide Hours Used — never pass principal accountId.
       sampleUsageRange(null, start, end),
       sampleWorkRange(start, end),
       sampleIdentityRange(start, end),
@@ -534,35 +585,87 @@ export const metricsStorage = {
     };
   },
 
+  async listSamplesInRange(metricId: string, start: Date, end: Date): Promise<MetricSample[]> {
+    const metric = await this.get(metricId);
+    if (!currentPrincipal().accountId) return [];
+    await ensureMetricsSamplesSchema();
+    const rows = await metricsDb
+      .select()
+      .from(metricSamples)
+      .where(and(
+        eq(metricSamples.metricId, metric.id),
+        sql`${metricSamples.observedAt} >= ${start}`,
+        sql`${metricSamples.observedAt} < ${end}`,
+      ))
+      .orderBy(desc(metricSamples.observedAt));
+    return rows.map(mapSample);
+  },
+
   /** Unified Metrics read. Domain-owned current values stay query-time and
    * durable observations stay in metric_samples, but every consumer receives
-   * the same MetricSeries contract and one readiness boundary. */
+   * the same MetricSeries contract and one readiness boundary. Product rows
+   * require users:read; meetings remain principal-scoped. */
   async collection(businessId: string, start: Date, end: Date): Promise<MetricCollection> {
     const principal = currentPrincipal();
+    const allowPlatform = canReadPlatformMetrics(principal);
     const durable = await this.list(undefined, businessId, { start, end });
     let current: Awaited<ReturnType<typeof this.sampleRange>> | null = null;
     try {
       current = await this.sampleRange(businessId, start, end);
     } catch (error) {
-      if ((error as { status?: number })?.status !== 409) throw error;
+      const status = (error as { status?: number })?.status;
+      // 409 = non-platform business; 404 = no users:read — both skip product current series.
+      if (status !== 409 && status !== 404) throw error;
     }
     const bySlug = new Map(durable.map((metric) => [metric.slug, metric]));
     if (!current) {
+      // Still project principal-scoped meetings when product current is gated.
+      const meetingsDef = CURRENT_METRIC_DEFINITIONS.find((d) => d.slug === "meetings");
+      let meetingsSeries: MetricSeries[] = [];
+      if (meetingsDef) {
+        const { countCompletedMeetingsWithNotesInRange } = await import("./meetings/meeting-index");
+        const value = await countCompletedMeetingsWithNotesInRange(start, end);
+        const existing = bySlug.get("meetings");
+        if (existing) bySlug.delete("meetings");
+        const observedAt = end.toISOString();
+        const sample: MetricSample = {
+          id: `query_${businessId}_meetings_${start.getTime()}_${end.getTime()}`,
+          metricId: existing?.id ?? `metric_current_${businessId}_meetings`,
+          accountId: principal.accountId!,
+          vaultId: existing?.vaultId ?? principal.activeVaultId ?? null,
+          value,
+          unit: meetingsDef.unit,
+          observedAt,
+          sourceRef: "internal/meetings-query-v1",
+          evidence: "Completed sessions with notes in the selected range.",
+          periodStart: start.toISOString(),
+          periodEnd: end.toISOString(),
+          createdAt: observedAt,
+        };
+        const metric = existing
+          ? { ...existing, latestSample: sample }
+          : virtualCurrentMetric(businessId, meetingsDef, sample);
+        meetingsSeries = [{ metric, samples: [sample], valueStatus: "actual", coverage: { status: "finalized" } }];
+      }
       return {
         start: start.toISOString(),
         end: end.toISOString(),
-        series: durable.map((metric) => ({
-          metric,
-          samples: metric.latestSample ? [metric.latestSample] : [],
-          valueStatus: "actual" as const,
-          coverage: { status: "finalized" as const },
-        })),
+        series: [
+          ...meetingsSeries,
+          ...[...bySlug.values()].map((metric) => ({
+            metric,
+            samples: metric.latestSample ? [metric.latestSample] : [],
+            valueStatus: "actual" as const,
+            coverage: { status: "finalized" as const },
+          })),
+        ],
       };
     }
     const rangeCoverage: MetricCoverage = current.coverage.status === "provisional"
       ? { status: "provisional", finalizesAt: current.coverage.finalizesAt }
       : { status: "finalized" };
-    const currentSeries = CURRENT_METRIC_DEFINITIONS.map((definition) => {
+    const currentSeries = CURRENT_METRIC_DEFINITIONS.flatMap((definition) => {
+      if (isProductCurrentSlug(definition.slug) && !allowPlatform) return [];
       const existing = bySlug.get(definition.slug);
       if (existing) bySlug.delete(definition.slug);
       const isIdentityStock = IDENTITY_STOCK_SLUGS.has(definition.slug);
@@ -574,7 +677,9 @@ export const metricsStorage = {
           }
         : isIdentityStock
           ? { status: "finalized" }
-          : rangeCoverage;
+          : definition.slug === "meetings"
+            ? { status: "finalized" }
+            : rangeCoverage;
       const observedAt = isIdentityStock ? new Date().toISOString() : end.toISOString();
       const sample: MetricSample = {
         id: `query_${businessId}_${definition.slug}_${isIdentityStock ? observedAt : `${start.getTime()}_${end.getTime()}`}`,
@@ -589,15 +694,17 @@ export const metricsStorage = {
           ? (definition.slug === "accounts"
             ? "Count of identity accounts with status=active."
             : "Distinct users with a membership on an active (status=active) account.")
-          : "Resolved from the owning product system for the selected range.",
+          : definition.slug === "meetings"
+            ? "Completed sessions with notes in the selected range."
+            : "Resolved from the owning product system for the selected range.",
         periodStart: isIdentityStock ? null : start.toISOString(),
         periodEnd: isIdentityStock ? null : end.toISOString(),
         createdAt: observedAt,
       };
       const metric = existing
-        ? { ...existing, latestSample: sample }
+        ? { ...existing, ownerKind: isProductCurrentSlug(definition.slug) ? "platform" : existing.ownerKind, latestSample: sample }
         : virtualCurrentMetric(businessId, definition, sample);
-      return { metric, samples: [sample], valueStatus: "actual" as const, coverage };
+      return [{ metric, samples: [sample], valueStatus: "actual" as const, coverage }];
     });
     const durableSeries = [...bySlug.values()].map((metric) => ({
       metric,
