@@ -20,6 +20,13 @@ const log = createLogger("VoiceTurnIO");
 export const COALESCE_BUFFER_MAX_BYTES = 4096;
 
 /** Spoken hold sentences are gone. Continuity is the live generator + write port. */
+const SPOKEN_FILLER_PREAMBLE = /^(?:One second\.|One moment\.|Still on it\.|Working\.)\s*/i;
+
+/** Drop a model-authored stall opener so it cannot become the first flushed speakable. */
+export function stripSpokenFillerPreamble(text: string): { text: string; stripped: boolean } {
+  const next = text.replace(SPOKEN_FILLER_PREAMBLE, "");
+  return { text: next, stripped: next !== text };
+}
 
 /**
  * Split completed speakable prose from an unstable trailing fragment.
@@ -249,6 +256,16 @@ export function createTurnIOHandlers(
       content = split.speakable;
       remainder = split.remainder;
       ctx.coalesceBuf.value = remainder;
+    }
+
+    const stripped = stripSpokenFillerPreamble(content);
+    if (stripped.stripped) {
+      log.info(`turn ${currentTurn} SPOKEN_FILLER_STRIPPED trigger=${trigger} ${spineIds(session, ctx)}`);
+      content = stripped.text;
+    }
+    if (!content) {
+      ctx.coalesceBuf.value = remainder;
+      return;
     }
 
     ctx.coalesceFlushCount++;

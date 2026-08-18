@@ -18,8 +18,9 @@ onSecretChange((name) => {
   if (name === "ELEVENLABS_API_KEY") cachedApiKey = null;
 });
 const DEFAULT_CASCADE_TIMEOUT_SECONDS = 30;
+const DISABLED_SOFT_TIMEOUT_SECONDS = -1;
 let verifiedCascadeTimeoutSeconds: number = DEFAULT_CASCADE_TIMEOUT_SECONDS;
-let verifiedSoftTimeoutSeconds: number = 5;
+let verifiedSoftTimeoutSeconds: number = 0;
 
 export function getVerifiedCascadeTimeoutSeconds(): number {
   return verifiedCascadeTimeoutSeconds;
@@ -314,8 +315,12 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
         cascade_timeout_seconds: 30,
         end_of_speech_silence_ms: 1000,
         interruption_sensitivity: 0.5,
-        // Spoken fillers are gone. Continuity is attach-not-abort + comment liveness.
-        // Omit soft_timeout_config so EL does not speak "One second."
+        // Official disable is -1. Omitting this field leaves a stored "One second." filler.
+        soft_timeout_config: {
+          timeout_seconds: DISABLED_SOFT_TIMEOUT_SECONDS,
+          message: "",
+          use_llm_generated_message: false,
+        },
       },
     },
     platform_settings: {
@@ -459,12 +464,15 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
 
       const rawSoftTimeout = softTimeoutConfig?.timeout_seconds;
       const effectiveSoftTimeout = rawSoftTimeout != null ? Number(rawSoftTimeout) : undefined;
-      if (effectiveSoftTimeout == null || effectiveSoftTimeout <= 0) {
+      if (effectiveSoftTimeout == null) {
         verifiedSoftTimeoutSeconds = 0;
-        log.debug(`setupAgentCallbackUrl: SOFT TIMEOUT DISABLED — agent reports ${rawSoftTimeout ?? "(not set)"}. Spoken filler is off; comment liveness + attach-not-abort own continuity.`);
+        log.warn(`setupAgentCallbackUrl: SOFT TIMEOUT ABSENT — PATCH requested ${DISABLED_SOFT_TIMEOUT_SECONDS}. Stored filler may still speak.`);
+      } else if (effectiveSoftTimeout < 0) {
+        verifiedSoftTimeoutSeconds = 0;
+        log.debug(`setupAgentCallbackUrl: SOFT TIMEOUT DISABLED — agent reports ${effectiveSoftTimeout}. Spoken filler is off.`);
       } else {
         verifiedSoftTimeoutSeconds = effectiveSoftTimeout;
-        log.debug(`setupAgentCallbackUrl: SOFT TIMEOUT VERIFIED at ${verifiedSoftTimeoutSeconds}s — keepalive first-fire threshold will sit between this and cascade timeout (${verifiedCascadeTimeoutSeconds}s)`);
+        log.warn(`setupAgentCallbackUrl: SOFT TIMEOUT STILL ENABLED at ${verifiedSoftTimeoutSeconds}s — requested ${DISABLED_SOFT_TIMEOUT_SECONDS}. Agent may still speak One second.`);
       }
 
       // Compute keepalive buffer at boot so the KEEPALIVE_BUFFER_NO_ROOM
