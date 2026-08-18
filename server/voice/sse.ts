@@ -106,13 +106,13 @@ export function writeFirstContentHandshake(
     log.debug(`FIRST_CONTENT_HANDSHAKE skipped=already_sent session=${sessionId || "unknown"}`);
     return false;
   }
-  handshakeSent.add(res);
   if (!isResponseAlive(res)) {
     log.warn(`WRITE_PORT_DEAD location=writeFirstContentHandshake session=${sessionId || "unknown"}`);
     return false;
   }
   try {
     res.write(buildSSEChunk(chatId, created, WRITE_PORT_HANDSHAKE, null, false));
+    handshakeSent.add(res);
     log.info(`FIRST_CONTENT_HANDSHAKE session=${sessionId || "unknown"}`);
     return true;
   } catch (err: unknown) {

@@ -285,7 +285,7 @@ export async function resolvePromptAndMessages(
     log.debug(`turn ${currentTurn} EARLY_SSE_HEADERS sent before context assembly session=${session.id}`);
   }
   if (res) {
-    // Spec: unflushed "... " is unrepresentable. Pre-context liveness is SSE comments only.
+    // Handshake already fired on this port. Pre-context liveness is SSE comments only.
     // Soft-timeout is disabled (-1); do not rely on EL speaking a filler.
     sendSSEComment(res, "keepalive", session.id);
     preContextKeepaliveTimer = setInterval(() => {
