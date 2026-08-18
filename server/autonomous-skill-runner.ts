@@ -600,7 +600,6 @@ export async function executeAutonomousSkillRun(
   }
   const startTime = Date.now();
 
-  let addToMemory = true;
   let resolvedSessionType: "autonomous" | "agent" | null = null;
   let authoritySkillId: string | undefined;
   let resolvedPersona: import("./skill-persona-service").SkillPersonaResolution | null = null;
@@ -612,9 +611,6 @@ export async function executeAutonomousSkillRun(
       if (!skillRecord) skillRecord = await storage.getSkill(skillId!);
       if (skillRecord) {
         authoritySkillId = skillRecord.id;
-        if (skillRecord.addToMemory === false) {
-          addToMemory = false;
-        }
         if (skillRecord.sessionType === "autonomous" || skillRecord.sessionType === "agent") {
           resolvedSessionType = skillRecord.sessionType;
         }
@@ -696,7 +692,7 @@ export async function executeAutonomousSkillRun(
     : options.spawnerTool;
   const effectiveTitle = options.titleOverride ?? config.label;
   try {
-    logger.log(`[SkillChat] phase=session-create — creating session for ${isSkillless ? "skillless" : `skill "${skillId}"`} title="${effectiveTitle}" type=${sessType} addToMemory=${addToMemory}${options.titleOverride ? ` (titleOverride applied)` : ""}`);
+    logger.log(`[SkillChat] phase=session-create — creating session for ${isSkillless ? "skillless" : `skill "${skillId}"`} title="${effectiveTitle}" type=${sessType}${options.titleOverride ? ` (titleOverride applied)` : ""}`);
     const provenance = {
       triggerType: (options as any).hookTriggerId ? "hook" as const : "skill" as const,
       triggerId: (options as any).hookTriggerId || skillId || undefined,
@@ -870,7 +866,7 @@ export async function executeAutonomousSkillRun(
   eventBus.publish({
     category: "chat",
     event: "chat.autonomous.started",
-    payload: { sessionId, skillId, skillName: config.label, addToMemory, sessionKey },
+    payload: { sessionId, skillId, skillName: config.label, sessionKey },
   });
 
   // Register with one complete identity tuple before any autonomous stream event.

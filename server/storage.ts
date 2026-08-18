@@ -753,6 +753,9 @@ export class HybridStorage implements IStorage {
     const { references: refs, scope: _scope, ownerUserId: _ownerUserId, accountId: _accountId, vaultId: _vaultId, ...skillData } = normalized;
     const [created] = await db.insert(skills).values({
       ...skillData,
+      whenToUse: "",
+      outputSpec: "",
+      addToMemory: true,
       allowedTools: [],
       ...ownedInsertValues(principal, skillScopeColumns),
     }).returning();
