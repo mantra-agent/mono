@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { PROFILE_DESCRIPTION_FRAME_CLASS } from "@/components/profile-description-style";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
 } from "@/components/hierarchy-section-header";
@@ -106,6 +107,48 @@ const SOURCE_MOD_LABELS: Record<"core" | ModKey, string> = {
   slack: "Slack",
 };
 const SOURCE_MOD_ORDER: Array<"core" | ModKey> = ["core", ...MOD_KEYS];
+
+function skillFieldValueClass(changed?: boolean): string {
+  return changed ? "text-white" : "text-muted-foreground";
+}
+
+function SkillDescriptionEditor({
+  value,
+  changed,
+  onChange,
+  placeholder = "Add description",
+  testId = "input-description",
+}: {
+  value: string;
+  changed?: boolean;
+  onChange: (next: string) => void;
+  placeholder?: string;
+  testId?: string;
+}) {
+  return (
+    <div className="group/editor grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-0 px-2 py-1.5">
+      <div className={cn(PROFILE_DESCRIPTION_FRAME_CLASS, "min-w-0")}>
+        {changed ? (
+          <div className="mb-1 flex justify-end">
+            <StatusDot kind="local" />
+          </div>
+        ) : null}
+        <Textarea
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          className={cn(
+            "min-h-[2.75rem] w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
+            "text-[14px] leading-tight",
+            skillFieldValueClass(changed),
+          )}
+          data-testid={testId}
+        />
+      </div>
+      <span className="h-6 w-6 shrink-0" aria-hidden="true" />
+    </div>
+  );
+}
 
 function downloadJson(data: unknown, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -482,6 +525,13 @@ function SkillTreeRow({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {!expanded && skill.description.trim() ? (
+        <div className="px-2 pb-1">
+          <div className={cn("whitespace-pre-wrap text-[14px] leading-tight", skillFieldValueClass(skill.changedFields?.includes("description")))}>
+            {skill.description.trim()}
+          </div>
+        </div>
+      ) : null}
       {expanded && (
         <SkillEditor skill={skill} />
       )}
@@ -1178,9 +1228,11 @@ function SkillEditor({
             {sessionType === "autonomous" ? "On" : "Off"}
           </button>
         </ProfileTreeRow>
-        <ProfileTreeRow label="Description" hasValue={Boolean(description.trim())} showEmpty mobileLayout="stacked" testId="row-skill-description">
-          <Textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What this skill does and when to use it..." className="min-h-[60px] text-xs" data-testid="input-description" />
-        </ProfileTreeRow>
+        <SkillDescriptionEditor
+          value={description}
+          changed={skill?.changedFields?.includes("description")}
+          onChange={setDescription}
+        />
         <ProfileTreeRow label="Process" hasValue={Boolean(process.trim())} showEmpty mobileLayout="stacked" testId="row-skill-process">
           <Textarea value={process} onChange={(event) => setProcess(event.target.value)} placeholder="Step-by-step workflow..." className="min-h-20 text-xs" data-testid="input-process" />
         </ProfileTreeRow>
