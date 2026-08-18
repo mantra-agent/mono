@@ -94,6 +94,16 @@ export function registerDocumentTemplateRoutes(app: Express): void {
     }
   });
 
+  app.get("/api/templates/:id/bindings", async (req, res) => {
+    try {
+      const template = await documentTemplateStorage.get(req.params.id);
+      if (!template) return res.status(404).json({ error: "Template not found" });
+      res.json({ skills: await documentTemplateStorage.listBindingsForTemplate(req.params.id) });
+    } catch (error) {
+      respondError(res, error);
+    }
+  });
+
   app.get("/api/templates/:id", async (req, res) => {
     try {
       const template = await documentTemplateStorage.get(req.params.id);

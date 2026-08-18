@@ -1,3 +1,10 @@
+<!-- 2026-08-18 Templates reverse skill list:
+- Assets/data: A07 `skill_template_bindings` plus visible `skills` identity (id/name). S1 catalog, no process/prompt bodies.
+- Flow/threat: GET `/api/templates/:id/bindings` could leak another account's user-scoped skill ids if the join skipped skill visibility (STRIDE disclosure; DATA-01).
+- Deterministic controls/owner: same `requireAuth` family as `/api/templates`. Storage joins bindings to skills through `combineWithVisibleScope` and global|user only. Owner: Core Automation. Severity: medium confidentiality. SLA: same PR.
+- Residual/rollback: global skill names remain shared catalog. Revert the GET, `listBindingsForTemplate`, expand chips, and this finding together.
+-->
+
 <!-- 2026-08-18 Stripe Billing Integration collector:
 - Assets/data: A01 Account identity; A03 `account_billing` pointers and term stamps (S1); A03 Stripe secrets (S3); A07 webhook receipts / meter deliveries (S1); A02 `api_calls` token totals (S1 operational, not prompt bodies). No entitlement column.
 - Flow/threat: operator attach → Checkout → Stripe; sibling emit → receive seam → delivery row → Meter Event; Stripe → signed webhook. Credible abuse: unsigned webhook flipping `collection_status`; treating `cus_` as login/entitlement; leaking `sk_` / `whsec_` in logs or tool results; replaying meter identifiers after Stripe's 24h window; attaching a consulting Price; accepting a meter event for an Account with no billing row; cross-Account Customer reuse (STRIDE spoofing/tampering/disclosure; IAM-01, DATA-01, INT-01, OBS-01).

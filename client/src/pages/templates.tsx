@@ -1,20 +1,21 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronRight, FileStack, Loader2, Plus } from "lucide-react";
+import { createReferenceRef } from "@shared/references";
 import type { DocumentTemplate } from "@shared/models/document-templates";
+import { FileStack, Loader2, Plus, X } from "lucide-react";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
-  HIERARCHY_SECTION_HEADER_CLASS,
   HIERARCHY_SESSION_ROW_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
-import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
+import { ReferencePicker } from "@/components/references/reference-picker";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -24,11 +25,8 @@ interface TemplatesResponse {
   templates: DocumentTemplate[];
 }
 
-interface TemplateDraft {
-  id: string;
-  name: string;
-  pageId: string;
-  pageLabel: string;
+interface TemplateBindingsResponse {
+  skills: Array<{ id: string; name: string }>;
 }
 
 function mutationErrorMessage(error: unknown): string {
@@ -43,111 +41,207 @@ function mutationErrorMessage(error: unknown): string {
   }
 }
 
-function TemplateEditor({
-  template,
-  onClose,
+function invalidateTemplates() {
+  return queryClient.invalidateQueries({
+    predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/templates"),
+  });
+}
+
+function TemplatePagePicker({
+  currentId,
+  currentLabel,
+  onAssign,
+  onCancel,
 }: {
-  template?: DocumentTemplate;
-  onClose: () => void;
+  currentId?: string;
+  currentLabel?: string;
+  onAssign: (pageId: string) => void;
+  onCancel?: () => void;
 }) {
-  const { toast } = useToast();
-  const [draft, setDraft] = useState<TemplateDraft>(() =>
-    template
-      ? { id: template.id, name: template.name, pageId: template.pageId, pageLabel: template.pageId }
-      : { id: "", name: "", pageId: "", pageLabel: "" },
+  return (
+    <div className="flex w-full items-center gap-1" onClick={(event) => event.stopPropagation()}>
+      <ReferencePicker
+        value={currentId ? [{ type: "page", id: currentId, label: currentLabel || currentId }] : []}
+        onChange={(next) => {
+          const selected = next[0];
+          if (selected) onAssign(selected.id);
+        }}
+        types={["page"]}
+        mode="single"
+        variant="compact"
+        placeholder="Choose page"
+        showToken={false}
+        className={HIERARCHY_PRIMARY_ACTION_CLASS}
+        testId="picker-template-page"
+      />
+      {onCancel ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 shrink-0 text-muted-foreground/70"
+          onClick={onCancel}
+          aria-label="Cancel"
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      ) : null}
+    </div>
   );
-  const invalidate = () =>
-    queryClient.invalidateQueries({
-      predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/templates"),
-    });
+}
 
-  const pageValue: ReferencePickerValue[] = draft.pageId
-    ? [{ type: "page", id: draft.pageId, label: draft.pageLabel || draft.pageId }]
-    : [];
-
+function TemplateCreateEditor({ onClose }: { onClose: () => void }) {
+  const { toast } = useToast();
+  const [id, setId] = useState("");
+  const [name, setName] = useState("");
+  const [pageId, setPageId] = useState("");
+  const [pageLabel, setPageLabel] = useState("");
   const save = useMutation({
-    mutationFn: async () => {
-      if (template) {
-        return (
-          await apiRequest("PATCH", `/api/templates/${template.id}`, {
-            name: draft.name.trim(),
-            pageId: draft.pageId.trim(),
-          })
-        ).json() as Promise<DocumentTemplate>;
-      }
-      return (
+    mutationFn: async () =>
+      (
         await apiRequest("POST", "/api/templates", {
-          id: draft.id.trim(),
-          name: draft.name.trim(),
-          pageId: draft.pageId.trim(),
+          id: id.trim(),
+          name: name.trim(),
+          pageId: pageId.trim(),
         })
-      ).json() as Promise<DocumentTemplate>;
-    },
+      ).json() as Promise<DocumentTemplate>,
     onSuccess: () => {
-      invalidate();
+      invalidateTemplates();
       onClose();
     },
     onError: (error) =>
       toast({ title: "Could not save template", description: mutationErrorMessage(error), variant: "destructive" }),
   });
-
-  const canSave = Boolean(draft.name.trim() && draft.pageId.trim() && (template || draft.id.trim()));
+  const canSave = Boolean(id.trim() && name.trim() && pageId.trim());
 
   return (
-    <div
-      className="ml-6 space-y-1 border-l border-border/40 pb-3 pl-3 pr-2 pt-2"
-      data-testid={template ? `template-editor-${template.id}` : "template-editor-new"}
-    >
-      {!template && (
-        <ProfileTreeRow label="Id" hasValue={Boolean(draft.id.trim())} showEmpty mobileLayout="inline" testId="row-template-id">
-          <Input
-            autoFocus
-            value={draft.id}
-            onChange={(event) => setDraft((current) => ({ ...current, id: event.target.value }))}
-            placeholder="spec"
-            className="h-8"
-            data-testid="input-template-id"
-          />
-        </ProfileTreeRow>
-      )}
-      <ProfileTreeRow label="Name" hasValue={Boolean(draft.name.trim())} showEmpty mobileLayout="inline" testId="row-template-name">
+    <div className="ml-6 space-y-1 border-l border-border/40 pb-3 pl-3 pr-2 pt-2" data-testid="template-editor-new">
+      <ProfileTreeRow label="Id" hasValue={Boolean(id.trim())} showEmpty mobileLayout="inline" testId="row-template-id">
         <Input
-          autoFocus={Boolean(template)}
-          value={draft.name}
-          onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+          autoFocus
+          value={id}
+          onChange={(event) => setId(event.target.value)}
+          placeholder="spec"
+          className="h-8"
+          data-testid="input-template-id"
+        />
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Name" hasValue={Boolean(name.trim())} showEmpty mobileLayout="inline" testId="row-template-name">
+        <Input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
           placeholder="Spec"
           className="h-8"
           data-testid="input-template-name"
         />
       </ProfileTreeRow>
-      <ProfileTreeRow label="Page" hasValue={Boolean(draft.pageId)} showEmpty mobileLayout="inline" testId="row-template-page">
-        <ReferencePicker
-          types={["page"]}
-          mode="single"
-          variant="compact"
-          dense
-          placeholder="Shape page"
-          value={pageValue}
-          onChange={(next) => {
-            const page = next[0];
-            setDraft((current) => ({
-              ...current,
-              pageId: page?.id ?? "",
-              pageLabel: page?.label ?? "",
-            }));
+      <ProfileTreeRow label="Page" hasValue={Boolean(pageId)} showEmpty mobileLayout="inline" testId="row-template-page">
+        <TemplatePagePicker
+          currentId={pageId || undefined}
+          currentLabel={pageLabel || undefined}
+          onAssign={(nextPageId) => {
+            setPageId(nextPageId);
+            setPageLabel(nextPageId);
           }}
-          testId="picker-template-page"
         />
       </ProfileTreeRow>
       <div className="flex items-center justify-end gap-2 pt-2">
         <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={save.isPending}>
           Cancel
         </Button>
-        <Button type="button" size="sm" disabled={!canSave || save.isPending} onClick={() => save.mutate()} data-testid="button-save-template">
+        <Button
+          type="button"
+          size="sm"
+          disabled={!canSave || save.isPending}
+          onClick={() => save.mutate()}
+          data-testid="button-save-template"
+        >
           {save.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}
         </Button>
       </div>
     </div>
+  );
+}
+
+function TemplatePageSlot({ template }: { template: DocumentTemplate }) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const assign = useMutation({
+    mutationFn: async (pageId: string) => {
+      const res = await apiRequest("PATCH", `/api/templates/${template.id}`, { pageId });
+      return res.json() as Promise<DocumentTemplate>;
+    },
+    onSuccess: () => {
+      invalidateTemplates();
+      setEditing(false);
+    },
+    onError: (error) =>
+      toast({ title: "Could not retarget page", description: mutationErrorMessage(error), variant: "destructive" }),
+  });
+  const pageRef = createReferenceRef({
+    type: "page",
+    id: template.pageId,
+    metadata: { label: template.pageId, href: `/info#library?page=${encodeURIComponent(template.pageId)}` },
+  });
+
+  return (
+    <ProfileTreeRow
+      label="Page"
+      hasValue
+      showEmpty
+      mobileLayout="inline"
+      menuVisibility="hover"
+      testId="row-template-page"
+      menuContent={
+        <DropdownMenuItem
+          disabled={assign.isPending}
+          onSelect={() => setEditing(true)}
+          data-testid={`menu-template-page-change-${template.id}`}
+        >
+          Change page
+        </DropdownMenuItem>
+      }
+    >
+      {editing ? (
+        <TemplatePagePicker
+          currentId={template.pageId}
+          currentLabel={template.pageId}
+          onAssign={(pageId) => assign.mutate(pageId)}
+          onCancel={() => setEditing(false)}
+        />
+      ) : (
+        <ReferenceRenderer refValue={pageRef} surface="simple-chip" />
+      )}
+    </ProfileTreeRow>
+  );
+}
+
+function TemplateSkillBindings({ templateId, open }: { templateId: string; open: boolean }) {
+  const { data, isLoading } = useQuery<TemplateBindingsResponse>({
+    queryKey: [`/api/templates/${templateId}/bindings`],
+    enabled: open,
+  });
+  const skills = data?.skills ?? [];
+
+  return (
+    <ProfileTreeRow
+      label="Skills"
+      hasValue={skills.length > 0}
+      showEmpty
+      mobileLayout="inline"
+      testId={`row-template-skills-${templateId}`}
+    >
+      {isLoading ? (
+        <span className="text-sm text-muted-foreground">Loading…</span>
+      ) : skills.length === 0 ? (
+        <span className="text-sm text-muted-foreground">None</span>
+      ) : (
+        <span className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+          {skills.map((skill) => (
+            <InlineReferenceText key={skill.id} text={`@skill:${skill.id}`} />
+          ))}
+        </span>
+      )}
+    </ProfileTreeRow>
   );
 }
 
@@ -160,23 +254,86 @@ function TemplateRow({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { toast } = useToast();
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(template.name);
+  const rename = useMutation({
+    mutationFn: async (name: string) => {
+      await apiRequest("PATCH", `/api/templates/${template.id}`, { name });
+    },
+    onSuccess: () => invalidateTemplates(),
+    onError: (error) =>
+      toast({ title: "Could not rename template", description: mutationErrorMessage(error), variant: "destructive" }),
+    onSettled: () => setEditingName(false),
+  });
+  const commitName = () => {
+    const next = nameDraft.trim();
+    if (!next || next === template.name) {
+      setNameDraft(template.name);
+      setEditingName(false);
+      return;
+    }
+    rename.mutate(next);
+  };
+
   return (
     <div className="group" data-testid={`template-row-${template.id}`}>
       <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-pointer")} onClick={onToggle}>
-        <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" data-testid={`button-template-${template.id}`}>
-          <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
-          <FileStack className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate text-sm text-foreground">{template.name}</span>
-          <span className="shrink-0 font-mono text-xs text-muted-foreground">{template.id}</span>
-          <span className="min-w-0 flex-1 truncate text-right text-sm">
-            <span className="pointer-events-none">
-              <InlineReferenceText text={`@page:${template.pageId}`} />
-            </span>
-          </span>
-          {template.scope === "user" && <span className="shrink-0 text-xs text-muted-foreground">account</span>}
-        </button>
+        <FileStack className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        {editingName ? (
+          <Input
+            autoFocus
+            value={nameDraft}
+            onChange={(event) => setNameDraft(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitName();
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setNameDraft(template.name);
+                setEditingName(false);
+              }
+            }}
+            onBlur={commitName}
+            className="h-6 min-w-0 flex-1 border-0 bg-muted/40 px-1.5 text-sm shadow-none focus-visible:ring-1"
+            data-testid={`input-template-row-name-${template.id}`}
+          />
+        ) : (
+          <button
+            type="button"
+            className="min-w-0 truncate text-left text-sm text-foreground"
+            onClick={(event) => {
+              event.stopPropagation();
+              setNameDraft(template.name);
+              setEditingName(true);
+            }}
+            data-testid={`text-template-name-${template.id}`}
+          >
+            {template.name}
+          </button>
+        )}
+        <span className="shrink-0 font-mono text-xs text-muted-foreground">{template.id}</span>
+        <span
+          className="min-w-0 flex-1 truncate text-right text-sm"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <InlineReferenceText text={`@page:${template.pageId}`} />
+        </span>
+        {template.scope === "user" && <span className="shrink-0 text-xs text-muted-foreground">account</span>}
       </div>
-      {open && <TemplateEditor template={template} onClose={onToggle} />}
+      {open && (
+        <div
+          className="ml-6 space-y-1 border-l border-border/40 pb-3 pl-3 pr-2 pt-2"
+          data-testid={`template-editor-${template.id}`}
+        >
+          <TemplatePageSlot template={template} />
+          <TemplateSkillBindings templateId={template.id} open={open} />
+        </div>
+      )}
     </div>
   );
 }
@@ -191,7 +348,6 @@ export default function TemplatesPage() {
     : "/api/templates";
   const { data, isLoading, error, refetch } = useQuery<TemplatesResponse>({ queryKey: [endpoint] });
   const templates = useMemo(() => data?.templates ?? [], [data?.templates]);
-  const [sectionOpen, setSectionOpen] = useState(true);
 
   return (
     <div className="h-full w-full overflow-y-auto bg-background" data-testid="templates-page">
@@ -204,7 +360,7 @@ export default function TemplatesPage() {
           ariaLabel="Search templates"
         />
         {creating ? (
-          <TemplateEditor onClose={() => setCreating(false)} />
+          <TemplateCreateEditor onClose={() => setCreating(false)} />
         ) : (
           <button
             type="button"
@@ -229,30 +385,20 @@ export default function TemplatesPage() {
               Try again
             </button>
           </div>
+        ) : templates.length === 0 ? (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">No templates.</div>
         ) : (
-          <Collapsible open={sectionOpen} onOpenChange={setSectionOpen}>
-            <CollapsibleTrigger className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover:bg-accent/70")}>
-              <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", sectionOpen && "rotate-90")} />
-              Templates · {templates.length}
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              {templates.length === 0 ? (
-                <div className="px-2 py-1.5 text-sm text-muted-foreground">No templates.</div>
-              ) : (
-                templates.map((template) => (
-                  <TemplateRow
-                    key={`${template.scope}:${template.id}`}
-                    template={template}
-                    open={openId === template.id}
-                    onToggle={() => {
-                      setCreating(false);
-                      setOpenId(openId === template.id ? null : template.id);
-                    }}
-                  />
-                ))
-              )}
-            </CollapsibleContent>
-          </Collapsible>
+          templates.map((template) => (
+            <TemplateRow
+              key={`${template.scope}:${template.id}`}
+              template={template}
+              open={openId === template.id}
+              onToggle={() => {
+                setCreating(false);
+                setOpenId(openId === template.id ? null : template.id);
+              }}
+            />
+          ))
         )}
       </div>
     </div>

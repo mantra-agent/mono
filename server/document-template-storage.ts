@@ -370,6 +370,39 @@ export class DocumentTemplateStorage {
     return rows.map(mapBinding);
   }
 
+  /** Reverse index: visible skills that bind this template id. Expand-only projection. */
+  async listBindingsForTemplate(
+    templateId: string,
+    principal?: Principal,
+  ): Promise<Array<{ id: string; name: string }>> {
+    const current = userPrincipal(principal);
+    const normalized = normalizeId(templateId);
+    const skillScopeColumns = {
+      scope: skills.scope,
+      ownerUserId: skills.ownerUserId,
+      accountId: skills.accountId,
+      vaultId: skills.vaultId,
+      instanceId: skills.instanceId,
+    };
+    const rows = await db
+      .select({ id: skills.id, name: skills.name })
+      .from(skillTemplateBindings)
+      .innerJoin(skills, eq(skills.id, skillTemplateBindings.skillId))
+      .where(
+        and(
+          eq(skillTemplateBindings.templateId, normalized),
+          combineWithVisibleScope(current, skillScopeColumns),
+          or(eq(skills.scope, "global"), eq(skills.scope, "user")),
+        ),
+      )
+      .orderBy(asc(skills.name), asc(skills.id));
+    const byId = new Map<string, { id: string; name: string }>();
+    for (const row of rows) {
+      if (!byId.has(row.id)) byId.set(row.id, { id: row.id, name: row.name });
+    }
+    return [...byId.values()];
+  }
+
   /**
    * Resolve skill key → template id → visible page markdown.
    * Fail closed: missing binding/row/invisible page returns null (caller stamps Residual).
