@@ -1,24 +1,11 @@
-import {
-    ACTIVITY_CHAT,
-    ACTIVITY_WORK,
-    ACTIVITY_FRAMING,
-    ACTIVITY_RECALL,
-    ACTIVITY_MEMORY,
-    ACTIVITY_THINKING,
-    ACTIVITY_STRATEGY,
-  } from "./job-profiles";
-  import { getInstanceName } from "@shared/instance-config";
-  import { composeFeaturePipelineSkillProcess } from "@shared/feature-pipeline";
+import { composeFeaturePipelineSkillProcess } from "@shared/feature-pipeline";
   import { composeIssueFeatureSkillProcess } from "@shared/issue-feature";
 
   export interface SkillDefault {
     name: string;
     description: string;
-    category: string;
-    activity: string;
     process: string;
     addToMemory?: boolean;
-    author?: string;
     version?: string;
     checklist?: Array<{
       check: string;
@@ -63,9 +50,7 @@ import {
   {
     name: "history-rollup",
     description: "Core hourly historical-continuity maintenance. The Skill's own routed model run summarizes deterministic owner-scoped source windows and persists each result through a validated immutable write boundary.",
-    category: "system",
-    activity: ACTIVITY_MEMORY,
-    author: "system",
+
     version: "2.0",
     addToMemory: false,
     pinnedToContext: false,
@@ -89,9 +74,6 @@ import {
     name: "self-heal",
     recommendedPersona: "Engineer",
     description: "Build-owned nightly production error repair. Inspects canonical reliability evidence, attributes recurring product defects, and ships bounded source repairs through the trusted engineering and production-build gate without publishing production.",
-    category: "build",
-    activity: ACTIVITY_WORK,
-    author: "system",
     version: "1.4",
     addToMemory: false,
     pinnedToContext: false,
@@ -139,9 +121,6 @@ import {
     name: "issue-burndown",
     recommendedPersona: "Engineer",
     description: "Build-owned manual Open Issues burndown. Operator-started only: inspects open tracked Issues, selects coherent actionable candidates, and runs diagnose → develop → launch through ordinary engineering children without touching Self Heal or application ERRORS.",
-    category: "build",
-    activity: ACTIVITY_WORK,
-    author: "system",
     version: "1.0",
     addToMemory: false,
     pinnedToContext: false,
@@ -187,9 +166,6 @@ import {
     recommendedPersona: "Engineer",
     description:
       "Continuously monitors Mantra Web stage and production for crashes, failed builds or deployments, unhealthy runtime state, recurring error and warning signatures, material performance degradation, and failed or degraded autonomous skill runs. Deduplicates incidents, always files a durable Issue before elevating to Ray, escalates any broken environment classification, and prepares a bounded repair handoff for reproducible software defects while production remains observe-only and human-promoted.",
-    category: "build",
-    activity: ACTIVITY_WORK,
-    author: "system",
     version: "1.13",
     addToMemory: false,
     pinnedToContext: false,
@@ -299,9 +275,6 @@ End each run with a compact structured outcome containing overall classification
     recommendedPersona: "Engineer",
     description:
       "Build-owned Security Sentinel. Weekly read-only security review of mantra-agent/mono main. Diff-only by default; full baseline every 4th run or after 30 days. Never modifies code or opens PRs in this run.",
-    category: "build",
-    activity: ACTIVITY_WORK,
-    author: "system",
     version: "1.2",
     addToMemory: false,
     pinnedToContext: false,
@@ -336,9 +309,6 @@ Mission: weekly read-only security review of mantra-agent/mono main. This run ne
     name: "curate",
     recommendedPersona: "Investigator",
     description: "Reads the bounded candidate set supplied by an active Landscape Scan, makes one evidence-based relevance decision per fingerprint, and hands the complete batch back to that scan through news.batch_curate.",
-    category: "news",
-    activity: ACTIVITY_WORK,
-    author: "system",
     version: "1.0",
     addToMemory: false,
     pinnedToContext: false,
@@ -385,9 +355,6 @@ The user message contains JSON with a \`candidates\` array. Each candidate may i
     name: "learning",
     recommendedPersona: "Investigator",
     description: "Generates one verified, non-duplicative Did You Know fact for Ray's Daily Brief. Reads Did You Know History, selects an interesting fact across Ray-relevant domains, verifies it, records it, and returns a concise section-ready line.",
-    category: "communication",
-    activity: ACTIVITY_THINKING,
-    author: "system",
     version: "1.0",
     addToMemory: true,
     pinnedToContext: true,
@@ -475,9 +442,6 @@ No preamble. No source list. No explanation of your process. No extra headings.
     name: "brief-daily",
     recommendedPersona: "Companion",
     description: "Assembles a morning briefing calibrated to the day's actual cognitive load. Monday/Wednesday/Friday carry more weight; Tuesday/Thursday are minimal. Prepends each day onto one rolling Morning Brief Library page and re-surfaces that same page.",
-    category: "communication",
-    activity: ACTIVITY_WORK,
-    author: "system",
     version: "7.9",
     addToMemory: true,
     scoreThreshold: 0.8,
@@ -660,9 +624,6 @@ Do NOT create \`daily-brief-YYYY-MM-DD\` pages. Do NOT use the \`priorities\` to
     name: "autonomy",
     recommendedPersona: "Executive",
     description: "Agent's autonomous scan-and-execute loop. Asks how Agent can help Ray achieve his goals; scans current goals, calendar, people, projects, tasks, issues, logs, news, workflows, decisions, email, and wellness; executes safe internal work; uses aligned Agent-assigned tasks as a legitimate work queue; routes durable outputs to canonical systems; and gates unsafe or unclear work for review.",
-    category: "system",
-    activity: ACTIVITY_WORK,
-    author: "system",
     version: "1.10",
     addToMemory: true,
     pinnedToContext: false,
@@ -777,9 +738,6 @@ Return a compact operational report:
     name: "financial-review",
     recommendedPersona: "Strategist",
     description: "Runs a periodic financial review for Ray using live finance data, investment positions, budget targets, goals, liabilities, recurring obligations, and forecast data. Produces a concise advisory brief in the style of a top-tier financial advisor. Monthly cadence for budget/tactical review. Quarterly cadence for goals, planning, and trend analysis.",
-    category: "finance",
-    activity: ACTIVITY_STRATEGY,
-    author: getInstanceName(),
     version: "3.0",
     addToMemory: true,
     pinnedToContext: false,
@@ -860,9 +818,6 @@ Return a compact operational report:
     recommendedPersona: "Coach",
     mayInitiateConversation: true,
       description: "Weekly deep question for Ray. Draws from the full spectrum — growth edges, creative synthesis, emerging opportunities, intellectual curiosity, and unresolved tensions — to ask one genuine, well-timed question that opens a door. Not coaching. Not poking soft spots. A real question from someone who sees the whole picture and is genuinely curious.",
-      category: "relationship",
-      activity: ACTIVITY_CHAT,
-      author: getInstanceName(),
       version: "1.1",
       addToMemory: true,
       pinnedToContext: false,
@@ -931,9 +886,6 @@ Use the \`converse\` tool to initiate a conversation:
   {
     name: "enrich-email",
     description: "Enriches triaged email threads with contextual summaries, decisions, and recommended actions by cross-referencing people, tasks, calendar, and memory. Can auto-dismiss 🟢 Acknowledge emails when appropriate.",
-    category: "communication",
-    activity: ACTIVITY_WORK,
-    author: "system",
     version: "1.0",
     addToMemory: false,
     pinnedToContext: false,
@@ -1003,9 +955,6 @@ This skill runs in the background. Do NOT create a conversation or set attention
     recommendedPersona: "Architect",
     mayInitiateConversation: true,
     description: "Generate the top 3 ideas to improve Agent, Ray's life, or their collaborative efforts. Research-backed, historically grounded, practically actionable. Surfaced as a conversation.",
-    category: "growth",
-    activity: ACTIVITY_THINKING,
-    author: getInstanceName(),
     version: "2.2",
     addToMemory: true,
     pinnedToContext: false,
@@ -1091,9 +1040,6 @@ For each selected idea:
   {
     name: "sleep",
     description: "Nightly vNext sleep cycle — claim lifecycle, REM dream generation, optional weekly GSI — filed onto one rolling Dreams Library page that owns sleep-related memory work.",
-    category: "memory",
-    activity: ACTIVITY_MEMORY,
-    author: "system",
     version: "5.3",
     addToMemory: false,
     pinnedToContext: false,
@@ -1197,9 +1143,6 @@ Surface any errors returned by the cycle explicitly in the Memory section and in
     name: "reflect",
     recommendedPersona: "Coach",
     description: "Parameterized reflection skill for daily, weekly, monthly, quarterly, and annual cadence reviews. Accepts cadence and period context, reads the relevant period data, writes a concise Library brief, and surfaces it to Home/Simple Inbox when useful.",
-    category: "thinking",
-    activity: ACTIVITY_THINKING,
-    author: "system",
     version: "2.1",
     addToMemory: true,
     pinnedToContext: false,
@@ -1441,9 +1384,6 @@ If the page has already been created but you later decide it should be surfaced,
     recommendedPersona: "Engineer",
     description:
       "Burns the open Issue queue after each new build: resolves fixed and non-actionable Issues with evidence, keeps real residual bugs, and prepends a surfaced entry on the Regression Testing Log for Ray review.",
-    category: "engineering",
-    activity: ACTIVITY_WORK,
-    author: "system",
     version: "2.4",
     addToMemory: false,
     pinnedToContext: false,
@@ -1529,8 +1469,6 @@ Primary artifact every run: prepend to and surface the account's Regression Test
     name: "cover-letter",
     recommendedPersona: "Strategist",
     description: "Generate a tailored cover letter for an opportunity using exec data and job description analysis.",
-    category: "exec",
-    activity: "generation",
     version: "1.0",
     checklist: [
       { check: "Opens with a specific hook tied to the company/role, not a generic opener", weight: 2 },
@@ -1578,8 +1516,6 @@ Primary artifact every run: prepend to and surface the account's Regression Test
     name: "resume",
     recommendedPersona: "Strategist",
     description: "Generate a tailored resume for an opportunity using exec data, JD gap analysis, and the Resume Design Standard.",
-    category: "exec",
-    activity: "generation",
     version: "1.0",
     checklist: [
       { check: "3-phase process followed: JD gap analysis → evidence assembly → generation", weight: 2 },
@@ -1634,9 +1570,6 @@ Primary artifact every run: prepend to and surface the account's Regression Test
   {
     name: "goal-manager",
     description: "Nightly steward of the goal graph. Reviews active goals across horizons, repairs high-confidence hierarchy and relationship gaps, prunes dangling links whose endpoint no longer resolves, flags weak goal definitions and provenance gaps for Ray, and appends a deterministic run log. Conservative authority: never deletes a goal, at most 25 mutations per run.",
-    category: "planning",
-    activity: ACTIVITY_WORK,
-    author: "system",
     version: "1.1",
     addToMemory: false,
     pinnedToContext: false,
@@ -1703,9 +1636,6 @@ Return a 3-5 line summary: goals reviewed, mutations by type, count flagged, and
     recommendedPersona: "Producer",
     mayInitiateConversation: true,
     description: "Quiet Thursday-night bandwidth maintenance before Friday planning. Reconciles Ray's real commitments against capacity, repairs safe date and priority drift, recalibrates task effort from execution evidence, writes one short running log entry, and starts a focused conversation only when an irreducible tradeoff remains.",
-    category: "thinking",
-    activity: ACTIVITY_THINKING,
-    author: "system",
     version: "1.6",
     addToMemory: false,
     pinnedToContext: false,
@@ -1820,9 +1750,6 @@ Success means Friday planning starts from a truthful system and Ray hears from y
     name: "coach",
     recommendedPersona: "Coach",
     description: "A biweekly mentor-style growth conversation inspired by Bill Campbell: warm, candid, trust-based, and focused on helping Ray become more capable rather than merely resolving the presenting problem.",
-    category: "coaching",
-    activity: ACTIVITY_CHAT,
-    author: "system",
     version: "1.1.0",
     addToMemory: true,
     pinnedToContext: false,
@@ -1896,9 +1823,6 @@ This is developmental coaching, not medical or mental-health treatment. If Ray i
     name: "feature-pipeline",
     recommendedPersona: "Architect",
     description: "Interactive Feature job launcher. Runs one assigned (stage, job) pair — Produce or opposite-seat Review — inside the current Feature room. Context is the Feature; procedure is this Skill.",
-    category: "build",
-    activity: ACTIVITY_WORK,
-    author: "system",
     version: "2.1",
     addToMemory: false,
     pinnedToContext: false,
@@ -1918,9 +1842,6 @@ This is developmental coaching, not medical or mental-health treatment. If Ray i
     name: "issue-feature",
     recommendedPersona: "Visionary",
     description: "Interactive Issue launcher. Converts one product Issue into a Feature idea, then deletes the source Issue. Context is the Issue; procedure is this Skill.",
-    category: "build",
-    activity: ACTIVITY_WORK,
-    author: "system",
     version: "1.0",
     addToMemory: false,
     pinnedToContext: false,

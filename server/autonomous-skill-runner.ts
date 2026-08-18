@@ -10,7 +10,7 @@ import { executeTool, executeBridgeTool } from "./bridge-tools";
 import { agentExecutor, formatAbortDetails, type ExecutorRunResult } from "./agent-executor";
 import { generateToolCallId } from "./file-storage/utils";
 import { createInactivityTimer, raceAbort } from "./timeout";
-import { ACTIVITY_THINKING, ACTIVITY_WORK, ACTIVITY_STRATEGY, ACTIVITY_MEMORY, ACTIVITY_FRAMING, BUILTIN_ACTIVITY_IDS, resolveActivityId, type ActivityId } from "./job-profiles";
+import { ACTIVITY_THINKING, ACTIVITY_WORK, ACTIVITY_STRATEGY, ACTIVITY_MEMORY, ACTIVITY_FRAMING, type ActivityId } from "./job-profiles";
 import type { AdmissionTier } from "./run-admission";
 
 import { getSideEffectTier, type SideEffectTier } from "./autonomy-tiers";
@@ -261,18 +261,6 @@ export interface SkillRunConfig {
 }
 
 
-function parseEstimatedDurationMs(duration: string | null | undefined): number | null {
-  if (!duration) return null;
-  const match = duration.match(/^(\d+)\s*(min|m|hr|h|hour|sec|s)$/i);
-  if (!match) return null;
-  const value = parseInt(match[1], 10);
-  const unit = match[2].toLowerCase();
-  if (unit === "min" || unit === "m") return value * 60 * 1000;
-  if (unit === "hr" || unit === "h" || unit === "hour") return value * 60 * 60 * 1000;
-  if (unit === "sec" || unit === "s") return value * 1000;
-  return null;
-}
-
 export interface AutonomousRunResult {
   sessionId: string;
   status: "succeeded" | "degraded" | "failed" | "yielded";
@@ -368,16 +356,12 @@ function findBuiltinSkillDefault(skillName: string): SkillDefault | undefined {
 function skillDefaultRunConfig(skillName: string): SkillRunConfig | undefined {
   const def = findBuiltinSkillDefault(skillName);
   if (!def?.callType || def.timeoutMs === undefined) return undefined;
-  const resolvedActivity = resolveActivityId(def.activity || "");
-  const activity: ActivityId = BUILTIN_ACTIVITY_IDS.includes(resolvedActivity)
-    ? resolvedActivity
-    : ACTIVITY_WORK;
   return {
     skillId: def.name,
     label: def.name,
     callType: def.callType,
     includeSections: def.includeSections,
-    activity,
+    activity: ACTIVITY_WORK,
     temperature: def.temperature ?? 0.5,
     timeoutMs: def.timeoutMs,
     sessionType: def.sessionType,
@@ -554,22 +538,18 @@ export async function executeAutonomousSkillRun(
           config = instanceByName;
           logger.log(`[skill:${requestedId}] Resolved UUID to SkillDefault config via db name="${dbSkill.name}" — timeout=${config.timeoutMs}ms`);
         } else {
-          const resolvedActivity = resolveActivityId(dbSkill.activity || "");
-          const activity: ActivityId = BUILTIN_ACTIVITY_IDS.includes(resolvedActivity) ? resolvedActivity : ACTIVITY_WORK;
-          const DYNAMIC_FALLBACK_MIN_TIMEOUT_MS = 10 * 60 * 1000;
-          const dbTimeoutMs = parseEstimatedDurationMs(dbSkill.estimatedDuration);
-          const timeoutMs = Math.max(dbTimeoutMs ?? DYNAMIC_FALLBACK_MIN_TIMEOUT_MS, DYNAMIC_FALLBACK_MIN_TIMEOUT_MS);
+          const DYNAMIC_FALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
           config = {
             skillId: dbSkill.name,
             label: dbSkill.name,
             callType: "full",
-            activity,
+            activity: ACTIVITY_WORK,
             temperature: 0.5,
-            timeoutMs,
+            timeoutMs: DYNAMIC_FALLBACK_TIMEOUT_MS,
             // No sessionType here — let the top-level default handle it
             // (autonomous for top-level runs, agent for child runs)
           };
-          logger.log(`[skill:${requestedId}] Built dynamic config from database — label="${config.label}" activity=${activity} timeoutMs=${config.timeoutMs}${dbTimeoutMs ? " (from estimatedDuration)" : " (default)"}`);
+          logger.log(`[skill:${requestedId}] Built dynamic config from database — label="${config.label}" timeoutMs=${config.timeoutMs}`);
         }
       } catch (err: unknown) {
         const errDetail = err instanceof Error ? (err.stack || err.message) : String(err);
@@ -639,10 +619,6 @@ export async function executeAutonomousSkillRun(
         }
         if (skillRecord.sessionType === "autonomous" || skillRecord.sessionType === "agent") {
           resolvedSessionType = skillRecord.sessionType;
-        }
-        const rowTimeoutMs = parseEstimatedDurationMs(skillRecord.estimatedDuration);
-        if (rowTimeoutMs && rowTimeoutMs > config.timeoutMs) {
-          config = { ...config, timeoutMs: rowTimeoutMs };
         }
         try {
           const { resolveSkillRunPersona } = await import("./skill-persona-service");

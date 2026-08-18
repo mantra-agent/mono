@@ -4529,13 +4529,12 @@ ${lines.join("\n")}` };
     try {
       switch (action) {
         case "list": {
-          const filters: { status?: string; category?: string } = {};
+          const filters: { status?: string } = {};
           if (args.status) filters.status = args.status;
-          if (args.category) filters.category = args.category;
           const allSkills = await storage.getSkills(Object.keys(filters).length > 0 ? filters : undefined);
           if (allSkills.length === 0) return { result: "No skills found." };
           const lines = allSkills.map(s =>
-            `- **${s.name}** (${s.category || "general"}) [${s.status}]\n  ${s.description?.slice(0, 120) || "No description"}${s.author === "system" ? " [built-in]" : ""}`
+            `- **${s.name}** [${s.status}]\n  ${s.description?.slice(0, 120) || "No description"}${s.scope === "global" ? " [built-in]" : ""}`
           );
           return { result: `${allSkills.length} skills:\n${lines.join("\n")}` };
         }
@@ -4547,8 +4546,7 @@ ${lines.join("\n")}` };
           if (!skill) return { result: `Skill "${identifier}" not found`, error: true };
           const parts = [
             `**${skill.name}** (id: ${skill.id})`,
-            `Category: ${skill.category || "general"} | Activity: ${skill.activity || "n/a"} | Status: ${skill.status}`,
-            `Author: ${skill.author || "user"} | Version: ${skill.version} | Session Type: ${skill.sessionType || "default (autonomous)"}`,
+            `Status: ${skill.status} | Version: ${skill.version} | Session Type: ${skill.sessionType || "default (autonomous)"}`,
           ];
           if (skill.description) parts.push(`Description: ${skill.description}`);
           parts.push(`\nProcess:\n${skill.process}`);
@@ -4582,10 +4580,7 @@ ${lines.join("\n")}` };
             checklist: Array.isArray(args.checklist) ? args.checklist : [],
             ...(args.scoreThreshold !== undefined ? { scoreThreshold: normalizeScoreThreshold(args.scoreThreshold) } : {}),
             status: "active",
-            author: getInstanceName(),
             version: args.version || "1.0",
-            category: args.category || "general",
-            activity: args.activity || ACTIVITY_FRAMING,
             sessionType: args.sessionType || null,
           } as any);
           return { result: `Created skill "${newSkill.name}" (id: ${newSkill.id})` };
@@ -4596,7 +4591,7 @@ ${lines.join("\n")}` };
           const existing = await storage.getSkill(id);
           if (!existing) return { result: `Skill "${id}" not found`, error: true };
           const updates: Record<string, unknown> = {};
-          for (const key of ["name", "description", "process", "whenToUse", "outputSpec", "status", "version", "category", "activity", "sessionType"]) {
+          for (const key of ["name", "description", "process", "whenToUse", "outputSpec", "status", "version", "sessionType"]) {
             if (args[key] !== undefined) updates[key] = args[key];
           }
           if (args.checklist !== undefined) {
@@ -4678,12 +4673,11 @@ ${lines.join("\n")}` };
           const matches = allSkills.filter(s =>
             s.name.toLowerCase().includes(query) ||
             (s.description || "").toLowerCase().includes(query) ||
-            (s.category || "").toLowerCase().includes(query) ||
             (s.process || "").toLowerCase().includes(query)
           );
           if (matches.length === 0) return { result: `No skills matching "${query}"` };
           const lines = matches.map(s =>
-            `- **${s.name}** (${s.category || "general"}) [${s.status}]\n  ${s.description?.slice(0, 120) || "No description"}${s.author === "system" ? " [built-in]" : ""}`
+            `- **${s.name}** [${s.status}]\n  ${s.description?.slice(0, 120) || "No description"}${s.scope === "global" ? " [built-in]" : ""}`
           );
           return { result: `${matches.length} skills matching "${query}":\n${lines.join("\n")}` };
         }

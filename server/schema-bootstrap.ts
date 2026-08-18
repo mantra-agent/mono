@@ -2852,11 +2852,8 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE skills ALTER COLUMN write_category SET DEFAULT 'read-only'`);
     await pool.query(`ALTER TABLE skills ALTER COLUMN allowed_tools SET DEFAULT '{}'::text[]`);
     await pool.query(`ALTER TABLE skills ALTER COLUMN inputs SET DEFAULT '{}'::text[]`);
-    await pool.query(`ALTER TABLE skills ALTER COLUMN estimated_tokens SET DEFAULT 0`);
-    await pool.query(`ALTER TABLE skills ALTER COLUMN estimated_duration SET DEFAULT '5min'`);
     await pool.query(`ALTER TABLE skills ALTER COLUMN status SET DEFAULT 'draft'`);
     await pool.query(`ALTER TABLE skills ALTER COLUMN version SET DEFAULT '1.0'`);
-    await pool.query(`ALTER TABLE skills ALTER COLUMN author SET DEFAULT 'user'`);
     await pool.query(`ALTER TABLE skills ALTER COLUMN add_to_memory SET DEFAULT true`);
     await pool.query(`ALTER TABLE skills ALTER COLUMN pinned_to_context SET DEFAULT false`);
     await pool.query(`ALTER TABLE skills ALTER COLUMN customized SET DEFAULT false`);
@@ -3438,12 +3435,12 @@ export async function runSchemaBootstrap(
   });
 
   await heal("skills schema columns", async () => {
-    await pool.query(
-      `ALTER TABLE skills ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'other'`,
-    );
-    await pool.query(
-      `ALTER TABLE skills ADD COLUMN IF NOT EXISTS activity TEXT NOT NULL DEFAULT 'e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d'`,
-    );
+    await pool.query(`ALTER TABLE skills DROP COLUMN IF EXISTS category`);
+    await pool.query(`ALTER TABLE skills DROP COLUMN IF EXISTS activity`);
+    await pool.query(`ALTER TABLE skills DROP COLUMN IF EXISTS author`);
+    await pool.query(`ALTER TABLE skills DROP COLUMN IF EXISTS estimated_tokens`);
+    await pool.query(`ALTER TABLE skills DROP COLUMN IF EXISTS estimated_duration`);
+    await pool.query(`ALTER TABLE skills DROP COLUMN IF EXISTS budget_behavior`);
     await pool.query(
       `ALTER TABLE skills ADD COLUMN IF NOT EXISTS add_to_memory BOOLEAN NOT NULL DEFAULT true`,
     );
