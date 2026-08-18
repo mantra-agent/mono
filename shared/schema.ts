@@ -2526,6 +2526,11 @@ export const workflowStageDefinitionSchema = z.object({
   exitCriteria: z.array(z.string()).optional(),
   evidenceRequirements: z.array(z.string()).optional(),
   maxAttempts: z.number().int().positive().optional(),
+  inputSources: z.array(z.string()).optional(),
+  governingArtifactKinds: z.array(z.string()).optional(),
+  purpose: z.string().optional(),
+  acceptanceContract: z.record(z.unknown()).optional(),
+  calibrationContract: z.record(z.unknown()).optional(),
   allowedTransitions: z.array(z.object({
     toStageKey: z.string().nullable(),
     on: workflowAttemptResultSchema,
