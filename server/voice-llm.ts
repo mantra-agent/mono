@@ -285,20 +285,8 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
     publishVoiceDiagnostic(session, "cascade_retry", `ElevenLabs cascade retry — attaching write port to inflight turn ${session.inflightTurn}`, { turn: session.turnCount, status: "done" });
     session.lastFiredUserContent = prevFired;
 
-    if (!res.headersSent) {
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
-      });
-    }
-    if (res.socket) res.socket.setNoDelay(true);
-    session.activeWriteRes = res;
-    sendSSEComment(res, "write_port_attached", sessionId);
-    session.flushAttachedWritePort?.();
-
     if (!generatorAlive) {
+      session.pendingAttach = null;
       log.warn(`[CascadeRetry] generator already aborted — cannot attach; closing retry socket session=${sessionId}`);
       try {
         res.write(buildSSEChunk(`chatcmpl-cascade-retry-${sessionId}`, Math.floor(Date.now() / 1000), "", "stop"));
@@ -309,6 +297,23 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
       }
       res.end();
       return;
+    }
+
+    if (session.attachWritePort) {
+      session.pendingAttach = null;
+      session.attachWritePort(req, res);
+    } else {
+      if (!res.headersSent) {
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "X-Accel-Buffering": "no",
+        });
+      }
+      if (res.socket) res.socket.setNoDelay(true);
+      sendSSEComment(res, "write_port_pending", sessionId);
+      session.pendingAttach = { req, res };
     }
     return;
   }
@@ -461,7 +466,7 @@ async function executeVoiceTurn(
           if (!cleared) {
             log.error(`turn ${currentTurn} ZOMBIE_BLOCKED — recovery failed session=${session.id}`);
             publishVoiceDiagnostic(session, "zombie_failed", `Zombie blocked — recovery failed`, { turn: currentTurn, status: "error" });
-            closeSSEWithError(res, session, currentTurn, "I'm having trouble processing right now. Could you try again?");
+            closeSSEWithError(res, session, currentTurn, "");
             persistVoiceErrorMessage(session, "Voice processing was blocked by a stuck operation. Please try again.").catch((e: unknown) => log.debug(`persistVoiceErrorMessage failed session=${session.id}: ${e instanceof Error ? e.message : String(e)}`));
             writeVoiceJournal(session, "error", { error: `voice_circuit_breaker: turn=${currentTurn} reason=zombie_blocked — recovery failed after ${CB_MAX_RETRIES} retries` });
             return;
@@ -499,7 +504,7 @@ async function executeVoiceTurn(
       const cleared = await waitForBlockerToClear(session, currentTurn, "circuit_breaker");
       if (!cleared) {
         publishVoiceDiagnostic(session, "circuit_breaker", `Circuit breaker recovery failed`, { turn: currentTurn, status: "error" });
-        closeSSEWithError(res, session, currentTurn, "I need a moment. Could you say that again?");
+        closeSSEWithError(res, session, currentTurn, "");
         persistVoiceErrorMessage(session, "Voice processing was throttled by the circuit breaker. Please try again.").catch((e: unknown) => log.debug(`persistVoiceErrorMessage failed session=${session.id}: ${e instanceof Error ? e.message : String(e)}`));
         writeVoiceJournal(session, "error", { error: `voice_circuit_breaker: turn=${currentTurn} reason=circuit_breaker — recovery failed` });
         return;
@@ -698,7 +703,8 @@ async function executeVoiceTurnBody(
       session.inflightAbort = null;
       session.inflightTurn = 0;
       session.activeWriteRes = null;
-      session.flushAttachedWritePort = null;
+      session.attachWritePort = null;
+      session.pendingAttach = null;
     }
     try {
       const { storage } = await import("./storage");
