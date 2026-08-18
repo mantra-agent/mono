@@ -166,6 +166,19 @@ function normalizeAppError(value: unknown, fallbackMessage: string, fallbackCode
   return error;
 }
 
+/**
+ * Chromium emits ResizeObserver loop notices as window "error" events.
+ * They are delivery-timing noise, not application defects — do not project
+ * them as APP_WINDOW_ERROR fingerprints.
+ */
+function isBenignWindowErrorMessage(message: string | undefined): boolean {
+  if (!message) return false;
+  return (
+    message.includes("ResizeObserver loop completed with undelivered notifications") ||
+    message.includes("ResizeObserver loop limit exceeded")
+  );
+}
+
 function getRuntimeCrashContext() {
   return {
     route: window.location.pathname,
@@ -597,6 +610,14 @@ function prefetchRoutes() {
 function App() {
   useEffect(() => {
     const handleError = (event: ErrorEvent) => {
+      const rawMessage =
+        (typeof event.message === "string" && event.message) ||
+        (event.error instanceof Error ? event.error.message : undefined) ||
+        (typeof event.error === "string" ? event.error : undefined);
+      if (isBenignWindowErrorMessage(rawMessage)) {
+        return;
+      }
+
       const error = normalizeAppError(
         event.error,
         event.message || "Window emitted an error without an exception",
