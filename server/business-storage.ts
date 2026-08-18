@@ -42,6 +42,7 @@ export interface Business {
   differentiatorsPageId: string | null;
   marketPageId: string | null;
   icpPageId: string | null;
+  pricingPageId: string | null;
   activationPageId: string | null;
   moatPageId: string | null;
   dataRoomUrl: string | null;
@@ -83,6 +84,7 @@ export async function ensureBusinessesSchema(): Promise<void> {
       differentiators_page_id text,
       market_page_id text,
       icp_page_id text,
+      pricing_page_id text,
       activation_page_id text,
       moat_page_id text,
       data_room_url text,
@@ -106,6 +108,7 @@ export async function ensureBusinessesSchema(): Promise<void> {
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS differentiators_page_id text`);
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS market_page_id text`);
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS icp_page_id text`);
+  await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS pricing_page_id text`);
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS activation_page_id text`);
   await db.execute(sql`ALTER TABLE businesses ADD COLUMN IF NOT EXISTS moat_page_id text`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_businesses_owner ON businesses(owner_user_id, account_id)`);
@@ -179,6 +182,7 @@ function hydrate(row: BusinessRow, vaultIds: string[]): Business {
     differentiatorsPageId: row.differentiatorsPageId ?? null,
     marketPageId: row.marketPageId ?? null,
     icpPageId: row.icpPageId ?? null,
+    pricingPageId: row.pricingPageId ?? null,
     activationPageId: row.activationPageId ?? null,
     moatPageId: row.moatPageId ?? null,
     dataRoomUrl: row.dataRoomUrl ?? null,
@@ -251,6 +255,7 @@ export const businessStorage = {
         differentiatorsPageId: input.differentiatorsPageId ?? null,
         marketPageId: input.marketPageId ?? null,
         icpPageId: input.icpPageId ?? null,
+        pricingPageId: input.pricingPageId ?? null,
         activationPageId: input.activationPageId ?? null,
         moatPageId: input.moatPageId ?? null,
         dataRoomUrl: input.dataRoomUrl ?? null,
@@ -310,6 +315,7 @@ export const businessStorage = {
     if (patch.differentiatorsPageId !== undefined) updates.differentiatorsPageId = patch.differentiatorsPageId;
     if (patch.marketPageId !== undefined) updates.marketPageId = patch.marketPageId;
     if (patch.icpPageId !== undefined) updates.icpPageId = patch.icpPageId;
+    if (patch.pricingPageId !== undefined) updates.pricingPageId = patch.pricingPageId;
     if (patch.activationPageId !== undefined) updates.activationPageId = patch.activationPageId;
     if (patch.moatPageId !== undefined) updates.moatPageId = patch.moatPageId;
     if (patch.dataRoomUrl !== undefined) updates.dataRoomUrl = patch.dataRoomUrl;

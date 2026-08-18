@@ -56,8 +56,14 @@ const NARRATIVE_SLOT_GROUPS = [
     title: "Marketing",
     slots: [
       { slot: "market", label: "Market", page: (b: BusinessDefinition) => b.marketPage },
-      { slot: "icp", label: "ICP", page: (b: BusinessDefinition) => b.icpPage },
       { slot: "gtm", label: "GTM", page: (b: BusinessDefinition) => b.gtmPage },
+    ],
+  },
+  {
+    title: "SALES",
+    slots: [
+      { slot: "icp", label: "ICP", page: (b: BusinessDefinition) => b.icpPage },
+      { slot: "pricing", label: "Pricing", page: (b: BusinessDefinition) => b.pricingPage },
     ],
   },
   {

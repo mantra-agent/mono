@@ -27,6 +27,7 @@ export interface BusinessDefinition {
   differentiatorsPageId: string | null;
   marketPageId: string | null;
   icpPageId: string | null;
+  pricingPageId: string | null;
   activationPageId: string | null;
   moatPageId: string | null;
   dataRoomUrl: string | null;
@@ -44,6 +45,7 @@ export interface BusinessDefinition {
   differentiatorsPage: NarrativePageRef | null;
   marketPage: NarrativePageRef | null;
   icpPage: NarrativePageRef | null;
+  pricingPage: NarrativePageRef | null;
   activationPage: NarrativePageRef | null;
   moatPage: NarrativePageRef | null;
   createdAt?: string;
