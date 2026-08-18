@@ -136,12 +136,21 @@ export interface ConnectorAuthStatus {
 }
 
 /**
- * Auth status for UI. Prefers connector-owned credential; falls back to legacy
- * global subscription account or app_secrets for unmigrated rows.
+ * Named Router members are exclusive instances. Only the legacy NULL-router
+ * chain may inherit global primary accounts / app_secrets during cutover.
+ */
+function allowsLegacyCredentialFallback(routerId: string | null | undefined): boolean {
+  return routerId == null;
+}
+
+/**
+ * Auth status for UI. Prefers connector-owned credential.
+ * Legacy global fallback applies only to unmigrated NULL-router rows.
  */
 export async function getConnectorAuthStatus(connectorId: number): Promise<ConnectorAuthStatus> {
   const row = await getConnectorRow(connectorId);
   if (!row) throw new Error("Model connector not found");
+  const legacyOk = allowsLegacyCredentialFallback(row.routerId);
 
   if (row.provider === "openai-subscription" || row.provider === "grok-subscription") {
     const tokens = await getConnectorSubscriptionTokens(connectorId);
@@ -154,7 +163,8 @@ export async function getConnectorAuthStatus(connectorId: number): Promise<Conne
         source: "connector",
       };
     }
-    // Legacy primary account fallback (one global account shared until rebound).
+    if (!legacyOk) return { connected: false, source: "none" };
+    // Legacy primary account fallback (NULL-router chain only).
     const legacyId = LEGACY_SUBSCRIPTION_ACCOUNT[row.provider];
     const legacy = await runWithPrincipal(createNamedSystemPrincipal("model-connector-auth"), async () => {
       const account = await getAccount(legacyId);
@@ -181,6 +191,7 @@ export async function getConnectorAuthStatus(connectorId: number): Promise<Conne
       source: "connector",
     };
   }
+  if (!legacyOk) return { connected: false, hasCredential: false, source: "none" };
   const legacyName = LEGACY_SECRET_NAME[row.provider as ModelConnectorProvider];
   if (legacyName && getSecretSync(legacyName)) {
     return { connected: true, hasCredential: true, source: "legacy" };
@@ -191,15 +202,19 @@ export async function getConnectorAuthStatus(connectorId: number): Promise<Conne
 /**
  * Resolve a usable secret/token string for routing.
  * Subscriptions return a sentinel when tokens exist (token materialization stays in model-client).
- * API/CLI return the secret string. Legacy globals remain fallback only.
+ * API/CLI return the secret string. Legacy globals apply only to NULL-router rows.
  */
 export async function resolveConnectorCredentialMaterial(
   connectorId: number,
   provider: ModelConnectorProvider,
 ): Promise<string | null> {
+  const row = await getConnectorRow(connectorId);
+  const legacyOk = allowsLegacyCredentialFallback(row?.routerId);
+
   if (provider === "openai-subscription" || provider === "grok-subscription") {
     const tokens = await getConnectorSubscriptionTokens(connectorId);
     if (tokens?.access_token) return "connector-subscription";
+    if (!legacyOk) return null;
     const legacyId = LEGACY_SUBSCRIPTION_ACCOUNT[provider];
     const legacy = await runWithPrincipal(createNamedSystemPrincipal("model-connector-auth"), () => getAccount(legacyId));
     return legacy ? "legacy-subscription" : null;
@@ -207,6 +222,7 @@ export async function resolveConnectorCredentialMaterial(
 
   const secret = await getConnectorSecret(connectorId);
   if (secret) return secret;
+  if (!legacyOk) return null;
 
   const legacyName = LEGACY_SECRET_NAME[provider];
   if (legacyName) return getSecretSync(legacyName) || null;
@@ -214,7 +230,8 @@ export async function resolveConnectorCredentialMaterial(
 }
 
 /**
- * Load subscription tokens for a connector, with legacy primary fallback.
+ * Load subscription tokens for a connector.
+ * Named-router connectors never inherit the legacy primary account.
  * When connectorId is omitted, legacy primary only (image paths / unrouted calls).
  */
 export async function loadSubscriptionTokens(
@@ -224,6 +241,13 @@ export async function loadSubscriptionTokens(
   if (connectorId && connectorId > 0) {
     const tokens = await getConnectorSubscriptionTokens(connectorId);
     if (tokens) return { tokens, connectorId, source: "connector" };
+    const row = await getConnectorRow(connectorId);
+    if (row && !allowsLegacyCredentialFallback(row.routerId)) {
+      throw Object.assign(
+        new Error(`${provider} not connected on this connector. Connect the account on this connector instance.`),
+        { code: "CONNECTOR_NOT_CONFIGURED" },
+      );
+    }
   }
   const legacyId = LEGACY_SUBSCRIPTION_ACCOUNT[provider];
   const legacyTokens = await runWithPrincipal(createNamedSystemPrincipal("model-client"), async () => {
