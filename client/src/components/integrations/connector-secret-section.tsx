@@ -25,12 +25,14 @@ export function ConnectorSecretSection({
   label = "Credentials",
   placeholder = "Paste secret",
   invalidateQueryKeys,
+  flattenHeaders = false,
   children,
 }: {
   connectorId: number;
   label?: string;
   placeholder?: string;
   invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
+  flattenHeaders?: boolean;
   children?: React.ReactNode;
 }) {
   const { toast } = useToast();
@@ -81,14 +83,14 @@ export function ConnectorSecretSection({
   const last4 = data?.credentialLast4;
   const sourceNote = data?.source === "legacy" ? " (legacy global)" : "";
 
-  return (
-    <div className="min-w-0" data-testid={`connector-secret-${connectorId}`}>
-      <IntegrationTreeSection label={label} initialOpen={!connected} icon={<Shield className="h-3.5 w-3.5" />}>
+  const rows = (
+    <>
         <ProfileTreeRow
           label="Status"
           icon={connected ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground" />}
           hasValue
           showEmpty
+          mobileLayout="inline"
         >
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             <span className={connected ? "text-active" : "text-muted-foreground"}>
@@ -96,8 +98,9 @@ export function ConnectorSecretSection({
             </span>
             {connected ? (
               <Button
-                variant="destructive"
+                variant="outline"
                 size="sm"
+                className="border-destructive text-destructive hover:border-destructive hover:bg-transparent hover:text-destructive"
                 disabled={!canWrite || disconnectMutation.isPending}
                 onClick={() => disconnectMutation.mutate()}
               >
@@ -107,7 +110,7 @@ export function ConnectorSecretSection({
             ) : null}
           </div>
         </ProfileTreeRow>
-        <ProfileTreeRow label="Secret" icon={<KeyRound className="h-3.5 w-3.5" />} hasValue showEmpty>
+        <ProfileTreeRow label="Secret" icon={<KeyRound className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             <Input
               type="password"
@@ -128,12 +131,21 @@ export function ConnectorSecretSection({
           </div>
         </ProfileTreeRow>
         {!canWrite ? (
-          <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
+          <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
             <span className="text-muted-foreground">Admin only</span>
           </ProfileTreeRow>
         ) : null}
         {children}
-      </IntegrationTreeSection>
+    </>
+  );
+
+  return (
+    <div className="min-w-0" data-testid={`connector-secret-${connectorId}`}>
+      {flattenHeaders ? rows : (
+        <IntegrationTreeSection label={label} initialOpen={!connected} icon={<Shield className="h-3.5 w-3.5" />}>
+          {rows}
+        </IntegrationTreeSection>
+      )}
     </div>
   );
 }

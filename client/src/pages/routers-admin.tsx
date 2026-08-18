@@ -14,6 +14,7 @@ import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_SESSION_ROW_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
@@ -85,6 +86,24 @@ function matchesQuery(query: string, ...parts: Array<string | null | undefined>)
   return parts.some((part) => (part ?? "").toLowerCase().includes(needle));
 }
 
+function ConnectorAuthMeta({ connectorId, provider }: { connectorId: number; provider: string }) {
+  const { data } = useQuery<{
+    connected?: boolean;
+    email?: string;
+    label?: string;
+    credentialLast4?: string;
+  }>({
+    queryKey: [`/api/models/connectors/${connectorId}/auth-status`],
+    staleTime: 15_000,
+  });
+  const isSecret = provider === "claude-cli" || provider === "openai" || provider === "anthropic";
+  const text = isSecret
+    ? (data?.credentialLast4 ? `···${data.credentialLast4}` : "")
+    : (data?.email || data?.label || "");
+  if (!text) return null;
+  return <span className="ml-1 min-w-0 truncate text-muted-foreground">{text}</span>;
+}
+
 function RouterConnectorRow({
   connector,
   routerId,
@@ -111,11 +130,11 @@ function RouterConnectorRow({
 
   return (
     <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
-      <div className="group/conn flex min-h-8 w-full items-center gap-2 px-1 py-0.5 text-sm">
+      <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "group/conn min-h-8 cursor-default")}>
         <span className={cn("min-w-0 flex-1 truncate", connector.status !== "active" && "text-muted-foreground")}>
           {connector.priorityPinned ? "📌 " : ""}
           {connector.label}
-          <span className="ml-1 text-muted-foreground">{connector.provider}</span>
+          <ConnectorAuthMeta connectorId={connector.id} provider={connector.provider} />
         </span>
         {supportsPackage ? (
           <button
@@ -135,6 +154,7 @@ function RouterConnectorRow({
             <ProviderConnectorPackage
               provider={packageConnector.provider}
               connector={packageConnector as any}
+              flattenHeaders
               invalidateQueryKeys={[[...ROUTERS_QUERY_KEY, routerId]]}
             />
           ) : (

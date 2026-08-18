@@ -48,11 +48,14 @@ export function ProviderConnectorPackage({
   invalidateQueryKeys,
   /** When true, omit the outer provider section chrome (Integrations page already owns it). */
   bare = false,
+  /** Routers: skip Subscription / Models section headers and nest fields under the connector. */
+  flattenHeaders = false,
 }: {
   provider: PackagedConnectorProvider;
   connector?: ConnectorProp;
   invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
   bare?: boolean;
+  flattenHeaders?: boolean;
 }) {
   const legacyQuery = useQuery<{ id: number; provider: string }>({
     queryKey: ["/api/models/connectors/by-provider", provider],
@@ -89,13 +92,14 @@ export function ProviderConnectorPackage({
       connectorId={connector ? undefined : connectorId}
       title="Models"
       nested
+      flattenHeaders={flattenHeaders}
       invalidateQueryKeys={invalidateQueryKeys}
     />
   );
 
   if (provider === "openai-subscription") {
     return (
-      <OpenAISubscriptionSection connectorId={connectorId} invalidateQueryKeys={invalidateQueryKeys}>
+      <OpenAISubscriptionSection connectorId={connectorId} flattenHeaders={flattenHeaders} invalidateQueryKeys={invalidateQueryKeys}>
         {models}
       </OpenAISubscriptionSection>
     );
@@ -103,7 +107,7 @@ export function ProviderConnectorPackage({
 
   if (provider === "grok-subscription") {
     return (
-      <GrokSubscriptionSection connectorId={connectorId} invalidateQueryKeys={invalidateQueryKeys}>
+      <GrokSubscriptionSection connectorId={connectorId} flattenHeaders={flattenHeaders} invalidateQueryKeys={invalidateQueryKeys}>
         {models}
       </GrokSubscriptionSection>
     );
@@ -115,6 +119,7 @@ export function ProviderConnectorPackage({
         connectorId={connectorId}
         label="API"
         placeholder="sk-…"
+        flattenHeaders={flattenHeaders}
         invalidateQueryKeys={invalidateQueryKeys}
       >
         {models}
@@ -130,6 +135,7 @@ export function ProviderConnectorPackage({
         connectorId={connectorId}
         label="API"
         placeholder="sk-ant-…"
+        flattenHeaders={flattenHeaders}
         invalidateQueryKeys={invalidateQueryKeys}
       >
         {models}
@@ -145,6 +151,7 @@ export function ProviderConnectorPackage({
       connectorId={connectorId}
       label="Claude Code CLI"
       placeholder="Claude Code OAuth token"
+      flattenHeaders={flattenHeaders}
       invalidateQueryKeys={invalidateQueryKeys}
     >
       {models}

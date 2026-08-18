@@ -1,7 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Bot, Zap, XCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { IntegrationTreeSection } from "@/components/integrations/integration-tree-section";
@@ -131,13 +130,14 @@ function TierSettingSelect<T extends string>({
 }: {
   label: string; value: T | undefined; options: readonly T[]; disabled?: boolean; onChange: (value: T) => void;
 }) {
-  return <div className="grid grid-cols-[8rem_1fr] items-center gap-2">
-    <Label className="text-xs text-muted-foreground">{label}</Label>
-    <Select value={value} disabled={disabled} onValueChange={(next) => onChange(next as T)}>
-      <SelectTrigger className="h-8 font-mono text-xs"><SelectValue /></SelectTrigger>
-      <SelectContent>{options.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent>
-    </Select>
-  </div>;
+  return (
+    <ProfileTreeRow label={label} hasValue showEmpty mobileLayout="inline">
+      <Select value={value} disabled={disabled} onValueChange={(next) => onChange(next as T)}>
+        <SelectTrigger className="h-5 min-h-5 font-mono text-sm"><SelectValue /></SelectTrigger>
+        <SelectContent>{options.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent>
+      </Select>
+    </ProfileTreeRow>
+  );
 }
 
 function ConnectorTierTree({
@@ -145,12 +145,14 @@ function ConnectorTierTree({
   models,
   title,
   nested = false,
+  flattenHeaders = false,
   invalidateQueryKeys,
 }: {
   connector: ModelConnectorDetail;
   models: ModelProviderDetail["models"];
   title: string;
   nested?: boolean;
+  flattenHeaders?: boolean;
   invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
 }) {
   const { toast } = useToast();
@@ -199,9 +201,8 @@ function ConnectorTierTree({
   };
   const testIdPrefix = isClaude ? "claude-cli" : isAnthropic ? "anthropic" : isGrok ? "grok-subscription" : `openai-${connector.provider}`;
 
-  return (
-    <div className="min-w-0">
-      <IntegrationTreeSection label={title} initialOpen icon={<Bot className="h-3.5 w-3.5" />} testIdPrefix={testIdPrefix} variant={nested ? "item" : "section"}>
+  const tiers = (
+        <>
         {MODEL_TIERS.map((tier) => {
           const config = mappings[tier];
           const model = models.find((item) => item.id === config.model || `${connector.provider}/${item.id}` === config.model);
@@ -216,9 +217,10 @@ function ConnectorTierTree({
               icon={tier === "fast" ? <Zap className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
               hasValue
               showEmpty
-              defaultOpen={tier === "balanced"}
+              defaultOpen={false}
+              mobileLayout="inline"
               testId={`${testIdPrefix}-${tier}-tier`}
-              expandedContentClassName="space-y-0"
+              expandedContentClassName="space-y-0 px-0 pb-0 pl-0 text-sm"
               expandedContent={(
                 <div className="space-y-0">
                   <TierSettingSelect
@@ -271,8 +273,7 @@ function ConnectorTierTree({
                         disabled={mutation.isPending || !supportsThinking}
                         onChange={(value) => updateTier(tier, { thinkingMode: value === "activity-default" ? undefined : value, effort: value === "disabled" ? undefined : config.effort })}
                       />
-                      <div className="grid grid-cols-[8rem_1fr] items-center gap-2">
-                        <Label className="text-xs text-muted-foreground">Max turns</Label>
+                      <ProfileTreeRow label="Max turns" hasValue showEmpty mobileLayout="inline">
                         <Input
                           key={`${tier}-${config.maxTurns ?? "default"}`}
                           type="number"
@@ -287,11 +288,10 @@ function ConnectorTierTree({
                             const value = Number.parseInt(raw, 10);
                             if (Number.isFinite(value) && value >= 1 && value <= 1000 && value !== config.maxTurns) updateTier(tier, { maxTurns: value });
                           }}
-                          className="h-8 font-mono text-xs"
+                          className="h-5 min-h-5 font-mono text-sm"
                         />
-                      </div>
-                      <div className="grid grid-cols-[8rem_1fr] items-center gap-2">
-                        <Label className="text-xs text-muted-foreground">Max output</Label>
+                      </ProfileTreeRow>
+                      <ProfileTreeRow label="Max output" hasValue showEmpty mobileLayout="inline">
                         <Input
                           key={`${tier}-${config.maxOutputTokens ?? "default"}`}
                           type="number"
@@ -306,9 +306,9 @@ function ConnectorTierTree({
                             const value = Number.parseInt(raw, 10);
                             if (Number.isFinite(value) && value >= 1 && value <= 32000 && value !== config.maxOutputTokens) updateTier(tier, { maxOutputTokens: Math.min(value, 32000) });
                           }}
-                          className="h-8 font-mono text-xs"
+                          className="h-5 min-h-5 font-mono text-sm"
                         />
-                      </div>
+                      </ProfileTreeRow>
                     </>
                   )}
                   {isGrok && allowedGrokReasoningEfforts(config.model).length > 0 && (
@@ -326,10 +326,9 @@ function ConnectorTierTree({
                   {supported?.verbosity && <TierSettingSelect label="Verbosity" value={config.verbosity ?? "medium"} options={VERBOSITIES} disabled={mutation.isPending} onChange={(value) => updateTier(tier, { verbosity: value })} />}
                   {supported?.serviceTier && <TierSettingSelect label="Service tier" value={config.serviceTier ?? "auto"} options={supported.serviceTierOptions} disabled={mutation.isPending} onChange={(value) => updateTier(tier, { serviceTier: value })} />}
                   {supported?.maxOutputTokens && (
-                    <div className="grid grid-cols-[8rem_1fr] items-center gap-2">
-                      <Label className="text-xs text-muted-foreground">Max output</Label>
-                      <Input type="number" min={1} max={model?.maxTokens} value={config.maxOutputTokens ?? ""} disabled={mutation.isPending} onChange={(event) => { const value = Number.parseInt(event.target.value, 10); if (Number.isFinite(value) && value > 0) updateTier(tier, { maxOutputTokens: model?.maxTokens ? Math.min(value, model.maxTokens) : value }); }} className="h-8 font-mono text-xs" />
-                    </div>
+                    <ProfileTreeRow label="Max output" hasValue showEmpty mobileLayout="inline">
+                      <Input type="number" min={1} max={model?.maxTokens} value={config.maxOutputTokens ?? ""} disabled={mutation.isPending} onChange={(event) => { const value = Number.parseInt(event.target.value, 10); if (Number.isFinite(value) && value > 0) updateTier(tier, { maxOutputTokens: model?.maxTokens ? Math.min(value, model.maxTokens) : value }); }} className="h-5 min-h-5 font-mono text-sm" />
+                    </ProfileTreeRow>
                   )}
                 </div>
               )}
@@ -339,11 +338,20 @@ function ConnectorTierTree({
           );
         })}
         {models.length === 0 && (
-          <ProfileTreeRow label="Models" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty>
+          <ProfileTreeRow label="Models" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
             <span className="text-muted-foreground">None available</span>
           </ProfileTreeRow>
         )}
-      </IntegrationTreeSection>
+        </>
+  );
+
+  return (
+    <div className="min-w-0">
+      {flattenHeaders ? tiers : (
+        <IntegrationTreeSection label={title} initialOpen icon={<Bot className="h-3.5 w-3.5" />} testIdPrefix={testIdPrefix} variant={nested ? "item" : "section"}>
+          {tiers}
+        </IntegrationTreeSection>
+      )}
     </div>
   );
 }
@@ -360,6 +368,7 @@ export function ModelConnectorSection({
   connector: connectorProp,
   title = "Models",
   nested = false,
+  flattenHeaders = false,
   invalidateQueryKeys,
 }: {
   provider?: ModelConnectorProvider;
@@ -368,6 +377,7 @@ export function ModelConnectorSection({
   connector?: ModelConnectorDetail;
   title?: string;
   nested?: boolean;
+  flattenHeaders?: boolean;
   /** Extra React Query keys to invalidate after a successful tier mapping write. */
   invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
 }) {
@@ -406,6 +416,7 @@ export function ModelConnectorSection({
         models={models}
         title={title}
         nested={nested}
+        flattenHeaders={flattenHeaders}
         invalidateQueryKeys={invalidateQueryKeys}
       />
     );
