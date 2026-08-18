@@ -19,7 +19,7 @@ onSecretChange((name) => {
 });
 const LEGAL_CASCADE_TIMEOUT_SECONDS = 15;
 const DISABLED_SOFT_TIMEOUT_SECONDS = -1;
-const DISABLED_SOFT_TIMEOUT_MESSAGE = "Hhmmmm...yeah.";
+const DISABLED_SOFT_TIMEOUT_MESSAGE = ".";
 let verifiedCascadeTimeoutSeconds: number = LEGAL_CASCADE_TIMEOUT_SECONDS;
 let verifiedSoftTimeoutSeconds: number = 0;
 
@@ -308,7 +308,7 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
         end_of_speech_silence_ms: 1000,
         interruption_sensitivity: 0.5,
         // Official disable is -1. Message is still required 1–200 chars; empty 400s.
-        // Dummy is schema tax, not a filler we intend to speak.
+        // "." is schema tax, not speech. Spoken dummies are unrepresentable.
         soft_timeout_config: {
           timeout_seconds: DISABLED_SOFT_TIMEOUT_SECONDS,
           message: DISABLED_SOFT_TIMEOUT_MESSAGE,
@@ -412,6 +412,7 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
   const effectiveUrl = customLlm?.url;
   const softTimeoutConfig = turnConf?.soft_timeout_config as Record<string, unknown> | undefined;
   const storedSoftTimeout = softTimeoutConfig?.timeout_seconds != null ? Number(softTimeoutConfig.timeout_seconds) : undefined;
+  const storedSoftTimeoutMessage = typeof softTimeoutConfig?.message === "string" ? softTimeoutConfig.message : undefined;
   const storedCascade = cascadeInCustomLlm != null ? Number(cascadeInCustomLlm) : undefined;
 
   log.debug(`setupAgentCallbackUrl: step 6/6 — GET verification done elapsed=${getElapsed}ms custom_llm.configured=${Boolean(effectiveUrl)} custom_llm.cascade_timeout_seconds=${cascadeInCustomLlm ?? "(absent)"} soft_timeout_config.timeout_seconds=${softTimeoutConfig?.timeout_seconds ?? "(absent)"} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length} language_detection=${hasLanguageDetection} (total=${Date.now() - setupStart}ms)`);
@@ -423,6 +424,10 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
   if (storedSoftTimeout !== DISABLED_SOFT_TIMEOUT_SECONDS) {
     log.error(`setupAgentCallbackUrl: SOFT TIMEOUT NOT DISABLED — stored=${storedSoftTimeout ?? "(absent)"} requested=${DISABLED_SOFT_TIMEOUT_SECONDS}`);
     throw new Error(`Agent soft_timeout_config.timeout_seconds is ${storedSoftTimeout ?? "absent"}, expected ${DISABLED_SOFT_TIMEOUT_SECONDS}`);
+  }
+  if (storedSoftTimeoutMessage !== DISABLED_SOFT_TIMEOUT_MESSAGE) {
+    log.error(`setupAgentCallbackUrl: SOFT TIMEOUT MESSAGE NOT SCHEMA TAX — stored=${storedSoftTimeoutMessage ?? "(absent)"} requested=${DISABLED_SOFT_TIMEOUT_MESSAGE}`);
+    throw new Error(`Agent soft_timeout_config.message is ${storedSoftTimeoutMessage ?? "absent"}, expected ${DISABLED_SOFT_TIMEOUT_MESSAGE}`);
   }
   if (storedCascade !== LEGAL_CASCADE_TIMEOUT_SECONDS) {
     log.error(`setupAgentCallbackUrl: CASCADE TIMEOUT NOT STORED — custom_llm.cascade_timeout_seconds=${cascadeInCustomLlm ?? "(absent)"} requested=${LEGAL_CASCADE_TIMEOUT_SECONDS}`);
