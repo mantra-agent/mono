@@ -1,44 +1,26 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   DollarSign,
   Zap,
   Hash,
-  ChevronLeft,
   ChevronRight,
-  Eye,
   TrendingUp,
   ChevronDown,
-  Database,
+  SlidersHorizontal,
 } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { apiRequest } from "@/lib/queryClient";
 import {
   BarChart,
@@ -50,12 +32,17 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useTimezone } from "@/hooks/use-timezone";
-import { getApiCallErrorText, shouldShowApiCallResponse } from "@/lib/api-call-diagnostics";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useAuth } from "@/hooks/use-auth";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import {
+  HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
+import { cn } from "@/lib/utils";
 
 interface SummaryData {
   totalCalls: number;
@@ -97,30 +84,6 @@ interface ProfileData {
   outputTokens: number;
 }
 
-interface ApiCallRow {
-  id: number;
-  timestamp: string;
-  provider: string;
-  model: string;
-  profile: string | null;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number | null;
-  cacheWriteTokens: number | null;
-  totalTokens: number;
-  costInput: number;
-  costOutput: number;
-  costTotal: number;
-  sessionKey: string | null;
-  sessionId: number | null;
-  captureId: string | null;
-  requestContent: string | null;
-  responseContent: string | null;
-  durationMs: number | null;
-  stopReason: string | null;
-  metadata?: Record<string, unknown> | null;
-}
-
 interface InferenceSummaryResponse {
   summary: SummaryData;
   byModel: ModelData[];
@@ -131,14 +94,74 @@ interface InferenceSummaryResponse {
   groupBy: string;
 }
 
-interface CallsResponse {
-  calls: ApiCallRow[];
-  total: number;
-  limit: number;
-  offset: number;
+type GroupBy = "tier" | "activity" | "prompt" | "hierarchy";
+
+const PERIOD_OPTIONS: { value: string; label: string }[] = [
+  { value: "1h", label: "Last Hour" },
+  { value: "today", label: "Today" },
+  { value: "7d", label: "Last 7 days" },
+  { value: "30d", label: "Last 30 days" },
+  { value: "all", label: "All time" },
+];
+
+function hierarchyMatchesQuery(parts: Array<string | null | undefined>, query: string): boolean {
+  if (!query) return true;
+  const haystack = parts.filter(Boolean).join(" ").toLowerCase();
+  return haystack.includes(query);
 }
 
-type GroupBy = "tier" | "activity" | "prompt" | "hierarchy";
+function filterHierarchyData(data: HierarchyResponse | undefined, rawQuery: string): HierarchyResponse | undefined {
+  if (!data) return data;
+  const query = rawQuery.trim().toLowerCase();
+  if (!query) return data;
+
+  const hierarchy = data.hierarchy
+    .map((tier) => {
+      if (hierarchyMatchesQuery([tier.tier, tier.tierLabel], query)) return tier;
+
+      const activities = tier.activities
+        .map((act) => {
+          if (hierarchyMatchesQuery([act.activity], query)) return act;
+
+          const prompts = act.prompts
+            .map((prompt) => {
+              if (hierarchyMatchesQuery([prompt.prompt], query)) return prompt;
+
+              const sessions = prompt.sessions.filter((session) =>
+                hierarchyMatchesQuery(
+                  [
+                    session.sessionTitle,
+                    session.sessionKey,
+                    session.chatSessionId,
+                    ...session.inferenceCalls.flatMap((call) => [
+                      String(call.id),
+                      call.provider,
+                      call.model,
+                      call.profile,
+                      call.captureId,
+                      call.runId,
+                    ]),
+                  ],
+                  query,
+                ),
+              );
+              if (sessions.length === 0) return null;
+              return { ...prompt, sessions };
+            })
+            .filter((prompt): prompt is HierarchyPrompt => prompt != null);
+
+          if (prompts.length === 0) return null;
+          return { ...act, prompts };
+        })
+        .filter((act): act is HierarchyActivity => act != null);
+
+      if (activities.length === 0) return null;
+      return { ...tier, activities };
+    })
+    .filter((tier): tier is HierarchyTier => tier != null);
+
+  return { ...data, hierarchy };
+}
 
 interface HierarchyInferenceCall { id: number; timestamp: string; provider: string; model: string; profile: string | null; inputTokens: number; outputTokens: number; totalTokens: number; costTotal: number; durationMs: number | null; runId: string | null; captureId: string | null; }
 interface HierarchySession { sessionKey: string; sessionId: number | null; sessionTitle: string | null; chatSessionId: string | null; cost: number; calls: number; inputTokens: number; outputTokens: number; inferenceCalls: HierarchyInferenceCall[]; }
@@ -223,31 +246,6 @@ function formatHour(hourStr: string): string {
   return hourStr;
 }
 
-function formatHourInTimezone(hourStr: string, tz: string): string {
-  const match = hourStr.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}):00$/);
-  if (match) {
-    const utcDate = new Date(`${match[1]}T${match[2]}:00:00Z`);
-    const localHour = parseInt(
-      utcDate.toLocaleString("en-US", { hour: "numeric", hour12: false, timeZone: tz }),
-      10
-    );
-    return formatHourRaw(localHour);
-  }
-  return formatHour(hourStr);
-}
-
-function formatTimestamp(ts: string, timezone: string): string {
-  const d = new Date(ts);
-  return d.toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    timeZone: timezone,
-  });
-}
-
 function shortenModel(model: string): string {
   if (model.length <= 16) return model;
   const parts = model.split("-");
@@ -305,24 +303,25 @@ function getColorForKey(key: string, index: number, groupBy: GroupBy): string {
   return CHART_COLORS[index % CHART_COLORS.length];
 }
 
-function HierarchyBreakdown({ data }: { data?: HierarchyResponse }) {
+function HierarchyBreakdown({ data, searchQuery }: { data?: HierarchyResponse; searchQuery: string }) {
   const [expandedTiers, setExpandedTiers] = useState<Set<string>>(new Set());
   const [expandedActivities, setExpandedActivities] = useState<Set<string>>(new Set());
   const [expandedPrompts, setExpandedPrompts] = useState<Set<string>>(new Set());
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
   const [sortBy, setSortBy] = useState<HierarchySortField>("tokens");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const filtered = useMemo(() => filterHierarchyData(data, searchQuery), [data, searchQuery]);
 
-  if (!data || data.hierarchy.length === 0) {
+  if (!filtered || filtered.hierarchy.length === 0) {
     return (
-      <div className="flex items-center justify-center h-[200px] text-sm text-muted-foreground" data-testid="hierarchy-empty">
-        No data yet
+      <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="hierarchy-empty">
+        {searchQuery.trim() ? "No matching usage" : "No data yet"}
       </div>
     );
   }
 
-  const totalCost = data.totals.cost;
-  const totalTokens = data.totals.inputTokens + data.totals.outputTokens;
+  const totalCost = filtered.totals.cost;
+  const totalTokens = filtered.totals.inputTokens + filtered.totals.outputTokens;
 
   const toggleSet = (setter: React.Dispatch<React.SetStateAction<Set<string>>>, key: string) => {
     setter(prev => {
@@ -387,7 +386,7 @@ function HierarchyBreakdown({ data }: { data?: HierarchyResponse }) {
     <div data-testid="hierarchy-breakdown">
       <HeaderRow />
       <div className="space-y-0.5">
-        {sortItems(data.hierarchy, totalCost, totalTokens).map((tier) => {
+        {sortItems(filtered.hierarchy, totalCost, totalTokens).map((tier) => {
           const tierExpanded = expandedTiers.has(tier.tier);
           const tierPct = totalCost > 0 ? ((tier.cost / totalCost) * 100).toFixed(0) : "0";
           const tierTokens = tier.inputTokens + tier.outputTokens;
@@ -523,10 +522,10 @@ function HierarchyBreakdown({ data }: { data?: HierarchyResponse }) {
 
       <div className={`grid ${gridCols} gap-x-2 items-center pt-3 mt-2 border-t border-border`}>
         <span className="text-sm font-semibold">Total</span>
-        <span className="text-right tabular-nums text-xs font-semibold">{data.totals.calls}</span>
+        <span className="text-right tabular-nums text-xs font-semibold">{filtered.totals.calls}</span>
         <span className="text-right tabular-nums text-xs font-semibold">{formatTokens(totalTokens)}</span>
         <span className="text-right tabular-nums text-xs text-muted-foreground">100%</span>
-        <span className="text-right tabular-nums text-sm font-semibold">{formatCost(data.totals.cost)}</span>
+        <span className="text-right tabular-nums text-sm font-semibold">{formatCost(filtered.totals.cost)}</span>
       </div>
     </div>
   );
@@ -541,10 +540,7 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
   const [period, setPeriod] = useState("today");
   const [groupBy, setGroupBy] = useState<GroupBy>("hierarchy");
   const [chartMetric, setChartMetric] = useState<ChartMetric>("tokens");
-  const [page, setPage] = useState(0);
-  const [selectedCall, setSelectedCall] = useState<ApiCallRow | null>(null);
-  const [callLogOpen, setCallLogOpen] = useState(false);
-  const pageSize = 20;
+  const [searchQuery, setSearchQuery] = useState("");
 
   const { data: inferenceDebug } = useQuery<{ enabled: boolean }>({
     queryKey: ["/api/settings/inference-debug"],
@@ -565,6 +561,11 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
   });
 
   const chartGroupBy = groupBy === "hierarchy" ? "tier" : groupBy;
+  const mixerActive =
+    period !== "today" ||
+    groupBy !== "hierarchy" ||
+    chartMetric !== "tokens" ||
+    (inferenceDebug?.enabled ?? false);
 
   const { data: summaryData, isLoading: summaryLoading } =
     useQuery<InferenceSummaryResponse>({
@@ -589,25 +590,10 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
       refetchInterval: 30000,
     });
 
-  const { data: callsData, isLoading: callsLoading } =
-    useQuery<CallsResponse>({
-      queryKey: ["/api/performance/calls", page],
-      queryFn: async () => {
-        const res = await fetch(`/api/performance/calls?limit=${pageSize}&offset=${page * pageSize}`);
-        if (!res.ok) throw new Error("Failed to fetch calls");
-        return res.json();
-      },
-      enabled: callLogOpen,
-    });
-
   const summary = summaryData?.summary;
-  const byModel = summaryData?.byModel || [];
   const byProfile = summaryData?.byProfile || [];
   const byModelByDay = summaryData?.byModelByDay || [];
   const byModelByHour = summaryData?.byModelByHour || [];
-  const calls = callsData?.calls || [];
-  const totalCalls = callsData?.total || 0;
-  const totalPages = Math.ceil(totalCalls / pageSize);
 
   const allKeys = useMemo(() => {
     const keySet = new Set<string>();
@@ -664,542 +650,319 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
   };
 
   const chartTitle = `${chartMetric === "cost" ? "Cost" : "Tokens"} by ${useHourly ? "Hour" : "Day"}`;
+  const breakdownTitle = groupBy === "hierarchy" ? "Usage Hierarchy" : `By ${GROUP_LABELS[groupBy]}`;
+
+  const breakdownBody = (() => {
+    if (groupBy === "hierarchy") {
+      return <HierarchyBreakdown data={hierarchyData} searchQuery={searchQuery} />;
+    }
+
+    if (groupBy === "prompt") {
+      const profiles = byProfile.filter((p) =>
+        hierarchyMatchesQuery([p.profile, p.name], searchQuery.trim().toLowerCase()),
+      );
+      if (profiles.length === 0) {
+        return (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+            {searchQuery.trim() ? "No matching usage" : "No data yet"}
+          </div>
+        );
+      }
+      return (
+        <div className="space-y-3 px-2">
+          {profiles.map((p) => {
+            const pctOfTotal = summary && summary.totalCost > 0
+              ? ((p.cost / summary.totalCost) * 100).toFixed(0)
+              : "0";
+            return (
+              <div key={p.profile} className="space-y-1" data-testid={`breakdown-item-${p.profile}`}>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="bg-cat-ai/15 text-cat-ai-foreground border border-cat-ai/30 rounded-sm text-xs font-medium px-2 py-0.5">{p.name || p.profile}</Badge>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">{pctOfTotal}%</span>
+                    <span className="text-sm font-medium">{formatCost(p.cost)}</span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>{p.calls} calls</span>
+                  <span>{p.avgDuration != null ? `avg ${formatDuration(p.avgDuration)}` : ""}</span>
+                  <span>{formatTokens(p.tokens)} tokens</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    const aggregated: Record<string, { cost: number; count: number }> = {};
+    const buckets = useHourly ? byModelByHour : byModelByDay;
+    for (const b of buckets) {
+      if (!aggregated[b.model]) {
+        aggregated[b.model] = { cost: 0, count: 0 };
+      }
+      aggregated[b.model].cost += b.cost;
+      aggregated[b.model].count += 1;
+    }
+
+    const query = searchQuery.trim().toLowerCase();
+    const sortedKeys = Object.entries(aggregated)
+      .filter(([key]) => hierarchyMatchesQuery([key], query))
+      .sort((a, b) => {
+        if (groupBy === "tier") {
+          const tierOrder = ["max", "high", "balanced", "fast", "embed", "unknown"];
+          return tierOrder.indexOf(a[0]) - tierOrder.indexOf(b[0]);
+        }
+        return b[1].cost - a[1].cost;
+      });
+
+    if (sortedKeys.length === 0) {
+      return (
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">
+          {searchQuery.trim() ? "No matching usage" : "No data yet"}
+        </div>
+      );
+    }
+
+    const totalCostForPct = sortedKeys.reduce((s, [, v]) => s + v.cost, 0);
+
+    return (
+      <div className="space-y-3 px-2">
+        {sortedKeys.map(([key, data], i) => {
+          const pctOfTotal = totalCostForPct > 0
+            ? ((data.cost / totalCostForPct) * 100).toFixed(0)
+            : "0";
+          return (
+            <div key={key} className="space-y-1" data-testid={`breakdown-item-${key}`}>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="h-2 w-2 rounded-full shrink-0"
+                    style={{ backgroundColor: getColorForKey(key, i, groupBy) }}
+                  />
+                  <span className="text-sm font-medium">
+                    {groupBy === "tier" ? (key.charAt(0).toUpperCase() + key.slice(1)) : key}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">{pctOfTotal}%</span>
+                  <span className="text-sm font-medium">{formatCost(data.cost)}</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  })();
 
   return (
-    <div className="flex flex-col h-full min-w-0 overflow-hidden">
-      <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="p-4 @sm:p-6 space-y-6">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-2">
-          <Database className="h-3.5 w-3.5 text-muted-foreground" />
-          <Label htmlFor="inference-debug" className="text-xs text-muted-foreground cursor-pointer">
-            Store call content
-          </Label>
-          <Switch
-            id="inference-debug"
-            checked={inferenceDebug?.enabled ?? false}
-            onCheckedChange={(checked) => toggleDebugMutation.mutate(checked)}
-            disabled={toggleDebugMutation.isPending}
-          />
-        </div>
-        <div className="flex items-center gap-2 ml-auto">
-          <div className="flex items-center border rounded-md overflow-hidden" data-testid="toggle-group-by">
-            {(["hierarchy", "tier", "activity", "prompt"] as GroupBy[]).map((g) => (
-              <button
-                key={g}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  groupBy === g
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted"
-                }`}
-                onClick={() => setGroupBy(g)}
-                data-testid={`button-group-${g}`}
-              >
-                {GROUP_LABELS[g]}
-              </button>
-            ))}
-          </div>
-          <Select value={period} onValueChange={setPeriod}>
-            <SelectTrigger className="w-[130px]" data-testid="select-period">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1h">Last Hour</SelectItem>
-              <SelectItem value="today">Today</SelectItem>
-              <SelectItem value="7d">Last 7 days</SelectItem>
-              <SelectItem value="30d">Last 30 days</SelectItem>
-              <SelectItem value="all">All time</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      <div className="space-y-1">
-        <ProfileTreeRow
-          label="Total Cost"
-          icon={<DollarSign className="h-3.5 w-3.5" />}
-          hasValue
-          showEmpty
-          mobileLayout="inline"
-          testId="row-total-cost"
-        >
-          <span data-testid="text-total-cost">
-            {summaryLoading ? "…" : formatCost(summary?.totalCost || 0)}
-            <span className="ml-2 text-xs text-muted-foreground">
-              {reportsAllAccounts ? "All accounts" : "This account"}
-            </span>
-          </span>
-        </ProfileTreeRow>
-        <ProfileTreeRow
-          label="API Calls"
-          icon={<Hash className="h-3.5 w-3.5" />}
-          hasValue
-          showEmpty
-          mobileLayout="inline"
-          testId="row-total-calls"
-        >
-          <span data-testid="text-total-calls">
-            {summaryLoading ? "…" : (summary?.totalCalls || 0)}
-          </span>
-        </ProfileTreeRow>
-        <ProfileTreeRow
-          label="Input Tokens"
-          icon={<Zap className="h-3.5 w-3.5" />}
-          hasValue
-          showEmpty
-          mobileLayout="inline"
-          testId="row-input-tokens"
-        >
-          <span data-testid="text-input-tokens">
-            {summaryLoading ? "…" : formatTokens(summary?.totalInputTokens || 0)}
-          </span>
-        </ProfileTreeRow>
-        <ProfileTreeRow
-          label="Output Tokens"
-          icon={<TrendingUp className="h-3.5 w-3.5" />}
-          hasValue
-          showEmpty
-          mobileLayout="inline"
-          testId="row-output-tokens"
-        >
-          <span data-testid="text-output-tokens">
-            {summaryLoading ? "…" : formatTokens(summary?.totalOutputTokens || 0)}
-          </span>
-        </ProfileTreeRow>
-      </div>
-
-      <Card data-testid="card-cost-chart">
-        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-          <div className="flex items-center gap-3">
-            <CardTitle className="text-base font-semibold">{chartTitle}</CardTitle>
-            <div className="flex items-center border rounded-md overflow-hidden" data-testid="toggle-chart-metric">
-              <button
-                className={`px-2.5 py-1 text-xs font-medium transition-colors ${
-                  chartMetric === "cost"
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted"
-                }`}
-                onClick={() => setChartMetric("cost")}
-                data-testid="button-metric-cost"
-              >$</button>
-              <button
-                className={`px-2.5 py-1 text-xs font-medium transition-colors ${
-                  chartMetric === "tokens"
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted"
-                }`}
-                onClick={() => setChartMetric("tokens")}
-                data-testid="button-metric-tokens"
-              >Tokens</button>
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className={HIERARCHY_TREE_STACK_CLASS} data-testid="cost-page">
+          <div className="mb-1 flex items-center gap-1.5">
+            <div className="min-w-0 flex-1 [&>div]:mb-0">
+              <HierarchySearchInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                inputTestId="input-search-cost"
+                clearTestId="button-clear-cost-search"
+                ariaLabel="Search usage hierarchy"
+              />
             </div>
-          </div>
-          <Badge variant="secondary" className="bg-cat-system/15 text-cat-system-foreground border border-cat-system/30 rounded-sm text-xs font-medium px-2 py-0.5" data-testid="badge-group-by">
-            {GROUP_LABELS[chartGroupBy]}
-          </Badge>
-        </CardHeader>
-        <CardContent>
-          {chartData.length === 0 ? (
-            <div className="flex items-center justify-center h-[200px] text-sm text-muted-foreground">
-              No data yet. Start chatting with Agent to see usage stats.
-            </div>
-          ) : (
-            <>
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis
-                    dataKey={useHourly ? "hour" : "date"}
-                    tickFormatter={(v: string) => useHourly ? formatHour(v) : formatDate(v)}
-                    className="text-xs"
-                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
-                  />
-                  <YAxis
-                    tickFormatter={(v: number) => formatChartValue(v)}
-                    className="text-xs"
-                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
-                    width={chartMetric === "tokens" ? 70 : 60}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "hsl(var(--card))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "6px",
-                      fontSize: "12px",
-                    }}
-                    formatter={stackedTooltipFormatter}
-                    labelFormatter={(label: string) => {
-                      if (useHourly) {
-                        const parts = label.split(" ");
-                        if (parts.length === 2) {
-                          return `${formatDate(parts[0])} ${formatHour(label)}`;
-                        }
-                        return label;
-                      }
-                      return formatDate(label);
-                    }}
-                  />
-                  {allKeys.map((key, i) => (
-                    <Bar
-                      key={key}
-                      dataKey={key}
-                      stackId="metric"
-                      fill={getColorForKey(key, i, chartGroupBy)}
-                    />
-                  ))}
-                </BarChart>
-              </ResponsiveContainer>
-              {renderLegend()}
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card data-testid="card-breakdown">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">
-            {groupBy === "hierarchy" ? "Usage Hierarchy" : `By ${GROUP_LABELS[groupBy]}`}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {(() => {
-            if (groupBy === "hierarchy") {
-              return <HierarchyBreakdown data={hierarchyData} />;
-            }
-
-            if (groupBy === "prompt") {
-              if (byProfile.length === 0) {
-                return (
-                  <div className="flex items-center justify-center h-[200px] text-sm text-muted-foreground">
-                    No data yet
-                  </div>
-                );
-              }
-              return (
-                <div className="space-y-3">
-                  {byProfile.map((p) => {
-                    const pctOfTotal = summary && summary.totalCost > 0
-                      ? ((p.cost / summary.totalCost) * 100).toFixed(0)
-                      : "0";
-                    return (
-                      <div key={p.profile} className="space-y-1" data-testid={`breakdown-item-${p.profile}`}>
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <div className="flex items-center gap-2">
-                            <Badge variant="secondary" className="bg-cat-ai/15 text-cat-ai-foreground border border-cat-ai/30 rounded-sm text-xs font-medium px-2 py-0.5">{p.name || p.profile}</Badge>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground">{pctOfTotal}%</span>
-                            <span className="text-sm font-medium">{formatCost(p.cost)}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                          <span>{p.calls} calls</span>
-                          <span>{p.avgDuration != null ? `avg ${formatDuration(p.avgDuration)}` : ""}</span>
-                          <span>{formatTokens(p.tokens)} tokens</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            }
-
-            const aggregated: Record<string, { cost: number; count: number }> = {};
-            const buckets = useHourly ? byModelByHour : byModelByDay;
-            for (const b of buckets) {
-              if (!aggregated[b.model]) {
-                aggregated[b.model] = { cost: 0, count: 0 };
-              }
-              aggregated[b.model].cost += b.cost;
-              aggregated[b.model].count += 1;
-            }
-
-            const sortedKeys = Object.entries(aggregated)
-              .sort((a, b) => {
-                if (groupBy === "tier") {
-                  const tierOrder = ["max", "high", "balanced", "fast", "embed", "unknown"];
-                  return tierOrder.indexOf(a[0]) - tierOrder.indexOf(b[0]);
-                }
-                return b[1].cost - a[1].cost;
-              });
-
-            if (sortedKeys.length === 0) {
-              return (
-                <div className="flex items-center justify-center h-[200px] text-sm text-muted-foreground">
-                  No data yet
-                </div>
-              );
-            }
-
-            const totalCostForPct = sortedKeys.reduce((s, [, v]) => s + v.cost, 0);
-
-            return (
-              <div className="space-y-3">
-                {sortedKeys.map(([key, data], i) => {
-                  const pctOfTotal = totalCostForPct > 0
-                    ? ((data.cost / totalCostForPct) * 100).toFixed(0)
-                    : "0";
-                  return (
-                    <div key={key} className="space-y-1" data-testid={`breakdown-item-${key}`}>
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="h-2 w-2 rounded-full shrink-0"
-                            style={{ backgroundColor: getColorForKey(key, i, groupBy) }}
-                          />
-                          <span className="text-sm font-medium">
-                            {groupBy === "tier" ? (key.charAt(0).toUpperCase() + key.slice(1)) : key}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground">{pctOfTotal}%</span>
-                          <span className="text-sm font-medium">{formatCost(data.cost)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })()}
-        </CardContent>
-      </Card>
-
-      <Collapsible open={callLogOpen} onOpenChange={setCallLogOpen}>
-        <Card>
-          <CollapsibleTrigger asChild>
-            <CardHeader className="flex flex-row items-center justify-between gap-2 cursor-pointer hover-elevate rounded-md">
-              <CardTitle className="text-base font-semibold">API Call Log</CardTitle>
-              <div className="flex items-center gap-2">
-                {summary && summary.totalCalls > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    {summary.totalCalls} total calls
-                  </span>
-                )}
-                <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${callLogOpen ? "rotate-180" : ""}`} />
-              </div>
-            </CardHeader>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <CardContent>
-              {callsLoading ? (
-                <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-                  Loading...
-                </div>
-              ) : calls.length === 0 ? (
-                <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-                  No API calls recorded yet. Chat with Agent to generate activity.
-                </div>
-              ) : (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm" data-testid="table-api-calls">
-                      <thead>
-                        <tr className="border-b text-left">
-                          <th className="pb-2 pr-3 font-medium text-muted-foreground">Time</th>
-                          <th className="pb-2 pr-3 font-medium text-muted-foreground">Model</th>
-                          <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Input</th>
-                          <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Output</th>
-                          <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Cost</th>
-                          <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Duration</th>
-                          <th className="pb-2 font-medium text-muted-foreground"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {calls.map((call) => (
-                          <tr
-                            key={call.id}
-                            className="border-b last:border-b-0 hover-elevate"
-                            data-testid={`row-api-call-${call.id}`}
-                          >
-                            <td className="py-2 pr-3 text-xs text-muted-foreground whitespace-nowrap">
-                              {formatTimestamp(call.timestamp, timezone)}
-                            </td>
-                            <td className="py-2 pr-3">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <Badge variant="outline" className="text-xs font-mono">
-                                  {call.provider}
-                                </Badge>
-                                <Badge variant="secondary" className="bg-cat-ai/15 text-cat-ai-foreground border border-cat-ai/30 rounded-sm text-xs font-medium font-mono px-2 py-0.5 truncate max-w-[120px]">{call.model}</Badge>
-                                {call.profile && (
-                                  <Badge variant="secondary" className="bg-cat-ai/15 text-cat-ai-foreground border border-cat-ai/30 rounded-sm text-xs font-medium px-2 py-0.5">
-                                    {call.profile}
-                                  </Badge>
-                                )}
-                              </div>
-                            </td>
-                            <td className="py-2 pr-3 text-right font-mono text-xs">
-                              {formatTokens(call.inputTokens)}
-                            </td>
-                            <td className="py-2 pr-3 text-right font-mono text-xs">
-                              {formatTokens(call.outputTokens)}
-                            </td>
-                            <td className="py-2 pr-3 text-right font-mono text-xs font-medium">
-                              {formatCost(call.costTotal)}
-                            </td>
-                            <td className="py-2 pr-3 text-right text-xs text-muted-foreground">
-                              {formatDuration(call.durationMs)}
-                            </td>
-                            <td className="py-2">
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                onClick={() => setSelectedCall(call)}
-                                data-testid={`button-view-call-${call.id}`}
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {totalPages > 1 && (
-                    <div className="flex items-center justify-between gap-2 mt-4 pt-4 border-t">
-                      <span className="text-xs text-muted-foreground">
-                        Page {page + 1} of {totalPages}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          size="icon"
-                          variant="outline"
-                          disabled={page === 0}
-                          onClick={() => setPage(Math.max(0, page - 1))}
-                          data-testid="button-prev-page"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="outline"
-                          disabled={page >= totalPages - 1}
-                          onClick={() => setPage(page + 1)}
-                          data-testid="button-next-page"
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    "mb-0 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                    mixerActive && "border-foreground/40 text-foreground",
                   )}
-                </>
-              )}
-            </CardContent>
-          </CollapsibleContent>
-        </Card>
-      </Collapsible>
+                  aria-label="Cost mixer"
+                  data-testid="button-cost-mixer"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger data-testid="menu-cost-period">Period</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup value={period} onValueChange={setPeriod}>
+                      {PERIOD_OPTIONS.map((option) => (
+                        <DropdownMenuRadioItem
+                          key={option.value}
+                          value={option.value}
+                          data-testid={`menu-cost-period-${option.value}`}
+                        >
+                          {option.label}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger data-testid="menu-cost-group-by">Group by</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup value={groupBy} onValueChange={(value) => setGroupBy(value as GroupBy)}>
+                      {(["hierarchy", "tier", "activity", "prompt"] as GroupBy[]).map((g) => (
+                        <DropdownMenuRadioItem
+                          key={g}
+                          value={g}
+                          data-testid={`button-group-${g}`}
+                        >
+                          {GROUP_LABELS[g]}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger data-testid="menu-cost-chart-metric">Chart metric</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup
+                      value={chartMetric}
+                      onValueChange={(value) => setChartMetric(value as ChartMetric)}
+                    >
+                      <DropdownMenuRadioItem value="tokens" data-testid="button-metric-tokens">
+                        Tokens
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="cost" data-testid="button-metric-cost">
+                        Cost
+                      </DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuCheckboxItem
+                  checked={inferenceDebug?.enabled ?? false}
+                  disabled={toggleDebugMutation.isPending}
+                  onCheckedChange={(checked) => toggleDebugMutation.mutate(checked === true)}
+                  onSelect={(event) => event.preventDefault()}
+                  data-testid="menu-cost-store-content"
+                >
+                  Store call content
+                </DropdownMenuCheckboxItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
 
-      <Dialog open={!!selectedCall} onOpenChange={(open) => !open && setSelectedCall(null)}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-base">API Call Details</DialogTitle>
-          </DialogHeader>
-          {selectedCall && (() => {
-            const errorText = getApiCallErrorText(selectedCall);
-            const showResponse = shouldShowApiCallResponse(selectedCall.responseContent, errorText);
+          <div className="space-y-1">
+            <ProfileTreeRow
+              label="Total Cost"
+              icon={<DollarSign className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              mobileLayout="inline"
+              testId="row-total-cost"
+            >
+              <span data-testid="text-total-cost">
+                {summaryLoading ? "…" : formatCost(summary?.totalCost || 0)}
+                <span className="ml-2 text-xs text-muted-foreground">
+                  {reportsAllAccounts ? "All accounts" : "This account"}
+                </span>
+              </span>
+            </ProfileTreeRow>
+            <ProfileTreeRow
+              label="API Calls"
+              icon={<Hash className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              mobileLayout="inline"
+              testId="row-total-calls"
+            >
+              <span data-testid="text-total-calls">
+                {summaryLoading ? "…" : (summary?.totalCalls || 0)}
+              </span>
+            </ProfileTreeRow>
+            <ProfileTreeRow
+              label="Input Tokens"
+              icon={<Zap className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              mobileLayout="inline"
+              testId="row-input-tokens"
+            >
+              <span data-testid="text-input-tokens">
+                {summaryLoading ? "…" : formatTokens(summary?.totalInputTokens || 0)}
+              </span>
+            </ProfileTreeRow>
+            <ProfileTreeRow
+              label="Output Tokens"
+              icon={<TrendingUp className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              mobileLayout="inline"
+              testId="row-output-tokens"
+            >
+              <span data-testid="text-output-tokens">
+                {summaryLoading ? "…" : formatTokens(summary?.totalOutputTokens || 0)}
+              </span>
+            </ProfileTreeRow>
+          </div>
 
-            return (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <span className="text-xs text-muted-foreground">Provider</span>
-                  <p className="text-sm font-medium">{selectedCall.provider}</p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground">Model</span>
-                  <p className="text-sm font-mono">{selectedCall.model}</p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground">Time</span>
-                  <p className="text-sm">{formatTimestamp(selectedCall.timestamp, timezone)}</p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground">Duration</span>
-                  <p className="text-sm">{formatDuration(selectedCall.durationMs)}</p>
-                </div>
-                {selectedCall.profile && (
-                  <div>
-                    <span className="text-xs text-muted-foreground">Profile</span>
-                    <p className="text-sm">
-                      <Badge variant="secondary" className="bg-cat-ai/15 text-cat-ai-foreground border border-cat-ai/30 rounded-sm text-xs font-medium px-2 py-0.5">{selectedCall.profile}</Badge>
-                    </p>
-                  </div>
-                )}
-                <div>
-                  <span className="text-xs text-muted-foreground">Input Tokens</span>
-                  <p className="text-sm font-mono">{selectedCall.inputTokens.toLocaleString()}</p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground">Output Tokens</span>
-                  <p className="text-sm font-mono">{selectedCall.outputTokens.toLocaleString()}</p>
-                </div>
-                {(selectedCall.cacheReadTokens || 0) > 0 && (
-                  <div>
-                    <span className="text-xs text-muted-foreground">Cache Read</span>
-                    <p className="text-sm font-mono">{selectedCall.cacheReadTokens?.toLocaleString()}</p>
-                  </div>
-                )}
-                {selectedCall.captureId && (
-                  <div className="col-span-2">
-                    <span className="text-xs text-muted-foreground">Provider Context</span>
-                    <p className="text-sm">
-                      <ReferenceRenderer refValue={createReferenceRef({ type: "inference_context", id: selectedCall.captureId, metadata: { label: "Context" } })} />
-                    </p>
-                  </div>
-                )}
-                {!selectedCall.captureId && (
-                  <div className="col-span-2 text-xs text-muted-foreground">Context unavailable for this legacy attempt.</div>
-                )}
-                {(selectedCall.cacheWriteTokens || 0) > 0 && (
-                  <div>
-                    <span className="text-xs text-muted-foreground">Cache Write</span>
-                    <p className="text-sm font-mono">{selectedCall.cacheWriteTokens?.toLocaleString()}</p>
-                  </div>
-                )}
+          <section data-testid="card-cost-chart" className="space-y-2 pt-2">
+            <div className={HIERARCHY_SECTION_HEADER_CLASS}>{chartTitle}</div>
+            {chartData.length === 0 ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                No data yet
               </div>
-              <div className="grid grid-cols-3 gap-3 pt-2 border-t">
-                <div>
-                  <span className="text-xs text-muted-foreground">Input Cost</span>
-                  <p className="text-sm font-mono">{formatCost(selectedCall.costInput)}</p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground">Output Cost</span>
-                  <p className="text-sm font-mono">{formatCost(selectedCall.costOutput)}</p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground">Total Cost</span>
-                  <p className="text-sm font-mono font-medium">{formatCost(selectedCall.costTotal)}</p>
-                </div>
-              </div>
-              {selectedCall.requestContent && (
-                <div className="pt-2 border-t">
-                  <span className="text-xs text-muted-foreground">Request</span>
-                  <pre className="mt-1 text-xs bg-muted/50 rounded-md p-3 max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words">
-                    {selectedCall.requestContent}
-                  </pre>
-                </div>
-              )}
-              {errorText && (
-                <div className="pt-2 border-t">
-                  <span className="text-xs text-error/80">Error</span>
-                  <pre className="mt-1 text-xs bg-error/10 border border-error/30 rounded-md p-3 max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words">
-                    {errorText}
-                  </pre>
-                </div>
-              )}
-              {showResponse && (
-                <div className="pt-2 border-t">
-                  <span className="text-xs text-muted-foreground">Response</span>
-                  <pre className="mt-1 text-xs bg-muted/50 rounded-md p-3 max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words">
-                    {selectedCall.responseContent}
-                  </pre>
-                </div>
-              )}
-            </div>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                    <XAxis
+                      dataKey={useHourly ? "hour" : "date"}
+                      tickFormatter={(v: string) => useHourly ? formatHour(v) : formatDate(v)}
+                      className="text-xs"
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                    />
+                    <YAxis
+                      tickFormatter={(v: number) => formatChartValue(v)}
+                      className="text-xs"
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                      width={chartMetric === "tokens" ? 70 : 60}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "6px",
+                        fontSize: "12px",
+                      }}
+                      formatter={stackedTooltipFormatter}
+                      labelFormatter={(label: string) => {
+                        if (useHourly) {
+                          const parts = label.split(" ");
+                          if (parts.length === 2) {
+                            return `${formatDate(parts[0])} ${formatHour(label)}`;
+                          }
+                          return label;
+                        }
+                        return formatDate(label);
+                      }}
+                    />
+                    {allKeys.map((key, i) => (
+                      <Bar
+                        key={key}
+                        dataKey={key}
+                        stackId="metric"
+                        fill={getColorForKey(key, i, chartGroupBy)}
+                      />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+                {renderLegend()}
+              </>
+            )}
+          </section>
+
+          <section data-testid="card-breakdown" className="space-y-2 pt-2">
+            <div className={HIERARCHY_SECTION_HEADER_CLASS}>{breakdownTitle}</div>
+            {breakdownBody}
+          </section>
         </div>
       </div>
     </div>
