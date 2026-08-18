@@ -2849,9 +2849,7 @@ export async function runSchemaBootstrap(
     // schema). The seed path now supplies these explicitly; this keeps every
     // other insert path safe.
     await pool.query(`ALTER TABLE skills ALTER COLUMN authority SET DEFAULT 'full'`);
-    await pool.query(`ALTER TABLE skills ALTER COLUMN write_category SET DEFAULT 'read-only'`);
     await pool.query(`ALTER TABLE skills ALTER COLUMN allowed_tools SET DEFAULT '{}'::text[]`);
-    await pool.query(`ALTER TABLE skills ALTER COLUMN inputs SET DEFAULT '{}'::text[]`);
     await pool.query(`ALTER TABLE skills ALTER COLUMN status SET DEFAULT 'draft'`);
     await pool.query(`ALTER TABLE skills ALTER COLUMN version SET DEFAULT '1.0'`);
     await pool.query(`ALTER TABLE skills ALTER COLUMN add_to_memory SET DEFAULT true`);
@@ -3441,6 +3439,8 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE skills DROP COLUMN IF EXISTS estimated_tokens`);
     await pool.query(`ALTER TABLE skills DROP COLUMN IF EXISTS estimated_duration`);
     await pool.query(`ALTER TABLE skills DROP COLUMN IF EXISTS budget_behavior`);
+    await pool.query(`ALTER TABLE skills DROP COLUMN IF EXISTS write_category`);
+    await pool.query(`ALTER TABLE skills DROP COLUMN IF EXISTS inputs`);
     await pool.query(
       `ALTER TABLE skills ADD COLUMN IF NOT EXISTS add_to_memory BOOLEAN NOT NULL DEFAULT true`,
     );

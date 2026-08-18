@@ -11,14 +11,8 @@ export const sessionTypes = ["autonomous", "agent"] as const;
 export type SessionType = typeof sessionTypes[number];
 export type SkillAuthority = typeof skillAuthorities[number];
 
-export const skillWriteCategories = ["read-only", "internal-data", "internal-control", "external", "destructive"] as const;
-export type SkillWriteCategory = typeof skillWriteCategories[number];
-
 export const skillStatuses = ["active", "draft", "deprecated"] as const;
 export type SkillStatus = typeof skillStatuses[number];
-
-export const skillInputTypes = ["task", "people", "memories", "events", "files", "project"] as const;
-export type SkillInputType = typeof skillInputTypes[number];
 
 export const checklistKinds = ["judgment", "tool_invoked", "child_skill_invoked"] as const;
 export type ChecklistKind = typeof checklistKinds[number];
@@ -74,10 +68,8 @@ export const skills = pgTable("skills", {
   description: text("description").notNull(),
 
   authority: text("authority").notNull().default("full"),
-  writeCategory: text("write_category").notNull().default("read-only"),
 
   allowedTools: text("allowed_tools").array().notNull().default(sql`'{}'::text[]`), // deprecated — no longer enforced; kept for DB compat
-  inputs: text("inputs").array().notNull().default(sql`'{}'::text[]`),
 
   whenToUse: text("when_to_use").notNull(),
   process: text("process").notNull(),
@@ -230,8 +222,6 @@ export const insertSkillSchema = createInsertSchema(skills).omit({
   name: z.string().min(1).max(64).regex(/^[a-z][a-z0-9-]*$/, "Lowercase letters, numbers, and hyphens only"),
   description: z.string().min(1).max(1024),
   authority: z.enum(skillAuthorities).default("full"),
-  writeCategory: z.enum(skillWriteCategories).default("read-only"),
-  inputs: z.array(z.enum(skillInputTypes)).default([]),
   status: z.enum(skillStatuses).default("draft"),
   version: z.string().default("1.0"),
   sessionType: z.enum(sessionTypes).nullable().optional(),
