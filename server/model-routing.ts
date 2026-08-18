@@ -57,6 +57,8 @@ export class ModelRoutingError extends Error {
   }
 }
 
+export { AccountUsageEnvelopeError } from "./account-usage-envelope";
+
 function splitModel(modelString: string): { provider: string; model: string } {
   const slash = modelString.indexOf("/");
   return slash < 0
@@ -100,6 +102,9 @@ export async function resolveModelCandidates(
 ): Promise<ModelRoutingDecision[]> {
   if (options.model) {
     if (!options.overrideReason) throw new ModelRoutingError("Explicit model override requires overrideReason");
+    const { getCurrentPrincipal } = await import("./principal-context");
+    const { assertAccountUsageDispatchAllowed } = await import("./account-usage-envelope");
+    await assertAccountUsageDispatchAllowed(getCurrentPrincipal()?.accountId ?? null);
     const parsed = splitModel(options.model);
     return [{
       activity, tier: "explicit-override", model: parsed.model, provider: parsed.provider,
@@ -118,7 +123,9 @@ export async function resolveModelCandidates(
   // One discriminant: account.router_id. Set → exclusive Router pool. Null → legacy global chain.
   const { getCurrentPrincipal } = await import("./principal-context");
   const { getAccountRouterId } = await import("./router-storage");
+  const { assertAccountUsageDispatchAllowed } = await import("./account-usage-envelope");
   const principal = getCurrentPrincipal();
+  await assertAccountUsageDispatchAllowed(principal?.accountId ?? null);
   const routerId = await getAccountRouterId(principal?.accountId ?? null);
   const connectors = (
     routerId

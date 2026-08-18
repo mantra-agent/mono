@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, real, boolean, timestamp, jsonb, unique, index, uniqueIndex, primaryKey, uuid, check } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, bigint, real, boolean, timestamp, jsonb, unique, index, uniqueIndex, primaryKey, uuid, check } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { libraryPages } from "./models/info";
@@ -153,6 +153,9 @@ export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
 export const INSTANCE_STATUSES = ["active", "paused", "archived", "quarantined"] as const;
 export type InstanceStatus = (typeof INSTANCE_STATUSES)[number];
 
+export const USAGE_STATUSES = ["ok", "bar", "warn", "pause"] as const;
+export type UsageStatus = (typeof USAGE_STATUSES)[number];
+
 export function derivedInstanceStatus(accountStatus: string | null | undefined): Exclude<InstanceStatus, "quarantined"> {
   if (accountStatus === "archived") return "archived";
   if (accountStatus === "suspended") return "paused";
@@ -167,6 +170,13 @@ export const accounts = pgTable("accounts", {
   ownerUserId: varchar("owner_user_id").references(() => users.id, { onDelete: "set null" }),
   /** Nullable during parallel cutover. NULL = legacy unnamed global connector chain. */
   routerId: uuid("router_id"),
+  /** NULL = no envelope (not a paying Account). Never default TIVE to Factory+ 1B. */
+  includedTokens: bigint("included_tokens", { mode: "number" }),
+  grantedTokens: bigint("granted_tokens", { mode: "number" }).notNull().default(0),
+  usagePeriod: text("usage_period"),
+  periodTokens: bigint("period_tokens", { mode: "number" }).notNull().default(0),
+  emittedOverageTokens: bigint("emitted_overage_tokens", { mode: "number" }).notNull().default(0),
+  usageStatus: text("usage_status"),
   metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -176,6 +186,10 @@ export const accounts = pgTable("accounts", {
   ownerIdx: index("idx_accounts_owner_user").on(table.ownerUserId),
   kindOwnerUnique: uniqueIndex("idx_accounts_kind_owner_unique").on(table.kind, table.ownerUserId),
   routerIdx: index("idx_accounts_router").on(table.routerId),
+  usageStatusCheck: check(
+    "accounts_usage_status_check",
+    sql`${table.usageStatus} IS NULL OR ${table.usageStatus} IN ('ok', 'bar', 'warn', 'pause')`,
+  ),
 }));
 
 export const memberships = pgTable("memberships", {

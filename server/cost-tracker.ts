@@ -177,13 +177,21 @@ export async function logApiCall(params: {
         usageSemantics,
       },
     };
+    let settledAccountId: string | null = null;
     if (params.apiCallId) {
       const settled = await storage.settleApiCall(params.apiCallId, persistedCall);
       if (!settled) {
         log.warn(`api_call settlement unavailable apiCallId=${params.apiCallId} provider=${provider} model=${model}`);
+      } else {
+        settledAccountId = settled.accountId ?? null;
       }
     } else {
-      await storage.createApiCall(persistedCall);
+      const created = await storage.createApiCall(persistedCall);
+      settledAccountId = created.accountId ?? null;
+    }
+    if (settledAccountId) {
+      const { settleAccountUsageEnvelope } = await import("./account-usage-envelope");
+      await settleAccountUsageEnvelope(settledAccountId);
     }
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);

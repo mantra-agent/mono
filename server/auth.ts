@@ -1608,6 +1608,12 @@ export function setupAuth(app: Express) {
             status: accounts.status,
             ownerUserId: accounts.ownerUserId,
             routerId: accounts.routerId,
+            includedTokens: accounts.includedTokens,
+            grantedTokens: accounts.grantedTokens,
+            usagePeriod: accounts.usagePeriod,
+            periodTokens: accounts.periodTokens,
+            emittedOverageTokens: accounts.emittedOverageTokens,
+            usageStatus: accounts.usageStatus,
             createdAt: accounts.createdAt,
             updatedAt: accounts.updatedAt,
           }).from(accounts).orderBy(asc(accounts.name), asc(accounts.id)),
@@ -1766,6 +1772,64 @@ export function setupAuth(app: Express) {
         const message = error instanceof Error ? error.message : "Failed to assign router";
         const status = message === "Account not found" || message === "Router not found" ? 404 : 400;
         res.status(status).json({ error: message });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/auth/accounts/:id/include",
+    requireAuth,
+    requirePermission("users:write"),
+    async (req: Request, res: Response) => {
+      try {
+        const accountId = req.params.id as string;
+        const parsed = z.object({
+          includedTokens: z.number().int().nonnegative().nullable(),
+        }).safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ error: "includedTokens must be a non-negative integer or null" });
+        }
+        const { setAccountIncludedTokens } = await import("./account-usage-envelope");
+        const result = await setAccountIncludedTokens(accountId, parsed.data.includedTokens);
+        await recordPrivilegedAccess({
+          principal: getPrincipal(req)!,
+          action: "account_include_set",
+          reason: "admin account usage include",
+          metadata: { accountId, includedTokens: result.includedTokens },
+        });
+        res.json(result);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to set include";
+        res.status(message === "Account not found" ? 404 : 400).json({ error: message });
+      }
+    },
+  );
+
+  app.post(
+    "/api/auth/accounts/:id/usage-grant",
+    requireAuth,
+    requirePermission("users:write"),
+    async (req: Request, res: Response) => {
+      try {
+        const accountId = req.params.id as string;
+        const parsed = z.object({
+          tokens: z.number().int().positive(),
+        }).safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ error: "tokens must be a positive integer" });
+        }
+        const { grantAccountUsageTokens } = await import("./account-usage-envelope");
+        const result = await grantAccountUsageTokens(accountId, parsed.data.tokens);
+        await recordPrivilegedAccess({
+          principal: getPrincipal(req)!,
+          action: "account_usage_grant",
+          reason: "admin account usage grant",
+          metadata: { accountId, tokens: parsed.data.tokens, grantedTokens: result.grantedTokens },
+        });
+        res.json(result);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to grant usage";
+        res.status(message === "Account not found" ? 404 : 400).json({ error: message });
       }
     },
   );

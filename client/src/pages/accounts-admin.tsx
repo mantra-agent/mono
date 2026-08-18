@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Building2, ChevronRight, Clock, Loader2, MoreHorizontal, Route } from "lucide-react";
+import { Building2, ChevronRight, Clock, Gauge, Gift, Loader2, MoreHorizontal, Pause, Route } from "lucide-react";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
 import { EditableSessionTitle } from "@/components/editable-session-title";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
@@ -51,6 +51,11 @@ function ownerEmail(account: IdentityGraphAccount, users: IdentityGraphUser[]): 
     ?? "unknown";
 }
 
+function formatTokenCount(value: number | null | undefined): string {
+  if (value == null) return "None";
+  return value.toLocaleString("en-US");
+}
+
 function accountChip(account: Pick<IdentityGraphAccount, "id" | "name">): string {
   return createReferenceRef({
     type: "account",
@@ -70,6 +75,8 @@ function AccountRow({
   onStatus,
   onDelete,
   onAssignRouter,
+  onSetInclude,
+  onGrantUsage,
 }: {
   account: IdentityGraphAccount;
   users: IdentityGraphUser[];
@@ -81,9 +88,16 @@ function AccountRow({
   onStatus: (account: IdentityGraphAccount, status: AccountLifecycleStatus) => void;
   onDelete: (account: IdentityGraphAccount, email: string) => void;
   onAssignRouter: (account: IdentityGraphAccount, routerId: string) => void;
+  onSetInclude: (account: IdentityGraphAccount, includedTokens: number | null) => void;
+  onGrantUsage: (account: IdentityGraphAccount, tokens: number) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [modsOpen, setModsOpen] = useState(false);
+  const [includeDraft, setIncludeDraft] = useState(
+    account.includedTokens == null ? "" : String(account.includedTokens),
+  );
+  const [grantDraft, setGrantDraft] = useState("");
+  const paying = account.includedTokens != null;
   const { toast } = useToast();
   const modsQuery = useQuery<{ mods: Array<{ key: string; name: string; status: string }>; canManage: boolean }>({
     queryKey: ["/api/admin/accounts", account.id, "mods"],
@@ -293,6 +307,102 @@ function AccountRow({
               ) : null}
             </div>
           </HierarchyTreeRow>
+          <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+            <ProfileTreeRow
+              label="Include"
+              icon={<Gauge className="h-3.5 w-3.5" />}
+              hasValue={account.includedTokens != null}
+              showEmpty
+              menuContent={canWrite ? (
+                <div className="space-y-2 p-1">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={includeDraft}
+                    onChange={(event) => setIncludeDraft(event.target.value)}
+                    aria-label="Included tokens"
+                    className="h-8"
+                  />
+                  <DropdownMenuItem
+                    onClick={() => {
+                      const parsed = includeDraft.trim() === "" ? null : Number(includeDraft);
+                      if (parsed != null && (!Number.isInteger(parsed) || parsed < 0)) return;
+                      onSetInclude(account, parsed);
+                    }}
+                  >
+                    Save include
+                  </DropdownMenuItem>
+                  {account.includedTokens != null ? (
+                    <DropdownMenuItem onClick={() => onSetInclude(account, null)}>
+                      Clear include
+                    </DropdownMenuItem>
+                  ) : null}
+                </div>
+              ) : undefined}
+            >
+              <span className={account.includedTokens != null ? "text-foreground" : "text-muted-foreground"}>
+                {formatTokenCount(account.includedTokens)}
+              </span>
+            </ProfileTreeRow>
+          </HierarchyTreeRow>
+          {paying ? (
+            <>
+              <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+                <ProfileTreeRow label="Period" icon={<Clock className="h-3.5 w-3.5" />} hasValue={Boolean(account.usagePeriod)} showEmpty>
+                  <span className="text-foreground">{account.usagePeriod ?? "—"} · {formatTokenCount(account.periodTokens ?? 0)}</span>
+                </ProfileTreeRow>
+              </HierarchyTreeRow>
+              <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+                <ProfileTreeRow
+                  label="Status"
+                  icon={<Pause className="h-3.5 w-3.5" />}
+                  hasValue={Boolean(account.usageStatus)}
+                  showEmpty
+                >
+                  <span className="text-foreground">{account.usageStatus ?? "ok"}</span>
+                </ProfileTreeRow>
+              </HierarchyTreeRow>
+              <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+                <ProfileTreeRow
+                  label="Granted"
+                  icon={<Gift className="h-3.5 w-3.5" />}
+                  hasValue={(account.grantedTokens ?? 0) > 0}
+                  showEmpty
+                  menuContent={canWrite ? (
+                    <div className="space-y-2 p-1">
+                      <Input
+                        type="number"
+                        min={1}
+                        value={grantDraft}
+                        onChange={(event) => setGrantDraft(event.target.value)}
+                        aria-label="Grant tokens"
+                        className="h-8"
+                      />
+                      <DropdownMenuItem
+                        onClick={() => {
+                          const parsed = Number(grantDraft);
+                          if (!Number.isInteger(parsed) || parsed <= 0) return;
+                          onGrantUsage(account, parsed);
+                          setGrantDraft("");
+                        }}
+                      >
+                        Grant
+                      </DropdownMenuItem>
+                    </div>
+                  ) : undefined}
+                >
+                  <span className={(account.grantedTokens ?? 0) > 0 ? "text-foreground" : "text-muted-foreground"}>
+                    {formatTokenCount(account.grantedTokens ?? 0)}
+                  </span>
+                </ProfileTreeRow>
+              </HierarchyTreeRow>
+              <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+                <ProfileTreeRow label="Emitted" icon={<Gauge className="h-3.5 w-3.5" />} hasValue={(account.emittedOverageTokens ?? 0) > 0} showEmpty>
+                  <span className="text-foreground">{formatTokenCount(account.emittedOverageTokens ?? 0)}</span>
+                </ProfileTreeRow>
+              </HierarchyTreeRow>
+            </>
+          ) : null}
           <HierarchyTreeRow continues={false} indent="icon" connectorAnchor="first-row-center">
             <ProfileTreeRow label="Last Active" icon={<Clock className="h-3.5 w-3.5" />} hasValue={!!account.lastActiveAt} showEmpty>
               <span className={account.lastActiveAt ? "text-foreground" : "text-muted-foreground"}>{lastActive}</span>
@@ -389,6 +499,30 @@ export default function AccountsAdminPage() {
       toast({ title: "Router assigned" });
     },
     onError: (error: Error) => toast({ title: "Could not assign router", description: error.message, variant: "destructive" }),
+  });
+
+  const includeMutation = useMutation({
+    mutationFn: async ({ account, includedTokens }: { account: IdentityGraphAccount; includedTokens: number | null }) => {
+      await apiRequest("PATCH", `/api/auth/accounts/${account.id}/include`, { includedTokens });
+      return { account, includedTokens };
+    },
+    onSuccess: async () => {
+      await invalidate();
+      toast({ title: "Include updated" });
+    },
+    onError: (error: Error) => toast({ title: "Could not set include", description: error.message, variant: "destructive" }),
+  });
+
+  const grantMutation = useMutation({
+    mutationFn: async ({ account, tokens }: { account: IdentityGraphAccount; tokens: number }) => {
+      await apiRequest("POST", `/api/auth/accounts/${account.id}/usage-grant`, { tokens });
+      return { account, tokens };
+    },
+    onSuccess: async () => {
+      await invalidate();
+      toast({ title: "Usage granted" });
+    },
+    onError: (error: Error) => toast({ title: "Could not grant usage", description: error.message, variant: "destructive" }),
   });
 
   const renameMutation = useMutation({
@@ -490,6 +624,8 @@ export default function AccountsAdminPage() {
                           onStatus={requestStatus}
                           onDelete={(next, email) => setPendingDelete({ account: next, email })}
                           onAssignRouter={(next, routerId) => routerMutation.mutate({ account: next, routerId })}
+                          onSetInclude={(next, includedTokens) => includeMutation.mutate({ account: next, includedTokens })}
+                          onGrantUsage={(next, tokens) => grantMutation.mutate({ account: next, tokens })}
                         />
                       );
                     })
