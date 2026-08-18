@@ -46,6 +46,10 @@ export interface VoiceSession {
   inflightTurn: number;
   inflightDone: Promise<void> | null;
   inflightDoneResolve: (() => void) | null;
+  /** Hot-swappable custom-LLM SSE write port. Socket death replaces this; it must not abort the generator. */
+  activeWriteRes: import("express").Response | null;
+  /** Flush completed speakables after a retry attaches a new write port. */
+  flushAttachedWritePort: (() => void) | null;
   inflightContextPromise: Promise<string> | null;
   inflightContextFocusKey: string | null;
   lastDataDeliveryAt: number;

@@ -107,14 +107,7 @@ export function initSSEStream(
   if (res.socket) res.socket.setNoDelay(true);
   ctx.pipelineStagesEmitted.add("writehead_sent");
   log.log(`turn ${currentTurn} TURN_PIPELINE stage=writehead_sent elapsed=${Date.now() - pipelineStart}ms session=${sessionId}`);
-
-  if (!ctx.firstChunk.sentAt) {
-    const roleChunk = {
-      id: ctx.chatId, object: "chat.completion.chunk", created: ctx.created, model: "xyz-voice",
-      choices: [{ index: 0, delta: { role: "assistant", content: " " }, finish_reason: null }],
-    };
-    trackedWrite(`data: ${JSON.stringify(roleChunk)}\n\n`, "role_chunk");
-  }
+  sendSSEComment(res, "writehead", sessionId);
 }
 
 // ── Brief Ack ────────────────────────────────────────────────────────────
@@ -133,11 +126,10 @@ export function sendBriefAck(
       "X-Accel-Buffering": "no",
     });
   }
-  // Spec: unflushed "... " is unrepresentable. Brief terminal acks use a flushed hold sentence.
-  const contentChunk = buildSSEChunk(chatId, created, "One moment. ", null, true);
+  // No spoken filler. Comments keep the socket; [DONE] only when this ack owns the response.
   let ok = true;
   try {
-    res.write(contentChunk);
+    sendSSEComment(res, `brief_ack:${opts.reason}`, chatId);
     if (opts.closeResponse) {
       res.write(buildSSEChunk(chatId, created, "", "stop"));
       res.write("data: [DONE]\n\n");
@@ -193,7 +185,7 @@ export function sendErrorResponse(
       object: "chat.completion.chunk",
       created: Math.floor(Date.now() / 1000),
       model: "xyz-voice",
-      choices: [{ index: 0, delta: { content: "One moment. ", flush: true }, finish_reason: "stop" }],
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
     };
     trackedWrite(`data: ${JSON.stringify(errorChunk)}\n\n`, "error_chunk");
     trackedWrite("data: [DONE]\n\n", "done_error");
@@ -207,7 +199,7 @@ export function sendErrorResponse(
 // ── Tracked Write Factory ────────────────────────────────────────────────
 
 export function createTrackedWrite(
-  res: Response,
+  getRes: () => Response,
   lastWrite: SSEWriteState,
   bp: BackpressureState,
   sessionId: string,
@@ -217,6 +209,7 @@ export function createTrackedWrite(
   return (data: string, label: string): boolean => {
     lastWrite.index++;
     const preview = data.slice(0, 200).replace(/\n/g, "\\n");
+    const res = getRes();
     try {
       const ok = res.write(data);
       lastWrite.ts = Date.now();
@@ -348,11 +341,8 @@ export function setupSSELifecycle(
     log.log(`RES_CLOSE turn=${ctx.currentTurn} premature=${premature} elapsed=${elapsed}ms keepalivesSent=${ctx.keepalivesSent} audibleDeltas=${ctx.audibleDeltaCount} sinceAudibleAtCloseMs=${sinceAudible} cascadeBudgetRemainingMs=${cascadeBudgetRemaining} pipelineStages=[${stagesEmitted}] missingStages=[${missingStages.join(",") || "none"}] session=${session.id}`);
     if (premature) {
       publishVoiceDiagnostic(session, "res_close_premature", `Response closed (premature)`, { turn: ctx.currentTurn, status: "error", elapsedMs: elapsed }, ctx);
-      if (!turnAbort.signal.aborted) {
-        log.warn(`RES_CLOSE turn=${ctx.currentTurn} aborting LLM — connection closed while inflight elapsed=${elapsed}ms session=${session.id}`);
-        turnAbort.abort();
-        publishVoiceDiagnostic(session, "response_closed_abort", `LLM aborted — HTTP connection closed (turn ${ctx.currentTurn}, ${elapsed}ms)`, { turn: ctx.currentTurn, status: "error", elapsedMs: elapsed });
-      }
+      if (session.activeWriteRes === res) session.activeWriteRes = null;
+      log.warn(`RES_CLOSE turn=${ctx.currentTurn} write_port_dead keeping generator elapsed=${elapsed}ms session=${session.id}`);
     }
   });
 }

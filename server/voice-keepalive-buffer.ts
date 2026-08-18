@@ -3,10 +3,8 @@
 //
 // See server/voice/turn-io.ts (sendPresenceHold / startKeepaliveTimer) and
 // server/elevenlabs.ts (soft_timeout_config) for the division of labor:
-//   - EL native soft_timeout_config = first spoken bridge ("One second.")
-//   - Mantra presence hold          = flushed complete hold sentences on this window
-// The hold must land strictly after soft_timeout_config.timeout_seconds and
-// before cascade_timeout_seconds so it cannot suppress EL's first line.
+// Spoken fillers are off. This window is now comment-only liveness before cascade retry.
+// When soft-timeout is disabled (0), the hold lands in the cascade-safety window only.
 
 export const KEEPALIVE_SAFETY_MARGIN_MS = 3_000;
 
@@ -22,7 +20,7 @@ export function computeSoftTimeoutBufferMs(
   const upper = cascadeMs - safetyMarginMs;
   if (lower >= upper) {
     if (warn) {
-      warn(`KEEPALIVE_BUFFER_NO_ROOM softTimeoutMs=${softMs} cascadeMs=${cascadeMs} safetyMarginMs=${safetyMarginMs} — soft+margin (${lower}ms) is not strictly less than cascade-margin (${upper}ms). Keepalive will either suppress EL's "One second." filler or fail to reset cascade in time. Increase cascade_timeout_seconds or reduce soft_timeout_config.timeout_seconds in server/elevenlabs.ts.`);
+      warn(`KEEPALIVE_BUFFER_NO_ROOM softTimeoutMs=${softMs} cascadeMs=${cascadeMs} safetyMarginMs=${safetyMarginMs} — no room for comment-only liveness before cascade. Increase cascade_timeout_seconds.`);
     }
     return Math.min(Math.max(lower, softMs + 1), Math.max(softMs + 1, cascadeMs - 1));
   }

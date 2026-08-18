@@ -122,8 +122,6 @@ export {
 const log = createLogger("VoiceLlm");
 
 // ── Constants ─────────────────────────────────────────────────────
-const PRE_CONTEXT_KEEPALIVE_INTERVAL_MS = 5_000;
-
 // ══════════════════════════════════════════════════════════════════
 // ORCHESTRATION
 // ══════════════════════════════════════════════════════════════════
@@ -279,53 +277,39 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
     && lastUserContent === prevFired
     && lastUserContent.length > 0
     && session.inflightAbort !== null
-    && session.inflightTurn > 0
-    && !session.inflightAbort.signal.aborted;
+    && session.inflightTurn > 0;
 
   if (isCascadeRetry) {
-    log.warn(`[CascadeRetry] CASCADE_RETRY_DETECTED session=${sessionId} inflightTurn=${session.inflightTurn} userHash=${lastUserHash} content="${lastUserContent.slice(0, 80)}" — NOT aborting in-flight turn, serving keepalive until real turn completes`);
-    publishVoiceDiagnostic(session, "cascade_retry", `ElevenLabs cascade retry detected — waiting for inflight turn ${session.inflightTurn}`, { turn: session.turnCount, status: "done" });
+    const generatorAlive = !session.inflightAbort.signal.aborted;
+    log.warn(`[CascadeRetry] CASCADE_RETRY_DETECTED session=${sessionId} inflightTurn=${session.inflightTurn} generatorAlive=${generatorAlive} userHash=${lastUserHash} — attaching write port, not minting a turn`);
+    publishVoiceDiagnostic(session, "cascade_retry", `ElevenLabs cascade retry — attaching write port to inflight turn ${session.inflightTurn}`, { turn: session.turnCount, status: "done" });
     session.lastFiredUserContent = prevFired;
 
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
+    if (!res.headersSent) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+    }
     if (res.socket) res.socket.setNoDelay(true);
-    sendSSEComment(res, "keepalive", sessionId);
+    session.activeWriteRes = res;
+    sendSSEComment(res, "write_port_attached", sessionId);
+    session.flushAttachedWritePort?.();
 
-    const retryKeepaliveTimer = setInterval(() => {
-      if (!isResponseAlive(res)) {
-        clearInterval(retryKeepaliveTimer);
-        log.warn(`[CascadeRetry] KEEPALIVE_STOPPED response_dead session=${sessionId}`);
-        return;
+    if (!generatorAlive) {
+      log.warn(`[CascadeRetry] generator already aborted — cannot attach; closing retry socket session=${sessionId}`);
+      try {
+        res.write(buildSSEChunk(`chatcmpl-cascade-retry-${sessionId}`, Math.floor(Date.now() / 1000), "", "stop"));
+        res.write("data: [DONE]\n\n");
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        log.warn(`SSE_WRITE_FAILED location=cascade_retry_dead_generator session=${sessionId} error=${msg}`);
       }
-      sendSSEComment(res, "keepalive", sessionId);
-    }, PRE_CONTEXT_KEEPALIVE_INTERVAL_MS);
-
-    const inflightDone = session.inflightDone;
-    const maxRetryWaitMs = getCascadeTimeoutMs() * 3;
-    const retryTimeout = new Promise<void>(resolve => setTimeout(resolve, maxRetryWaitMs));
-
-    (inflightDone ? Promise.race([inflightDone, retryTimeout]) : retryTimeout).then(() => {
-      clearInterval(retryKeepaliveTimer);
-      if (isResponseAlive(res)) {
-        const chatId = `chatcmpl-cascade-retry-${sessionId}`;
-        const created = Math.floor(Date.now() / 1000);
-        try {
-          res.write(buildSSEChunk(chatId, created, "", "stop"));
-          res.write("data: [DONE]\n\n");
-        } catch (e: any) { log.warn(`SSE_WRITE_FAILED location=cascade_retry_close session=${sessionId} error=${e?.message}`); }
-        res.end();
-      }
-      log.debug(`[CascadeRetry] CASCADE_RETRY_CLOSED session=${sessionId} — retry response terminated`);
-    }).catch((err: any) => {
-      clearInterval(retryKeepaliveTimer);
-      log.warn(`[CascadeRetry] CASCADE_RETRY_ERROR session=${sessionId}: ${err?.message || String(err)}`);
-      try { if (isResponseAlive(res)) res.end(); } catch (e: any) { log.warn(`SSE_WRITE_FAILED location=cascade_retry_cleanup session=${sessionId} error=${e?.message}`); }
-    });
+      res.end();
+      return;
+    }
     return;
   }
 
@@ -689,7 +673,8 @@ async function executeVoiceTurnBody(
     thinkingFilter.finalize();
     await handleSuccessfulTurn(session, ctx, result, conversationMessages, currentTurn, systemPromptBytes, thinkingFilter, trackedWrite, flushCoalesceBuffer);
     sendChunk.close("completed");
-    res.end();
+    const port = session.activeWriteRes ?? res;
+    if (!port.writableEnded) port.end();
 
   } catch (err: unknown) {
     sendChunk.close(turnAbort.signal.aborted ? "cancelled" : "transport_failed");
@@ -712,6 +697,8 @@ async function executeVoiceTurnBody(
     if (session.inflightTurn === currentTurn) {
       session.inflightAbort = null;
       session.inflightTurn = 0;
+      session.activeWriteRes = null;
+      session.flushAttachedWritePort = null;
     }
     try {
       const { storage } = await import("./storage");

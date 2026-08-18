@@ -6,7 +6,7 @@
  */
 import type { Response } from "express";
 import type { PresenceState, VoiceSession, TurnContext } from "./types";
-import { buildSSEChunk, isResponseAlive, createTrackedWrite } from "./sse";
+import { buildSSEChunk, isResponseAlive, createTrackedWrite, sendSSEComment } from "./sse";
 import { publishVoiceDiagnostic } from "./session";
 import { createLogger } from "../log";
 import { getVerifiedCascadeTimeoutSeconds, getVerifiedSoftTimeoutSeconds } from "../elevenlabs";
@@ -19,8 +19,7 @@ const log = createLogger("VoiceTurnIO");
 
 export const COALESCE_BUFFER_MAX_BYTES = 4096;
 
-/** Code-owned hold sentences. Rotate. Never LLM-generated. Never "... ". */
-const HOLD_SENTENCES = ["One moment.", "Still on it.", "Working."] as const;
+/** Spoken hold sentences are gone. Continuity is the live generator + write port. */
 
 /**
  * Split completed speakable prose from an unstable trailing fragment.
@@ -100,13 +99,16 @@ export interface TurnIOHandlers {
 export function createTurnIOHandlers(
   res: Response, ctx: TurnContext, session: VoiceSession, currentTurn: number,
 ): TurnIOHandlers {
-  const _rawTrackedWrite = createTrackedWrite(res, ctx.lastWrite, ctx.bp, session.id, currentTurn, () => {
+  session.activeWriteRes = res;
+  const writeRes = (): Response => session.activeWriteRes ?? res;
+  const _rawTrackedWrite = createTrackedWrite(writeRes, ctx.lastWrite, ctx.bp, session.id, currentTurn, () => {
     publishVoiceDiagnostic(session, "backpressure", `Backpressure detected (buffered=${ctx.bp.totalBytes} bytes)`, { turn: currentTurn, status: "active" }, ctx);
   });
 
   const trackedWrite = (data: string, label: string): boolean => {
     const ok = _rawTrackedWrite(data, label);
-    if (!res.destroyed) ctx.lastWriteAt = Date.now();
+    const port = writeRes();
+    if (!port.destroyed) ctx.lastWriteAt = Date.now();
     return ok;
   };
 
@@ -146,7 +148,7 @@ export function createTurnIOHandlers(
     trigger: string,
   ): boolean => {
     if (!content) return false;
-    if (!isResponseAlive(res)) {
+    if (!isResponseAlive(writeRes())) {
       log.warn(
         `CONTENT_DROPPED_DEAD_RESPONSE location=writeSpeakable kind=${kind} trigger=${trigger} contentBytes=${content.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
       );
@@ -224,7 +226,7 @@ export function createTurnIOHandlers(
    */
   const flushCoalesceBuffer = (trigger?: string, flush: boolean = false): void => {
     if (!ctx.coalesceBuf.value) return;
-    if (!isResponseAlive(res)) {
+    if (!isResponseAlive(writeRes())) {
       log.warn(
         `CONTENT_DROPPED_DEAD_RESPONSE location=flushCoalesceBuffer trigger=${trigger} contentBytes=${ctx.coalesceBuf.value.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
       );
@@ -267,15 +269,21 @@ export function createTurnIOHandlers(
     ctx.coalesceFlushCount++;
     writeSpeakable(content, "model", trigger || "unspecified");
   };
+  session.flushAttachedWritePort = () => {
+    flushCoalesceBuffer("write_port_attached");
+  };
 
   const sendPresenceHold = (): void => {
-    if (!isResponseAlive(res)) {
+    const port = writeRes();
+    if (!isResponseAlive(port)) {
       log.warn(`CONTENT_DROPPED_DEAD_RESPONSE location=sendPresenceHold turn=${currentTurn} ${spineIds(session, ctx)}`);
       return;
     }
-    const sentence = HOLD_SENTENCES[ctx.fillerCount % HOLD_SENTENCES.length]!;
-    // Trailing space matches EL speakable chunk habit; sentence is complete.
-    writeSpeakable(`${sentence} `, "hold", "presence_hold");
+    sendSSEComment(port, "presence_hold", session.id);
+    ctx.lastFillerSentAt = Date.now();
+    log.info(
+      `turn ${currentTurn} PRESENCE_HOLD fillerCount=${ctx.fillerCount} silent=true ${spineIds(session, ctx)}`,
+    );
   };
 
   /** Demolished: unflushed "... " is unrepresentable. Kept as no-op for stray callers. */
@@ -296,7 +304,7 @@ export function createTurnIOHandlers(
     ctx.fillerTimer = setInterval(() => {
       const now = Date.now();
       const sinceFlushed = now - ctx.lastFlushedSpeakableAt;
-      if (!isResponseAlive(res)) {
+      if (!isResponseAlive(writeRes())) {
         log.warn(
           `turn ${currentTurn} PRESENCE_HOLD_TICK response_dead sinceFlushed=${sinceFlushed}ms — self-terminating ${spineIds(session, ctx)}`,
         );
@@ -410,14 +418,8 @@ export function createStreamChunkHandler(
       log.warn(`voice_output_fragment_rejected session=${session.id} turn=${currentTurn} turnKey=${turnKey} outcome=${outcome.outcome}`);
       return;
     }
-    if (!isResponseAlive(res)) {
-      close("transport_failed");
-      log.warn(`CONTENT_DROPPED_DEAD_RESPONSE location=streamChunkHandler contentBytes=${content.length} turn=${currentTurn} elapsed=${Date.now() - ctx.turnStart}ms session=${session.id}`);
-      if (!ctx.contentDroppedPublished) {
-        ctx.contentDroppedPublished = true;
-        publishVoiceDiagnostic(session, "content_dropped", `Content dropped — response dead (${content.length} bytes)`, { turn: currentTurn, status: "error" }, ctx);
-      }
-      return;
+    if (!isResponseAlive(session.activeWriteRes ?? res)) {
+      log.warn(`WRITE_PORT_DEAD location=streamChunkHandler buffering contentBytes=${content.length} turn=${currentTurn} elapsed=${Date.now() - ctx.turnStart}ms session=${session.id}`);
     }
     log.debug(
       `turn ${currentTurn} MODEL_DELTA_ACCEPTED chars=${content.length} sequence=${sequence - 1} turnId=${ctx.turnId} assistantAttemptId=${ctx.assistantAttemptId} session=${session.id}`,
