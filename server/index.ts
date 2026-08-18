@@ -22,7 +22,7 @@ import { resolve as resolvePath } from "path";
 import { createLogger } from "./log";
 import { bootTracker, registerBootStatusRoute } from "./boot-tracker";
 import { convergeBootSchema, startPostReadySchemaConvergence } from "./schema-convergence";
-import { isRecoverablePostgresConnectionError } from "./postgres-errors";
+import { isPoolAcquireTimeoutError, isRecoverablePostgresConnectionError } from "./postgres-errors";
 import { closeDatabasePools } from "./db";
 import { runWithPrincipal } from "./principal-context";
 import { createNamedSystemPrincipal } from "./principal";
@@ -513,20 +513,36 @@ app.use((req, res, next) => {
   bootTracker.completePhase("routes_auth");
 
   // Sentry error middleware first (no-op when unconfigured), then product error shape.
+  // Pool-acquire timeouts are capacity/load-shed, not opaque 500s: classify before the
+  // generic HTTP_UNHANDLED_ERROR identity so ERRORS and clients see POOL_ACQUIRE_TIMEOUT.
   app.use(sentryErrorHandler());
   app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
     const errorRecord = err && typeof err === "object" ? err as Record<string, unknown> : undefined;
+    const poolAcquireTimeout = isPoolAcquireTimeoutError(err);
     const rawStatus = errorRecord?.status ?? errorRecord?.statusCode;
-    const status = typeof rawStatus === "number" && rawStatus >= 400 && rawStatus <= 599 ? rawStatus : 500;
+    const status = poolAcquireTimeout
+      ? 503
+      : typeof rawStatus === "number" && rawStatus >= 400 && rawStatus <= 599
+        ? rawStatus
+        : 500;
     const error = err instanceof Error
       ? err
       : new Error(typeof err === "string" && err.trim() ? err : "Non-Error value reached Express error middleware");
-    const message = status >= 500 ? "Internal Server Error" : (error.message || "Request failed");
+    const message = poolAcquireTimeout
+      ? "Service Temporarily Unavailable"
+      : status >= 500
+        ? "Internal Server Error"
+        : (error.message || "Request failed");
     const route = req.route && typeof req.route.path === "string" ? req.route.path : "unmatched";
+    const errorCode = poolAcquireTimeout
+      ? "POOL_ACQUIRE_TIMEOUT"
+      : typeof errorRecord?.code === "string"
+        ? errorRecord.code
+        : "HTTP_UNHANDLED_ERROR";
 
     serverLog.error("request.unhandled_error", {
       error,
-      errorCode: typeof errorRecord?.code === "string" ? errorRecord.code : "HTTP_UNHANDLED_ERROR",
+      errorCode,
       method: req.method,
       route,
       status,
@@ -538,7 +554,7 @@ app.use((req, res, next) => {
       return next(error);
     }
 
-    return res.status(status).json({ message });
+    return res.status(status).json({ message, ...(poolAcquireTimeout ? { code: errorCode } : {}) });
   });
 
   bootTracker.startPhase("server");
