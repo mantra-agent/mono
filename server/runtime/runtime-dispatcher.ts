@@ -42,6 +42,21 @@ function isExpectedAuthorityTerminal(error: unknown): boolean {
   return "status" in error && (error as { status?: unknown }).status === 403;
 }
 
+/**
+ * stale_fence is healthy lease loss: another worker took the fence, the lease
+ * expired, or the handler revalidated a superseded attempt. Heartbeat already
+ * demotes it to debug; the outer execute catch must not promote the same
+ * cancellation into RUNTIME_DISPATCH_EXECUTION_FAILED ERRORS noise.
+ */
+function isExpectedStaleFence(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "stale_fence",
+  );
+}
+
 class RuntimeDispatcher {
   private interval: ReturnType<typeof setInterval> | null = null;
   private stopping = false;
@@ -104,11 +119,15 @@ class RuntimeDispatcher {
               ? String((error as { code: string }).code)
               : null,
         };
-        // Authority already terminalized the run as blocked; warn only so
-        // AccountLifecycleError thrash cannot flood ERRORS (see Self Heal
-        // RUNTIME_DISPATCH_EXECUTION_FAILED).
+        // Authority already terminalized the run as blocked; stale_fence is
+        // healthy lease loss (retry/reclaim owns recovery). Warn only so neither
+        // thrash floods ERRORS as RUNTIME_DISPATCH_EXECUTION_FAILED.
         if (isExpectedAuthorityTerminal(error)) {
           log.warn("runtime.dispatch.execution_blocked", details);
+          return;
+        }
+        if (isExpectedStaleFence(error)) {
+          log.warn("runtime.dispatch.execution_lease_lost", details);
           return;
         }
         log.error("runtime.dispatch.execution_failed", details);
