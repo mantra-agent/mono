@@ -1720,7 +1720,7 @@ This is developmental coaching, not medical or mental-health treatment. If Ray i
     name: "feature-pipeline",
     recommendedPersona: "Architect",
     description: "Interactive Feature job launcher. Runs one assigned (stage, job) pair — Produce or opposite-seat Review — inside the current Feature room. Context is the Feature; procedure is this Skill.",
-    version: "2.1",
+    version: "2.2",
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "agent",

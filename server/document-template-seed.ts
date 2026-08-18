@@ -12,7 +12,7 @@ import { createLogger } from "./log";
 
 const log = createLogger("DocumentTemplateSeed");
 
-/** Stable Library page ids for day-one shape pages (insert-only). */
+/** Stable Library page ids for day-one shape pages. */
 export const SHAPE_PAGE_IDS = {
   spec: "template-shape-spec",
   "daily-digest": "template-shape-daily-digest",
@@ -21,39 +21,39 @@ export const SHAPE_PAGE_IDS = {
 
 const SPEC_SHAPE_MARKDOWN = `# Spec shape
 
-Heading outline for Spec Produce. Fill a *different* artifact page against this vessel.
+This page is the shape, not the spec. Fill a different page. Every section: as simple as possible. No filler.
 
-## Failed invariant (inspected)
+## Problem
 
-Name the broken or missing invariant with inspected evidence.
+One sentence, people-first: who is stuck, and what is broken. Then the inspected evidence — not a slogan.
 
-## The cut
+## Solution
 
-The smallest coherent repair. One sentence if possible.
+Done when these concrete conditions hold. Not a restatement of Scope.
 
-## Outcome
+## Scope
 
-Done when these concrete conditions hold.
+The cut — the smallest coherent change.
 
-## Non-goals
+## Out-of-scope
 
 What this deliberately does not do.
 
-## Architecture
+## External
 
-Structure, ownership, seams, and why alternatives lose.
+What the outside world touches: end consumers, or external systems. What they see or receive.
 
-## Verification path
+## Internal
 
-How a reviewer proves the cut holds.
+Architecture — objects, who owns them, and the seams between them. Name where this breaks first. Do not catalog discarded options.
 
-## Terminal state
+## Acceptance Criteria
 
-What shipped looks like.
+How we'll know we're done. Three short beats:
 
-## Governing standards
-
-Named standards this spec must satisfy.
+- Picture — what shipped looks like
+- Check — how a reviewer proves it
+- Bars — the named standards it must satisfy
 `;
 
 const DAILY_DIGEST_SHAPE_MARKDOWN = `# Daily Digest shape
@@ -150,26 +150,69 @@ const DAY_ONE_BINDS: Array<{ skillName: string; key: "spec" | "daily" | "weekly"
   { skillName: "reflect", key: "weekly", templateId: "weekly-summary" },
 ];
 
+function normalizeShapeMarkdown(markdown: string): string {
+  return markdown.replace(/\r\n/g, "\n").trim();
+}
+
 async function ensureShapePage(seed: (typeof SHAPE_SEEDS)[number]): Promise<void> {
-  const existing = await db.select({ id: libraryPages.id }).from(libraryPages).where(eq(libraryPages.id, seed.pageId)).limit(1);
-  if (existing.length > 0) return;
-
-  const bySlug = await db.select({ id: libraryPages.id }).from(libraryPages).where(eq(libraryPages.slug, seed.pageId)).limit(1);
-  if (bySlug.length > 0) return;
-
   const synced = syncContentFields({ markdown: seed.markdown });
-  await db.insert(libraryPages).values({
-    id: seed.pageId,
-    title: seed.title,
-    slug: seed.pageId,
-    content: synced.content,
-    plainTextContent: synced.plainTextContent,
-    tags: seed.tags,
-    status: "active",
-    scope: "global",
-    sortOrder: 0,
-  });
-  log.info("seeded shape page", { pageId: seed.pageId });
+  const nextPlain = normalizeShapeMarkdown(synced.plainTextContent);
+  const [existing] =
+    (await db
+      .select({
+        id: libraryPages.id,
+        scope: libraryPages.scope,
+        plainTextContent: libraryPages.plainTextContent,
+      })
+      .from(libraryPages)
+      .where(eq(libraryPages.id, seed.pageId))
+      .limit(1)) ?? [];
+  const [bySlug] = existing
+    ? []
+    : await db
+        .select({
+          id: libraryPages.id,
+          scope: libraryPages.scope,
+          plainTextContent: libraryPages.plainTextContent,
+        })
+        .from(libraryPages)
+        .where(eq(libraryPages.slug, seed.pageId))
+        .limit(1);
+  const row = existing ?? bySlug;
+
+  if (!row) {
+    await db.insert(libraryPages).values({
+      id: seed.pageId,
+      title: seed.title,
+      slug: seed.pageId,
+      content: synced.content,
+      plainTextContent: synced.plainTextContent,
+      tags: seed.tags,
+      status: "active",
+      scope: "global",
+      sortOrder: 0,
+    });
+    log.info("seeded shape page", { pageId: seed.pageId });
+    return;
+  }
+
+  // Official Spec vessel only. Daily/Weekly stay insert-only. Never touch
+  // account overlays or non-global pages.
+  if (seed.templateId !== "spec" || row.scope !== "global") return;
+  if (normalizeShapeMarkdown(row.plainTextContent) === nextPlain) return;
+
+  await db
+    .update(libraryPages)
+    .set({
+      title: seed.title,
+      content: synced.content,
+      plainTextContent: synced.plainTextContent,
+      tags: seed.tags,
+      status: "active",
+      updatedAt: new Date(),
+    })
+    .where(eq(libraryPages.id, row.id));
+  log.info("converged official spec shape page", { pageId: row.id });
 }
 
 async function ensureGlobalTemplate(seed: (typeof SHAPE_SEEDS)[number]): Promise<void> {
@@ -219,7 +262,7 @@ async function ensureSkillBinding(bind: (typeof DAY_ONE_BINDS)[number]): Promise
   log.info("seeded skill template binding", { skillName: bind.skillName, key: bind.key, templateId: bind.templateId });
 }
 
-/** Insert-only day-one shape pages, global map rows, and skill binds. Never overwrites account overlays. */
+/** Day-one shape pages, global map rows, and skill binds. Spec shape may converge; Daily/Weekly stay insert-only. Never overwrites account overlays. */
 export async function ensureDocumentTemplateSeeds(): Promise<void> {
   for (const seed of SHAPE_SEEDS) {
     await ensureShapePage(seed);
