@@ -828,7 +828,7 @@ const FeatureRow = memo(function FeatureRow({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="relative h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-cta hover:bg-accent hover:text-active"
+                  className="relative h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground/70 hover:bg-accent hover:text-foreground"
                   disabled={launch.isPending}
                   aria-label={`AI review ${feature.summary}`}
                   title={`AI ${reviewContract.actionLabel}`}
@@ -842,6 +842,7 @@ const FeatureRow = memo(function FeatureRow({
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
                     <span className="relative inline-flex h-3 w-3 items-center justify-center">
+                      {/* Search is leftover mute (same as Play); only Sparkles keeps CTA. */}
                       <Search className="h-3 w-3" />
                       {/* Tiny badge on glass corner — must not inherit button [&_svg]:size-*. */}
                       <Sparkles className="pointer-events-none absolute -right-px -top-px !h-1.5 !w-1.5 text-cta" strokeWidth={2.5} />
@@ -1187,7 +1188,7 @@ const FeatureRow = memo(function FeatureRow({
                 {reviewLaunchPending ? (
                   <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                 ) : (
-                  <span className="relative mr-2 inline-flex h-3.5 w-3.5 items-center justify-center text-cta">
+                  <span className="relative mr-2 inline-flex h-3.5 w-3.5 items-center justify-center text-muted-foreground/70">
                     <Search className="h-3.5 w-3.5" />
                     <Sparkles className="pointer-events-none absolute -right-px -top-px h-1.5 w-1.5 text-cta" strokeWidth={2.5} />
                   </span>
