@@ -186,9 +186,24 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: 'Search: { "action": "search", "query": "Sarah" }\nAdd Vault: { "action": "add_vault_membership", "id": "person-id", "vaultId": "vault-id" }\nReplace Vaults: { "action": "set_vault_memberships", "id": "person-id", "vaultIds": ["vault-id"], "confirmReplace": true }',
   },
   work: {
-    description: "Manage projects and work status. Project detail returns metadata, milestones, task counts by status, and a small actionable slice; list_tasks returns an explicit bounded page with total and continuation. Actions: create_project, status, list_projects, get_project, list_tasks, set_goal, add_file, read_file, remove_file, add_milestone, update_milestone, remove_milestone.",
-    whenToUse: "User asks about projects, work status, or wants to manage project-level resources. Use list_tasks with taskStatus, limit, and offset to inspect larger task sets. For individual task operations, use the `tasks` tool instead.",
+    description: "Manage projects and work status. Project detail returns metadata, milestones, task counts by status, and a small actionable slice; list_tasks returns an explicit bounded page with total and continuation. Actions: create_project, status, list_projects, get_project, list_tasks, set_goal, add_file, read_file, remove_file, add_milestone, update_milestone, remove_milestone. Internal delivery, product ideas, and implementation tracks live here — not on the commercial Opportunities Pipeline (`exec`).",
+    whenToUse: "User asks about projects, work status, delivery plans, or wants to manage project-level resources. Use list_tasks with taskStatus, limit, and offset to inspect larger task sets. For individual task operations, use the `tasks` tool instead. Do not route internal project work through `exec` create_opportunity / Pipelines.",
     example: 'List projects: { "action": "list_projects" }\nGet project overview: { "action": "get_project", "id": 1 }\nPage active tasks: { "action": "list_tasks", "id": 1, "taskStatus": "active", "limit": 25, "offset": 0 }',
+  },
+  exec: {
+    description: "Career Exec inventory plus the commercial Opportunities Pipeline (Pipelines UI): skills, experience, metrics/education, opportunity artifacts, and external revenue/career deals. An Opportunity requires an external counterparty path — job, consulting, business venture, passive income, customer, or partner.",
+    whenToUse: "Track or update career inventory, or manage commercial pipeline deals with external counterparties. Never use create_opportunity for internal project work, product ideas, implementation tracks, delivery plans, or 'work pipelines' — those belong on `work`/`tasks`/`plan`. The word Pipeline here means sales/career commercial pipeline only.",
+    example: 'List deals: { "action": "list_opportunities" }\nCreate customer deal: { "action": "create_opportunity", "title": "Acme expansion", "type": "customer", "companyId": "…" }\nCreate job pursuit: { "action": "create_opportunity", "title": "VP Eng at Contoso", "type": "job", "company": "Contoso" }',
+    actions: {
+      list_opportunities: { description: "List commercial opportunities in the Pipelines UI.", optionalParams: ["statusFilter", "typeFilter"] },
+      get_opportunity: { description: "Get one commercial opportunity by id.", requiredParams: ["id"] },
+      create_opportunity: { description: "Create an external commercial opportunity only (job/consulting/business/passive_income/customer/partner). Reject the impulse to file internal project or delivery work here.", requiredParams: ["title", "type"], optionalParams: ["description", "status", "probability", "company", "companyId", "nextSteps", "priority", "vaultId", "championPersonId", "followUpBy", "followUpNote", "jdText", "jobUrl"] },
+      update_opportunity: { description: "Update a commercial opportunity.", requiredParams: ["id"] },
+      delete_opportunity: { description: "Delete a commercial opportunity.", requiredParams: ["id"] },
+      list_skills: { description: "List career skills inventory." },
+      list_experience: { description: "List experience log entries." },
+      get_opportunity_artifacts: { description: "List research/cover-letter/resume artifact slots for an opportunity.", requiredParams: ["opportunityId"] },
+    },
   },
   gmail: {
     description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, draft, update_draft, recent, download_attachment, triage_log, email_cache. update_draft uses one explicit body operation: findReplace for exact edits, rangePatch with expectedBodyHash for guarded offsets, or replaceBody for intentional whole-body rewrites. There is no tool-level send action.",

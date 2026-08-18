@@ -970,7 +970,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   work: {
-    description: "Manage projects and work status — create projects, list/get with tasks, manage files, milestones, goal links. Use `tasks` for individual task operations.",
+    description: "Manage projects and work status — create projects, list/get with tasks, manage files, milestones, goal links. Use `tasks` for individual task operations. Internal delivery and product work live here; commercial deals live on `exec` opportunities / Pipelines, not as work projects.",
     category: "work",
     sideEffectDefault: 1,
     sideEffectActions: { status: 0, list_projects: 0, get_project: 0, list_tasks: 0, read_file: 0 },
@@ -1426,7 +1426,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   exec: {
-    description: "Manage the Exec page — skills inventory, experience log, opportunities pipeline, verified metrics/education, and opportunity artifacts.",
+    description: "Manage career Exec data and the commercial Opportunities Pipeline (UI: Pipelines). Skills inventory, experience log, verified metrics/education, opportunity artifacts, and revenue/career deals only. An Opportunity is an external commercial pursuit with a counterparty — job, consulting engagement, business venture, passive income stream, customer, or partner. Never create opportunities for internal project work, delivery plans, product ideas, implementation tracks, or work pipelines; those belong on `work`/`tasks`/`plan`.",
     category: "knowledge",
     sideEffectDefault: 1,
     sideEffectActions: {
@@ -1438,7 +1438,8 @@ export const TOOLS: Record<string, ToolMeta> = {
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list_skills", "get_skill", "create_skill", "update_skill", "delete_skill", "list_experience", "get_experience", "create_experience", "update_experience", "delete_experience", "list_opportunities", "get_opportunity", "create_opportunity", "update_opportunity", "delete_opportunity", "list_opportunity_activities", "create_or_link_opportunity_activity", "update_opportunity_activity", "unlink_opportunity_activity", "list_passions", "get_passion", "create_passion", "update_passion", "delete_passion", "list_metrics", "create_metric", "update_metric", "delete_metric", "list_education", "create_education", "update_education", "delete_education", "set_artifact", "get_opportunity_artifacts", "render_artifact_docx"], description: "Action" },
+        action: { type: "string", enum: ["list_skills", "get_skill", "create_skill", "update_skill", "delete_skill", "list_experience", "get_experience", "create_experience", "update_experience", "delete_experience", "list_opportunities", "get_opportunity", "create_opportunity", "update_opportunity", "delete_opportunity", "list_opportunity_activities", "create_or_link_opportunity_activity", "update_opportunity_activity", "unlink_opportunity_activity", "list_passions", "get_passion", "create_passion", "update_passion", "delete_passion", "list_metrics", "create_metric", "update_metric", "delete_metric", "list_education", "create_education", "update_education", "delete_education", "set_artifact", "get_opportunity_artifacts", "render_artifact_docx"], description: "Action. create_opportunity is only for external commercial deals in the Pipelines UI — never internal project or delivery work." },
+
         id: { type: "number", description: "Skill or experience ID (get/update/delete)" },
         name: { type: "string", description: "Skill name (required for create_skill)" },
         category: { type: "string", enum: ["technical", "business", "creative", "interpersonal", "domain"], description: "Skill category" },
@@ -1452,10 +1453,11 @@ export const TOOLS: Record<string, ToolMeta> = {
         endDate: { type: "string", description: "End date YYYY-MM format, null for present (experience)" },
         keyOutcomes: { type: "array", items: { type: "string" }, description: "Key outcomes" },
         transferableAssets: { type: "array", items: { type: "string" }, description: "Transferable assets" },
-        title: { type: "string", description: "Opportunity title (required for create_opportunity)" },
-        description: { type: "string", description: "Opportunity description" },
-        type: { type: "string", enum: ["job", "consulting", "business", "passive_income", "customer", "partner"], description: "Opportunity type (required for create_opportunity)" },
-        status: { type: "string", enum: ["discovered", "qualified", "researched", "pursuing", "active", "passed", "lost"], description: "Opportunity status" },
+        title: { type: "string", description: "Commercial opportunity title (required for create_opportunity). Name the deal or counterparty pursuit, not an internal workstream." },
+        description: { type: "string", description: "Commercial opportunity description — external deal context only, not project scope notes" },
+        type: { type: "string", enum: ["job", "consulting", "business", "passive_income", "customer", "partner"], description: "Commercial opportunity type (required for create_opportunity). job/consulting/business/passive_income/customer/partner only — never use create_opportunity for internal projects or delivery pipelines." },
+        status: { type: "string", enum: ["discovered", "qualified", "researched", "pursuing", "active", "passed", "lost"], description: "Commercial pipeline status for an external opportunity" },
+
         probability: { type: "number", description: "Probability 0-1 (opportunities)" },
         isFullTime: { type: "boolean", description: "Whether opportunity is full time" },
         hoursPerWeek: { type: "number", description: "Hours per week commitment" },
