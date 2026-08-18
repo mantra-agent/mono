@@ -13,6 +13,9 @@ import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { PROFILE_DESCRIPTION_FRAME_CLASS } from "@/components/profile-description-style";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
+  HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_SESSION_ROW_CLASS,
+  HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import {
   AlertDialog,
@@ -118,12 +121,14 @@ function SkillDescriptionEditor({
   onChange,
   placeholder = "Add description",
   testId = "input-description",
+  minHeightClass = "min-h-[2.75rem]",
 }: {
   value: string;
   changed?: boolean;
   onChange: (next: string) => void;
   placeholder?: string;
   testId?: string;
+  minHeightClass?: string;
 }) {
   return (
     <div className="group/editor grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-0 px-2 py-1.5">
@@ -138,7 +143,8 @@ function SkillDescriptionEditor({
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           className={cn(
-            "min-h-[2.75rem] w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
+            minHeightClass,
+            "w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
             "text-[14px] leading-tight",
             skillFieldValueClass(changed),
           )}
@@ -403,9 +409,10 @@ function SkillTreeRow({
     <div data-testid={`skill-row-${skill.id}`}>
       <div
         className={cn(
-          "group relative flex items-center gap-2 rounded-md px-2 py-1.5 pr-16 text-sm w-full text-left cursor-pointer select-none transition-colors overflow-hidden",
+          HIERARCHY_SESSION_ROW_CLASS,
+          "pr-16",
           expanded ? "bg-accent text-foreground" : "hover:bg-accent/70 hover:text-foreground",
-          hasFailed ? "text-error" : "text-muted-foreground"
+          hasFailed ? "text-error" : "text-muted-foreground",
         )}
         onClick={onToggleExpand}
         data-testid={`button-skill-${skill.id}`}
@@ -438,7 +445,7 @@ function SkillTreeRow({
         ) : (
           <button
             type="button"
-            className="flex-1 min-w-0 truncate text-left"
+            className="min-w-0 flex-1 truncate text-left text-sm"
             onClick={(event) => {
               event.stopPropagation();
               setNameDraft(skill.name);
@@ -556,12 +563,12 @@ function SkillTreeSection({
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex h-8 w-full items-center gap-1.5 rounded-md px-2 text-left text-xs font-bold uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground">
-        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+      <CollapsibleTrigger className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}>
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
         <span className="truncate">{title}</span>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="space-y-0.5 pb-1">
+        <div className="mt-0 space-y-0">
           {children}
         </div>
       </CollapsibleContent>
@@ -676,7 +683,7 @@ function SkillListSidebar({
 
   return (
     <ScrollArea className="flex-1">
-      <div className="min-w-0 p-2 space-y-1">
+      <div className={HIERARCHY_TREE_STACK_CLASS}>
         {/* Search bar + global overflow */}
         <div className="flex items-center gap-1 mb-1">
           <div className="relative min-w-0 flex-1">
@@ -1080,7 +1087,6 @@ function SkillEditor({
   const [personaChoice, setPersonaChoice] = useState<number | "recommended">("recommended");
   const personaTouchedRef = useRef(false);
   const [version, setVersion] = useState(skill?.version ?? "1.0");
-  const [references, setReferences] = useState<{ name: string; content: string }[]>(skill?.references.map((ref) => ({ name: ref.name, content: ref.content })) ?? []);
 
   useEffect(() => {
     if (!skill) return;
@@ -1090,7 +1096,6 @@ function SkillEditor({
     setChecklist(Array.isArray(skill.checklist) ? skill.checklist as ChecklistItem[] : []);
     setSessionType(skill.sessionType || "agent");
     setVersion(skill.version);
-    setReferences(skill.references.map((ref) => ({ name: ref.name, content: ref.content })));
   }, [skill]);
 
   const { data: personas = [] } = useQuery<{ id: number; name: string }[]>({
@@ -1169,7 +1174,6 @@ function SkillEditor({
       sessionType,
       status: skill?.status || "draft",
       version,
-      references,
     };
     if (skill) {
       updateMutation.mutate(data);
@@ -1181,62 +1185,65 @@ function SkillEditor({
   const isPending = createMutation.isPending || updateMutation.isPending;
 
   return (
-    <div className="space-y-1" data-testid={skill ? `skill-editor-${skill.id}` : "skill-editor-new"}>
-      <ProfileDetailSection title="Skill" defaultOpen>
-        {!skill ? (
-          <ProfileTreeRow label="Name" hasValue showEmpty mobileLayout="inline" testId="row-skill-name">
-            <Input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="my-skill-name"
-              className="h-7 text-right text-xs font-mono"
-              data-testid="input-skill-name"
-            />
-          </ProfileTreeRow>
-        ) : null}
-        <ProfileTreeRow label="Version" hasValue showEmpty mobileLayout="inline" testId="row-skill-version">
-          <Input value={version} onChange={(event) => setVersion(event.target.value)} className="h-7 text-right text-xs" data-testid="input-version" />
+    <div className="space-y-0" data-testid={skill ? `skill-editor-${skill.id}` : "skill-editor-new"}>
+      {!skill ? (
+        <ProfileTreeRow label="Name" hasValue showEmpty mobileLayout="inline" testId="row-skill-name">
+          <Input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="my-skill-name"
+            className="h-7 text-right text-xs font-mono"
+            data-testid="input-skill-name"
+          />
         </ProfileTreeRow>
-        <ProfileTreeRow label="Persona" hasValue showEmpty mobileLayout="inline" testId="row-skill-persona">
-          <Select
-            value={personaChoice === "recommended" ? "recommended" : String(personaChoice)}
-            onValueChange={(value) => {
-              personaTouchedRef.current = true;
-              setPersonaChoice(value === "recommended" ? "recommended" : Number(value));
-            }}
-          >
-            <SelectTrigger className={FIELD_SELECT_TRIGGER_CLASS} data-testid="select-persona">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="recommended">
-                {recommendedName ?? "Default persona"}
-              </SelectItem>
-              {personas.map((persona) => (
-                <SelectItem key={persona.id} value={String(persona.id)}>{persona.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </ProfileTreeRow>
-        <ProfileTreeRow label="System" hasValue showEmpty mobileLayout="inline" testId="row-skill-system">
-          <button
-            type="button"
-            onClick={() => setSessionType((current) => current === "autonomous" ? "agent" : "autonomous")}
-            className="text-xs text-right"
-            data-testid="toggle-skill-system"
-          >
-            {sessionType === "autonomous" ? "On" : "Off"}
-          </button>
-        </ProfileTreeRow>
-        <SkillDescriptionEditor
-          value={description}
-          changed={skill?.changedFields?.includes("description")}
-          onChange={setDescription}
-        />
-        <ProfileTreeRow label="Process" hasValue={Boolean(process.trim())} showEmpty mobileLayout="stacked" testId="row-skill-process">
-          <Textarea value={process} onChange={(event) => setProcess(event.target.value)} placeholder="Step-by-step workflow..." className="min-h-20 text-xs" data-testid="input-process" />
-        </ProfileTreeRow>
-      </ProfileDetailSection>
+      ) : null}
+      <SkillDescriptionEditor
+        value={description}
+        changed={skill?.changedFields?.includes("description")}
+        onChange={setDescription}
+      />
+      <ProfileTreeRow label="Version" hasValue showEmpty mobileLayout="inline" testId="row-skill-version">
+        <Input value={version} onChange={(event) => setVersion(event.target.value)} className="h-7 text-right text-xs" data-testid="input-version" />
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Persona" hasValue showEmpty mobileLayout="inline" testId="row-skill-persona">
+        <Select
+          value={personaChoice === "recommended" ? "recommended" : String(personaChoice)}
+          onValueChange={(value) => {
+            personaTouchedRef.current = true;
+            setPersonaChoice(value === "recommended" ? "recommended" : Number(value));
+          }}
+        >
+          <SelectTrigger className={FIELD_SELECT_TRIGGER_CLASS} data-testid="select-persona">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="recommended">
+              {recommendedName ?? "Default persona"}
+            </SelectItem>
+            {personas.map((persona) => (
+              <SelectItem key={persona.id} value={String(persona.id)}>{persona.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </ProfileTreeRow>
+      <ProfileTreeRow label="System" hasValue showEmpty mobileLayout="inline" testId="row-skill-system">
+        <button
+          type="button"
+          onClick={() => setSessionType((current) => current === "autonomous" ? "agent" : "autonomous")}
+          className="text-sm text-right"
+          data-testid="toggle-skill-system"
+        >
+          {sessionType === "autonomous" ? "On" : "Off"}
+        </button>
+      </ProfileTreeRow>
+      <SkillDescriptionEditor
+        value={process}
+        changed={skill?.changedFields?.includes("process")}
+        onChange={setProcess}
+        placeholder="Step-by-step workflow..."
+        testId="input-process"
+        minHeightClass="min-h-20"
+      />
       <ProfileDetailSection
         title="Checklist"
         count={checklist.length}
@@ -1287,58 +1294,6 @@ function SkillEditor({
                 className="h-7 w-16 text-right text-xs"
                 title="Weight"
                 data-testid={`input-checklist-weight-${index}`}
-              />
-            </div>
-          </ProfileTreeRow>
-        ))}
-      </ProfileDetailSection>
-      <ProfileDetailSection
-        title="References"
-        count={references.length}
-        headerAction={(
-          <button type="button" className="text-xs text-cta" onClick={() => setReferences([...references, { name: "", content: "" }])} data-testid="button-add-reference">
-            Add
-          </button>
-        )}
-      >
-        {references.length === 0 ? (
-          <div className="px-2 py-1.5 text-sm text-muted-foreground">No references.</div>
-        ) : references.map((ref, index) => (
-          <ProfileTreeRow
-            key={index}
-            label={ref.name || `Reference ${index + 1}`}
-            hasValue
-            showEmpty
-            mobileLayout="stacked"
-            testId={`reference-item-${index}`}
-            actionContent={(
-              <button type="button" className="text-xs text-destructive" onClick={() => setReferences(references.filter((_, current) => current !== index))} data-testid={`button-remove-reference-${index}`}>
-                Remove
-              </button>
-            )}
-          >
-            <div className="space-y-1">
-              <Input
-                value={ref.name}
-                onChange={(event) => {
-                  const next = [...references];
-                  next[index] = { ...next[index], name: event.target.value };
-                  setReferences(next);
-                }}
-                placeholder="reference-name"
-                className="h-7 text-xs"
-                data-testid={`input-reference-name-${index}`}
-              />
-              <Textarea
-                value={ref.content}
-                onChange={(event) => {
-                  const next = [...references];
-                  next[index] = { ...next[index], content: event.target.value };
-                  setReferences(next);
-                }}
-                placeholder="Reference content loaded into context on activation..."
-                className="min-h-10 text-xs"
-                data-testid={`input-reference-content-${index}`}
               />
             </div>
           </ProfileTreeRow>
