@@ -19,6 +19,62 @@ export type MetricSamplePeriod = (typeof METRIC_SAMPLE_PERIODS)[number];
 export const METRIC_ADAPTER_KINDS = ["manual", "internal", "expression"] as const;
 export type MetricAdapterKind = (typeof METRIC_ADAPTER_KINDS)[number];
 
+/** Closed catalog sections. Code-owned adapterKey families, not adapterKind. */
+export const METRIC_CATALOG_FAMILIES = ["product", "health", "system", "engagement", "manual"] as const;
+export type MetricCatalogFamily = (typeof METRIC_CATALOG_FAMILIES)[number];
+
+export const METRIC_CATALOG_FAMILY_LABEL: Record<MetricCatalogFamily, string> = {
+  product: "Product",
+  health: "Health",
+  system: "System",
+  engagement: "Engagement",
+  manual: "Manual",
+};
+
+const PRODUCT_CATALOG_SLUGS = new Set([
+  "hours-used",
+  "active-users",
+  "current-users",
+  "new-users",
+  "accounts",
+  "registered-users",
+  "shipped-prs",
+]);
+
+const ENGAGEMENT_ADAPTER_KEYS = new Set(["tasks", "interactions", "wellness", "meetings"]);
+
+export function metricAdapterKeyOf(metric: {
+  slug: string;
+  ownerKind: string;
+  adapterConfig?: Record<string, unknown> | null;
+}): string | null {
+  const fromConfig = metric.adapterConfig?.adapterKey;
+  if (typeof fromConfig === "string" && fromConfig.trim()) return fromConfig.trim();
+  if (metric.slug === "meetings") return "meetings";
+  if (metric.ownerKind === "platform" || PRODUCT_CATALOG_SLUGS.has(metric.slug)) return "product";
+  if (metric.slug === "completed-tasks") return "tasks";
+  if (metric.slug === "opportunity-interactions") return "interactions";
+  if (metric.slug === "wellness-completions") return "wellness";
+  if (metric.ownerKind === "health") return "oura";
+  if (metric.ownerKind === "performance") return "performance";
+  return null;
+}
+
+export function metricCatalogFamilyOf(metric: {
+  slug: string;
+  ownerKind: string;
+  adapterConfig?: Record<string, unknown> | null;
+}): MetricCatalogFamily {
+  const key = metricAdapterKeyOf(metric);
+  if (key === "product" || metric.ownerKind === "platform" || PRODUCT_CATALOG_SLUGS.has(metric.slug)) {
+    return "product";
+  }
+  if (key === "oura" || metric.ownerKind === "health") return "health";
+  if (key === "performance" || metric.ownerKind === "performance") return "system";
+  if (key && ENGAGEMENT_ADAPTER_KEYS.has(key)) return "engagement";
+  return "manual";
+}
+
 export const KPI_SCORE_BANDS = ["bull", "on_track", "bear", "critical", "unmeasured", "stale", "unavailable"] as const;
 export type KpiScoreBand = (typeof KPI_SCORE_BANDS)[number];
 

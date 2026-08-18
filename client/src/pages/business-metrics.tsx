@@ -3,10 +3,14 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Database, FunctionSquare, Loader2, Plus, PenLine, SlidersHorizontal, Trash2 } from "lucide-react";
 import {
   METRIC_ADAPTER_KINDS,
+  METRIC_CATALOG_FAMILIES,
+  METRIC_CATALOG_FAMILY_LABEL,
   METRIC_DIRECTIONS,
   METRIC_SAMPLE_PERIODS,
+  metricCatalogFamilyOf,
   type Metric,
   type MetricAdapterKind,
+  type MetricCatalogFamily,
   type MetricDirection,
   type MetricSeries,
 } from "@shared/models/metrics";
@@ -421,6 +425,19 @@ export default function BusinessMetricsPage() {
     return list.filter(({ metric }) => metric.name.toLowerCase().includes(q) || metric.slug.toLowerCase().includes(q));
   }, [data, query]);
 
+  const sections = useMemo(() => {
+    const grouped = new Map<MetricCatalogFamily, typeof series>();
+    for (const item of series) {
+      const family = metricCatalogFamilyOf(item.metric);
+      const bucket = grouped.get(family) ?? [];
+      bucket.push(item);
+      grouped.set(family, bucket);
+    }
+    return METRIC_CATALOG_FAMILIES
+      .map((family) => ({ family, items: grouped.get(family) ?? [] }))
+      .filter((section) => section.items.length > 0);
+  }, [series]);
+
   return (
     <div className={HIERARCHY_TREE_STACK_CLASS}>
       <div className="flex items-center gap-2">
@@ -464,15 +481,19 @@ export default function BusinessMetricsPage() {
         </div>
       ) : (
         <>
-          <HierarchySectionHeader data-testid="metric-section-metrics">
-            Metrics · {SAMPLE_SPANS.find((option) => option.key === sampleSpan)?.label}
-          </HierarchySectionHeader>
-          {series.map((item) => (
-            <MetricTreeRow
-              key={item.metric.id}
-              series={item}
-              onRequestDelete={setDeleteTarget}
-            />
+          {sections.map((section) => (
+            <div key={section.family} className="space-y-0">
+              <HierarchySectionHeader data-testid={`metric-section-${section.family}`}>
+                {METRIC_CATALOG_FAMILY_LABEL[section.family]}
+              </HierarchySectionHeader>
+              {section.items.map((item) => (
+                <MetricTreeRow
+                  key={item.metric.id}
+                  series={item}
+                  onRequestDelete={setDeleteTarget}
+                />
+              ))}
+            </div>
           ))}
         </>
       )}
