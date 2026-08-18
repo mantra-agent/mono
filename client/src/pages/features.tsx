@@ -791,8 +791,8 @@ const FeatureRow = memo(function FeatureRow({
     update.mutate({ summary: next }, { onSettled: () => setEditingTitle(false) });
   };
 
-  // Session block lives outside ProfileTreeRow expand so it stays visible
-  // under contracted Feature rows while a pipeline session is in progress.
+  // Child session widget mounts only when the Feature row is expanded.
+  // Collapsed rows keep humming chrome (pulse title, spinner, Stop) without the strip.
   return (
     <div className="min-w-0">
       <ProfileTreeRow
@@ -1349,7 +1349,7 @@ const FeatureRow = memo(function FeatureRow({
         </>
       )}
       />
-      {activeSessionMeta ? (
+      {rowExpanded && activeSessionMeta ? (
         <FeatureActiveSessionStrip
           meta={activeSessionMeta}
           streamStore={streamStore}
