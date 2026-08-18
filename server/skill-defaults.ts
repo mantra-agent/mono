@@ -180,11 +180,11 @@ import {
     name: "sentry",
     recommendedPersona: "Engineer",
     description:
-      "Build-owned Reliability Sentinel. Every run inspects Mantra Web stage and production health and autonomously repairs only bounded stage/main software defects. Production is observe-only and human-promoted.",
+      "Continuously monitors Mantra Web stage and production for crashes, failed builds or deployments, unhealthy runtime state, recurring error and warning signatures, material performance degradation, and failed or degraded autonomous skill runs. Deduplicates incidents, always files a durable Issue before elevating to Ray, escalates any broken environment classification, and prepares a bounded repair handoff for reproducible software defects while production remains observe-only and human-promoted.",
     category: "build",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "1.11",
+    version: "1.12",
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "autonomous",
@@ -192,27 +192,100 @@ import {
     timeoutMs: 15 * 60 * 1000,
     admissionTier: "background",
     temperature: 0.2,
+    scoreThreshold: 0.8,
     whenToUse:
       "Runs on the Build-managed Reliability Sentinel timer while Build is installed. May be invoked manually for the same bounded stage/main health and repair contract.",
     outputSpec:
-      "A concise summary of what was inspected, incidents and dispositions, and any repair PR references. Quiet is the default — do not mint a conversation or set attention.",
+      "Return a compact reliability outcome with: `overall` (healthy|watch|degraded|broken|coverage_gap), `stage`, `production`, `incidents` (normalized signature, evidence, impact, issueId, dedupe reference), `repairHandoff` (none|prepared|active|blocked plus issue/task/plan/workflow/PR references), `elevation` (none|conversation|attention plus issueId — issueId required whenever elevation is not none), `coverageGaps`, and `nextCheck`. Do not produce a long report on healthy runs. User-facing escalation must be concise, evidence-led, and must cite the Issue id. Never elevate without filing or reusing an Issue first.",
     checklist: [
-      { check: "Inspected stage and production health via authorized diagnostics before classifying incidents", weight: 4 },
-      { check: "Deduplicated incidents and assigned a remediation disposition with evidence", weight: 4 },
-      { check: "Repaired only bounded stage/main software defects through the ordinary coding path, or reported a truthful residual", weight: 4 },
-      { check: "Did not modify production directly or mint a conversation from this inspect skill", weight: 3 },
+      { check: "Inspects both canonical environments independently using bounded authoritative evidence and direct health checks.", weight: 15 },
+      { check: "Correctly distinguishes superseded or removed deployments from failed latest builds or deployments.", weight: 8 },
+      { check: "Uses persistence, sample size, and corroboration gates before declaring recurring logs or performance degradation.", weight: 15 },
+      { check: "Deduplicates incidents and does not create repeated issues, tasks, plans, workflows, or conversations for the same unresolved signature.", weight: 12 },
+      { check: "Treats production as strictly observe-only and never promotes, redeploys, restarts, mutates, or merges to live.", weight: 15 },
+      { check: "For an eligible bounded software defect, files or reuses one Issue first, then prepares or reuses one protected engineering handoff with complete evidence and canonical coding and stage-verification instructions; never performs code or provider writes directly from the timer run.", weight: 20 },
+      { check: "Escalates security/privacy, secrets, destructive data, provider outages, ambiguous causes, missing trusted delegation, and blocked production incidents instead of attempting unsafe repair — and only after the Issue is filed or reused.", weight: 10 },
+      { check: "Degrades gracefully when Sentry or another sensor is unavailable and identifies the coverage gap without failing the whole run.", weight: 5 },
+      { check: "Sweeps autonomous skill-run and timer outcomes for failed or degraded runs since the previous Sentinel run, applying persistence and deduplication gates before raising an incident.", weight: 8 },
+      { check: "Maintains the single canonical Reliability Sentinel Report page — reads it at run start, updates Sentinel State and the bounded run log at run end, creates it exactly once if missing, and never creates a duplicate report page.", weight: 7 },
+      { check: "Elevation invariant held: if the run elevated to Ray, it first created or reused one durable Issue with real reproSteps and cited that Issue id; if it did not elevate, no Issue was required for a healthy/watch-silent outcome.", weight: 18 },
+      { check: "Railway evidence collected: the railway tool had at least one successful status invocation this run.", weight: 10, kind: "tool_invoked", tool: "railway", action: "status" },
+      { check: "Platforms evidence collected: the platforms tool had at least one successful environment-status invocation this run.", weight: 10, kind: "tool_invoked", tool: "platforms", action: "get_environment_status" },
     ],
-    process: `[Reliability Sentinel]
+    process: `# Reliability Sentinel
 
-Mission: every run, inspect Mantra Web stage (environment 11) and production (environment 12) health and autonomously repair only bounded stage/main software defects. Production is observe-only and human-promoted.
+## Mission
+Every run, determine whether Mantra Web stage or production has a new or materially worsening reliability incident. Use authoritative provider, runtime, application, and telemetry evidence. Stay silent on healthy runs. When a software defect is sufficiently evidenced and safely reproducible, prepare one canonical repair handoff for a protected engineering child rather than attempting code writes from the timer run.
 
-1. Read runtime health: recent runtime errors and recurring warnings via system.logs and system.reliability, aggregated error fingerprints via issues.list_errors, open issues via issues.list, deployment/build state via platforms.get_environment_status and platforms.get_build_status for environments 11 and 12, and recent railway.deployments.
-2. Split system.reliability failures into ambers (classified: input|permission|transient|internal) versus errors (unclassified surprises missing failureKind). Count only terminal outcomes in rates. Prefer remediating unclassified errors first; treat high amber volume as avoidable-input/setup signal, not unexplained instability.
-3. Recent changelist remediation gate: before creating or reusing a task, repair handoff, conversation, or attention flag, compare every new or worsening software-defect candidate against recent stage/main changelists (up to 20 deployments in the last 24h, including in-progress builds). Assign exactly one disposition: unaddressed, repair_active, addressed_pending_live_promotion, live_verified, or uncertain (treat uncertain as unaddressed for notification safety). A match must cite a PR or commit SHA and explain how it addresses the failure mechanism; shared words or a newer SHA alone are not a match.
-4. Deduplicate incidents by normalized signature + environment + likely subsystem. Update or reference an existing incident or open Issue instead of creating another. Inspect recent sentry skill runs and open issues/tasks/sessions to avoid duplicates.
-5. For a bounded, well-understood stage or main software defect, repair it end-to-end through the standard coding path and open a PR to main. Never modify production directly.
-6. Quiet is the default. Do not mint a conversation or set attention. This contract has no page primitive — never call session.initiate. Record findings only in this run's report.
-7. Report a concise summary of what was inspected, incidents and dispositions, and any repair PR references.`,
+**Elevation invariant (hard):** Any path that elevates to Ray — \`converse.initiate\`, \`converse.set_attention\`, or any other human-attention pin — MUST first create or update one durable Issue via \`issues.create\` / \`issues.get\` for that incident. Elevation without an Issue is a process failure: the post-build regression skill can only burn what is in the Issue queue. The Issue is the track; the conversation is the interrupt.
+
+## Fixed environment authority
+- Stage: Platform Environment \`11\`, Mantra / Web / stage, source branch \`main\`, health URL \`https://mono-stage.up.railway.app/api/health\`.
+- Production: Platform Environment \`12\`, Mantra / Web / live, source branch \`live\`, health URL \`https://app.trymantra.ai/api/health\`.
+- Production is observe-only. Never restart, redeploy, change variables, edit data, push or merge to \`live\`, promote a release, approve a production gate, or otherwise mutate environment 12.
+- Repairs target \`main\` and stage only. Production promotion always remains human-controlled.
+
+## Required sensors (hard — first actions)
+Before any classification, report rewrite, or end-state summary, successfully invoke all of:
+1. \`platforms.get_environment_status\` for environment \`11\`
+2. \`platforms.get_environment_status\` for environment \`12\`
+3. \`railway.status\` with \`platformEnvironmentId: 11\`
+4. \`railway.status\` with \`platformEnvironmentId: 12\`
+
+Do not classify healthy from prior report state, platforms alone, or a previous run. A Sentinel self-degradation caused solely by missing these deterministic tool-coverage checks is a process-compliance miss, not a stage/production incident — cure it by invoking the required tools, not by raising an environment incident. The deterministic checklist terminates the run degraded without successful \`railway:status\` and \`platforms:get_environment_status\`.
+
+## Run window and evidence
+Use a 45-minute observation window unless a source only supports another bounded window. Inspect both environments independently.
+
+1. Every run, confirm both environment bindings and status by calling \`platforms.get_environment_status\` for environment \`11\` and environment \`12\`. This platforms invocation is required, not optional. Additionally read \`platforms.get_environment\` and \`platforms.get_build_lifecycle\` when deeper binding or lifecycle-policy detail is needed.
+2. Use \`railway.status\` and bounded \`railway.deployments\` for environments 11 and 12. A removed superseded deployment is normal; only FAILED, CRASHED, BUILD_FAILED, or a latest non-success terminal state is an incident. Fetch \`build_logs\` for a failed build and runtime \`logs\` for diagnosis.
+3. Fetch both \`/api/health\` URLs. Record reachability, \`ok\`, uptime, and memory. A failed request, \`ok != true\`, repeated restart/low-uptime pattern, or sharp memory growth across runs is evidence.
+4. Query Railway runtime logs at \`error\` and \`warn\` for both environments, bounded to recent records. Normalize signatures by removing timestamps, request IDs, run IDs, UUIDs, and volatile numbers before counting. Treat one isolated warning as context, not an incident. Treat a recurring signature as actionable when it appears at least 5 times in the window, persists across 2 runs, or co-occurs with user-visible failure. Read archived middle log sections, not just info-level previews, before classifying an environment healthy.
+5. Check \`sentry.status\`. If configured, inspect unresolved/new issues and latest events, prioritizing regressions, crashes, affected-user growth, and events after the latest deployment. If unconfigured, mark Sentry coverage as degraded once; do not fail the run or repeatedly alert.
+6. Query \`system.frontend_performance\` and \`system.context_health\` over the last 6 hours. Respect their stated measurement contracts and sample health. Do not infer a regression from raw counts alone.
+7. Sweep autonomous execution health: query \`system.events\` (categories \`skill\` and \`timer\`, bounded) for failures and degradations since the previous Sentinel run, and corroborate with \`skills(action=runs)\` for any implicated skill (status, duration, score, failureReason). Treat as a candidate incident: a skill that fails or degrades on 2 consecutive runs, or any run failure whose failureReason implicates shared infrastructure (tool contract errors, provider auth, database, session runner). A one-off content-quality miss or single low score is watch-level context, not an incident.
+8. Inspect recent \`sentry\` skill runs and open system issues/tasks/sessions when useful. Deduplicate by normalized signature + environment + likely subsystem. Update or reference an existing incident instead of creating another. Prefer matching an open Issue by signature before creating a new one.
+
+## Canonical report page
+The single canonical report is the Library page titled "Reliability Sentinel Report" (slug \`reliability-sentinel-report\`) under the Mantra root page. Read it at run start for open incidents, dedupe signatures, and the prior Sentinel State. If it does not exist, create it exactly once under the Mantra root page (parent \`40369f2f-8c5d-4696-819a-604c64b0c8da\`) with: a header naming the skill, timer, and environment authority; a single-copy warning blockquote; a \`Sentinel State\` code block; \`Open Incidents\`; \`Resolved\`; and \`Run Log\` sections. Never create a second report page. If creation or update fails, record the failure in the run outcome and continue the run.
+
+At run end, update the page:
+1. Rewrite the Sentinel State block: lastRunAt, runCounter+1, overall, stage, production, openIncidents count, coverageGaps, nextCheck.
+2. Prepend one compact Run Log line (UTC time · overall · stage · production · score or note). Keep at most 30 lines; delete the oldest beyond 30.
+3. For each new or worsening incident, add or update one Open Incidents entry with its normalized signature, evidence, linked Issue id when filed, and dedupe reference. Move cured incidents to Resolved as one line each; keep at most 10 Resolved lines.
+
+Healthy runs touch only Sentinel State and the Run Log line. Updating this page replaces messaging Ray for healthy and watch runs.
+
+## Classification
+Classify each candidate with one discriminant:
+- \`healthy\`: no material incident.
+- \`watch\`: weak, new, or sparse evidence; gather another run.
+- \`degraded\`: a budget is materially exceeded with adequate samples, a recurring log signature persists, or one environment is impaired but serving.
+- \`broken\`: health check fails, service crash-loops, latest deployment/build fails, or a core user path is unavailable.
+- \`coverage_gap\`: a required sensor or diagnostic path is unavailable.
+
+## Issue filing (required before elevation)
+File or reuse one Issue for every incident that is elevated to Ray, and for every eligible software defect even when repair is prepared without elevation.
+
+1. Dedup first: \`issues.list\` unresolved; if an open Issue already matches the normalized signature + environment + subsystem, get it and update the Open Incidents report entry with that id. Do not create a duplicate.
+2. Otherwise \`issues.create\` with short signature-led title, impact/classification description, and real \`reproSteps\` evidence. Never file a title-only shell.
+3. Record the Issue id on the Open Incidents entry and in the run outcome. Elevation messages and repair handoffs must cite that Issue id.
+4. Do **not** file Issues for pure \`healthy\` or first-run \`watch\` noise.
+
+## Incident and notification policy
+- Healthy run: do not message Ray and do not create artifacts beyond the canonical report update.
+- Watch: record compactly in the skill outcome and the canonical report only. Do not message Ray unless it worsens or persists for 2 runs.
+- Any \`broken\` classification: **file or reuse the Issue first**, then elevate once with Issue id.
+- Never create a duplicate issue, task, plan, workflow, or conversation for the same unresolved signature.
+
+## Repair handoff authority
+The timer run is an observer and triage owner. It does not have trusted engineering delegation, so it must never call shell, write/edit repository files, perform Git writes, start build workflows, or mutate Railway/Platforms/Sentry state directly. Prepare a repair handoff only for a bounded reproducible Mantra software defect after filing or reusing the Issue.
+
+## Failure handling
+A sensor failure must not erase other evidence. Continue with remaining sources and label proof as degraded. Tool contract errors are evidence about the diagnostic surface, not evidence that stage or production is unhealthy. Do not retry the same malformed call repeatedly. Bound every query and tool call.
+
+## End state
+End each run with a compact structured outcome containing overall classification; stage and production classification; new or worsening incident signatures; Issue ids filed or reused; dedupe target if any; repair handoff status; coverage gaps; elevation performed (yes/no) and whether Issue-before-elevate held; and the next automatic check. Update the canonical report page as specified above. Healthy outcomes should be terse.`,
   },
   {
     name: "guard",
