@@ -68,6 +68,7 @@ export interface FeaturePipelineStage {
   /**
    * Optional availability clock for this room. Today only Test declares one.
    * Rooms without this render Play as before; the Features row must not branch on stage name.
+   * waiting/unknown occupy the Play slot as a Timer; click rechecks Stage, it does not launch Smoke.
    */
   availability?: FeaturePipelineAvailability;
   produce: FeaturePipelineJobContract;
