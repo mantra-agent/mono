@@ -664,14 +664,7 @@ export function supportsSelectableEffort(modelId: string): boolean {
   return getThinkingInfo(modelId).selectableEffort === true;
 }
 
-/**
- * Whether a Grok subscription model accepts the reasoning_effort parameter.
- * Grok 4.5 and 4.6 support low/medium/high; Grok 4.6 additionally supports
- * xhigh. The connector gates injection on this model capability.
- */
-export function supportsGrokReasoningEffort(modelId: string): boolean {
-  return bareId(modelId) === "grok-4.5" || bareId(modelId) === "grok-4.6";
-}
+export { supportsGrokReasoningEffort } from "@shared/model-connectors";
 
 export function getModelName(modelId: string): string {
   const id = bareId(modelId);

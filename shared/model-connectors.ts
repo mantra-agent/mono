@@ -79,11 +79,32 @@ export const claudeCliTierMappingsSchema = z.object({
 }).strict();
 export type ClaudeCliTierMappings = z.infer<typeof claudeCliTierMappingsSchema>;
 
-// Grok subscription reasoning effort. Grok 4.5 and 4.6 accept
-// reasoning_effort on the chat.completions surface. Grok 4.6 also supports
-// xhigh; values map directly to xAI's documented controls.
-export const grokReasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh"]);
+// Grok subscription reasoning effort. xAI documents:
+//   grok-4.3: none | low | medium | high  (none is the Haiku/mini-like off switch)
+//   grok-4.5: low | medium | high         (cannot disable)
+//   grok-4.6: low | medium | high | xhigh (cannot disable)
+export const grokReasoningEffortSchema = z.enum(["none", "low", "medium", "high", "xhigh"]);
 export type GrokReasoningEffort = z.infer<typeof grokReasoningEffortSchema>;
+
+const GROK_REASONING_EFFORTS = {
+  "grok-4.3": ["none", "low", "medium", "high"],
+  "grok-4.5": ["low", "medium", "high"],
+  "grok-4.6": ["low", "medium", "high", "xhigh"],
+} as const satisfies Record<string, readonly GrokReasoningEffort[]>;
+
+function bareGrokModelId(modelId: string): string {
+  return modelId.includes("/") ? modelId.split("/").slice(1).join("/") : modelId;
+}
+
+/** Closed, code-owned capability table for Grok reasoning_effort. Empty = model rejects the param. */
+export function allowedGrokReasoningEfforts(modelId: string): readonly GrokReasoningEffort[] {
+  const id = bareGrokModelId(modelId);
+  return GROK_REASONING_EFFORTS[id as keyof typeof GROK_REASONING_EFFORTS] ?? [];
+}
+
+export function supportsGrokReasoningEffort(modelId: string): boolean {
+  return allowedGrokReasoningEfforts(modelId).length > 0;
+}
 
 function normalizeGrokTierConfig(value: unknown): unknown {
   if (typeof value === "string") return { model: value };
@@ -136,9 +157,9 @@ export const claudeCliConnectorConfigSchema = z.object({
 export type ClaudeCliConnectorConfig = z.infer<typeof claudeCliConnectorConfigSchema>;
 
 // Grok subscription connector. Grok models are OpenAI-compatible chat models
-// addressed by plain name. Grok 4.5 and 4.6 accept a reasoning_effort
-// param, so tier mappings carry an optional per-tier reasoningEffort. Legacy
-// plain-string mappings are still accepted and normalized to { model }.
+// addressed by plain name. Per-tier reasoningEffort is optional and gated by
+// allowedGrokReasoningEfforts (4.3 includes none; 4.5/4.6 cannot disable).
+// Legacy plain-string mappings are still accepted and normalized to { model }.
 // Decorative keys such as maxOutputTokens are stripped at parse time because
 // Grok never persisted or applied them.
 export const grokSubscriptionConnectorConfigSchema = z.object({
