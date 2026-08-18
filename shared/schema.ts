@@ -259,6 +259,109 @@ export const agentInstanceMemberships = pgTable("agent_instance_memberships", {
   instanceIdx: index("idx_agent_instance_memberships_instance").on(table.instanceId),
 }));
 
+/** Pointer + policy timestamps for a paying Account. Not entitlement. */
+export const accountBilling = pgTable("account_billing", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  accountId: varchar("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  packageKey: text("package_key").notNull(),
+  includeTokens: integer("include_tokens").notNull(),
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  stripeMeterId: text("stripe_meter_id"),
+  termStartedAt: timestamp("term_started_at", { withTimezone: true }),
+  termEndsAt: timestamp("term_ends_at", { withTimezone: true }),
+  cancelNoticeAt: timestamp("cancel_notice_at", { withTimezone: true }),
+  cancelAt: timestamp("cancel_at", { withTimezone: true }),
+  collectionStatus: text("collection_status").notNull().default("pending_setup"),
+  paymentMethodKind: text("payment_method_kind").notNull().default("none"),
+  checkoutSessionId: text("checkout_session_id"),
+  checkoutUrl: text("checkout_url"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => ({
+  accountUnique: uniqueIndex("uq_account_billing_account").on(table.accountId),
+  customerIdx: index("idx_account_billing_customer").on(table.stripeCustomerId),
+  subscriptionIdx: index("idx_account_billing_subscription").on(table.stripeSubscriptionId),
+  packageCheck: check(
+    "account_billing_package_key_check",
+    sql`${table.packageKey} IN ('max', 'max_plus', 'factory_plus', 'custom')`,
+  ),
+  statusCheck: check(
+    "account_billing_collection_status_check",
+    sql`${table.collectionStatus} IN ('pending_setup', 'active', 'past_due', 'canceled', 'unpaid')`,
+  ),
+  methodCheck: check(
+    "account_billing_payment_method_kind_check",
+    sql`${table.paymentMethodKind} IN ('card', 'us_bank_account', 'none')`,
+  ),
+  includeCheck: check("account_billing_include_tokens_check", sql`${table.includeTokens} >= 0`),
+  customIncludeCheck: check(
+    "account_billing_custom_include_check",
+    sql`${table.packageKey} <> 'custom' OR ${table.includeTokens} IS NOT NULL`,
+  ),
+  customerPrefixCheck: check(
+    "account_billing_customer_prefix_check",
+    sql`${table.stripeCustomerId} IS NULL OR ${table.stripeCustomerId} ~ '^cus_'`,
+  ),
+  subscriptionPrefixCheck: check(
+    "account_billing_subscription_prefix_check",
+    sql`${table.stripeSubscriptionId} IS NULL OR ${table.stripeSubscriptionId} ~ '^sub_'`,
+  ),
+  cancelNoticeCheck: check(
+    "account_billing_cancel_notice_check",
+    sql`${table.cancelAt} IS NULL OR ${table.cancelNoticeAt} IS NOT NULL OR ${table.termEndsAt} IS NOT NULL`,
+  ),
+}));
+
+/** Closed Stripe Price ids we are willing to put on a Mantra Subscription. */
+export const billingPrices = pgTable("billing_prices", {
+  key: text("key").primaryKey(),
+  stripePriceId: text("stripe_price_id").notNull(),
+  stripeProductId: text("stripe_product_id"),
+  amountCents: integer("amount_cents"),
+  currency: text("currency").notNull().default("usd"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => ({
+  keyCheck: check(
+    "billing_prices_key_check",
+    sql`${table.key} IN ('max', 'max_plus', 'factory_plus', 'extra_principal', 'extra_agent', 'extra_participant', 'token_overage', 'tive_custom')`,
+  ),
+  pricePrefixCheck: check(
+    "billing_prices_price_prefix_check",
+    sql`${table.stripePriceId} ~ '^price_'`,
+  ),
+}));
+
+export const billingMeterDeliveries = pgTable("billing_meter_deliveries", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  apiCallId: integer("api_call_id").notNull(),
+  accountId: varchar("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  accountBillingId: uuid("account_billing_id").notNull().references(() => accountBilling.id, { onDelete: "cascade" }),
+  tokenDelta: integer("token_delta").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  status: text("status").notNull().default("queued"),
+  attempts: integer("attempts").notNull().default(0),
+  lastErrorCode: text("last_error_code"),
+  stripeIdentifier: text("stripe_identifier").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => ({
+  apiCallUnique: uniqueIndex("uq_billing_meter_deliveries_api_call").on(table.apiCallId),
+  statusIdx: index("idx_billing_meter_deliveries_status").on(table.status, table.createdAt),
+  statusCheck: check(
+    "billing_meter_deliveries_status_check",
+    sql`${table.status} IN ('queued', 'delivered', 'error')`,
+  ),
+}));
+
+export const billingWebhookEvents = pgTable("billing_webhook_events", {
+  stripeEventId: text("stripe_event_id").primaryKey(),
+  eventType: text("event_type").notNull(),
+  accountBillingId: uuid("account_billing_id"),
+  stripeObjectId: text("stripe_object_id"),
+  processedAt: timestamp("processed_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 export const agentProfiles = pgTable("agent_profiles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   /** created_by / rolling-deploy dual-write key; ownership moves to instanceId. */

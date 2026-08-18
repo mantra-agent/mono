@@ -7,6 +7,14 @@ export interface IdentityGraphRouter {
   isDefault: boolean;
 }
 
+export interface IdentityGraphBilling {
+  packageKey: "max" | "max_plus" | "factory_plus" | "custom";
+  collectionStatus: "pending_setup" | "active" | "past_due" | "canceled" | "unpaid";
+  paymentMethodKind: "card" | "us_bank_account" | "none";
+  includeTokens: number;
+  cancelAt: string | null;
+}
+
 export interface IdentityGraphAccount {
   id: string;
   name: string;
@@ -15,6 +23,7 @@ export interface IdentityGraphAccount {
   ownerUserId: string | null;
   routerId?: string | null;
   router?: IdentityGraphRouter | null;
+  billing?: IdentityGraphBilling | null;
   createdAt: string;
   updatedAt: string;
   lastActiveAt: string | null;

@@ -1649,6 +1649,15 @@ export function setupAuth(app: Express) {
             isDefault: routers.isDefault,
           }).from(routers),
         ]);
+        let billingByAccount = new Map<string, import("@shared/billing").AccountBillingSummary>();
+        try {
+          const { listAccountBillingSummaries } = await import("./billing-service");
+          billingByAccount = await listAccountBillingSummaries(accountRows.map((account) => account.id));
+        } catch (error) {
+          log.warn("identity graph billing projection unavailable", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
 
         const routersById = new Map(routerRows.map((row) => [row.id, row]));
         const memberIdsByAccount = new Map<string, string[]>();
@@ -1676,6 +1685,7 @@ export function setupAuth(app: Express) {
               router: router
                 ? { id: router.id, name: router.name, isDefault: router.isDefault === true }
                 : null,
+              billing: billingByAccount.get(account.id) ?? null,
             };
           }),
           memberships: membershipRows,

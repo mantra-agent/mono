@@ -18,6 +18,7 @@ import { registerBrainRoutes } from "./brain";
 import { registerProjectsRoutes } from "./projects";
 import { registerOodaRoutes } from "./ooda";
 import { registerPlaidRoutes } from "./plaid";
+import { registerBillingRoutes } from "./billing";
 import { registerQuickBooksRoutes } from "./quickbooks";
 import { registerFinanceRoutes } from "./finance";
 import { registerWellnessRoutes } from "./wellness";
@@ -99,6 +100,7 @@ export async function registerDomainRoutes(
   await registerProjectsRoutes(app);
   await registerOodaRoutes(app);
   await registerPlaidRoutes(app);
+  registerBillingRoutes(app);
   registerQuickBooksRoutes(app);
   await registerFinanceRoutes(app);
   await registerWellnessRoutes(app);
