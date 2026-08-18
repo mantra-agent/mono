@@ -190,7 +190,7 @@ export function resolveConnectorReadiness(
     }
     const fromSecret = secretConnectorReadiness(connectorKey);
     // Connectors with no cheap synchronous signal (e.g. twitter OAuth1,
-    // meta wearables, oura, automation-auth) are conservatively setup-required
+    // meta wearables, automation-auth) are conservatively setup-required
     // in shadow mode rather than performing a live provider probe.
     readiness.set(connectorKey, fromSecret ?? "setup-required");
   }
