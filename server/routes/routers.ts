@@ -17,6 +17,12 @@ import {
   setDefaultRouter,
 } from "../router-storage";
 import { updateModelConnector } from "../model-connectors";
+import {
+  claudeCliTierMappingsSchema,
+  grokSubscriptionTierMappingsSchema,
+  modelTierMappingsSchema,
+  openAITierMappingsSchema,
+} from "@shared/model-connectors";
 import { createLogger } from "../log";
 
 const log = createLogger("RoutersRoutes");
@@ -268,6 +274,12 @@ export async function registerRouterRoutes(app: Express): Promise<void> {
         const body = z.object({
           status: z.enum(["active", "inactive"]).optional(),
           priorityPinned: z.boolean().optional(),
+          tierMappings: z.union([
+            modelTierMappingsSchema,
+            openAITierMappingsSchema,
+            claudeCliTierMappingsSchema,
+            grokSubscriptionTierMappingsSchema,
+          ]).optional(),
         }).parse(req.body);
         // Verify membership first
         const router = await getRouter(req.params.id as string);

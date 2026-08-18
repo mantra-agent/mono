@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { ClipboardList, FileText, Activity, Heart, User, SlidersHorizontal, Loader2 } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { lazyWithRetry } from "@/lib/lazy-with-retry";
@@ -32,15 +32,16 @@ const brainTabs = [
 ];
 
 export default function BrainPage() {
-  const [location, setLocation] = useLocation();
+  const [, setLocation] = useLocation();
+  const search = useSearch();
   const { hasPermission } = useAuth();
 
   const readUrlParams = useCallback(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
     return {
       tab: params.get("tab") || "observations",
     };
-  }, []);
+  }, [search]);
 
   const visibleTabs = useMemo(
     () => brainTabs.filter((tab) => !tab.permission || hasPermission(tab.permission)),
@@ -48,6 +49,11 @@ export default function BrainPage() {
   );
 
   const [activeTab, setActiveTab] = useState(() => readUrlParams().tab);
+
+  const handleTabChange = useCallback((tab: string) => {
+    setActiveTab(tab);
+    setLocation(`/brain?tab=${encodeURIComponent(tab)}`);
+  }, [setLocation]);
 
   useEffect(() => {
     const p = readUrlParams();
@@ -57,7 +63,7 @@ export default function BrainPage() {
       return;
     }
     setActiveTab(nextTab);
-  }, [location, readUrlParams, setLocation, visibleTabs]);
+  }, [search, readUrlParams, setLocation, visibleTabs]);
 
   useEffect(() => {
     const syncFromHistory = () => {
@@ -72,7 +78,7 @@ export default function BrainPage() {
     title: activeTab === "persona" ? "Personas" : "Brain",
     tabs: visibleTabs,
     activeTab,
-    onTabChange: setActiveTab,
+    onTabChange: handleTabChange,
   });
 
   return (
