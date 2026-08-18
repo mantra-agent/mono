@@ -273,6 +273,33 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
     session.prefixContinuation = false;
   }
 
+  const isTerminalUtteranceRetry = samePhysicalUtterance
+    && session.inflightAbort === null
+    && session.inflightTurn === 0
+    && session.turnCount > 0;
+
+  if (isTerminalUtteranceRetry) {
+    session.pendingAttach = null;
+    session.prefixContinuation = false;
+    log.warn(`[CascadeRetry] TERMINAL_UTTERANCE_RETRY_DISCARDED session=${sessionId} userOrdinal=${userOrdinal} transcriptChanged=${transcriptChanged} userHash=${lastUserHash} — one utterance already spent its generator`);
+    publishVoiceDiagnostic(session, "cascade_retry_discarded", "ElevenLabs retried a terminal utterance — discarded without generating again", { turn: session.turnCount, status: "done" });
+    try {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+      res.write(buildSSEChunk(`chatcmpl-terminal-retry-${sessionId}`, Math.floor(Date.now() / 1000), "", "stop"));
+      res.write("data: [DONE]\n\n");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log.warn(`SSE_WRITE_FAILED location=terminal_utterance_retry session=${sessionId} error=${msg}`);
+    }
+    res.end();
+    return;
+  }
+
   const isCascadeRetry = samePhysicalUtterance
     && !transcriptChanged
     && lastUserContent === prevFired
