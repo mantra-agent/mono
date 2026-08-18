@@ -86,8 +86,6 @@ import { useSkillFailures } from "@/components/skill-failure-indicator";
 import { useAuth } from "@/hooks/use-auth";
 import type {
   SkillWithReferences,
-  SkillWriteCategory,
-  SkillInputType,
   SkillScore,
   SkillRun,
   ChecklistItem,
@@ -96,8 +94,6 @@ import type {
 import type { PromptModule } from "@shared/models/prompt-modules";
 import { MOD_KEYS, type ModKey } from "@shared/models/mods";
 
-const WRITE_CATEGORIES: SkillWriteCategory[] = ["read-only", "internal-data", "internal-control", "external", "destructive"];
-const INPUT_TYPES: SkillInputType[] = ["task", "people", "memories", "events", "files", "project"];
 const FIELD_SELECT_TRIGGER_CLASS = "h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0";
 const SOURCE_MOD_LABELS: Record<"core" | ModKey, string> = {
   core: "Core",
@@ -1028,8 +1024,6 @@ function SkillEditor({
   const { toast } = useToast();
   const [name, setName] = useState(skill?.name ?? "");
   const [description, setDescription] = useState(skill?.description ?? "");
-  const [writeCategory, setWriteCategory] = useState<SkillWriteCategory>((skill?.writeCategory as SkillWriteCategory) || "read-only");
-  const [inputs, setInputs] = useState<SkillInputType[]>((skill?.inputs as SkillInputType[]) ?? []);
   const [process, setProcess] = useState(skill?.process ?? "");
   const [checklist, setChecklist] = useState<ChecklistItem[]>(Array.isArray(skill?.checklist) ? skill.checklist as ChecklistItem[] : []);
   const [sessionType, setSessionType] = useState<string>(skill?.sessionType || "agent");
@@ -1042,8 +1036,6 @@ function SkillEditor({
     if (!skill) return;
     setName(skill.name);
     setDescription(skill.description);
-    setWriteCategory(skill.writeCategory as SkillWriteCategory);
-    setInputs(skill.inputs as SkillInputType[]);
     setProcess(skill.process);
     setChecklist(Array.isArray(skill.checklist) ? skill.checklist as ChecklistItem[] : []);
     setSessionType(skill.sessionType || "agent");
@@ -1121,8 +1113,6 @@ function SkillEditor({
       name,
       description,
       authority: skill?.authority || "full",
-      writeCategory,
-      inputs,
       process,
       qualityCriteria: skill?.qualityCriteria || "",
       checklist: validChecklist,
@@ -1139,14 +1129,6 @@ function SkillEditor({
   };
 
   const isPending = createMutation.isPending || updateMutation.isPending;
-
-  const toggleInput = (input: SkillInputType) => {
-    setInputs(prev =>
-      prev.includes(input)
-        ? prev.filter(i => i !== input)
-        : [...prev, input]
-    );
-  };
 
   return (
     <div className="space-y-1" data-testid={skill ? `skill-editor-${skill.id}` : "skill-editor-new"}>
@@ -1186,18 +1168,6 @@ function SkillEditor({
             </SelectContent>
           </Select>
         </ProfileTreeRow>
-        <ProfileTreeRow label="Write" hasValue showEmpty mobileLayout="inline" testId="row-skill-write">
-          <Select value={writeCategory} onValueChange={(value) => setWriteCategory(value as SkillWriteCategory)}>
-            <SelectTrigger className={FIELD_SELECT_TRIGGER_CLASS} data-testid="select-write-category">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {WRITE_CATEGORIES.map((option) => (
-                <SelectItem key={option} value={option}>{option}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </ProfileTreeRow>
         <ProfileTreeRow label="System" hasValue showEmpty mobileLayout="inline" testId="row-skill-system">
           <button
             type="button"
@@ -1207,33 +1177,6 @@ function SkillEditor({
           >
             {sessionType === "autonomous" ? "On" : "Off"}
           </button>
-        </ProfileTreeRow>
-        <ProfileTreeRow
-          label="Inputs"
-          hasValue
-          showEmpty
-          mobileLayout="inline"
-          testId="row-skill-inputs"
-          expandedContent={(
-            <div className="space-y-0.5">
-              {INPUT_TYPES.map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => toggleInput(type)}
-                  className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-accent/70"
-                  data-testid={`toggle-input-${type}`}
-                >
-                  <span className={cn("flex h-3.5 w-3.5 items-center justify-center rounded-sm border", inputs.includes(type) && "border-cta bg-cta text-cta-foreground")}>
-                    {inputs.includes(type) ? <CheckCircle2 className="h-3 w-3" /> : null}
-                  </span>
-                  {type}
-                </button>
-              ))}
-            </div>
-          )}
-        >
-          <span className="truncate text-xs">{inputs.length ? inputs.join(", ") : "None"}</span>
         </ProfileTreeRow>
         <ProfileTreeRow label="Description" hasValue={Boolean(description.trim())} showEmpty mobileLayout="stacked" testId="row-skill-description">
           <Textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What this skill does and when to use it..." className="min-h-[60px] text-xs" data-testid="input-description" />
