@@ -89,6 +89,8 @@ import {
   MessageSquare,
   Box,
   Clock,
+  GitBranch,
+  Share2,
 } from "lucide-react";
 import { SiX } from "react-icons/si";
 import { SecretsForSection } from "@/components/SecretControl";
