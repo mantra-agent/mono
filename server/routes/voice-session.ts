@@ -153,6 +153,7 @@ async function ensureAgentSetup(): Promise<void> {
     );
     voiceLog.error(error, voiceSessionLogContext({ operation: error.operation! }));
     agentSetupPromise = null;
+    throw err;
   });
   await agentSetupPromise;
 }
