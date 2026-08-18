@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { ScrollText, DollarSign, Loader2, Wrench, ClipboardCheck, Brain, Zap, GitBranch, Cpu, Users, FileText, KeyRound, Building2, Bot, Route } from "lucide-react";
 import { ProcessesCard } from "@/components/processes-card";
 import { usePageHeader } from "@/hooks/use-page-header";
@@ -48,7 +48,9 @@ const systemTabs = [
 ];
 
 export default function SystemPage() {
-  const [location, setLocation] = useLocation();
+  const [, setLocation] = useLocation();
+  // Wouter location is pathname-only; query changes must subscribe via useSearch.
+  const search = useSearch();
 
   const { hasUnseenErrors: hasUnseenLogErrors, markSeen: markLogErrorsSeen } = useLogErrors();
   const { hasPermission } = useAuth();
@@ -56,29 +58,13 @@ export default function SystemPage() {
   const canReadPrompts = hasPermission("build:read");
 
   const readUrlParams = useCallback(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
     return {
       tab: params.get("tab") || "logs",
     };
-  }, [canReadUsers]);
+  }, [search]);
 
   const [activeTab, setActiveTab] = useState(() => readUrlParams().tab);
-
-  useEffect(() => {
-    const p = readUrlParams();
-    // Vaults moved to a first-class /vaults route so all authenticated users
-    // can manage their vaults without system:read.
-    if (p.tab === "vaults") {
-      setLocation("/vaults");
-      return;
-    }
-    // Performance is a first-class /performance route; keep old System deep links working.
-    if (p.tab === "resources" || p.tab === "performance") {
-      setLocation("/performance");
-      return;
-    }
-    setActiveTab(p.tab);
-  }, [location, readUrlParams, setLocation]);
 
   const identityTabs = new Set(["users", "accounts", "agents"]);
 
@@ -94,14 +80,50 @@ export default function SystemPage() {
     [canReadUsers, canReadPrompts, hasUnseenLogErrors]
   );
 
+  const handleTabChange = useCallback((tab: string) => {
+    setActiveTab(tab);
+    // Keep query string authoritative so deep links and same-path navigations remount the right tab.
+    setLocation(`/system?tab=${encodeURIComponent(tab)}`);
+  }, [setLocation]);
+
+  useEffect(() => {
+    const p = readUrlParams();
+    // Vaults moved to a first-class /vaults route so all authenticated users
+    // can manage their vaults without system:read.
+    if (p.tab === "vaults") {
+      setLocation("/vaults");
+      return;
+    }
+    // Performance is a first-class /performance route; keep old System deep links working.
+    if (p.tab === "resources" || p.tab === "performance") {
+      setLocation("/performance");
+      return;
+    }
+    const allowed = tabs.some((t) => t.value === p.tab) ? p.tab : (tabs[0]?.value ?? "logs");
+    if (allowed !== p.tab) {
+      setLocation(`/system?tab=${encodeURIComponent(allowed)}`, { replace: true });
+      return;
+    }
+    setActiveTab(allowed);
+  }, [search, readUrlParams, setLocation, tabs]);
+
+  useEffect(() => {
+    const syncFromHistory = () => {
+      const p = readUrlParams();
+      if (tabs.some((t) => t.value === p.tab)) setActiveTab(p.tab);
+    };
+    window.addEventListener("popstate", syncFromHistory);
+    return () => window.removeEventListener("popstate", syncFromHistory);
+  }, [readUrlParams, tabs]);
+
   useEffect(() => {
     if (identityTabs.has(activeTab) && !canReadUsers) {
-      setActiveTab("logs");
+      handleTabChange("logs");
     }
     if (activeTab === "prompts" && !canReadPrompts) {
-      setActiveTab("logs");
+      handleTabChange("logs");
     }
-  }, [activeTab, canReadUsers, canReadPrompts]);
+  }, [activeTab, canReadUsers, canReadPrompts, handleTabChange]);
 
   usePageHeader({
     title:
@@ -114,7 +136,7 @@ export default function SystemPage() {
                   : "System",
     tabs,
     activeTab,
-    onTabChange: setActiveTab,
+    onTabChange: handleTabChange,
   });
 
   return (

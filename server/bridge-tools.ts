@@ -12726,6 +12726,7 @@ const cognitionTools: Record<string, ToolHandler> = {
       "list_legacy",
       "create",
       "add_connector",
+      "update_connector",
       "move_connector",
       "set_account_router",
     ]);
@@ -12782,6 +12783,7 @@ const cognitionTools: Record<string, ToolHandler> = {
               sortOrder: c.sortOrder,
               hasCredential: Boolean(c.credentialRef),
               routerId: c.routerId,
+              config: c.config,
             })),
           }, null, 2),
         };
@@ -12820,6 +12822,44 @@ const cognitionTools: Record<string, ToolHandler> = {
               sortOrder: connector.sortOrder,
               priorityPinned: connector.priorityPinned,
               hasCredential: Boolean(connector.credentialRef),
+            },
+          }, null, 2),
+        };
+      }
+
+      if (action === "update_connector") {
+        const connectorId = Number(args.connectorId);
+        if (!Number.isFinite(connectorId) || connectorId <= 0) {
+          return { result: "Missing or invalid connectorId", error: true };
+        }
+        const { updateModelConnector } = await import("./model-connectors");
+        const input: {
+          status?: "active" | "inactive";
+          priorityPinned?: boolean;
+          tierMappings?: unknown;
+        } = {};
+        if (args.status === "active" || args.status === "inactive") input.status = args.status;
+        if (typeof args.priorityPinned === "boolean") input.priorityPinned = args.priorityPinned;
+        if (args.tierMappings !== undefined) input.tierMappings = args.tierMappings;
+        if (input.status === undefined && input.priorityPinned === undefined && input.tierMappings === undefined) {
+          return {
+            result: "update_connector requires status, priorityPinned, and/or tierMappings",
+            error: true,
+          };
+        }
+        const connector = await updateModelConnector(connectorId, input as any);
+        if (!connector) return { result: `Connector ${connectorId} not found`, error: true };
+        return {
+          result: JSON.stringify({
+            connector: {
+              id: connector.id,
+              provider: connector.provider,
+              label: connector.label,
+              status: connector.status,
+              routerId: connector.routerId,
+              sortOrder: connector.sortOrder,
+              priorityPinned: connector.priorityPinned,
+              config: connector.config,
             },
           }, null, 2),
         };
@@ -12910,7 +12950,7 @@ const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   pronunciation: new Set(["add", "update", "remove"]),
   decisions: new Set(["create", "update", "append", "delete", "lock", "reopen", "add_update", "edit_update", "delete_update", "add_link", "remove_link", "record_judgment"]),
   plan: new Set(["update_step", "add_steps", "pause", "unlink_session"]),
-  routers: new Set(["create", "add_connector", "move_connector", "set_account_router"]),
+  routers: new Set(["create", "add_connector", "update_connector", "move_connector", "set_account_router"]),
   blocking_graph: new Set(["add_blocker", "remove_blocker"]),
 };
 
