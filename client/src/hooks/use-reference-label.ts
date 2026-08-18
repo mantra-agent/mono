@@ -1,6 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 
 /**
+ * Client registry fallbacks are either the raw id or `${Type} ${id}`.
+ * Those are unresolved identifiers, not display names — fetch the server label.
+ */
+export function isUnresolvedFallbackLabel(id: string, staticLabel: string): boolean {
+  if (!staticLabel || staticLabel === id) return true;
+  if (/^\d+$/.test(staticLabel)) return true;
+  return staticLabel.endsWith(` ${id}`);
+}
+
+/**
  * Async-resolves a reference label when the client-side registry only has
  * a raw ID as the fallback. Uses a batch-capable server endpoint with
  * aggressive React Query caching so repeated refs are cheap.
@@ -10,12 +20,7 @@ export function useReferenceLabel(
   id: string,
   staticLabel: string,
 ): string {
-  // Heuristic: if the static label looks like a real name, skip the fetch.
-  // Raw IDs look like UUIDs, numbers, or "Task 42" / "Project 7" patterns.
-  const looksUnresolved =
-    staticLabel === id ||
-    /^\d+$/.test(staticLabel) ||
-    /^(Task|Project|Milestone|Intention|Event|Session|Interaction|Context|Build|Environment) \S+$/.test(staticLabel);
+  const looksUnresolved = isUnresolvedFallbackLabel(id, staticLabel);
 
   const { data } = useQuery<string>({
     queryKey: ["reference-label", type, id],
