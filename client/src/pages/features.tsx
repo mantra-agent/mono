@@ -49,6 +49,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ChildSessionBlock } from "@/components/inline-session-blocks";
 import { stripMessageTimestamp } from "@/components/chat-shared";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
@@ -541,10 +551,28 @@ const FeatureRow = memo(function FeatureRow({
   const [rowExpanded, setRowExpanded] = useState(false);
   /** Optimistic link after a row launch, before discovery/artifact indexing catches up. */
   const [launchedSessionId, setLaunchedSessionId] = useState<string | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (!editingTitle) setTitleDraft(feature.summary);
   }, [feature.summary, editingTitle]);
+
+  const deleteFeature = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/features/${feature.id}`, { confirm: true });
+    },
+    onSuccess: () => {
+      setDeleteConfirmOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["/api/features"] });
+      toast({ title: "Feature deleted", description: feature.summary });
+    },
+    onError: (error: unknown) =>
+      toast({
+        title: "Failed to delete Feature",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      }),
+  });
 
   const update = useMutation({
     mutationFn: async (patch: Record<string, unknown>) => {
@@ -1338,11 +1366,11 @@ const FeatureRow = memo(function FeatureRow({
           </DropdownMenuItem>
           <DropdownMenuItem
             className="text-destructive"
-            onSelect={() =>
-              apiRequest("DELETE", `/api/features/${feature.id}`, { confirm: true }).then(() => {
-                queryClient.invalidateQueries({ queryKey: ["/api/features"] });
-              })
-            }
+            onSelect={(event) => {
+              event.preventDefault();
+              setDeleteConfirmOpen(true);
+            }}
+            data-testid={`menu-feature-delete-${feature.id}`}
           >
             Delete
           </DropdownMenuItem>
@@ -1356,6 +1384,35 @@ const FeatureRow = memo(function FeatureRow({
           wsConnected={streamWsConnected}
         />
       ) : null}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Feature?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes “{feature.summary}”. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={deleteFeature.isPending}
+              data-testid={`button-cancel-delete-feature-${feature.id}`}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteFeature.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                deleteFeature.mutate();
+              }}
+              data-testid={`button-confirm-delete-feature-${feature.id}`}
+            >
+              {deleteFeature.isPending ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 });
