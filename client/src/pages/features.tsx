@@ -13,6 +13,7 @@ import {
   Lightbulb,
   Loader2,
   MessageSquare,
+  MoreHorizontal,
   Package,
   PenLine,
   Play,
@@ -29,7 +30,6 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
@@ -73,6 +73,7 @@ import {
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_SESSION_ROW_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -851,9 +852,17 @@ const FeatureRow = memo(function FeatureRow({
   // Collapsed rows keep humming chrome (pulse title, spinner, Stop) without the strip.
   return (
     <div className="min-w-0">
-      <ProfileTreeRow
-        label={(
-          editingTitle ? (
+      <div
+        className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")}
+        data-testid={`feature-row-${feature.id}`}
+        onClick={() => handleRowOpenChange(!rowExpanded)}
+      >
+        <span className="flex shrink-0 items-center justify-center text-muted-foreground">
+          {isSessionInProgress
+            ? <ActiveStatusSpinner className="h-3.5 w-3.5" />
+            : STAGE_ICONS[feature.stage]}
+        </span>
+          {editingTitle ? (
             <Input
               autoFocus
               value={titleDraft}
@@ -879,7 +888,7 @@ const FeatureRow = memo(function FeatureRow({
             <button
               type="button"
               className={cn(
-                "max-w-full truncate text-left text-sm",
+                "min-w-0 flex-1 truncate text-left text-sm",
                 isSessionInProgress && "text-active font-medium motion-safe:animate-pulse",
                 !isSessionInProgress && needsReview && "font-medium text-foreground",
                 !isSessionInProgress && !needsReview && "text-muted-foreground",
@@ -893,21 +902,8 @@ const FeatureRow = memo(function FeatureRow({
             >
               {feature.summary}
             </button>
-          )
-        )}
-        icon={
-          isSessionInProgress
-            ? <ActiveStatusSpinner className="h-3.5 w-3.5" />
-            : STAGE_ICONS[feature.stage]
-        }
-        hasValue
-        showEmpty
-        mobileLayout="inline"
-        valueLayout="compact"
-        testId={`feature-row-${feature.id}`}
-        // In-progress: Stop replaces Play/AI/Check. Idle: Play or AI Review + green Check.
-        actionContent={(
-          <div className="flex shrink-0 items-center justify-end">
+          )}
+          <div className="ml-auto flex shrink-0 items-center justify-end pr-7">
             {isSessionInProgress ? (
               <Button
                 type="button"
@@ -1047,11 +1043,159 @@ const FeatureRow = memo(function FeatureRow({
               })()
             )}
           </div>
-        )}
-        onOpenChange={handleRowOpenChange}
-        expandedContentClassName="px-2 pb-2 pl-2"
-        expandedContent={(
-          <div className="space-y-0.5">
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md bg-accent/50 opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
+              aria-label={`Actions for ${feature.summary}`}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
+            {isSessionInProgress ? (
+              <DropdownMenuItem
+                disabled={stopSession.isPending}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  runStopSession();
+                }}
+                data-testid={`button-feature-menu-stop-${feature.id}`}
+              >
+                {stopSession.isPending ? (
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Square className="mr-2 h-3.5 w-3.5 fill-current" />
+                )}
+                Stop
+              </DropdownMenuItem>
+            ) : needsReview ? (
+              <>
+                <DropdownMenuItem
+                  disabled={launch.isPending}
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    runPipelineLaunch("review");
+                  }}
+                  data-testid={`button-feature-launch-${feature.stage}-review-${feature.id}`}
+                >
+                  {reviewLaunchPending ? (
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <span className="relative mr-2 inline-flex h-3.5 w-3.5 items-center justify-center text-muted-foreground/70">
+                      <Search className="h-3.5 w-3.5" />
+                      <Sparkles className="pointer-events-none absolute -right-px -top-px h-1.5 w-1.5 text-cta" strokeWidth={2.5} />
+                    </span>
+                  )}
+                  AI {reviewContract.actionLabel}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!canApprove || update.isPending}
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    approveToNextStage();
+                  }}
+                  data-testid={`button-feature-menu-approve-${feature.stage}-${feature.id}`}
+                >
+                  {update.isPending ? (
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="mr-2 h-3.5 w-3.5 text-success" />
+                  )}
+                  {canApprove
+                    ? `Approve → ${formatStage(nextStageOnPass!)}`
+                    : "Approve (no next stage)"}
+                </DropdownMenuItem>
+              </>
+            ) : (
+              <DropdownMenuItem
+                disabled={launch.isPending}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  runPipelineLaunch("produce");
+                }}
+                data-testid={`button-feature-launch-${feature.stage}-produce-${feature.id}`}
+              >
+                {produceLaunchPending ? (
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Play className="mr-2 h-3.5 w-3.5" />
+                )}
+                {produceContract.actionLabel}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem
+              disabled={launch.isPending || isSessionInProgress}
+              onSelect={(event) => {
+                event.preventDefault();
+                runDiscussLaunch();
+              }}
+              data-testid={`button-feature-discuss-${feature.id}`}
+            >
+              {discussPending ? (
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <MessageSquare className="mr-2 h-3.5 w-3.5" />
+              )}
+              Discuss
+            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger data-testid={`menu-feature-stage-${feature.id}`}>
+                Stage
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-44">
+                <DropdownMenuRadioGroup
+                  value={feature.stage}
+                  onValueChange={(stage) => {
+                    if (stage === feature.stage) return;
+                    update.mutate({
+                      stage,
+                      historyNote: `Manual stage change ${formatStage(feature.stage)} → ${formatStage(stage as FeatureStage)}`,
+                      historySource: "manual",
+                    });
+                  }}
+                >
+                  {stages.map((stage) => (
+                    <DropdownMenuRadioItem
+                      key={stage}
+                      value={stage}
+                      data-testid={`menu-feature-stage-${stage}-${feature.id}`}
+                    >
+                      <span className="mr-2 inline-flex h-3.5 w-3.5 items-center justify-center text-muted-foreground">
+                        {STAGE_ICONS[stage]}
+                      </span>
+                      {formatStage(stage)}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem
+              onSelect={() =>
+                apiRequest("POST", `/api/features/${feature.id}/archive`, { confirm: true }).then(() => {
+                  queryClient.invalidateQueries({ queryKey: ["/api/features"] });
+                })
+              }
+            >
+              Archive
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive"
+              onSelect={(event) => {
+                event.preventDefault();
+                setDeleteConfirmOpen(true);
+              }}
+              data-testid={`menu-feature-delete-${feature.id}`}
+            >
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      {rowExpanded ? (
+        <div className="space-y-0.5 px-2 pb-2">
           <div
             className={cn(FEATURE_DESCRIPTION_FRAME_CLASS, "mb-1.5")}
             data-testid={`feature-description-${feature.id}`}
@@ -1281,148 +1425,7 @@ const FeatureRow = memo(function FeatureRow({
             )}
           </div>
         </div>
-      )}
-      menuContent={(
-        <>
-          {isSessionInProgress ? (
-            <DropdownMenuItem
-              disabled={stopSession.isPending}
-              onSelect={(event) => {
-                event.preventDefault();
-                runStopSession();
-              }}
-              data-testid={`button-feature-menu-stop-${feature.id}`}
-            >
-              {stopSession.isPending ? (
-                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Square className="mr-2 h-3.5 w-3.5 fill-current" />
-              )}
-              Stop
-            </DropdownMenuItem>
-          ) : needsReview ? (
-            <>
-              <DropdownMenuItem
-                disabled={launch.isPending}
-                onSelect={(event) => {
-                  event.preventDefault();
-                  runPipelineLaunch("review");
-                }}
-                data-testid={`button-feature-launch-${feature.stage}-review-${feature.id}`}
-              >
-                {reviewLaunchPending ? (
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <span className="relative mr-2 inline-flex h-3.5 w-3.5 items-center justify-center text-muted-foreground/70">
-                    <Search className="h-3.5 w-3.5" />
-                    <Sparkles className="pointer-events-none absolute -right-px -top-px h-1.5 w-1.5 text-cta" strokeWidth={2.5} />
-                  </span>
-                )}
-                AI {reviewContract.actionLabel}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!canApprove || update.isPending}
-                onSelect={(event) => {
-                  event.preventDefault();
-                  approveToNextStage();
-                }}
-                data-testid={`button-feature-menu-approve-${feature.stage}-${feature.id}`}
-              >
-                {update.isPending ? (
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Check className="mr-2 h-3.5 w-3.5 text-success" />
-                )}
-                {canApprove
-                  ? `Approve → ${formatStage(nextStageOnPass!)}`
-                  : "Approve (no next stage)"}
-              </DropdownMenuItem>
-            </>
-          ) : (
-            <DropdownMenuItem
-              disabled={launch.isPending}
-              onSelect={(event) => {
-                event.preventDefault();
-                runPipelineLaunch("produce");
-              }}
-              data-testid={`button-feature-launch-${feature.stage}-produce-${feature.id}`}
-            >
-              {produceLaunchPending ? (
-                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Play className="mr-2 h-3.5 w-3.5" />
-              )}
-              {produceContract.actionLabel}
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuItem
-            disabled={launch.isPending || isSessionInProgress}
-            onSelect={(event) => {
-              event.preventDefault();
-              runDiscussLaunch();
-            }}
-            data-testid={`button-feature-discuss-${feature.id}`}
-          >
-            {discussPending ? (
-              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <MessageSquare className="mr-2 h-3.5 w-3.5" />
-            )}
-            Discuss
-          </DropdownMenuItem>
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger data-testid={`menu-feature-stage-${feature.id}`}>
-              Stage
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="w-44">
-              <DropdownMenuRadioGroup
-                value={feature.stage}
-                onValueChange={(stage) => {
-                  if (stage === feature.stage) return;
-                  update.mutate({
-                    stage,
-                    historyNote: `Manual stage change ${formatStage(feature.stage)} → ${formatStage(stage as FeatureStage)}`,
-                    historySource: "manual",
-                  });
-                }}
-              >
-                {stages.map((stage) => (
-                  <DropdownMenuRadioItem
-                    key={stage}
-                    value={stage}
-                    data-testid={`menu-feature-stage-${stage}-${feature.id}`}
-                  >
-                    <span className="mr-2 inline-flex h-3.5 w-3.5 items-center justify-center text-muted-foreground">
-                      {STAGE_ICONS[stage]}
-                    </span>
-                    {formatStage(stage)}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-          <DropdownMenuItem
-            onSelect={() =>
-              apiRequest("POST", `/api/features/${feature.id}/archive`, { confirm: true }).then(() => {
-                queryClient.invalidateQueries({ queryKey: ["/api/features"] });
-              })
-            }
-          >
-            Archive
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="text-destructive"
-            onSelect={(event) => {
-              event.preventDefault();
-              setDeleteConfirmOpen(true);
-            }}
-            data-testid={`menu-feature-delete-${feature.id}`}
-          >
-            Delete
-          </DropdownMenuItem>
-        </>
-      )}
-      />
+      ) : null}
       {rowExpanded && activeSessionMeta ? (
         <FeatureActiveSessionStrip
           meta={activeSessionMeta}
@@ -1667,10 +1670,11 @@ export default function FeaturesPage() {
                 {formatStage(stage)}
               </CollapsibleTrigger>
               <CollapsibleContent>
+                <div className="space-y-0 mt-0">
                 {rows.length ? (
-                  rows.map((feature, index) => (
-                    <HierarchyTreeRow key={feature.id} continues={index < rows.length - 1} connectorAnchor="first-row-center">
+                  rows.map((feature) => (
                       <FeatureRow
+                        key={feature.id}
                         feature={feature}
                         products={productList}
                         sessionsById={sessionsById}
@@ -1678,11 +1682,11 @@ export default function FeaturesPage() {
                         streamStore={featureStreamStore}
                         streamWsConnected={featureStreamWsConnected}
                       />
-                    </HierarchyTreeRow>
                   ))
                 ) : (
                   <div className="px-2 py-1.5 text-sm text-muted-foreground">No Features</div>
                 )}
+                </div>
               </CollapsibleContent>
             </Collapsible>
           ))}
