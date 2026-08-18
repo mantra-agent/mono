@@ -347,6 +347,11 @@ export function buildStepBrief(
   workspaceDir?: string,
   retryContext?: { attempt: number; priorOutput?: string },
   planContext?: { planId: string; stepId: string; attemptId: number; planPageRef: string },
+  /**
+   * Deterministic resolveWorkDependencyContext digest for linked/referenced work.
+   * Distinguishes external durable blockers from internal step order.
+   */
+  dependencySection?: string,
 ): string {
   const priorSection = priorOutcomes.length > 0
     ? `### Prior Steps\n${priorOutcomes.map(o => `- **${o.title}**: ${o.outcome}`).join("\n")}`
@@ -364,6 +369,10 @@ export function buildStepBrief(
     ? `### Plan Context\nPlan ID: ${planContext.planId}\nStep ID: ${planContext.stepId}\nAttempt ID: ${planContext.attemptId}\nPlan document: ${planContext.planPageRef}\n\nRead the plan document for context if needed. Do not edit the plan document's managed Run History section; the parent executor owns that projection.`
     : "";
 
+  const dependencyBlock = dependencySection?.trim()
+    ? `\n${dependencySection.trim()}\n`
+    : "";
+
   return `## Plan: ${planTitle}
 
 You are executing step ${stepIndex + 1} of ${totalSteps}.
@@ -374,12 +383,12 @@ ${instructions}
 ${priorSection}
 
 ${workspaceSection}
-${planContextSection ? `\n${planContextSection}\n` : ""}${retrySection ? `\n${retrySection}\n` : ""}
+${planContextSection ? `\n${planContextSection}\n` : ""}${dependencyBlock}${retrySection ? `\n${retrySection}\n` : ""}
 ### Important
 - The parent plan executor owns this step's running, completed, failed, skipped, and retry state. Do not call plan(action: "update_step") to mark this step complete or failed. When the work is complete, call session(action: "end") with a concise completion summary; prose, tool activity, and ordinary session stopping are not completion evidence.
 - Treat the step instructions as the full in-scope mission. If you find missing code, defects, build failures, incomplete requirements, or an unsafe first pass that you can repair with the available tools, **keep working**. Those are unfinished work, not blockers.
 - "blocked" is reserved for an external, irreducible dependency that prevents further progress inside this mission: for example, missing human approval or product input, unavailable credentials/provider access, an authority gate the current session cannot satisfy, or a dependency on another session/provider. Before reporting "blocked", verify that the dependency is genuinely outside the stated scope and explain exactly what is unavailable and why the child cannot resolve it.
-- Your position in this plan (step N of M, prior steps) is internal execution order, not a durable work prerequisite. Durable cross-object prerequisites live only in the \`blocked_by\` graph. If your mission targets a task, project, or milestone, read its Work Dependencies with \`blocking_graph.list_blockers\` before executing: an unresolved active blocker on that work item is an external durable blocker — report "blocked" with the blocking address rather than treating a blocked work item as executable. Never invent prerequisites from titles or write a second dependency store.
+- Your position in this plan (step N of M, prior steps) is internal execution order, not a durable work prerequisite. Durable cross-object prerequisites live only in the \`blocked_by\` graph and are projected above via \`resolveWorkDependencyContext\` when the plan links or references work. An unresolved active blocker on a targeted work item is an external durable blocker — report "blocked" with the blocking address rather than treating blocked work as executable. Never invent prerequisites from titles or write a second dependency store.
 - Use "needs_review" only when the work has reached a deliberate human decision or acceptance gate. Do not use it as a synonym for incomplete, uncertain, or not-yet-polished work.
 - Use plan(action: "update_step") for this step only when reporting a qualifying "blocked" or "needs_review" condition so execution must stop. A self-discovered implementation gap is not qualifying.
 - If you discover the plan needs additional steps, call plan(action: "add_steps") with the planId.

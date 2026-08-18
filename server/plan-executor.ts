@@ -374,8 +374,13 @@ export async function executePlan(
 
 interface ExecuteStepInput {
   planId: string;
-  plan: { workspaceDir: string | null; pageId: string };
-  step: { id: string; title: string; status: string; instructions: string | null; timeoutMinutes: number | null; totalAttempts: number | null };
+  plan: {
+    workspaceDir: string | null;
+    pageId: string;
+    projectId?: number | null;
+    goalId?: string | null;
+  };
+  step: { id: string; title: string; status: string; instructions: string | null; timeoutMinutes: number | null; totalAttempts: number | null; persona?: string | null };
   stepIndex: number;
   totalSteps: number;
   planTitle: string;
@@ -428,11 +433,28 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
         throw new Error(`Could not create attempt row for ${step.id} attempt ${attemptCount}`);
       }
 
+      // Deterministic work-dependency gate: external durable blockers ≠ step order.
+      let dependencySection: string | undefined;
+      try {
+        const { resolvePlanStepDependencyDigest } = await import("./work-dependency-consumers");
+        dependencySection = await resolvePlanStepDependencyDigest({
+          projectId: plan.projectId,
+          goalId: plan.goalId,
+          title: step.title,
+          instructions: stepInstructions,
+        });
+      } catch (err) {
+        log.warn(
+          `[${planId}] Plan step dependency digest failed (fail-soft): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
       const brief = buildStepBrief(
         planTitle, { id: step.id, title: step.title, status: "running" },
         stepIndex, totalSteps, stepInstructions, priorOutcomes, plan.workspaceDir ?? undefined,
         attempt > 1 ? { attempt, priorOutput: priorAttemptOutput } : undefined,
         { planId, stepId: step.id, attemptId, planPageRef },
+        dependencySection,
       );
 
       const idleTimeoutMs = (step.timeoutMinutes ?? DEFAULT_IDLE_TIMEOUT_MINUTES) * 60 * 1000;
