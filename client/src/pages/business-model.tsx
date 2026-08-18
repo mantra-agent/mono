@@ -364,6 +364,66 @@ export default function BusinessModelPage() {
       <section className="overflow-hidden border-y border-border/20">
         <ProfileDetailSection title="Assumptions" open={assumptionsOpen} onOpenChange={changeAssumptionsOpen} headerAction={<SavedIndicator state={saveState} />}>
           <div className="space-y-0">
+            <ProfileDetailSection title="Tiers" defaultOpen testId="assumptions-tiers">
+              <ProfileDetailSection title="Max" defaultOpen testId="tier-max">
+                <AssumptionDriver assumptionKey="maxSubscriptionMonthly" label="Max" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                  <NumericInput ariaLabel="Max monthly price" value={liveAssumptions.maxSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" disabled={sampled("maxSubscriptionMonthly")} onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} />
+                </AssumptionDriver>
+                <AssumptionDriver assumptionKey="maxIncludedParticipants" label="Included Participants" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                  <NumericInput ariaLabel="Max included Participants" value={liveAssumptions.maxIncludedParticipants} min={0} step={1} disabled={sampled("maxIncludedParticipants")} onChange={(maxIncludedParticipants) => updateGlobal({ maxIncludedParticipants })} />
+                </AssumptionDriver>
+                <AssumptionDriver assumptionKey="maxIncludedTokensMillions" label="Max included tokens" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                  <NumericInput ariaLabel="Max included tokens in millions" value={liveAssumptions.maxIncludedTokensMillions} min={0} step={1} suffix="M" disabled={sampled("maxIncludedTokensMillions")} onChange={(maxIncludedTokensMillions) => updateGlobal({ maxIncludedTokensMillions })} />
+                </AssumptionDriver>
+                <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
+                  <span className="min-w-0 truncate text-muted-foreground">Principals</span>
+                  <span className="tabular-nums text-sm text-foreground">1</span>
+                </div>
+              </ProfileDetailSection>
+              <ProfileDetailSection title="Max+" defaultOpen testId="tier-max-plus">
+                <AssumptionDriver assumptionKey="maxPlusSubscriptionMonthly" label="Max+" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                  <NumericInput ariaLabel="Max+ monthly price" value={liveAssumptions.maxPlusSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" disabled={sampled("maxPlusSubscriptionMonthly")} onChange={(maxPlusSubscriptionMonthly) => updateGlobal({ maxPlusSubscriptionMonthly })} />
+                </AssumptionDriver>
+                <AssumptionDriver assumptionKey="maxPlusIncludedParticipants" label="Included Participants" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                  <NumericInput ariaLabel="Max+ included Participants" value={liveAssumptions.maxPlusIncludedParticipants} min={0} step={1} disabled={sampled("maxPlusIncludedParticipants")} onChange={(maxPlusIncludedParticipants) => updateGlobal({ maxPlusIncludedParticipants })} />
+                </AssumptionDriver>
+                <AssumptionDriver assumptionKey="maxPlusIncludedTokensMillions" label="Max+ included tokens" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                  <NumericInput ariaLabel="Max+ included tokens in millions" value={liveAssumptions.maxPlusIncludedTokensMillions} min={0} step={1} suffix="M" disabled={sampled("maxPlusIncludedTokensMillions")} onChange={(maxPlusIncludedTokensMillions) => updateGlobal({ maxPlusIncludedTokensMillions })} />
+                </AssumptionDriver>
+                <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
+                  <span className="min-w-0 truncate text-muted-foreground">Principals</span>
+                  <span className="tabular-nums text-sm text-foreground">1</span>
+                </div>
+              </ProfileDetailSection>
+              <ProfileDetailSection title="Enterprise" defaultOpen testId="tier-enterprise">
+                <AssumptionDriver assumptionKey="enterpriseSubscriptionMonthly" label="Enterprise" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                  <NumericInput ariaLabel="Enterprise monthly floor" value={liveAssumptions.enterpriseSubscriptionMonthly} min={0} step={250} prefix="$" suffix="/ mo" disabled={sampled("enterpriseSubscriptionMonthly")} onChange={(enterpriseSubscriptionMonthly) => updateGlobal({ enterpriseSubscriptionMonthly })} />
+                </AssumptionDriver>
+                <AssumptionDriver assumptionKey="enterpriseIncludedParticipants" label="Included Participants" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                  <NumericInput ariaLabel="Enterprise included Participants" value={liveAssumptions.enterpriseIncludedParticipants} min={0} step={1} disabled={sampled("enterpriseIncludedParticipants")} onChange={(enterpriseIncludedParticipants) => updateGlobal({ enterpriseIncludedParticipants })} />
+                </AssumptionDriver>
+                <AssumptionDriver assumptionKey="enterpriseIncludedTokensMillions" label="Enterprise included tokens" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                  <NumericInput ariaLabel="Enterprise included tokens in millions" value={liveAssumptions.enterpriseIncludedTokensMillions} min={0} step={10} suffix="M" disabled={sampled("enterpriseIncludedTokensMillions")} onChange={(enterpriseIncludedTokensMillions) => updateGlobal({ enterpriseIncludedTokensMillions })} />
+                </AssumptionDriver>
+                <AssumptionDriver assumptionKey="enterpriseEntrySharePct" label="Enterprise entry share" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                  <NumericInput ariaLabel="Enterprise entry volume share" value={liveAssumptions.enterpriseEntrySharePct} min={0} step={5} suffix="%" disabled={sampled("enterpriseEntrySharePct")} onChange={(enterpriseEntrySharePct) => updateGlobal({ enterpriseEntrySharePct })} />
+                </AssumptionDriver>
+                <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
+                  <span className="min-w-0 truncate text-muted-foreground">Principals</span>
+                  <span className="tabular-nums text-sm text-foreground">2</span>
+                </div>
+                <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
+                  <span className="min-w-0 truncate text-muted-foreground">Router</span>
+                  <span className="text-sm text-foreground">Dedicated</span>
+                </div>
+              </ProfileDetailSection>
+              <AssumptionDriver assumptionKey="participantSeatMonthly" label="Extra Participant" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                <NumericInput ariaLabel="Extra Participant monthly price" value={liveAssumptions.participantSeatMonthly} min={0} step={25} prefix="$" suffix="/ mo" disabled={sampled("participantSeatMonthly")} onChange={(participantSeatMonthly) => updateGlobal({ participantSeatMonthly })} />
+              </AssumptionDriver>
+              <AssumptionDriver assumptionKey="overageMarkupPct" label="Extra usage markup" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                <NumericInput ariaLabel="Extra usage markup over published API" value={liveAssumptions.overageMarkupPct} min={0} step={25} suffix="%" disabled={sampled("overageMarkupPct")} onChange={(overageMarkupPct) => updateGlobal({ overageMarkupPct })} />
+              </AssumptionDriver>
+            </ProfileDetailSection>
             <AssumptionDriver assumptionKey="startingAccounts" label="Starting accounts" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
               <NumericInput ariaLabel="Starting paying accounts" value={liveAssumptions.startingAccounts} min={0} step={1} disabled={sampled("startingAccounts")} onChange={(startingAccounts) => updateGlobal({ startingAccounts })} />
             </AssumptionDriver>
@@ -384,15 +444,6 @@ export default function BusinessModelPage() {
             </AssumptionDriver>
             <AssumptionDriver assumptionKey="annualAccountUpgradePct" label="Account upgrades" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
               <NumericInput ariaLabel="Annual account upgrade rate" value={liveAssumptions.annualAccountUpgradePct} min={0} step={5} suffix="% / yr" disabled={sampled("annualAccountUpgradePct")} onChange={(annualAccountUpgradePct) => updateGlobal({ annualAccountUpgradePct })} />
-            </AssumptionDriver>
-            <AssumptionDriver assumptionKey="maxSubscriptionMonthly" label="Base plan" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-              <NumericInput ariaLabel="Base plan monthly price" value={liveAssumptions.maxSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" disabled={sampled("maxSubscriptionMonthly")} onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} />
-            </AssumptionDriver>
-            <AssumptionDriver assumptionKey="maxPlusSubscriptionMonthly" label="Upgraded plan" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-              <NumericInput ariaLabel="Upgraded plan monthly price" value={liveAssumptions.maxPlusSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" disabled={sampled("maxPlusSubscriptionMonthly")} onChange={(maxPlusSubscriptionMonthly) => updateGlobal({ maxPlusSubscriptionMonthly })} />
-            </AssumptionDriver>
-            <AssumptionDriver assumptionKey="participantSeatMonthly" label="Additional user" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-              <NumericInput ariaLabel="Additional user monthly price" value={liveAssumptions.participantSeatMonthly} min={0} step={25} prefix="$" suffix="/ mo" disabled={sampled("participantSeatMonthly")} onChange={(participantSeatMonthly) => updateGlobal({ participantSeatMonthly })} />
             </AssumptionDriver>
             <AssumptionDriver assumptionKey="hoursUsedPerActiveUser" label="Hours per user" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
               <NumericInput ariaLabel="Hours used per active user per month" value={liveAssumptions.hoursUsedPerActiveUser} min={0} step={1} suffix="/ mo" disabled={sampled("hoursUsedPerActiveUser")} onChange={(hoursUsedPerActiveUser) => updateGlobal({ hoursUsedPerActiveUser })} />
