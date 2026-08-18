@@ -37,6 +37,14 @@ export function registerFeatureRoutes(app: Express): void {
     }
   });
   app.patch("/api/features/:id", requirePermission("build:write"), async (req, res) => { try { const row = await featureStorage.update(id.parse(req.params.id), req.body); row ? res.json(row) : res.status(404).json({ error: "Feature not found" }); } catch (e) { res.status((e as any)?.status ?? 400).json({ error: e instanceof Error ? e.message : "Feature update failed" }); } });
+  app.post("/api/features/:id/recheck-availability", requirePermission("build:write"), async (req, res) => {
+    try {
+      const row = await featureStorage.recheckAvailability(id.parse(req.params.id));
+      row ? res.json(row) : res.status(404).json({ error: "Feature not found" });
+    } catch (e) {
+      res.status((e as any)?.status ?? 400).json({ error: e instanceof Error ? e.message : "Feature availability recheck failed" });
+    }
+  });
   app.post("/api/features/:id/archive", requirePermission("build:write"), async (req, res) => { try { confirm.parse(req.body); const row = await featureStorage.archive(id.parse(req.params.id), req.body); row ? res.json(row) : res.status(404).json({ error: "Feature not found" }); } catch (e) { res.status((e as any)?.status ?? 400).json({ error: e instanceof Error ? e.message : "Feature archive failed" }); } });
   app.delete("/api/features/:id", requirePermission("build:write"), async (req, res) => { try { confirm.parse(req.body); res.json({ success: await featureStorage.permanentlyDelete(id.parse(req.params.id), true) }); } catch (e) { res.status((e as any)?.status ?? 400).json({ error: e instanceof Error ? e.message : "Feature deletion failed" }); } });
   app.put("/api/features/:id/kpi", requirePermission("build:write"), async (req, res) => { try { res.json(await featureStorage.linkKpi(id.parse(req.params.id), String(req.body.kpiAddress), String(req.body.idempotencyKey))); } catch (e) { res.status((e as any)?.status ?? 400).json({ error: e instanceof Error ? e.message : "KPI link failed" }); } });

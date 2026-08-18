@@ -21,6 +21,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Square,
+  Timer,
   User,
   Wrench,
 } from "lucide-react";
@@ -599,6 +600,7 @@ const FeatureRow = memo(function FeatureRow({
                   spec_page_id:
                     row.spec_page_id !== undefined ? row.spec_page_id : entry.spec_page_id,
                   product_name: row.product_name ?? entry.product_name,
+                  availability: row.availability ?? entry.availability,
                 }
               : entry,
           );
@@ -610,6 +612,32 @@ const FeatureRow = memo(function FeatureRow({
     onError: (error: unknown) =>
       toast({
         title: "Failed to update Feature",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      }),
+  });
+
+  const recheckAvailability = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/features/${feature.id}/recheck-availability`);
+      return response.json() as Promise<Feature>;
+    },
+    onSuccess: (row) => {
+      if (row?.id) {
+        queryClient.setQueriesData<Feature[]>({ queryKey: ["/api/features"] }, (old) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((entry) =>
+            entry.id === row.id
+              ? { ...entry, availability: row.availability ?? entry.availability }
+              : entry,
+          );
+        });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["/api/features"] });
+    },
+    onError: (error: unknown) =>
+      toast({
+        title: "Could not recheck stage",
         description: error instanceof Error ? error.message : "Unknown error",
         variant: "destructive",
       }),
@@ -961,13 +989,15 @@ const FeatureRow = memo(function FeatureRow({
               (() => {
                 // Availability is room data on the row payload — never branch on stage name.
                 const availabilityState = feature.availability?.state;
-                const waitingOnStage = availabilityState === "waiting";
-                const playTooltip = waitingOnStage
+                const needsRecheck =
+                  availabilityState === "waiting" || availabilityState === "unknown";
+                const playTooltip = availabilityState === "waiting"
                   ? "Waiting on stage"
-                  : produceContract.actionLabel;
-                const playClass = waitingOnStage
-                  ? "h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground/40 hover:bg-accent hover:text-muted-foreground/70 [&_svg]:size-3"
-                  : "h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground/70 hover:bg-accent hover:text-foreground [&_svg]:size-3";
+                  : availabilityState === "unknown"
+                    ? "Recheck stage"
+                    : produceContract.actionLabel;
+                const playClass =
+                  "h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground/70 hover:bg-accent hover:text-foreground [&_svg]:size-3";
                 return (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -976,19 +1006,35 @@ const FeatureRow = memo(function FeatureRow({
                         variant="ghost"
                         size="icon"
                         className={playClass}
-                        disabled={launch.isPending}
+                        disabled={needsRecheck ? recheckAvailability.isPending : launch.isPending}
                         aria-label={
-                          waitingOnStage
-                            ? `Waiting on stage — Play ${produceContract.actionLabel} for ${feature.summary}`
-                            : `Play ${produceContract.actionLabel} for ${feature.summary}`
+                          availabilityState === "waiting"
+                            ? `Waiting on stage — recheck ${feature.summary}`
+                            : availabilityState === "unknown"
+                              ? `Recheck stage for ${feature.summary}`
+                              : `Play ${produceContract.actionLabel} for ${feature.summary}`
                         }
                         onClick={(event) => {
                           event.stopPropagation();
+                          if (needsRecheck) {
+                            recheckAvailability.mutate();
+                            return;
+                          }
                           runPipelineLaunch("produce");
                         }}
-                        data-testid={`button-feature-play-${feature.stage}-produce-${feature.id}`}
+                        data-testid={
+                          needsRecheck
+                            ? `button-feature-recheck-${feature.stage}-${feature.id}`
+                            : `button-feature-play-${feature.stage}-produce-${feature.id}`
+                        }
                       >
-                        {produceLaunchPending ? (
+                        {needsRecheck ? (
+                          recheckAvailability.isPending ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Timer className="h-3 w-3" />
+                          )
+                        ) : produceLaunchPending ? (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         ) : (
                           <Play className="h-3 w-3" />

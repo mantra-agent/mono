@@ -208,6 +208,51 @@ export const featureStorage = {
     const [projected] = await projectFeatureAvailability([row as Record<string, unknown>]);
     return projected ?? row;
   },
+  /**
+   * Recheck the Stage join for one Feature. Does not launch Smoke and does not
+   * leave/re-enter the room. If the newest enter-declaring-room history row has
+   * a NULL change_sha, fill it through resolveChangeShaForStamp only. Never
+   * overwrite a real SHA. Then re-project availability from the Product clock.
+   */
+  async recheckAvailability(id: string) {
+    const current = await this.get(id);
+    if (!current) return undefined;
+    const stage = String((current as { stage?: string }).stage ?? "");
+    if (!featureRoomDeclaresAvailability(stage)) return current;
+
+    const productId = Number((current as { product_id?: number }).product_id);
+    if (Number.isInteger(productId) && productId > 0 && roomDeclaresChangeShaIdentity(stage)) {
+      const newest = await db.execute(sql`
+        SELECT id, change_sha
+        FROM feature_history
+        WHERE feature_id = ${id}
+          AND to_stage = ${stage}
+        ORDER BY created_at DESC
+        LIMIT 1
+      `);
+      const history = newest.rows[0] as { id?: string; change_sha?: string | null } | undefined;
+      const historyId = typeof history?.id === "string" ? history.id : "";
+      const existingSha =
+        typeof history?.change_sha === "string" && history.change_sha.trim()
+          ? history.change_sha.trim()
+          : null;
+      if (historyId && !existingSha) {
+        const filled = await resolveChangeShaForStamp({ featureId: id, productId });
+        if (filled) {
+          await db.execute(sql`
+            UPDATE feature_history
+            SET change_sha = ${filled}
+            WHERE id = ${historyId}
+              AND (change_sha IS NULL OR btrim(change_sha) = '')
+          `);
+        }
+      }
+    }
+
+    const [projected] = await projectFeatureAvailability([current as Record<string, unknown>]);
+    if (projected) publishFeaturesChanged("updated", id);
+    return projected ?? current;
+  },
   async archive(id: string, input: any = {}) {
     const p = principal();
     const current = await this.get(id);
