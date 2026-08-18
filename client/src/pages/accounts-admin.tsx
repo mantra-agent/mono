@@ -224,7 +224,7 @@ function AccountRow({
                       className="max-w-full"
                     />
                   ) : (
-                    <span className="text-muted-foreground">Legacy</span>
+                    <span className="text-muted-foreground">Unassigned</span>
                   )}
                 </ProfileTreeRow>
               </div>

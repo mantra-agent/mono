@@ -1798,6 +1798,24 @@ export async function runSchemaBootstrap(
       SELECT 'Default', TRUE
       WHERE NOT EXISTS (SELECT 1 FROM routers WHERE is_default = TRUE)
     `);
+    // Legacy sunset: leftover NULL model connectors retire; every Account gets Default.
+    await pool.query(`DELETE FROM provider_connections WHERE connector_kind = 'model' AND router_id IS NULL`);
+    await pool.query(`
+      UPDATE accounts
+         SET router_id = (SELECT id FROM routers WHERE is_default = TRUE LIMIT 1),
+             updated_at = CURRENT_TIMESTAMP
+       WHERE router_id IS NULL
+         AND EXISTS (SELECT 1 FROM routers WHERE is_default = TRUE)
+    `);
+    await pool.query(`ALTER TABLE accounts ALTER COLUMN router_id SET NOT NULL`);
+    await pool.query(`
+      DO $ BEGIN
+        ALTER TABLE provider_connections
+          ADD CONSTRAINT provider_connections_model_router_required
+          CHECK (connector_kind <> 'model' OR router_id IS NOT NULL);
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $
+    `);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS semantic_tier TEXT`);
     // routing_examples was a dead orientation-only signal that never survived
     // copy-on-write; drop the column rather than keep reconciling empty arrays.

@@ -149,7 +149,7 @@ const SIDE_EFFECT_TIERS: Record<string, ToolSideEffectEntry> = {
     poll_cloudflare_pages_deployment: 0,
   }},
   routers: { default: 2, actions: {
-    list: 0, get: 0, list_legacy: 0,
+    list: 0, get: 0,
   }},
   observe: { default: 1 },
   orient: { default: 1 },

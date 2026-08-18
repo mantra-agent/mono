@@ -391,19 +391,20 @@ export async function ensureUserIdentityFoundation(
 
     let accountId = existingAccount?.id ?? null;
     if (!accountId) {
-      // New Accounts receive Default Router when one exists (parallel cutover: existing stay NULL).
+      // New Accounts receive Default. Missing Default is a boot defect.
       const [defaultRouter] = await tx
         .select({ id: routers.id })
         .from(routers)
         .where(eq(routers.isDefault, true))
         .limit(1);
+      if (!defaultRouter) throw new Error("Default Router is missing");
       accountId = (await tx
         .insert(accounts)
         .values({
           kind: "personal",
           name: firstName,
           ownerUserId: user.id,
-          routerId: defaultRouter?.id ?? null,
+          routerId: defaultRouter.id,
         })
         .onConflictDoUpdate({
           target: [accounts.kind, accounts.ownerUserId],

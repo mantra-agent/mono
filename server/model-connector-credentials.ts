@@ -136,8 +136,8 @@ export interface ConnectorAuthStatus {
 }
 
 /**
- * Named Router members are exclusive instances. Only the legacy NULL-router
- * chain may inherit global primary accounts / app_secrets during cutover.
+ * Named Router members are exclusive. Residual NULL-router rows (pre-sunset
+ * boot) may still inherit global secrets until schema tighten deletes them.
  */
 function allowsLegacyCredentialFallback(routerId: string | null | undefined): boolean {
   return routerId == null;
@@ -290,15 +290,17 @@ export async function disconnectConnectorAuth(connectorId: number): Promise<void
   log.info("cleared connector auth", { connectorId, provider: row.provider });
 }
 
-/** Find the sole legacy connector of a provider (Integrations singleton view). */
+/** Integrations singleton: Default Router's connector of this provider. */
 export async function findLegacyConnectorId(provider: ModelConnectorProvider): Promise<number | null> {
+  const { ensureDefaultRouter } = await import("./router-storage");
+  const fallback = await ensureDefaultRouter();
   const [row] = await db
     .select({ id: providerConnections.id })
     .from(providerConnections)
     .where(and(
       eq(providerConnections.connectorKind, "model"),
       eq(providerConnections.provider, provider),
-      isNull(providerConnections.routerId),
+      eq(providerConnections.routerId, fallback.id),
     ))
     .limit(1);
   return row?.id ?? null;

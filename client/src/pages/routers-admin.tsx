@@ -41,7 +41,6 @@ import { cn } from "@/lib/utils";
 
 
 const ROUTERS_QUERY_KEY = ["/api/routers"] as const;
-const LEGACY_CONNECTORS_QUERY_KEY = ["/api/routers/legacy-connectors"] as const;
 
 interface RouterSummary {
   id: string;
@@ -177,18 +176,9 @@ function RouterRow({
 
   const connectors = detailQuery.data?.connectors ?? [];
 
-  const legacyQuery = useQuery<{ connectors: RouterConnector[] }>({
-    queryKey: LEGACY_CONNECTORS_QUERY_KEY,
-    enabled: canWrite,
-    queryFn: async () => (await apiRequest("GET", "/api/routers/legacy-connectors")).json(),
-    staleTime: 10_000,
-  });
-  const legacyConnectors = legacyQuery.data?.connectors ?? [];
-
   async function invalidateMembership() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: [...ROUTERS_QUERY_KEY, summary.id] }),
-      queryClient.invalidateQueries({ queryKey: LEGACY_CONNECTORS_QUERY_KEY }),
       queryClient.invalidateQueries({ queryKey: ROUTERS_QUERY_KEY }),
     ]);
   }
@@ -201,17 +191,6 @@ function RouterRow({
       await invalidateMembership();
     },
     onError: (error: Error) => toast({ title: "Add connector failed", description: error.message, variant: "destructive" }),
-  });
-
-  const attachLegacy = useMutation({
-    mutationFn: async (connectorId: number) => {
-      await apiRequest("POST", `/api/routers/${summary.id}/connectors/move`, { connectorId });
-    },
-    onSuccess: async () => {
-      await invalidateMembership();
-      toast({ title: "Connector attached" });
-    },
-    onError: (error: Error) => toast({ title: "Attach failed", description: error.message, variant: "destructive" }),
   });
 
   const patchConnector = useMutation({
@@ -232,17 +211,6 @@ function RouterRow({
       await invalidateMembership();
     },
     onError: (error: Error) => toast({ title: "Remove failed", description: error.message, variant: "destructive" }),
-  });
-
-  const leaveLegacy = useMutation({
-    mutationFn: async (connectorId: number) => {
-      await apiRequest("POST", "/api/routers/connectors/leave", { connectorId });
-    },
-    onSuccess: async () => {
-      await invalidateMembership();
-      toast({ title: "Returned to legacy" });
-    },
-    onError: (error: Error) => toast({ title: "Leave failed", description: error.message, variant: "destructive" }),
   });
 
   const reorder = useMutation({
@@ -332,29 +300,6 @@ function RouterRow({
                   ))}
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>Attach Legacy</DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="max-h-72 overflow-y-auto">
-                  {legacyQuery.isLoading ? (
-                    <DropdownMenuItem disabled>Loading…</DropdownMenuItem>
-                  ) : legacyConnectors.length === 0 ? (
-                    <DropdownMenuItem disabled>No legacy connectors</DropdownMenuItem>
-                  ) : (
-                    legacyConnectors.map((connector) => (
-                      <DropdownMenuItem
-                        key={connector.id}
-                        disabled={attachLegacy.isPending}
-                        onClick={() => attachLegacy.mutate(connector.id)}
-                      >
-                        <span className="min-w-0 truncate">
-                          {connector.label}
-                          <span className="ml-1 text-muted-foreground">{connector.provider}</span>
-                        </span>
-                      </DropdownMenuItem>
-                    ))
-                  )}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 disabled={summary.isDefault}
@@ -414,12 +359,6 @@ function RouterRow({
                         })}
                       >
                         {connector.status === "active" ? "Disable" : "Enable"}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        disabled={leaveLegacy.isPending}
-                        onClick={() => leaveLegacy.mutate(connector.id)}
-                      >
-                        Return to Legacy
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         className="text-destructive focus:text-destructive"

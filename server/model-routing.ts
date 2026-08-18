@@ -120,18 +120,18 @@ export async function resolveModelCandidates(
     : await resolveSemanticTier(options.sessionId);
   if (options.semanticTierOverride && !options.overrideReason) throw new ModelRoutingError("Semantic tier override requires overrideReason");
 
-  // One discriminant: account.router_id. Set → exclusive Router pool. Null → legacy global chain.
+  // One discriminant: account.router_id. Missing Account or Router fails closed.
   const { getCurrentPrincipal } = await import("./principal-context");
   const { getAccountRouterId } = await import("./router-storage");
   const { assertAccountUsageDispatchAllowed } = await import("./account-usage-envelope");
   const principal = getCurrentPrincipal();
   await assertAccountUsageDispatchAllowed(principal?.accountId ?? null);
   const routerId = await getAccountRouterId(principal?.accountId ?? null);
-  const connectors = (
-    routerId
-      ? await listModelConnectors({ routerId })
-      : await listModelConnectors({ legacyOnly: true })
-  ).filter((connector) => connector.status === "active");
+  if (!routerId) {
+    throw new ModelRoutingError("Account has no Router; Legacy chain is retired");
+  }
+  const connectors = (await listModelConnectors({ routerId }))
+    .filter((connector) => connector.status === "active");
 
   const configHash = createHash("sha256").update(JSON.stringify({
     routerId: routerId ?? null,

@@ -168,8 +168,8 @@ export const accounts = pgTable("accounts", {
   name: text("name").notNull(),
   status: text("status").notNull().default("active"),
   ownerUserId: varchar("owner_user_id").references(() => users.id, { onDelete: "set null" }),
-  /** Nullable during parallel cutover. NULL = legacy unnamed global connector chain. */
-  routerId: uuid("router_id"),
+  /** Exclusive Router pool. Required after Legacy sunset. */
+  routerId: uuid("router_id").notNull(),
   /** NULL = no envelope (not a paying Account). Never default TIVE to Factory+ 1B. */
   includedTokens: bigint("included_tokens", { mode: "number" }),
   grantedTokens: bigint("granted_tokens", { mode: "number" }).notNull().default(0),

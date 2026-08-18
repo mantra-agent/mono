@@ -111,7 +111,6 @@ export const coreDefinition: CoreDefinition = {
       nav("core.nav.prompts", "System", "Prompts", "FileText", "navigation.prompts.open", "core.route.system", 5, { requiredPermissions: ["build:read"] }),
       nav("core.nav.context", "System", "Context", "BrainCircuit", "navigation.context.open", "core.route.brain", 6, { requiredPermissions: ["system:read"] }),
       nav("core.nav.router", "System", "Router", "Brain", "navigation.router.open", "core.route.system", 7, { requiredPermissions: ["system:read"] }),
-      nav("core.nav.models", "System", "Models", "SlidersHorizontal", "navigation.models.open", "core.route.brain", 8),
       nav("core.nav.cost", "System", "Cost", "DollarSign", "navigation.cost.open", "core.route.system", 9, { requiredPermissions: ["system:read"] }),
       // Admin
       nav("core.nav.audiences", "Admin", "Audiences", "Users", "navigation.audiences.open", "core.route.audiences", 1, { requiredPermissions: ["system:read"] }),
