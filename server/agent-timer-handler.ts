@@ -3,7 +3,7 @@ import type { Timer, TimerRun } from "@shared/models/timers";
 import { timerStorage } from "./file-storage";
 import { withQueryAttributionAsync } from "./db";
 import { generateToolCallId } from "./file-storage/utils";
-import { getModelForActivity, ACTIVITY_CHAT } from "./job-profiles";
+import { ACTIVITY_CHAT } from "./job-profiles";
 import { createLogger } from "./log";
 import { formatMessageTimestamp, nowMessageTimestamp } from "./timezone";
 import type { TimerHandler, TimerHandlerResult } from "./timer-handlers";
@@ -22,6 +22,10 @@ export class AgentTimerHandler implements TimerHandler {
     const { recordToolCallStart, recordToolCallEnd } =
       await import("./file-storage/tool-stats");
     const { extractToolFailureKind } = await import("@shared/tool-failure");
+    const { resolveModelCandidates } = await import("./model-routing");
+    const { normalizeSessionModelTierOverride } = await import(
+      "./session-model-tier-override"
+    );
     type ExecutorMessageType = import("./agent-executor").ExecutorMessage;
     type StreamEventType = import("./agent-executor").StreamEvent;
 
@@ -44,7 +48,23 @@ export class AgentTimerHandler implements TimerHandler {
 
     await chatStorage.createMessage(sessionId, "user", timer.prompt);
 
-    const chatModel = getModelForActivity(ACTIVITY_CHAT);
+    // Same live connector pool as ordinary chat — never pin via legacy job-profiles.
+    const sessionTierOverride = normalizeSessionModelTierOverride(
+      session.modelTier,
+    );
+    const routingDecision = (
+      await resolveModelCandidates(
+        ACTIVITY_CHAT,
+        sessionTierOverride
+          ? {
+              semanticTierOverride: sessionTierOverride,
+              overrideReason: "session model tier override",
+              sessionId,
+            }
+          : { sessionId },
+      )
+    )[0];
+    const chatModel = routingDecision.modelString;
 
     const journal = (type: string, extra: Record<string, unknown> = {}) => {
       writeJournal({
@@ -57,7 +77,11 @@ export class AgentTimerHandler implements TimerHandler {
       } as Parameters<typeof writeJournal>[0]);
     };
 
-    journal("model_info", { model: chatModel });
+    journal("model_info", {
+      model: chatModel,
+      connectorId: routingDecision.connectorId ?? null,
+      source: routingDecision.source,
+    });
 
     const existingMessages = await chatStorage.getMessagesBySession(sessionId);
     const conversationHistory: Array<{
@@ -192,7 +216,7 @@ export class AgentTimerHandler implements TimerHandler {
       tools: toolDefs as any,
       toolExecutor,
       activity: ACTIVITY_CHAT,
-      model: chatModel,
+      routingDecision,
       onEvent,
       querySubsystem: "autonomous",
       tier: "background",
