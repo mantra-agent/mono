@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Building2, ChevronRight, Clock, Gauge, Gift, Loader2, MoreHorizontal, Pause, Route } from "lucide-react";
+import { Building2, ChevronRight, Clock, CreditCard, Gauge, Gift, Loader2, MoreHorizontal, Pause, Route } from "lucide-react";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
 import { EditableSessionTitle } from "@/components/editable-session-title";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
@@ -93,6 +93,10 @@ function AccountRow({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [modsOpen, setModsOpen] = useState(false);
+  const [attachPackage, setAttachPackage] = useState<"max" | "max_plus" | "factory_plus" | "custom">("custom");
+  const [includeTokens, setIncludeTokens] = useState(
+    account.includedTokens == null ? "0" : String(account.includedTokens),
+  );
   const [includeDraft, setIncludeDraft] = useState(
     account.includedTokens == null ? "" : String(account.includedTokens),
   );
@@ -113,6 +117,31 @@ function AccountRow({
     },
     onError: (error: Error) => toast({ title: "Could not update Mod", description: error.message, variant: "destructive" }),
   });
+  const billingMutation = useMutation({
+    mutationFn: async (input: { action: "attach" | "cancel-notice" }) => {
+      if (input.action === "attach") {
+        const body: { packageKey: typeof attachPackage; includeTokens?: number } = { packageKey: attachPackage };
+        if (attachPackage === "custom") {
+          const parsed = Number(includeTokens);
+          if (!Number.isInteger(parsed) || parsed < 0) throw new Error("custom requires include tokens");
+          body.includeTokens = parsed;
+        }
+        return (await apiRequest("POST", `/api/admin/accounts/${account.id}/billing/attach`, body)).json() as Promise<{ checkoutUrl?: string }>;
+      }
+      return (await apiRequest("POST", `/api/admin/accounts/${account.id}/billing/cancel-notice`)).json();
+    },
+    onSuccess: async (result, input) => {
+      await queryClient.invalidateQueries({ queryKey: IDENTITY_GRAPH_QUERY_KEY });
+      if (input.action === "attach" && result && "checkoutUrl" in result && typeof result.checkoutUrl === "string") {
+        window.open(result.checkoutUrl, "_blank", "noopener,noreferrer");
+      }
+      toast({ title: input.action === "attach" ? "Checkout opened" : "Cancel notice recorded" });
+    },
+    onError: (error: Error) => toast({ title: "Could not update billing", description: error.message, variant: "destructive" }),
+  });
+  const billingValue = account.billing
+    ? `${account.billing.packageKey} · ${account.billing.collectionStatus}${account.billing.paymentMethodKind === "us_bank_account" ? " · ACH" : account.billing.paymentMethodKind === "card" ? " · card" : ""}`
+    : "None";
   const email = ownerEmail(account, users);
   const children = useMemo(() => {
     const userRefs = users.map((user) => createReferenceRef({
@@ -257,6 +286,67 @@ function AccountRow({
                       placeholder="Choose router"
                       showToken={false}
                     />
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+            </div>
+          </HierarchyTreeRow>
+          <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+            <div className="group/billing flex w-full min-w-0 items-stretch">
+              <div className="min-w-0 flex-1">
+                <ProfileTreeRow
+                  label="Billing"
+                  icon={<CreditCard className="h-3.5 w-3.5" />}
+                  hasValue={Boolean(account.billing)}
+                  showEmpty
+                >
+                  <span className={account.billing ? "text-foreground" : "text-muted-foreground"}>{billingValue}</span>
+                </ProfileTreeRow>
+              </div>
+              {canWrite ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="mt-1 mr-1 flex h-7 w-5 shrink-0 items-center justify-center rounded p-0.5 opacity-0 transition-opacity hover:bg-accent/60 group-hover/billing:opacity-100 data-[state=open]:opacity-100"
+                      aria-label="Change billing"
+                    >
+                      <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-64 p-2">
+                    <p className="mb-2 px-1 text-xs font-medium text-muted-foreground">Attach</p>
+                    <select
+                      className="mb-2 w-full rounded-md border border-border bg-background px-2 py-1 text-sm"
+                      value={attachPackage}
+                      onChange={(event) => setAttachPackage(event.target.value as typeof attachPackage)}
+                    >
+                      <option value="custom">custom</option>
+                      <option value="max">max</option>
+                      <option value="max_plus">max_plus</option>
+                      <option value="factory_plus">factory_plus</option>
+                    </select>
+                    {attachPackage === "custom" ? (
+                      <Input
+                        className="mb-2 h-8"
+                        inputMode="numeric"
+                        placeholder="include tokens"
+                        value={includeTokens}
+                        onChange={(event) => setIncludeTokens(event.target.value)}
+                      />
+                    ) : null}
+                    <DropdownMenuItem
+                      disabled={billingMutation.isPending}
+                      onClick={() => billingMutation.mutate({ action: "attach" })}
+                    >
+                      Open Checkout
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={billingMutation.isPending || !account.billing}
+                      onClick={() => billingMutation.mutate({ action: "cancel-notice" })}
+                    >
+                      Record cancel notice
+                    </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : null}
