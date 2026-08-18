@@ -19,7 +19,7 @@ import { getReliabilityOutcomeSummary } from "../reliability-outcomes";
 import { createNamedSystemPrincipal } from "../principal";
 import { principalHasPermission, requirePermission } from "../permissions";
 import { requireAuth } from "../auth";
-import { runWithApiCallReportingScope } from "../file-storage/api-calls";
+import { runWithApiCallReportingScope, runWithApiCallRouterFilter, type ApiCallRouterFilter } from "../file-storage/api-calls";
 import { listModelConnectors, reorderModelConnectors, updateModelConnector } from "../model-connectors";
 import {
   claudeCliTierMappingsSchema,
@@ -31,12 +31,24 @@ import { projectPerformanceMetrics } from "../mods/performance-metrics-adapter";
 
 const INFERENCE_DEBUG_KEY = "system.inference_debug";
 
-function withCostReportingScope<T>(req: { principal?: Parameters<typeof principalHasPermission>[0] | null }, fn: () => T): T {
+const routerFilterSchema = z.union([z.literal("all"), z.literal("legacy"), z.string().uuid()]);
+
+function parseCostRouterFilter(value: unknown): ApiCallRouterFilter {
+  const parsed = routerFilterSchema.safeParse(typeof value === "string" && value.trim() ? value : "all");
+  return parsed.success ? parsed.data : "all";
+}
+
+function withCostReportingScope<T>(
+  req: { principal?: Parameters<typeof principalHasPermission>[0] | null; query?: Record<string, unknown> },
+  fn: () => T,
+): T {
   const principal = req.principal ?? null;
+  const routerFilter = parseCostRouterFilter(req.query?.routerId);
+  const run = () => runWithApiCallRouterFilter(routerFilter, fn);
   if (principal && principalHasPermission(principal, "system:read")) {
-    return runWithApiCallReportingScope("all-accounts", fn);
+    return runWithApiCallReportingScope("all-accounts", run);
   }
-  return fn();
+  return run();
 }
 
 const EMBED_MODELS = new Set(["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002", "all-MiniLM-L6-v2"]);

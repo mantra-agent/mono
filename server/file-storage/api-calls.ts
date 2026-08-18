@@ -141,6 +141,8 @@ export interface ApiCallListFilters {
   sessionKey?: string;
   profile?: string;
   model?: string;
+  /** Stamped metadata.routerId. `legacy` = null stamp. */
+  routerId?: ApiCallRouterFilter;
   since?: Date;
   before?: Date;
 }
@@ -202,12 +204,38 @@ function rowToApiCallLight(row: ApiCallRow): Omit<ApiCall, 'requestContent' | 'r
 }
 
 type ApiCallReportingScope = "owner" | "all-accounts";
+export type ApiCallRouterFilter = "all" | "legacy" | string;
 
 const reportingScopeALS = new AsyncLocalStorage<ApiCallReportingScope>();
+const routerFilterALS = new AsyncLocalStorage<ApiCallRouterFilter>();
 
 /** Widen Cost/inference *read* predicates to every account. Writes never enter this scope. */
 export function runWithApiCallReportingScope<T>(scope: ApiCallReportingScope, fn: () => T): T {
   return reportingScopeALS.run(scope, fn);
+}
+
+/** Cost/inference *read* filter on stamped metadata.routerId. Writes never enter this scope. */
+export function runWithApiCallRouterFilter<T>(filter: ApiCallRouterFilter, fn: () => T): T {
+  return routerFilterALS.run(filter, fn);
+}
+
+function currentRouterFilter(): ApiCallRouterFilter {
+  return routerFilterALS.getStore() ?? "all";
+}
+
+function appendRouterFilter(
+  alias: string,
+  conditions: string[],
+  params: Array<Date | number | string>,
+): void {
+  const filter = currentRouterFilter();
+  if (filter === "all") return;
+  if (filter === "legacy") {
+    conditions.push(`${alias}.metadata->>'routerId' IS NULL`);
+    return;
+  }
+  params.push(filter);
+  conditions.push(`${alias}.metadata->>'routerId' = ${params.length}`);
 }
 
 function currentReportingScope(): ApiCallReportingScope {
@@ -245,10 +273,12 @@ function visibilityClause(alias = "api_calls", startIndex = 1): { clause: string
 function buildSinceQuery(baseQuery: string, since: Date | undefined): { query: string; params: Array<Date | number | string> } {
   const visibility = visibilityClause("api_calls");
   const params: Array<Date | number | string> = [...visibility.params];
-  let query = `${baseQuery} WHERE ${visibility.clause}`;
+  const conditions = [visibility.clause];
+  appendRouterFilter("api_calls", conditions, params);
+  let query = `${baseQuery} WHERE ${conditions.join(" AND ")}`;
   if (since) {
     params.push(since);
-    query += ` AND timestamp >= $${params.length}`;
+    query += ` AND timestamp >= ${params.length}`;
   }
   return { query, params };
 }
@@ -256,10 +286,12 @@ function buildSinceQuery(baseQuery: string, since: Date | undefined): { query: s
 function buildWhereParams(since: Date | undefined, params: Array<Date | string | number>): string {
   const visibility = visibilityClause("api_calls", params.length + 1);
   params.push(...visibility.params);
-  let where = `WHERE ${visibility.clause}`;
+  const conditions = [visibility.clause];
+  appendRouterFilter("api_calls", conditions, params);
+  let where = `WHERE ${conditions.join(" AND ")}`;
   if (since) {
     params.push(since);
-    where += ` AND timestamp >= $${params.length}`;
+    where += ` AND timestamp >= ${params.length}`;
   }
   return where;
 }
@@ -365,6 +397,12 @@ export class FileApiCallStorage {
     if (filters.sessionKey) addCondition("session_key = $VALUE", filters.sessionKey);
     if (filters.profile) addCondition("profile = $VALUE", filters.profile);
     if (filters.model) addCondition("model = $VALUE", filters.model);
+    const routerId = filters.routerId ?? currentRouterFilter();
+    if (routerId === "legacy") {
+      conditions.push("metadata->>'routerId' IS NULL");
+    } else if (routerId !== "all") {
+      addCondition("metadata->>'routerId' = $VALUE", routerId);
+    }
 
     params.push(Math.max(1, Math.min(limit, 100_000)));
     const limitIdx = params.length;
@@ -608,7 +646,13 @@ export class FileApiCallStorage {
 
   async getTotalApiCallCount(): Promise<number> {
     const visibility = visibilityClause("api_calls");
-    const result = await pool.query<CountRow>(`SELECT COUNT(*)::int AS cnt FROM api_calls WHERE ${visibility.clause}`, visibility.params);
+    const params: Array<Date | number | string> = [...visibility.params];
+    const conditions = [visibility.clause];
+    appendRouterFilter("api_calls", conditions, params);
+    const result = await pool.query<CountRow>(
+      `SELECT COUNT(*)::int AS cnt FROM api_calls WHERE ${conditions.join(" AND ")}`,
+      params,
+    );
     return result.rows[0]?.cnt ?? 0;
   }
 
