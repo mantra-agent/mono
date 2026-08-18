@@ -61,11 +61,12 @@ Goal Manager owns goal hierarchy, horizons, and goal↔person/meeting links. It 
 
 ### Consumers (placement)
 
-- **Plan tool / decomposition** — primary producer/consumer for discovered work prerequisites; distinguishes durable external blockers from internal step order; consumes `resolveWorkDependencyContext`.
-- **Streamline / capacity** — excludes work with unresolved active blockers from executable capacity via the shared resolver.
-- **Autonomy** — gates Agent execution on unresolved blockers and prefers executable prerequisites via the shared resolver.
-- **Bootstrap / context** — may load bounded dependency state only for planning, selection, sequencing, scheduling, capacity, autonomy, or explicit work/dependency contexts (`world_model.active_work.dependencies`).
+- **Plan tool / decomposition** — primary producer/consumer for discovered work prerequisites; distinguishes durable external blockers from internal step order; consumes `resolveWorkDependencyContext` via `server/work-dependency-consumers.ts` (`resolvePlanStepDependencyDigest` injected into each step brief).
+- **Streamline / capacity** — excludes work with unresolved active blockers from executable capacity via the shared resolver (`resolveCapacityDependencyDigest` purpose `capacity`, injected on Streamline skill launch).
+- **Autonomy** — gates Agent execution on unresolved blockers and prefers executable prerequisites via the shared resolver (`resolveCapacityDependencyDigest` purpose `autonomy`, injected on Autonomy skill launch).
+- **Bootstrap / context** — may load bounded dependency state only for planning, selection, sequencing, scheduling, capacity, autonomy, or explicit work/dependency contexts (`world_model.active_work.dependencies`); address inventory shares `collectActiveWorkAddresses`.
 - All other skills — context-only if needed; no graph mutation and no private dependency fields.
+- Shared consumer helpers live in `server/work-dependency-consumers.ts`. Do not add parallel dependency digests per skill.
 
 ## Agenda vs Plan
 

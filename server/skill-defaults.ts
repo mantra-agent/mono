@@ -655,7 +655,7 @@ Do NOT create \`daily-brief-YYYY-MM-DD\` pages. Do NOT use the \`priorities\` to
     category: "system",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "1.8",
+    version: "1.9",
     addToMemory: true,
     pinnedToContext: false,
     sessionType: "autonomous",
@@ -712,9 +712,9 @@ Aligned Agent-assigned tasks are a legitimate autonomous work queue. Work them w
 
 ## Dependency-aware execution
 
-Work prerequisites live in one Core graph: the \`blocked_by\` relationship, read through the Work Dependencies projection in context and mutated only through \`blocking_graph\`.
+Work prerequisites live in one Core graph: the \`blocked_by\` relationship. The runner injects a deterministic **Autonomy Dependency Gate** from \`resolveWorkDependencyContext\` into this run's instructions; the Work Dependencies projection in context is the same read model. Mutate only through \`blocking_graph\`.
 
-- A task or project reported as \`blocked\` in that projection has an unresolved active prerequisite. Do not start it, advance it, or count it as executable. Task status is separate evidence; the graph is prerequisite truth.
+- A task or project reported as \`blocked\` in that gate/projection has an unresolved active prerequisite. Do not start it, advance it, or count it as executable. Task status is separate evidence; the graph is prerequisite truth.
 - Prefer executable prerequisites: when a target is blocked, the highest-leverage move is often the prerequisite that unblocks it, if that prerequisite is itself ready and safe.
 - A \`stale\` entry means the prerequisite is already satisfied, inaccessible, or invalid — the edge should be reviewed or retired via \`blocking_graph\`, not silently ignored.
 - When you discover a real prerequisite while working, record it with \`blocking_graph.add_blocker\` (or the \`blockedBy\` convenience on the work item). Never invent a second dependency store, a task \`dependencies\` field, or a private dependency vocabulary.
@@ -1785,7 +1785,7 @@ Return a 3-5 line summary: goals reviewed, mutations by type, count flagged, and
     category: "thinking",
     activity: ACTIVITY_THINKING,
     author: "system",
-    version: "1.4",
+    version: "1.5",
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "autonomous",
@@ -1839,7 +1839,7 @@ Apply Ray's standing model:
 
 Evaluate outcomes and dependency order, not raw task count.
 
-Exclude blocked work from executable capacity. The Work Dependencies (\`blocked_by\`) projection in context is the read model: any task or project marked \`blocked\` there has an unresolved active prerequisite and must not count as available bandwidth this week. A \`stale\` entry signals a satisfied or invalid edge to review or retire via \`blocking_graph\`. Dependency truth lives only in that graph — never infer prerequisites from titles or create a parallel dependency store.
+Exclude blocked work from executable capacity. The runner injects a deterministic **Capacity Dependency Gate** from \`resolveWorkDependencyContext\` into this run; the Work Dependencies (\`blocked_by\`) projection in context is the same read model. Any task or project marked \`blocked\` has an unresolved active prerequisite and must not count as available bandwidth this week. A \`stale\` entry signals a satisfied or invalid edge to review or retire via \`blocking_graph\`. Dependency truth lives only in that graph — never infer prerequisites from titles or create a parallel dependency store.
 
 ## 3. Recalibrate effort
 

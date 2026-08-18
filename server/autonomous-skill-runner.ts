@@ -1374,6 +1374,31 @@ async function runSkillPipeline(
       if (options.preContext && skillProcessText) {
         instructions = `[SKILL — ${config.label}]\n\n${options.preContext}\n\n${skillProcessText}`;
       }
+
+      // First-wave work consumers: inject deterministic dependency gate over
+      // resolveWorkDependencyContext so capacity/execution never treat blocked
+      // work as executable. Fail-soft — never block skill launch on digest errors.
+      try {
+        const {
+          isWorkDependencySkillConsumer,
+          resolveCapacityDependencyDigest,
+          skillDependencyPurpose,
+        } = await import("./work-dependency-consumers");
+        const consumerName = resolveSkillRunName(config.skillId) || config.skillId;
+        if (isWorkDependencySkillConsumer(consumerName)) {
+          const digest = await resolveCapacityDependencyDigest(skillDependencyPurpose(consumerName));
+          if (digest.trim()) {
+            instructions = `${instructions}\n\n${digest.trim()}`;
+            logger.log(
+              `[SkillChat] [${sessionId}] Injected work-dependency digest for skill=${consumerName} (${digest.length} chars)`,
+            );
+          }
+        }
+      } catch (depErr) {
+        logger.warn(
+          `[SkillChat] [${sessionId}] Work-dependency digest failed (fail-soft): ${depErr instanceof Error ? depErr.message : String(depErr)}`,
+        );
+      }
     }
 
     await chatFileStorage.createMessage(sessionId, "system_prompt", instructions);
