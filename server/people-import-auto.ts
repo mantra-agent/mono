@@ -228,6 +228,8 @@ export async function maybeAutoImportCandidate(candidateId: string): Promise<Aut
 /**
  * After staging unknown email participants, evaluate each queued email for auto decision.
  * Soft-fail: never throws to parent sync/triage.
+ * Also runs a bounded backlog backfill so candidates staged before auto-import shipped
+ * (or re-touched without a new pending insert) still hit the high-confidence path.
  */
 export async function maybeAutoImportAfterEmailStaging(
   emails: string[],
@@ -237,11 +239,68 @@ export async function maybeAutoImportAfterEmailStaging(
   for (const email of unique) {
     results.push(await maybeAutoImportCandidate(email));
   }
+  // Drain historical pending under the same principal — Spec §10 backfill.
+  await maybeRunAutoImportBackfill();
   return results;
 }
 
 /**
+ * Soft-fail entry used when email activity may not have staged new candidates
+ * (known-person interaction path, empty batch) but pending backlog may still
+ * contain high-confidence rows that predate auto-import.
+ */
+export async function maybeAutoImportAfterEmailActivity(
+  emails: string[] = [],
+): Promise<void> {
+  try {
+    if (emails.length > 0) {
+      await maybeAutoImportAfterEmailStaging(emails);
+      return;
+    }
+    await maybeRunAutoImportBackfill();
+  } catch (error) {
+    log.warn("auto-import after email activity failed; candidates remain pending", {
+      staged: emails.length,
+      errorName: error instanceof Error ? error.name : "unknown",
+    });
+  }
+}
+
+/** Serialize backfill per process so concurrent email/triage workers do not thrash the queue. */
+let backfillChain: Promise<unknown> = Promise.resolve();
+
+/**
+ * Bounded catch-up over pending day-one candidates (same policy). Soft-fail wrapper.
+ * Safe on queue reads and email paths; never throws to callers.
+ */
+export async function maybeRunAutoImportBackfill(limit = BACKFILL_CAP): Promise<{
+  scanned: number;
+  decided: number;
+  results: AutoImportRunResult[];
+}> {
+  const empty = { scanned: 0, decided: 0, results: [] as AutoImportRunResult[] };
+  const run = async () => {
+    try {
+      return await runAutoImportBackfill(limit);
+    } catch (error) {
+      log.warn("auto-import backfill failed; candidates remain pending", {
+        errorName: error instanceof Error ? error.name : "unknown",
+        errorMessage: error instanceof Error ? error.message.slice(0, 200) : "unknown",
+      });
+      return empty;
+    }
+  };
+  const next = backfillChain.then(run, run);
+  backfillChain = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+/**
  * Bounded catch-up over pending day-one candidates (same policy).
+ * Requires user principal. Prefer maybeRunAutoImportBackfill at call sites.
  */
 export async function runAutoImportBackfill(limit = BACKFILL_CAP): Promise<{
   scanned: number;
@@ -263,10 +322,12 @@ export async function runAutoImportBackfill(limit = BACKFILL_CAP): Promise<{
     if (result.action !== "leave_queued" && result.decision) decided += 1;
   }
 
-  log.info("auto-import backfill complete", {
-    scanned: eligible.length,
-    decided,
-    policyVersion: PEOPLE_IMPORT_AUTO_POLICY_VERSION,
-  });
+  if (eligible.length > 0 || decided > 0) {
+    log.info("auto-import backfill complete", {
+      scanned: eligible.length,
+      decided,
+      policyVersion: PEOPLE_IMPORT_AUTO_POLICY_VERSION,
+    });
+  }
   return { scanned: eligible.length, decided, results };
 }

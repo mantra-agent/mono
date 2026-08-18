@@ -692,6 +692,13 @@ export async function registerIntegrationsRoutes(app: Express) {
 
   app.get("/api/import-queue/candidates", requireAdmin, async (_req, res) => {
     try {
+      // Drain high-confidence backlog before projecting the queue (Spec §10).
+      try {
+        const { maybeRunAutoImportBackfill } = await import("../people-import-auto");
+        await maybeRunAutoImportBackfill();
+      } catch {
+        // Soft-fail: still return the queue if auto evaluation degrades.
+      }
       const { getPendingCandidatesFromDb } = await import("../import-queue");
       const pending = await getPendingCandidatesFromDb();
       res.json({ candidates: pending });

@@ -747,16 +747,14 @@ async function scanInBackground(
         const pendingEmails = upserts
           .filter((candidate) => candidate.decision === "pending")
           .map((candidate) => candidate.email);
-        if (pendingEmails.length > 0) {
-          try {
-            const { maybeAutoImportAfterEmailStaging } = await import("./people-import-auto");
-            await maybeAutoImportAfterEmailStaging(pendingEmails);
-          } catch (error) {
-            log.warn("auto-import after gmail scan staging failed; candidates remain pending", {
-              staged: pendingEmails.length,
-              errorName: error instanceof Error ? error.name : "unknown",
-            });
-          }
+        try {
+          const { maybeAutoImportAfterEmailActivity } = await import("./people-import-auto");
+          await maybeAutoImportAfterEmailActivity(pendingEmails);
+        } catch (error) {
+          log.warn("auto-import after gmail scan staging failed; candidates remain pending", {
+            staged: pendingEmails.length,
+            errorName: error instanceof Error ? error.name : "unknown",
+          });
         }
       }
 

@@ -267,16 +267,16 @@ export async function processEmailPeopleSignals(messages: EmailSignalMessage[], 
   }
 
   // High-confidence auto decisions close discovery → eligibility without failing sync.
-  if (stagedEmails.length > 0) {
-    try {
-      const { maybeAutoImportAfterEmailStaging } = await import("./people-import-auto");
-      await maybeAutoImportAfterEmailStaging(stagedEmails);
-    } catch (error) {
-      log.warn("auto-import after email staging failed; candidates remain pending", {
-        staged: stagedEmails.length,
-        errorName: error instanceof Error ? error.name : "unknown",
-      });
-    }
+  // Always attempt (even when no new stages): backlog may predate auto-import, and
+  // known-person interaction paths never re-stage an already-pending candidate.
+  try {
+    const { maybeAutoImportAfterEmailActivity } = await import("./people-import-auto");
+    await maybeAutoImportAfterEmailActivity(stagedEmails);
+  } catch (error) {
+    log.warn("auto-import after email activity failed; candidates remain pending", {
+      staged: stagedEmails.length,
+      errorName: error instanceof Error ? error.name : "unknown",
+    });
   }
 
   if (processed > 0) {
