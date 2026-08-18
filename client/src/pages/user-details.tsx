@@ -1,15 +1,24 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Bot, Check, Clock, Globe2, Image, KeyRound, Loader2, LogOut, Mail, MessageSquareText, Monitor, Save } from "lucide-react";
+import { Bot, Check, Clock, Globe2, Image, KeyRound, Loader2, LogOut, Mail, MessageSquareText, Monitor, Save, ShieldAlert } from "lucide-react";
 import { ConnectionsIndicator } from "@/components/connections-indicator";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import type { Vault } from "@/hooks/use-vaults";
 import { useAuth, useLogout, type AuthPrincipal, type AuthUser } from "@/hooks/use-auth";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
@@ -238,8 +247,125 @@ export default function AccountPage() {
           </Button>
         </ProfileTreeRow>
         </ProfileDetailSection>
+
+        <ProfileDetailSection title="Trust and Safety" defaultOpen testId="account-trust-section">
+          <TrustAndSafetyTreeRow />
+        </ProfileDetailSection>
       </div>
     </div>
+  );
+}
+
+function TrustAndSafetyTreeRow() {
+  const { toast } = useToast();
+  const [pendingVault, setPendingVault] = useState<Vault | null>(null);
+  const [confirmation, setConfirmation] = useState("");
+  const { data, isLoading } = useQuery<{ vaults: Vault[] }>({
+    queryKey: ["/api/vaults", "includeArchived"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/vaults?includeArchived=1");
+      return res.json() as Promise<{ vaults: Vault[] }>;
+    },
+  });
+  const erase = useMutation({
+    mutationFn: async (vault: Vault) => {
+      const res = await apiRequest("POST", `/api/vaults/${vault.id}/permanent-delete`, {
+        confirmation: "DELETE",
+        idempotencyKey: crypto.randomUUID(),
+      });
+      return res.json() as Promise<{ erased: true; reminted: boolean }>;
+    },
+    onSuccess: (_result, vault) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/vaults"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      setPendingVault(null);
+      setConfirmation("");
+      toast({ title: `${vault.name} permanently deleted` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Could not delete vault", description: error.message, variant: "destructive" });
+    },
+  });
+  const vaults = data?.vaults ?? [];
+
+  return (
+    <>
+      <ProfileTreeRow
+        label="Permanent delete"
+        icon={<ShieldAlert className="h-3.5 w-3.5 text-destructive" />}
+        hasValue
+        showEmpty
+        mobileLayout="inline"
+        testId="account-permanent-delete-row"
+        expandedContent={(
+          <div className="max-w-xl space-y-2 py-1">
+            {isLoading ? <Skeleton className="h-9 w-full" /> : vaults.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No vaults.</p>
+            ) : vaults.map((vault) => (
+              <div key={vault.id} className="flex min-h-11 items-center justify-between gap-3 border-b border-border/40 last:border-b-0">
+                <span className="min-w-0 truncate text-sm">
+                  {vault.name}
+                  {vault.isArchived ? <span className="ml-2 text-xs text-muted-foreground">Archived</span> : null}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => { setConfirmation(""); setPendingVault(vault); }}
+                  data-testid={`button-permanent-delete-${vault.id}`}
+                >
+                  Delete permanently
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      >
+        <span className="text-muted-foreground">{isLoading ? "Loading…" : `${vaults.length} vault${vaults.length === 1 ? "" : "s"}`}</span>
+      </ProfileTreeRow>
+
+      <Dialog
+        open={pendingVault !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingVault(null);
+            setConfirmation("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Permanently delete {pendingVault?.name}?</DialogTitle>
+            <DialogDescription>
+              This cannot be undone. Pages, sessions, meetings, and other data in this vault will be erased. Type DELETE to confirm.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+            placeholder="DELETE"
+            aria-label="Type DELETE to confirm"
+            data-testid="input-permanent-delete-confirmation"
+          />
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => { setPendingVault(null); setConfirmation(""); }}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={confirmation !== "DELETE" || erase.isPending || !pendingVault}
+              onClick={() => pendingVault && erase.mutate(pendingVault)}
+              data-testid="button-confirm-permanent-delete"
+            >
+              {erase.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+              Delete permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
