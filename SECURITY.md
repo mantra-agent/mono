@@ -1,3 +1,10 @@
+<!-- 2026-08-18 Voice soft-timeout disable:
+- Assets/data: A04/A07 ElevenLabs agent turn config (soft_timeout_config); A02/S2 spoken custom-LLM SSE. No new route, secret, lease, or Principal.
+- Flow/threat: omitting soft_timeout_config left a stored "One second." filler; the model also authored the same opener. That is unconsented speech on the TTS wire (STRIDE tampering; DATA-01). Logging stripped prose would add disclosure.
+- Deterministic controls/owner: PATCH timeout_seconds=-1 (official disable). Writer strips a leading stall opener before first flush. Voice prompt forbids those sentences. Diagnostics log a strip count, not the text. Owner: Voice Platform. Severity: medium integrity. SLA: same PR.
+- Residual/rollback: a still-positive stored timeout after PATCH is warned, not assumed gone. First-content liveness for long tool turns is a later cut — do not restore unflushed drip here. Revert -1 PATCH, strip, prompt line, and this finding together.
+-->
+
 <!-- 2026-08-18 Voice live write-port attach:
 - Assets/data: A02/S2 live custom-LLM SSE speakables and turn remainder; A07 write-port/cascade diagnostics (ids/counts only). No new route, secret, lease, or Principal class.
 - Flow/threat: cascade retry swapping sockets without a live write handle could drop extracted sentences or replay already-flushed speakables onto a second socket (STRIDE tampering/repudiation; DATA-01/OBS-01). Widening logs with transcript bodies would add disclosure.

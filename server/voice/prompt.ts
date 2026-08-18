@@ -120,7 +120,8 @@ export async function buildSystemPrompt(
   log.debug(`context spine resolved in ${spineElapsed}ms promptLen=${assembled.systemPrompt.length} TRANSCRIPT_LOADED path=spine_assembled focusMsgs=${contextHistory.length} keptAfterBudget=${keptAfterBudget} droppedReason=${droppedReason} sysPromptTokens=${assembled.tokenUsage.systemPrompt} convTokens=${assembled.tokenUsage.conversation} budgetRemaining=${assembled.tokenUsage.remaining} session=${session.id}`);
 
   const chatContinuation = await buildChatContinuationSection(session);
-  const fullPrompt = assembled.systemPrompt + chatContinuation;
+  const voiceSpeechContract = "\n\n## Voice speech\nDo not say \"One second.\", \"One moment.\", \"Still on it.\", or \"Working.\" Those are stall fillers. If work takes time, stay silent until you have a real sentence.";
+  const fullPrompt = assembled.systemPrompt + chatContinuation + voiceSpeechContract;
 
   session.cachedSystemPrompt = fullPrompt;
   session.cachedSystemPromptFocusKey = conversationFocusKey(contextHistory);
@@ -284,8 +285,8 @@ export async function resolvePromptAndMessages(
     log.debug(`turn ${currentTurn} EARLY_SSE_HEADERS sent before context assembly session=${session.id}`);
   }
   if (res) {
-    // Spec: unflushed "... " is unrepresentable. Pre-context liveness is SSE comments only;
-    // EL soft-timeout owns the first spoken bridge once the custom-LLM stream is open.
+    // Spec: unflushed "... " is unrepresentable. Pre-context liveness is SSE comments only.
+    // Soft-timeout is disabled (-1); do not rely on EL speaking a filler.
     sendSSEComment(res, "keepalive", session.id);
     preContextKeepaliveTimer = setInterval(() => {
       if (!isResponseAlive(res) || turnAbort?.signal.aborted) {
