@@ -149,7 +149,12 @@ const registry: Record<string, RegistryEntry> = {
   kpi: {
     Icon: Gauge,
     fallbackLabel: ref => metadataString(ref, "label") || `KPI ${ref.id}`,
-    href: ref => metadataString(ref, "href") || `/business/kpis?kpi=${encodeURIComponent(ref.id)}`,
+    href: ref => metadataString(ref, "href") || `/tools/kpis?kpi=${encodeURIComponent(ref.id)}`,
+  },
+  metric: {
+    Icon: Gauge,
+    fallbackLabel: ref => metadataString(ref, "label") || `Metric ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/tools/metrics?metric=${encodeURIComponent(ref.id)}`,
   },
   wellness_activity: {
     Icon: Heart,

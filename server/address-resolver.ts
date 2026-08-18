@@ -70,6 +70,7 @@ import { fileIssueStorage } from "./file-storage";
 import { tagService } from "./tag-service";
 import { formatBuildDeploymentLabel } from "./mods/build-deployment-home";
 import { featureStorage } from "./feature-storage";
+import { kpiStorage, metricsStorage } from "./metrics-storage";
 
 import { getEvent, listAllEvents } from "./google-calendar";
 import { objectStorageService } from "./object_storage/objectStorage";
@@ -288,6 +289,36 @@ const adapters: AddressResolverAdapter[] = [
       href: `/business/plan?plan=${encodeURIComponent(ref.id)}`,
       updatedAt: byId.get(ref.id)!.updatedAt,
     })]] : []));
+  }),
+  simpleAdapter("kpi", async (_principal, refs) => {
+    const entries = await Promise.all(refs.map(async ref => {
+      try {
+        const row = await kpiStorage.get(ref.id);
+        return [requestedAddress(ref), resolved(ref, {
+          label: row.name,
+          summary: row.targetLabel || row.description,
+          updatedAt: row.updatedAt,
+        })] as const;
+      } catch {
+        return null;
+      }
+    }));
+    return new Map(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null));
+  }),
+  simpleAdapter("metric", async (_principal, refs) => {
+    const entries = await Promise.all(refs.map(async ref => {
+      try {
+        const row = await metricsStorage.get(ref.id);
+        return [requestedAddress(ref), resolved(ref, {
+          label: row.name,
+          summary: row.description,
+          updatedAt: row.updatedAt,
+        })] as const;
+      } catch {
+        return null;
+      }
+    }));
+    return new Map(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null));
   }),
   simpleAdapter("milestone", async (principal, refs) => {
     const parsed = refs.map(ref => ({ ref, parts: ref.id.split("~").map(Number) })).filter(item => item.parts.length === 2 && item.parts.every(Number.isInteger));
