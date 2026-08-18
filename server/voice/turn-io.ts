@@ -292,8 +292,8 @@ export function createTurnIOHandlers(
     if (res.socket) res.socket.setNoDelay(true);
     const prev = session.activeWriteRes;
     session.activeWriteRes = res;
-    sendSSEComment(res, "write_port_attached", session.id);
     openWritePort(res, ctx.chatId, ctx.created, session.id);
+    sendSSEComment(res, "write_port_attached", session.id);
     setupSSELifecycle(req, res, session, ctx, trackedWrite, flushCoalesceBuffer, stopFillerTimer, ctx.turnAbort, getCascadeTimeoutMs);
     if (prev && prev !== res && !prev.writableEnded && !prev.destroyed) {
       try { prev.end(); } catch (e: unknown) {

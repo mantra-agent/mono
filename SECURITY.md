@@ -8,7 +8,7 @@
 <!-- 2026-08-18 Voice first-content handshake:
 - Assets/data: A02/S2 custom-LLM SSE first `delta.content`; A07 handshake/hold diagnostics (ids/counts only). No new route, secret, lease, or Principal.
 - Flow/threat: a new write-port with no `delta.content` dies on cascade 1002; repeating unflushed `"... "` or flushed hold sentences is unconsented speech / stutter (STRIDE tampering; DATA-01). Logging handshake text as transcript would poison reconnect context.
-- Deterministic controls/owner: `writeFirstContentHandshake` / `openWritePort` emit one unflushed `"... "` per Response (`WeakSet`). After that, comments only. Handshake never enters `coalesceBuf`, `segmentChronology`, or assistant transcript. Soft-timeout stays `-1`; writer still strips stall openers. Owner: Voice Platform. Severity: medium integrity. SLA: same PR.
+- Deterministic controls/owner: `writeFirstContentHandshake` / `openWritePort` emit one unflushed `"... "` per Response. `WeakSet` marks sent only after a successful write so a dead/throwing port stays retryable. After a successful handshake, comments only. Handshake never enters `coalesceBuf`, `segmentChronology`, or assistant transcript. Soft-timeout stays `-1`; writer still strips stall openers. Owner: Voice Platform. Severity: medium integrity. SLA: same PR.
 - Residual/rollback: if EL speaks the handshake, stop — do not flush hold sentences. If cascade is a mid-stream heartbeat, recut the turn model, do not restore the drip. Revert handshake helper, attach/init/pending call sites, AGENTS room 3, and this finding together.
 -->
 
