@@ -294,19 +294,12 @@ function buildPreviousFailurePacket(attempts: WorkflowStageAttempt[]): unknown |
   };
 }
 
-const BUILD_STAGE_INPUT_SOURCES: Record<string, string[]> = {
-  design_review: ["scope"],
-  implement: ["scope", "design_review"],
-  code_review: ["scope", "design_review", "implement"],
-  acceptance: ["scope", "design_review", "implement", "code_review"],
-  calibration: ["scope", "design_review", "acceptance"],
-  documentation: ["scope", "design_review", "implement", "code_review", "acceptance", "calibration"],
-};
+function stageDefinitionFor(detail: WorkflowRunDetail, stageKey: string): WorkflowStageDefinition | undefined {
+  return parseWorkflowDefinition(detail.template).stages.find((stage) => stage.key === stageKey);
+}
 
 function stageArtifacts(detail: WorkflowRunDetail, stageKey: string): WorkflowArtifactBrief[] {
-  const sourceStageKeys = detail.template.id === BUILD_WORKFLOW_TEMPLATE_ID
-    ? BUILD_STAGE_INPUT_SOURCES[stageKey] || []
-    : [stageKey];
+  const sourceStageKeys = stageDefinitionFor(detail, stageKey)?.inputSources ?? [stageKey];
   const attemptIds = new Set(
     detail.stages
       .filter((stage) => sourceStageKeys.includes(stage.key))
@@ -410,9 +403,7 @@ async function projectSessionArtifactsToWorkflow(
 }
 
 async function reconcilePriorStageSessionArtifacts(detail: WorkflowRunDetail, stageKey: string): Promise<WorkflowRunDetail> {
-  const sourceStageKeys = detail.template.id === BUILD_WORKFLOW_TEMPLATE_ID
-    ? BUILD_STAGE_INPUT_SOURCES[stageKey] || []
-    : [];
+  const sourceStageKeys = stageDefinitionFor(detail, stageKey)?.inputSources ?? [];
   if (sourceStageKeys.length === 0) return detail;
   for (const stage of detail.stages.filter((candidate) => sourceStageKeys.includes(candidate.key))) {
     for (const attempt of stage.attempts.filter((candidate) => candidate.completedAt && candidate.childSessionId)) {
@@ -476,29 +467,9 @@ function buildRevisionContext(detail: WorkflowRunDetail, stageKey: string): Work
   };
 }
 
-const BUILD_STAGE_PURPOSES: Record<string, string> = {
-  scope: "Produce the durable specification for the smallest coherent change that satisfies the originating request. Inspect repository and runtime evidence here, name every governing standard the specification relies on, and expand only when evidence proves the narrower design cannot preserve a named invariant.",
-  design_review: "Review only the Design-produced specification against its named governing standards. Reject only concrete violations cited to a specific standard; do not perform fresh architecture or repository discovery, and do not introduce requirements absent from those standards.",
-  implement: "Implement the approved design completely, preserve its constraints, and produce build and change evidence.",
-  code_review: "Find defects, inconsistencies, technical debt, and governing-context violations in the resulting implementation and every affected system. This is an implementation review, not merely a code or build check.",
-  acceptance: "Confirm the deployed system boots successfully and does what the approved specification says it must do in the target environment.",
-  calibration: "Determine what this run revealed about the product, implementation process, and workflow, then record the changes that should follow.",
-  documentation: "Preserve the final implemented truth, evidence, decisions, and remaining gates in durable project documentation.",
-};
-
-const BUILD_STAGE_ARTIFACT_KINDS: Record<string, string[]> = {
-  scope: ["design_system", "product_definition"],
-  design_review: ["design_system", "product_definition"],
-  implement: ["coding_process", "product_definition"],
-  code_review: ["coding_process", "product_definition"],
-  acceptance: [],
-  calibration: ["product_definition"],
-  documentation: ["product_definition"],
-};
-
-async function resolveGoverningArtifacts(environmentId: number | null, stageKey: string): Promise<Array<{ kind: string; libraryPageId: string; title: string }>> {
+async function resolveGoverningArtifacts(environmentId: number | null, kinds: string[] | undefined): Promise<Array<{ kind: string; libraryPageId: string; title: string }>> {
   if (!environmentId) return [];
-  const relevantKinds = BUILD_STAGE_ARTIFACT_KINDS[stageKey] || [];
+  const relevantKinds = kinds ?? [];
   if (relevantKinds.length === 0) return [];
   const { listVisibleProductContextPages } = await import("../platforms/context-artifact-access");
   const rows = await listVisibleProductContextPages(relevantKinds, environmentId);
@@ -518,9 +489,7 @@ async function buildStageInputContext(detail: WorkflowRunDetail, stageKey: strin
   const previousFailurePacket = buildPreviousFailurePacket(visitAttempts);
   const retryContext = retryCount > 0 ? buildRetryContext(detail, stageKey, stageDef.title, visitAttempts) : undefined;
   const revisionContext = buildRevisionContext(detail, stageKey);
-  const governingArtifacts = detail.template.id === BUILD_WORKFLOW_TEMPLATE_ID
-    ? await resolveGoverningArtifacts(detail.run.linkedEnvironmentId, stageKey)
-    : [];
+  const governingArtifacts = await resolveGoverningArtifacts(detail.run.linkedEnvironmentId, stageDef.governingArtifactKinds);
   return {
     workflowRunId: detail.run.id,
     workflowTitle: detail.run.title,
@@ -541,7 +510,7 @@ async function buildStageInputContext(detail: WorkflowRunDetail, stageKey: strin
     evidenceRequirements: stageDef.evidenceRequirements,
     allowedTransitions: stageDef.allowedTransitions,
     governingArtifacts,
-    purpose: BUILD_STAGE_PURPOSES[stageKey] || `Complete the ${stageDef.title} stage.`,
+    purpose: stageDef.purpose || `Complete the ${stageDef.title} stage.`,
     environmentTruth: detail.environmentTruth || null,
     lifecycleSnapshot: detail.lifecycleSnapshot || detail.run.lifecycleSnapshot || null,
     ...(extraContext !== undefined ? { extraContext } : {}),
@@ -731,27 +700,29 @@ async function releaseWorkflowAttemptMonitor(attemptId: number, leaseId: string)
 }
 
 function acceptanceStageContext(detail: WorkflowRunDetail): Record<string, unknown> | undefined {
-  if (detail.template.id !== BUILD_WORKFLOW_TEMPLATE_ID || detail.run.currentStageKey !== "acceptance") return undefined;
+  const stageKey = detail.run.currentStageKey;
+  if (!stageKey) return undefined;
+  const contract = stageDefinitionFor(detail, stageKey)?.acceptanceContract;
+  if (!contract) return undefined;
   const truth = detail.environmentTruth || null;
   const publicUrl = typeof truth?.deployment?.publicUrl === "string" && truth.deployment.publicUrl
     ? (truth.deployment.publicUrl.startsWith("http") ? truth.deployment.publicUrl : `https://${truth.deployment.publicUrl}`)
     : null;
   return {
     v1AcceptanceEvidenceContract: {
+      ...contract,
       requiredGates: ACCEPTANCE_GATE_KEYS,
       targetUrl: publicUrl,
       deploymentStatus: truth?.deployment?.latest ? String(truth.deployment.latest.status || "unknown") : null,
-      routePathDefault: "/home",
-      routePathSelection: "Prefer a route explicitly named in scope or changed files. Otherwise load /home. The Workflows screen is deprecated and is not a product surface.",
-      logPolicy: "Check structured client and server logs after browser load. Treat relevant error-level entries as gate failures unless clearly unrelated.",
-      smokePolicy: "Attempt the smallest safe feature path. If no non-destructive path exists, mark optional smoke attempted=false with reason rather than blocking.",
-      failurePacketRequiredOnFail: ["failedGates", "targetUrl", "routePath", "deployment", "screenshot", "clientLogErrors", "serverLogErrors", "nextSuggestedFix"],
     },
   };
 }
 
 function calibrationStageContext(detail: WorkflowRunDetail): Record<string, unknown> | undefined {
-  if (detail.template.id !== BUILD_WORKFLOW_TEMPLATE_ID || detail.run.currentStageKey !== "calibration") return undefined;
+  const stageKey = detail.run.currentStageKey;
+  if (!stageKey) return undefined;
+  const contract = stageDefinitionFor(detail, stageKey)?.calibrationContract;
+  if (!contract) return undefined;
   const acceptanceArtifacts = detail.artifacts.filter((artifact) => artifact.kind === "acceptance" || artifact.kind === "screenshot" || artifact.kind === "logs").slice(-10);
 
   // Detect repeated identical acceptance failures — if the same gate keys failed ≥2 consecutive times, escalate to user gate
@@ -777,10 +748,8 @@ function calibrationStageContext(detail: WorkflowRunDetail): Record<string, unkn
 
   return {
     calibrationContract: {
-      compareAgainst: "Build workflow v1 spec: Design → Design Review → Implement → Implementation Review → Acceptance Test → Calibration → Documentation.",
+      ...contract,
       inspectArtifacts: acceptanceArtifacts.map((artifact) => ({ id: artifact.id, kind: artifact.kind, title: artifact.title, summary: artifact.summary, metadata: artifact.metadata })),
-      requiredDecision: "Emit exactly one declared Calibration decision: continue, update_docs, gate, or fail_back. The template owns the corresponding transition; do not report a domain decision as executor failure.",
-      documentationUpdatePolicy: "Attach a calibration artifact recording workflow/spec/doc updates needed or made. Do not create a user gate for routine documentation updates.",
       ...(repeatedFailureEscalation ? { repeatedFailureEscalation } : {}),
     },
   };
@@ -1144,6 +1113,8 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
   stages: [
     {
       key: "scope", title: "Design", position: 0, autonomyMode: "autonomous", persona: "Architect",
+      purpose: "Produce the durable specification for the smallest coherent change that satisfies the originating request. Inspect repository and runtime evidence here, name every governing standard the specification relies on, and expand only when evidence proves the narrower design cannot preserve a named invariant.",
+      governingArtifactKinds: ["design_system", "product_definition"],
       entryCriteria: ["Start from the originating request. Inspect the repository and runtime only as needed to identify the failed invariant, the smallest coherent repair, and the named governing standards the specification must satisfy."],
       evidenceRequirements: ["A durable specification artifact (`kind: spec`) that names the smallest coherent implementation, success conditions, target truth, verification path, terminal state, and every governing standard relied upon. Any expansion beyond the request must cite the repository evidence and invariant that require it."],
       exitCriteria: ["The specification satisfies the request without speculative systems, migrations, abstractions, or adjacent improvements and is complete enough for implementation without Design Review adding architecture or requirements."],
@@ -1151,6 +1122,9 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
     },
     {
       key: "design_review", title: "Design Review", position: 1, autonomyMode: "requires_agent_review", persona: "Architect",
+      purpose: "Review only the Design-produced specification against its named governing standards. Reject only concrete violations cited to a specific standard; do not perform fresh architecture or repository discovery, and do not introduce requirements absent from those standards.",
+      inputSources: ["scope"],
+      governingArtifactKinds: ["design_system", "product_definition"],
       entryCriteria: ["Load the Design-produced specification and the named governing standards from Stage Inputs. Do not perform fresh architecture, repository, runtime, or dependency discovery."],
       evidenceRequirements: ["For each rejection, cite the exact specification statement and the exact named governing-standard provision it violates. Do not introduce a requirement that is absent from those standards. Security review remains authoritative: concrete violations of named SECURITY.md requirements may reject the specification."],
       exitCriteria: ["Pass unless the specification contains a concrete cited violation of a named governing standard. Unsupported preferences, newly discovered architecture concerns, and uncited best practices are not rejection grounds."],
@@ -1161,12 +1135,18 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
     },
     {
       key: "implement", title: "Implement", position: 2, autonomyMode: "autonomous", persona: "Engineer",
+      purpose: "Implement the approved design completely, preserve its constraints, and produce build and change evidence.",
+      inputSources: ["scope", "design_review"],
+      governingArtifactKinds: ["coding_process", "product_definition"],
       entryCriteria: ["Load and implement the approved specification from Stage Inputs."],
       evidenceRequirements: ["Implementation evidence, build result, impact/change-scope evidence, and branch/commit references proving the approved specification was executed under the loaded governing context."],
       allowedTransitions: [{ toStageKey: "code_review", on: "passed" }],
     },
     {
       key: "code_review", title: "Implementation Review", position: 3, autonomyMode: "requires_agent_review", persona: "Engineer",
+      purpose: "Find defects, inconsistencies, technical debt, and governing-context violations in the resulting implementation and every affected system. This is an implementation review, not merely a code or build check.",
+      inputSources: ["scope", "design_review", "implement"],
+      governingArtifactKinds: ["coding_process", "product_definition"],
       entryCriteria: ["Inspect the complete implementation, affected systems, approved design, and every loaded governing artifact before judging readiness."],
       evidenceRequirements: ["Find and report material defects, inconsistencies, technical debt, and governing-context violations in the resulting implementation. State required cures, residual risk, and acceptance readiness."],
       exitCriteria: ["Pass only when no material implementation or governing-context violation remains."],
@@ -1177,6 +1157,16 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
     },
     {
       key: "acceptance", title: "Acceptance Test", position: 4, autonomyMode: "autonomous", persona: "Engineer",
+      purpose: "Confirm the deployed system boots successfully and does what the approved specification says it must do in the target environment.",
+      inputSources: ["scope", "design_review", "implement", "code_review"],
+      governingArtifactKinds: [],
+      acceptanceContract: {
+        routePathDefault: "/home",
+        routePathSelection: "Prefer a route explicitly named in scope or changed files. Otherwise load /home. The Workflows screen is deprecated and is not a product surface.",
+        logPolicy: "Check structured client and server logs after browser load. Treat relevant error-level entries as gate failures unless clearly unrelated.",
+        smokePolicy: "Attempt the smallest safe feature path. If no non-destructive path exists, mark optional smoke attempted=false with reason rather than blocking.",
+        failurePacketRequiredOnFail: ["failedGates", "targetUrl", "routePath", "deployment", "screenshot", "clientLogErrors", "serverLogErrors", "nextSuggestedFix"],
+      },
       entryCriteria: ["Load the approved specification from Stage Inputs, then confirm the merged implementation is deployed and healthy in the target environment."],
       evidenceRequirements: ["Deployment, boot/health, target-route, screenshot, runtime-log, and safe feature-path evidence sufficient to determine whether the deployed result does what the approved specification requires."],
       exitCriteria: ["Pass only when the deployed system boots successfully and satisfies the approved specification."],
@@ -1188,6 +1178,14 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
     },
     {
       key: "calibration", title: "Calibration", position: 5, autonomyMode: "autonomous", persona: "Architect",
+      purpose: "Determine what this run revealed about the product, implementation process, and workflow, then record the changes that should follow.",
+      inputSources: ["scope", "design_review", "acceptance"],
+      governingArtifactKinds: ["product_definition"],
+      calibrationContract: {
+        compareAgainst: "Build workflow v1 spec: Design → Design Review → Implement → Implementation Review → Acceptance Test → Calibration → Documentation.",
+        requiredDecision: "Emit exactly one declared Calibration decision: continue, update_docs, gate, or fail_back. The template owns the corresponding transition; do not report a domain decision as executor failure.",
+        documentationUpdatePolicy: "Attach a calibration artifact recording workflow/spec/doc updates needed or made. Do not create a user gate for routine documentation updates.",
+      },
       entryCriteria: ["Load the approved specification and acceptance evidence from Stage Inputs."],
       evidenceRequirements: ["Compare the approved specification, implementation outcome, retries, and acceptance evidence to identify what the run taught us about the product and what should change next."],
       allowedTransitions: [
@@ -1199,6 +1197,9 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
     },
     {
       key: "documentation", title: "Documentation", position: 6, autonomyMode: "autonomous", persona: "Engineer",
+      purpose: "Preserve the final implemented truth, evidence, decisions, and remaining gates in durable project documentation.",
+      inputSources: ["scope", "design_review", "implement", "code_review", "acceptance", "calibration"],
+      governingArtifactKinds: ["product_definition"],
       evidenceRequirements: ["Durable final documentation that records the implemented truth, linked evidence, decisions, handoff, and any remaining gates under the loaded governing context."],
       allowedTransitions: [{ toStageKey: null, on: "passed", reason: "complete" }],
     },
@@ -1226,7 +1227,7 @@ export async function seedBuildWorkflowTemplate(): Promise<WorkflowTemplate> {
     name: "Build",
     type: "build",
     description: "Reusable software build lifecycle: scope, design review, implementation, code review, staged publish, acceptance, calibration, and documentation.",
-    version: "1.0",
+    version: "1.1",
     status: "active",
     definition: buildDefinition,
     defaultAutonomyPolicy: buildRetryPolicy,
@@ -1789,7 +1790,7 @@ export async function startStageAttempt(runId: string, stageKey?: string, option
   if (executionAttemptNumber > maxAttempts) throw new Error(`Workflow run ${runId} stage ${key} exceeded max execution attempts (${maxAttempts}) in its current visit.`);
 
   const parentSessionId = await ensureWorkflowParentSession(detail);
-  const stageSpecificContext = key === "acceptance" ? acceptanceStageContext(detail) : key === "calibration" ? calibrationStageContext(detail) : undefined;
+  const stageSpecificContext = acceptanceStageContext(detail) || calibrationStageContext(detail);
   const mergedInputContext = stageSpecificContext || options.inputContext !== undefined
     ? { ...(typeof stageSpecificContext === "object" ? stageSpecificContext : {}), ...(typeof options.inputContext === "object" && options.inputContext !== null ? options.inputContext as Record<string, unknown> : options.inputContext !== undefined ? { input: options.inputContext } : {}) }
     : undefined;
