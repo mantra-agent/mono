@@ -66,6 +66,27 @@ export async function queryWellnessSeries(
   return new Map(rows.map((row) => [row.date, Number(row.value)]));
 }
 
+export async function queryAchievedGoalSeries(
+  start: Date,
+  end: Date,
+  _principal: Principal,
+): Promise<Map<string, number>> {
+  const { goalStorage } = await import("../goal-storage");
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  const dayMap = new Map<string, number>();
+  const goals = await goalStorage.listGoals({ includeDormant: true });
+  for (const goal of goals) {
+    if (goal.status !== "achieved" || !goal.completedAt) continue;
+    const completed = new Date(goal.completedAt);
+    const completedMs = completed.getTime();
+    if (!Number.isFinite(completedMs) || completedMs < startMs || completedMs >= endMs) continue;
+    const date = userDateStr(completed);
+    dayMap.set(date, (dayMap.get(date) ?? 0) + 1);
+  }
+  return dayMap;
+}
+
 export async function queryTaskSeries(
   start: Date,
   end: Date,

@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Database, FunctionSquare, Loader2, Plus, PenLine, SlidersHorizontal, Trash2 } from "lucide-react";
+import { ChevronRight, Database, FunctionSquare, Loader2, Plus, PenLine, SlidersHorizontal, Trash2 } from "lucide-react";
 import {
   METRIC_ADAPTER_KINDS,
   METRIC_CATALOG_FAMILIES,
@@ -51,10 +51,11 @@ import {
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
-  HierarchySectionHeader,
   HIERARCHY_PRIMARY_ACTION_CLASS,
+  HIERARCHY_SECTION_HEADER_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
@@ -126,6 +127,32 @@ const ADAPTER_ICON: Record<MetricAdapterKind, typeof Database> = {
   internal: Database,
   expression: FunctionSquare,
 };
+
+const METRIC_SECTIONS_COLLAPSED_KEY = "metrics-catalog-sections-collapsed";
+
+function loadCollapsedFamilies(): Set<MetricCatalogFamily> {
+  try {
+    const raw = localStorage.getItem(METRIC_SECTIONS_COLLAPSED_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(
+      parsed.filter((value): value is MetricCatalogFamily =>
+        (METRIC_CATALOG_FAMILIES as readonly string[]).includes(value),
+      ),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedFamilies(collapsed: Set<MetricCatalogFamily>) {
+  try {
+    localStorage.setItem(METRIC_SECTIONS_COLLAPSED_KEY, JSON.stringify([...collapsed]));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
 
 function formatValue(value: number, unit: string): string {
   const formatted = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
@@ -226,6 +253,8 @@ function MetricTreeRow({
   const metric = series.metric;
   const AdapterIcon = ADAPTER_ICON[metric.adapterKind] ?? Database;
   const sample = metric.latestSample;
+  const coverage = series.coverage?.status;
+  const unavailable = coverage === "unavailable" || coverage === "unbound";
   const isManual = metric.adapterKind === "manual";
 
   return (
@@ -264,8 +293,8 @@ function MetricTreeRow({
         )
       }
     >
-      <span className={cn("whitespace-nowrap font-mono", !sample && "text-muted-foreground")}>
-        {sample ? formatValue(sample.value, sample.unit) : "—"}
+      <span className={cn("whitespace-nowrap font-mono", (!sample || unavailable) && "text-muted-foreground")}>
+        {unavailable ? (coverage === "unbound" ? "unbound" : "unavailable") : sample ? formatValue(sample.value, sample.unit) : "—"}
       </span>
     </ProfileTreeRow>
   );
@@ -364,6 +393,20 @@ export default function BusinessMetricsPage() {
   const [query, setQuery] = useState("");
   const [sampleSpan, setSampleSpan] = useState<SampleSpan>("today");
   const [deleteTarget, setDeleteTarget] = useState<Metric | null>(null);
+  const [collapsedFamilies, setCollapsedFamilies] = useState<Set<MetricCatalogFamily>>(loadCollapsedFamilies);
+
+  useEffect(() => {
+    saveCollapsedFamilies(collapsedFamilies);
+  }, [collapsedFamilies]);
+
+  function toggleFamily(family: MetricCatalogFamily) {
+    setCollapsedFamilies((current) => {
+      const next = new Set(current);
+      if (next.has(family)) next.delete(family);
+      else next.add(family);
+      return next;
+    });
+  }
 
   const samplingRange = useMemo(() => {
     const end = new Date();
@@ -418,7 +461,7 @@ export default function BusinessMetricsPage() {
       metric,
       samples: metric.latestSample ? [metric.latestSample] : [],
       valueStatus: "actual" as const,
-      coverage: { status: "finalized" as const },
+      coverage: metric.coverage ?? { status: "finalized" as const },
     }));
     const q = query.trim().toLowerCase();
     if (!q) return list;
@@ -481,20 +524,37 @@ export default function BusinessMetricsPage() {
         </div>
       ) : (
         <>
-          {sections.map((section) => (
-            <div key={section.family} className="space-y-0">
-              <HierarchySectionHeader data-testid={`metric-section-${section.family}`}>
-                {METRIC_CATALOG_FAMILY_LABEL[section.family]}
-              </HierarchySectionHeader>
-              {section.items.map((item) => (
-                <MetricTreeRow
-                  key={item.metric.id}
-                  series={item}
-                  onRequestDelete={setDeleteTarget}
-                />
-              ))}
-            </div>
-          ))}
+          {sections.map((section) => {
+            const isOpen = !collapsedFamilies.has(section.family);
+            return (
+              <Collapsible
+                key={section.family}
+                open={isOpen}
+                onOpenChange={() => toggleFamily(section.family)}
+              >
+                <div className="space-y-0">
+                  <CollapsibleTrigger
+                    className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
+                    data-testid={`metric-section-${section.family}`}
+                  >
+                    <ChevronRight
+                      className={cn("h-3 w-3 shrink-0 transition-transform", isOpen && "rotate-90")}
+                    />
+                    {METRIC_CATALOG_FAMILY_LABEL[section.family]}
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    {section.items.map((item) => (
+                      <MetricTreeRow
+                        key={item.metric.id}
+                        series={item}
+                        onRequestDelete={setDeleteTarget}
+                      />
+                    ))}
+                  </CollapsibleContent>
+                </div>
+              </Collapsible>
+            );
+          })}
         </>
       )}
 

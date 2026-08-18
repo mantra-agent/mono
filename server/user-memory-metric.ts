@@ -27,6 +27,8 @@ const USER_MEMORY_METRIC_DEFINITION: InternalBusinessMetricDefinition = {
   samplePeriod: "daily",
 };
 
+export const USER_MEMORY_PLATFORM_DEFINITION = USER_MEMORY_METRIC_DEFINITION;
+
 async function rollupUserMemory(now = new Date()): Promise<void> {
   await ensureMetricsSamplesSchema();
   const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));

@@ -136,6 +136,8 @@ function validateUsageRange(start: Date, end: Date): void {
   if (end.getTime() - start.getTime() > USAGE_SAMPLE_MAX_DAYS * 24 * HOUR_MS) {
     throw Object.assign(new Error(`range cannot exceed ${USAGE_SAMPLE_MAX_DAYS} days`), { status: 400 });
   }
+  // Catalog/list callers pass Date.now() as exclusive end. Clock skew of a few
+  // seconds is not a future range — clamp rather than fail the product adapter.
   if (end.getTime() > Date.now() + 60_000) {
     throw Object.assign(new Error("end cannot be in the future"), { status: 400 });
   }

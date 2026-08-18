@@ -6,7 +6,7 @@
  * through to warehouse metric_samples in queryMetric.
  */
 import { createHash } from "crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { metrics } from "@shared/schema";
 import {
   metricAdapterKeyOf,
@@ -26,6 +26,7 @@ import { queryMergedPrSeries } from "../integrations/merged-pr-ledger";
 import { countCompletedMeetingsWithNotesInRange } from "../meetings/meeting-index";
 import { USAGE_LEASE_TAIL_MS } from "../hours-used";
 import {
+  queryAchievedGoalSeries,
   queryInteractionSeries,
   queryTaskSeries,
   queryWellnessSeries,
@@ -42,6 +43,8 @@ export const PRODUCT_METRIC_SLUGS = new Set([
   "accounts",
   "registered-users",
   "shipped-prs",
+  "user-memory",
+  "achieved-goals",
 ]);
 
 /** Meetings is principal-scoped via the meeting index — not a product metric. */
@@ -77,6 +80,13 @@ const ENGAGEMENT_DEFINITIONS = [
     description: "Wellness activity completions in the selected range.",
     unit: "completions",
     adapterKey: "wellness",
+  },
+  {
+    slug: "personal-achieved-goals",
+    name: "Achieved Goals",
+    description: "Goals you marked achieved in the selected range.",
+    unit: "goals",
+    adapterKey: "goals",
   },
 ] as const;
 
@@ -318,6 +328,29 @@ async function handleInteractions(
   };
 }
 
+async function handleGoals(
+  metric: Metric,
+  range: { start: Date; end: Date },
+  principal: Principal,
+): Promise<MetricSeries> {
+  const dayMap = await queryAchievedGoalSeries(range.start, range.end, principal);
+  const samples = samplesFromDayMap(metric, dayMap, range, "internal/achieved-goals-query-v1");
+  const total = [...dayMap.values()].reduce((sum, n) => sum + n, 0);
+  const totalSample = singleRangeSample(
+    metric,
+    total,
+    range,
+    "internal/achieved-goals-query-v1",
+    "Principal-visible goals marked achieved in the selected range.",
+  );
+  return {
+    metric: { ...metric, latestSample: totalSample },
+    samples: samples.length > 0 ? samples : [totalSample],
+    valueStatus: "actual",
+    coverage: { status: "finalized" },
+  };
+}
+
 async function handleWellness(
   metric: Metric,
   range: { start: Date; end: Date },
@@ -359,6 +392,73 @@ async function handleProduct(
       range,
       "internal/meetings-query-v1",
       "Completed sessions with notes in the selected range.",
+    );
+    return {
+      metric: { ...metric, latestSample: sample },
+      samples: [sample],
+      valueStatus: "actual",
+      coverage: { status: "finalized" },
+    };
+  }
+
+  if (metric.slug === "user-memory") {
+    const { metricSamples } = await import("@shared/schema");
+    const { metricsDb, ensureMetricsSamplesSchema } = await import("../metrics-db");
+    const { desc } = await import("drizzle-orm");
+    await ensureMetricsSamplesSchema();
+    const rows = await metricsDb
+      .select()
+      .from(metricSamples)
+      .where(and(
+        eq(metricSamples.metricId, metric.id),
+        sql`${metricSamples.observedAt} >= ${range.start}`,
+        sql`${metricSamples.observedAt} < ${range.end}`,
+      ))
+      .orderBy(desc(metricSamples.observedAt));
+    const samples = rows.map((row) => ({
+      id: row.id,
+      metricId: row.metricId,
+      accountId: row.accountId,
+      vaultId: row.vaultId ?? null,
+      value: row.value,
+      unit: row.unit ?? metric.unit,
+      observedAt: row.observedAt instanceof Date ? row.observedAt.toISOString() : String(row.observedAt),
+      sourceRef: row.sourceRef ?? "internal/user-memory-v2",
+      evidence: row.evidence ?? "Platform count of active canonical and linked vNext memory claims.",
+      periodStart: row.periodStart instanceof Date ? row.periodStart.toISOString() : row.periodStart ? String(row.periodStart) : null,
+      periodEnd: row.periodEnd instanceof Date ? row.periodEnd.toISOString() : row.periodEnd ? String(row.periodEnd) : null,
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt ?? new Date().toISOString()),
+    }));
+    return {
+      metric: { ...metric, latestSample: samples[0] ?? metric.latestSample ?? null },
+      samples,
+      valueStatus: "actual",
+      coverage: { status: "finalized" },
+    };
+  }
+
+  if (metric.slug === "achieved-goals") {
+    const { documentStoreDocuments } = await import("@shared/schema");
+    const startIso = range.start.toISOString();
+    const endIso = range.end.toISOString();
+    const [row] = await db
+      .select({
+        value: sql<number>`count(*)::int`,
+      })
+      .from(documentStoreDocuments)
+      .where(and(
+        eq(documentStoreDocuments.documentType, "goal"),
+        sql`COALESCE(${documentStoreDocuments.metadata}->>'status', '') = 'achieved'`,
+        sql`COALESCE(${documentStoreDocuments.metadata}->>'completedAt', '') >= ${startIso}`,
+        sql`COALESCE(${documentStoreDocuments.metadata}->>'completedAt', '') < ${endIso}`,
+      ));
+    const value = Number(row?.value ?? 0);
+    const sample = singleRangeSample(
+      metric,
+      value,
+      range,
+      "internal/achieved-goals-platform-query-v1",
+      "Platform count of goals marked achieved in the selected range. Count only — no titles or owners.",
     );
     return {
       metric: { ...metric, latestSample: sample },
@@ -483,6 +583,7 @@ export const METRIC_ADAPTER_HANDLERS: Record<string, MetricAdapterHandler> = {
   tasks: handleTasks,
   interactions: handleInteractions,
   wellness: handleWellness,
+  goals: handleGoals,
   product: handleProduct,
   meetings: handleMeetings,
 };
@@ -493,6 +594,25 @@ export function adapterKeyOf(metric: Metric): string | null {
 
 export function productCurrentDefinitions() {
   return PRODUCT_CURRENT_KEYS;
+}
+
+const PLATFORM_ACHIEVED_GOALS_DEFINITION = {
+  key: "achieved-goals",
+  name: "Achieved Goals",
+  unit: "goals",
+  description: "Goals marked achieved across Mantra in the selected range.",
+  direction: "higher_is_better" as const,
+  samplePeriod: "daily" as const,
+};
+
+/** Stamp User Memory + platform Achieved Goals as product rows. */
+export async function ensureProductCatalogDefinitions(): Promise<void> {
+  const { ensurePlatformBusinessMetrics } = await import("../metrics-storage");
+  const { USER_MEMORY_PLATFORM_DEFINITION } = await import("../user-memory-metric");
+  await ensurePlatformBusinessMetrics([
+    USER_MEMORY_PLATFORM_DEFINITION,
+    PLATFORM_ACHIEVED_GOALS_DEFINITION,
+  ]);
 }
 
 export async function stampPlatformOwnerOnProductMetrics(): Promise<number> {
