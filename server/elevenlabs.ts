@@ -284,6 +284,8 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
           custom_llm: {
             url: callbackUrl,
             model_id: "xyz-voice",
+            // Preferred home when the provider retains it. Always dual-write turn
+            // below — current EL GET often leaves custom_llm.cascade absent.
             cascade_timeout_seconds: LEGAL_CASCADE_TIMEOUT_SECONDS,
           },
           tool_ids: [],
@@ -305,6 +307,8 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
       turn: {
         mode: "turn",
         turn_timeout: 60,
+        // EL currently persists cascade here even when custom_llm.cascade is dropped.
+        cascade_timeout_seconds: LEGAL_CASCADE_TIMEOUT_SECONDS,
         end_of_speech_silence_ms: 1000,
         interruption_sensitivity: 0.5,
         // Official disable is -1. Message is still required 1–200 chars; empty 400s.
@@ -360,8 +364,9 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
   }
   log.debug(`setupAgentCallbackUrl: step 5/6 — PATCH full response body (${responseText.length} bytes): ${responseText.slice(0, 3000)}`);
   const effectiveLlm = responseData?.conversation_config?.agent?.prompt?.custom_llm;
-  const patchCascade = effectiveLlm?.cascade_timeout_seconds;
-  log.debug(`setupAgentCallbackUrl: step 5/6 — PATCH success elapsed=${patchElapsed}ms custom_llm.configured=${Boolean(effectiveLlm?.url)} cascade_timeout_seconds=${patchCascade ?? "(not in response)"} (total=${Date.now() - setupStart}ms)`);
+  const patchCascadeCustom = effectiveLlm?.cascade_timeout_seconds;
+  const patchCascadeTurn = responseData?.conversation_config?.turn?.cascade_timeout_seconds;
+  log.debug(`setupAgentCallbackUrl: step 5/6 — PATCH success elapsed=${patchElapsed}ms custom_llm.configured=${Boolean(effectiveLlm?.url)} custom_llm.cascade=${patchCascadeCustom ?? "(not in response)"} turn.cascade=${patchCascadeTurn ?? "(not in response)"} (total=${Date.now() - setupStart}ms)`);
 
   if (effectiveLlm?.url && effectiveLlm.url !== callbackUrl) {
     log.warn("setupAgentCallbackUrl MISMATCH: provider callback URL differs from the configured capability URL");
@@ -409,13 +414,21 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
   const configuredLanguageCount = ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.filter((code) => languagePresets?.[code]).length;
 
   const cascadeInCustomLlm = customLlm?.cascade_timeout_seconds;
+  const cascadeInTurn = turnConf?.cascade_timeout_seconds;
   const effectiveUrl = customLlm?.url;
   const softTimeoutConfig = turnConf?.soft_timeout_config as Record<string, unknown> | undefined;
   const storedSoftTimeout = softTimeoutConfig?.timeout_seconds != null ? Number(softTimeoutConfig.timeout_seconds) : undefined;
   const storedSoftTimeoutMessage = typeof softTimeoutConfig?.message === "string" ? softTimeoutConfig.message : undefined;
-  const storedCascade = cascadeInCustomLlm != null ? Number(cascadeInCustomLlm) : undefined;
+  const cascadeSource =
+    cascadeInCustomLlm != null ? "custom_llm" :
+    cascadeInTurn != null ? "turn" :
+    null;
+  const storedCascade =
+    cascadeInCustomLlm != null ? Number(cascadeInCustomLlm) :
+    cascadeInTurn != null ? Number(cascadeInTurn) :
+    undefined;
 
-  log.debug(`setupAgentCallbackUrl: step 6/6 — GET verification done elapsed=${getElapsed}ms custom_llm.configured=${Boolean(effectiveUrl)} custom_llm.cascade_timeout_seconds=${cascadeInCustomLlm ?? "(absent)"} soft_timeout_config.timeout_seconds=${softTimeoutConfig?.timeout_seconds ?? "(absent)"} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length} language_detection=${hasLanguageDetection} (total=${Date.now() - setupStart}ms)`);
+  log.debug(`setupAgentCallbackUrl: step 6/6 — GET verification done elapsed=${getElapsed}ms custom_llm.configured=${Boolean(effectiveUrl)} custom_llm.cascade_timeout_seconds=${cascadeInCustomLlm ?? "(absent)"} turn.cascade_timeout_seconds=${cascadeInTurn ?? "(absent)"} soft_timeout_config.timeout_seconds=${softTimeoutConfig?.timeout_seconds ?? "(absent)"} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length} language_detection=${hasLanguageDetection} (total=${Date.now() - setupStart}ms)`);
 
   if (!hasLanguageDetection || configuredLanguageCount !== ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length) {
     log.error(`setupAgentCallbackUrl: MULTILINGUAL CONFIG MISMATCH — language_detection=${hasLanguageDetection} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length}`);
@@ -429,15 +442,15 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
     log.error(`setupAgentCallbackUrl: SOFT TIMEOUT MESSAGE NOT SCHEMA TAX — stored=${storedSoftTimeoutMessage ?? "(absent)"} requested=${DISABLED_SOFT_TIMEOUT_MESSAGE}`);
     throw new Error(`Agent soft_timeout_config.message is ${storedSoftTimeoutMessage ?? "absent"}, expected ${DISABLED_SOFT_TIMEOUT_MESSAGE}`);
   }
-  if (storedCascade !== LEGAL_CASCADE_TIMEOUT_SECONDS) {
-    log.error(`setupAgentCallbackUrl: CASCADE TIMEOUT NOT STORED — custom_llm.cascade_timeout_seconds=${cascadeInCustomLlm ?? "(absent)"} requested=${LEGAL_CASCADE_TIMEOUT_SECONDS}`);
-    throw new Error(`Agent custom_llm.cascade_timeout_seconds is ${cascadeInCustomLlm ?? "absent"}, expected ${LEGAL_CASCADE_TIMEOUT_SECONDS}`);
+  if (cascadeSource == null || storedCascade !== LEGAL_CASCADE_TIMEOUT_SECONDS) {
+    log.error(`setupAgentCallbackUrl: CASCADE TIMEOUT NOT STORED — custom_llm=${cascadeInCustomLlm ?? "(absent)"} turn=${cascadeInTurn ?? "(absent)"} requested=${LEGAL_CASCADE_TIMEOUT_SECONDS}`);
+    throw new Error(`Agent cascade_timeout_seconds is ${storedCascade ?? "absent"} (custom_llm=${cascadeInCustomLlm ?? "absent"}, turn=${cascadeInTurn ?? "absent"}), expected ${LEGAL_CASCADE_TIMEOUT_SECONDS}`);
   }
 
   verifiedSoftTimeoutSeconds = 0;
   verifiedCascadeTimeoutSeconds = LEGAL_CASCADE_TIMEOUT_SECONDS;
   log.debug(`setupAgentCallbackUrl: SOFT TIMEOUT DISABLED — agent reports ${storedSoftTimeout}`);
-  log.debug(`setupAgentCallbackUrl: CASCADE TIMEOUT VERIFIED at ${verifiedCascadeTimeoutSeconds}s from custom_llm`);
+  log.debug(`setupAgentCallbackUrl: CASCADE TIMEOUT VERIFIED at ${verifiedCascadeTimeoutSeconds}s from ${cascadeSource}`);
 
   try {
     const { computeSoftTimeoutBufferMs } = await import("./voice-keepalive-buffer");
