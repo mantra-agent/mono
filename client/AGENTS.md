@@ -92,7 +92,9 @@ App-shell consumers of live Session state must read `SessionActivityProvider` th
 `/features` must stay smooth under many humming pipeline sessions. Rules:
 
 - One page-level `["/api/sessions"]` query; never re-query sessions inside each `FeatureRow`.
-- Session match uses an active-pipeline shortlist + optional linked-session fetch. Linked `/api/features/:id/sessions` is enabled only when the row launched a session, a title might match an active session, or the row is expanded — never N fan-out because some other Feature is humming.
+- One page-level `useSessionSubscriptions` store; rows read via `useSessionStreamState(store, sessionId)` — never per-row `useSessionSubscription`.
+- **Exclusive session ownership.** Each live session binds to at most one Feature. Title match is exact launch title only (`${actionLabel|Discuss}: ${summary}` truncated to 80) — never `title.includes(summary)`. Page builds `titleSessionOwners` (sessionId → featureId); collisions prefer the longest summary and leave equal-length ties unowned. Linked/launched claims must not steal a session title-owned by another Feature.
+- Linked `/api/features/:id/sessions` is enabled only when the row launched a session, owns a title-matched session, or is expanded — never N fan-out because some other Feature is humming.
 - History (`/api/features/:id/history`) is expand-only (`ProfileTreeRow.onOpenChange`).
 - `FeatureRow` is `memo`ized. Browser telemetry kind `features` records `list_fetch`, `first_paint`, `session_match`, `expand`, `row_count`, `active_sessions` through `recordBrowserTelemetry`.
 

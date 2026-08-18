@@ -295,47 +295,104 @@ function recordFeaturesTelemetry(
   });
 }
 
+/** Launch titles are `${label}: ${summary}` truncated to 80 (useSessionLaunch). */
+const FEATURE_SESSION_TITLE_LABELS: readonly string[] = Array.from(
+  new Set([
+    "Discuss",
+    ...FEATURE_STAGES.flatMap((stage) => [
+      FEATURE_PIPELINE[stage].produce.actionLabel,
+      FEATURE_PIPELINE[stage].review.actionLabel,
+    ]),
+  ]),
+);
+
+function featureSessionLaunchTitles(summary: string): string[] {
+  const trimmed = summary.trim();
+  if (!trimmed) return [];
+  return FEATURE_SESSION_TITLE_LABELS.map((label) => `${label}: ${trimmed}`.slice(0, 80));
+}
+
+/** Exact launch-title match only — never substring. Substring let short Features steal longer ones' streams. */
+function sessionTitleMatchesFeature(sessionTitle: string | null | undefined, summary: string): boolean {
+  const title = sessionTitle?.trim();
+  if (!title) return false;
+  return featureSessionLaunchTitles(summary).includes(title);
+}
+
 /**
- * Resolve the live pipeline session for one Feature without scanning the full
- * session catalog. Callers pass the page-level active-session shortlist.
+ * Page-level exclusive title ownership: each live session binds to at most one
+ * Feature via title. Prefer the longest matching summary on collision; ties stay
+ * unowned by title (linked/launched paths may still claim).
+ */
+function buildExclusiveTitleSessionOwners(
+  features: Array<{ id: string; summary: string }>,
+  activePipelineSessions: ChatSession[],
+): Map<string, string> {
+  const sessionToFeature = new Map<string, string>();
+  for (const session of activePipelineSessions) {
+    const title = session.title?.trim();
+    if (!title) continue;
+    const matches = features
+      .filter((feature) => sessionTitleMatchesFeature(title, feature.summary))
+      .map((feature) => ({
+        featureId: feature.id,
+        summaryLen: feature.summary.trim().length,
+      }))
+      .sort((a, b) => b.summaryLen - a.summaryLen || a.featureId.localeCompare(b.featureId));
+    if (matches.length === 0) continue;
+    if (matches.length === 1 || matches[0].summaryLen > matches[1].summaryLen) {
+      sessionToFeature.set(session.id, matches[0].featureId);
+    }
+    // Equal-length collisions: leave unowned by title so two rows never share one stream.
+  }
+  return sessionToFeature;
+}
+
+/**
+ * Resolve the live pipeline session for one Feature.
+ * Priority: optimistic launch → linked session → exclusive title owner.
+ * Never free-scan titles with substring includes. Never claim a session
+ * title-owned by a different Feature.
  */
 function resolveActiveFeatureSession(args: {
   featureId: string;
-  summary: string;
   linkedSessions: FeatureSessionLink[];
   launchedSessionId: string | null;
   sessionsById: Map<string, ChatSession>;
-  activePipelineSessions: ChatSession[];
+  /** sessionId → featureId from page-level exclusive title assignment */
+  titleSessionOwners: Map<string, string>;
 }): ChatSession | null {
   const startedAt = performance.now();
   const candidates = new Map<string, ChatSession>();
-  for (const link of args.linkedSessions) {
-    const session = args.sessionsById.get(link.sessionId);
-    if (session && isActivePipelineSession(session)) candidates.set(session.id, session);
-  }
-  if (args.launchedSessionId) {
+  const ownedByOther = (sessionId: string) => {
+    const owner = args.titleSessionOwners.get(sessionId);
+    return Boolean(owner && owner !== args.featureId);
+  };
+
+  if (args.launchedSessionId && !ownedByOther(args.launchedSessionId)) {
     const launched = args.sessionsById.get(args.launchedSessionId);
     if (launched && isActivePipelineSession(launched)) candidates.set(launched.id, launched);
   }
-  // Title match covers the gap before @feature discovery indexes the launch message.
-  // Only active sessions are candidates — never O(features × all sessions).
-  const summary = args.summary.trim();
-  if (summary) {
-    for (const session of args.activePipelineSessions) {
-      if (!session.title?.includes(summary)) continue;
-      candidates.set(session.id, session);
-    }
+  for (const link of args.linkedSessions) {
+    if (ownedByOther(link.sessionId)) continue;
+    const session = args.sessionsById.get(link.sessionId);
+    if (session && isActivePipelineSession(session)) candidates.set(session.id, session);
   }
+  for (const [sessionId, ownerFeatureId] of args.titleSessionOwners) {
+    if (ownerFeatureId !== args.featureId) continue;
+    const session = args.sessionsById.get(sessionId);
+    if (session && isActivePipelineSession(session)) candidates.set(session.id, session);
+  }
+
   const active = [...candidates.values()].sort(
     (a, b) => Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt),
   );
   const elapsed = performance.now() - startedAt;
-  // Sample expensive matches only; keep ambient noise low.
   if (elapsed >= 8 || Math.random() < 0.05) {
     recordFeaturesTelemetry("session_match", elapsed, "ms", {
       featureId: args.featureId,
       candidateCount: candidates.size,
-      activeSessionPool: args.activePipelineSessions.length,
+      titleOwnerPool: args.titleSessionOwners.size,
     });
   }
   return active[0] ?? null;
@@ -460,14 +517,15 @@ const FeatureRow = memo(function FeatureRow({
   feature,
   products,
   sessionsById,
-  activePipelineSessions,
+  titleSessionOwners,
   streamStore,
   streamWsConnected,
 }: {
   feature: Feature;
   products: Product[];
   sessionsById: Map<string, ChatSession>;
-  activePipelineSessions: ChatSession[];
+  /** sessionId → featureId exclusive title ownership from the page. */
+  titleSessionOwners: Map<string, string>;
   /** Page-level multiplexed stream store — real-time without N subscriptions. */
   streamStore: SessionStreamStore;
   streamWsConnected: boolean;
@@ -529,16 +587,17 @@ const FeatureRow = memo(function FeatureRow({
       }),
   });
 
-  // Linked-session fetch is gated: title-match against the active shortlist,
-  // an optimistic launch on this row, or expand (for explicit discovery links).
-  // Never fan out /sessions to every Feature just because one elsewhere is humming.
-  const titleMightMatchActive = useMemo(() => {
-    const summary = feature.summary.trim();
-    if (!summary || activePipelineSessions.length === 0) return false;
-    return activePipelineSessions.some((session) => session.title?.includes(summary));
-  }, [activePipelineSessions, feature.summary]);
+  // Linked-session fetch is gated: exclusive title ownership, optimistic launch,
+  // or expand. Never fan out /sessions because some other Feature is humming,
+  // and never use substring title includes (that double-bound streams).
+  const ownsTitleSession = useMemo(() => {
+    for (const ownerFeatureId of titleSessionOwners.values()) {
+      if (ownerFeatureId === feature.id) return true;
+    }
+    return false;
+  }, [feature.id, titleSessionOwners]);
   const sessionsQueryEnabled =
-    Boolean(launchedSessionId) || titleMightMatchActive || rowExpanded;
+    Boolean(launchedSessionId) || ownsTitleSession || rowExpanded;
   const { data: linkedSessions = [] } = useQuery<FeatureSessionLink[]>({
     queryKey: ["/api/features", feature.id, "sessions"],
     queryFn: async () => {
@@ -570,20 +629,12 @@ const FeatureRow = memo(function FeatureRow({
     () =>
       resolveActiveFeatureSession({
         featureId: feature.id,
-        summary: feature.summary,
         linkedSessions,
         launchedSessionId,
         sessionsById,
-        activePipelineSessions,
+        titleSessionOwners,
       }),
-    [
-      activePipelineSessions,
-      feature.id,
-      feature.summary,
-      launchedSessionId,
-      linkedSessions,
-      sessionsById,
-    ],
+    [feature.id, launchedSessionId, linkedSessions, sessionsById, titleSessionOwners],
   );
 
   const isSessionInProgress = Boolean(activeSession);
@@ -1364,10 +1415,21 @@ export default function FeaturesPage() {
     return map;
   }, [sessions.data]);
 
-  // Shortlist of live pipeline sessions for title-match without O(N×M) scans.
+  // Shortlist of live pipeline sessions for exclusive title ownership.
   const activePipelineSessions = useMemo(
     () => (sessions.data ?? []).filter((session) => isActivePipelineSession(session)),
     [sessions.data],
+  );
+
+  // Each live session binds to at most one Feature via exact launch title.
+  // Prevents two child widgets from mounting the same stream state.
+  const titleSessionOwners = useMemo(
+    () =>
+      buildExclusiveTitleSessionOwners(
+        filteredFeatures.map((feature) => ({ id: feature.id, summary: feature.summary })),
+        activePipelineSessions,
+      ),
+    [activePipelineSessions, filteredFeatures],
   );
 
   // One multiplexed WS subscription for every live pipeline session on the page.
@@ -1515,7 +1577,7 @@ export default function FeaturesPage() {
                         feature={feature}
                         products={productList}
                         sessionsById={sessionsById}
-                        activePipelineSessions={activePipelineSessions}
+                        titleSessionOwners={titleSessionOwners}
                         streamStore={featureStreamStore}
                         streamWsConnected={featureStreamWsConnected}
                       />
