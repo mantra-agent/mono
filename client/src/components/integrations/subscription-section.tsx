@@ -108,12 +108,15 @@ export function SubscriptionSection({
   kind,
   connectorId,
   invalidateQueryKeys,
+  flattenHeaders = false,
   children,
 }: {
   kind: SubscriptionKind;
   /** When set, OAuth/status bind to this model connector instance. */
   connectorId?: number;
   invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
+  /** Routers: skip the Subscription header and nest rows under the connector. */
+  flattenHeaders?: boolean;
   children?: React.ReactNode;
 }) {
   const cfg = subscriptionPaths(kind, connectorId);
@@ -278,10 +281,9 @@ export function SubscriptionSection({
 
   const connected = statusData?.connected ?? false;
 
-  return (
-    <div className="min-w-0" data-testid={cfg.testId}>
-      <IntegrationTreeSection label="Subscription" initialOpen={!connected} icon={<Bot className="h-3.5 w-3.5" />}>
-        <ProfileTreeRow label="Account" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty>
+  const rows = (
+    <>
+        <ProfileTreeRow label="Account" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
           <span className="text-muted-foreground">{statusData?.email || statusData?.label || "Not connected"}</span>
         </ProfileTreeRow>
         <ProfileTreeRow
@@ -289,6 +291,7 @@ export function SubscriptionSection({
           icon={connected ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground" />}
           hasValue
           showEmpty
+          mobileLayout="inline"
         >
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             <span className={connected ? "text-active" : "text-muted-foreground"}>
@@ -298,8 +301,9 @@ export function SubscriptionSection({
               <Skeleton className="h-5 w-16" />
             ) : connected ? (
               <Button
-                variant="destructive"
+                variant="outline"
                 size="sm"
+                className="border-destructive text-destructive hover:border-destructive hover:bg-transparent hover:text-destructive"
                 onClick={() => disconnectMutation.mutate()}
                 disabled={disconnectMutation.isPending || !canManageSystemIntegrations}
                 title={canManageSystemIntegrations ? undefined : "Admin only"}
@@ -354,12 +358,21 @@ export function SubscriptionSection({
           </div>
         </ProfileTreeRow>
         {!canManageSystemIntegrations && (
-          <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty>
+          <ProfileTreeRow label="Access" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
             <span className="text-muted-foreground">Admin only</span>
           </ProfileTreeRow>
         )}
         {children}
-      </IntegrationTreeSection>
+    </>
+  );
+
+  return (
+    <div className="min-w-0" data-testid={cfg.testId}>
+      {flattenHeaders ? rows : (
+        <IntegrationTreeSection label="Subscription" initialOpen={!connected} icon={<Bot className="h-3.5 w-3.5" />}>
+          {rows}
+        </IntegrationTreeSection>
+      )}
     </div>
   );
 }
@@ -367,14 +380,16 @@ export function SubscriptionSection({
 export function OpenAISubscriptionSection({
   connectorId,
   invalidateQueryKeys,
+  flattenHeaders,
   children,
 }: {
   connectorId?: number;
   invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
+  flattenHeaders?: boolean;
   children?: React.ReactNode;
 }) {
   return (
-    <SubscriptionSection kind="openai" connectorId={connectorId} invalidateQueryKeys={invalidateQueryKeys}>
+    <SubscriptionSection kind="openai" connectorId={connectorId} flattenHeaders={flattenHeaders} invalidateQueryKeys={invalidateQueryKeys}>
       {children}
     </SubscriptionSection>
   );
@@ -383,14 +398,16 @@ export function OpenAISubscriptionSection({
 export function GrokSubscriptionSection({
   connectorId,
   invalidateQueryKeys,
+  flattenHeaders,
   children,
 }: {
   connectorId?: number;
   invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
+  flattenHeaders?: boolean;
   children?: React.ReactNode;
 }) {
   return (
-    <SubscriptionSection kind="grok" connectorId={connectorId} invalidateQueryKeys={invalidateQueryKeys}>
+    <SubscriptionSection kind="grok" connectorId={connectorId} flattenHeaders={flattenHeaders} invalidateQueryKeys={invalidateQueryKeys}>
       {children}
     </SubscriptionSection>
   );
