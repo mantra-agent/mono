@@ -1552,23 +1552,17 @@ export default function FeaturesPage() {
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
+                <button
+                  type="button"
                   className={cn(
-                    "h-7 shrink-0 gap-1.5 px-2 text-xs",
-                    productFilter.size > 0 && "border-foreground/40",
+                    "mb-0 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                    productFilter.size > 0 && "border-foreground/40 text-foreground",
                   )}
+                  aria-label="Features mixer"
                   data-testid="button-features-mixer"
                 >
                   <SlidersHorizontal className="h-3.5 w-3.5" />
-                  Mixer
-                  {productFilter.size > 0 ? (
-                    <span className="rounded bg-muted px-1 text-[10px] tabular-nums text-muted-foreground">
-                      {productFilter.size}
-                    </span>
-                  ) : null}
-                </Button>
+                </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuSub>
