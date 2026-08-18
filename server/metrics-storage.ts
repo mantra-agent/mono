@@ -42,7 +42,8 @@ import { eventBus } from "./event-bus";
 import { visibleBusinessPredicate, writableBusinessPredicate } from "./business-vault-access";
 import {
   canReadPlatformMetrics,
-  isPlatformMetric,
+  canReadSystemMetrics,
+  metricIsVisibleTo,
   PRODUCT_METRIC_SLUGS,
 } from "./metrics/metric-adapters";
 
@@ -420,6 +421,7 @@ export const metricsStorage = {
   async list(query?: string, businessId?: string, range?: { start: Date; end: Date }): Promise<Metric[]> {
     const principal = currentPrincipal();
     const allowPlatform = canReadPlatformMetrics(principal);
+    const allowSystem = canReadSystemMetrics(principal);
     const needle = query?.trim();
     const filter = and(
       businessId ? eq(metrics.businessId, businessId) : undefined,
@@ -428,10 +430,13 @@ export const metricsStorage = {
         ilike(metrics.description, `%${needle}%`),
         ilike(metrics.slug, `%${needle}%`),
       ) : undefined,
-      // Engine gate: never advertise platform product rows without users:read.
+      // Engine gate: never advertise Product without users:read or System without system:read.
       allowPlatform
         ? undefined
         : sql`(${metrics.ownerKind} IS DISTINCT FROM 'platform' AND ${metrics.slug} NOT IN ('hours-used','active-users','current-users','new-users','accounts','registered-users','shipped-prs'))`,
+      allowSystem
+        ? undefined
+        : sql`(${metrics.ownerKind} IS DISTINCT FROM 'performance' AND COALESCE(${metrics.adapterConfig}->>'adapterKey', '') IS DISTINCT FROM 'performance')`,
     );
     const rows = await db
       .select({ metric: metrics })
@@ -442,7 +447,7 @@ export const metricsStorage = {
     const out: Metric[] = [];
     for (const { metric } of rows) {
       const mapped = mapMetric(metric, await latestSampleFor(metric.id, range));
-      if (isPlatformMetric(mapped) && !allowPlatform) continue;
+      if (!metricIsVisibleTo(principal, mapped)) continue;
       out.push(await overlayIdentityStockSample(mapped));
     }
     return out;
@@ -457,7 +462,7 @@ export const metricsStorage = {
       .limit(1);
     if (!result?.metric) throw Object.assign(new Error("Metric not found"), { status: 404 });
     const mapped = mapMetric(result.metric, await latestSampleFor(result.metric.id));
-    if (isPlatformMetric(mapped) && !canReadPlatformMetrics(principal)) {
+    if (!metricIsVisibleTo(principal, mapped)) {
       throw Object.assign(new Error("Metric not found"), { status: 404 });
     }
     return overlayIdentityStockSample(mapped);
@@ -838,16 +843,14 @@ export const kpiStorage = {
 
     const out: Kpi[] = [];
     for (const { kpi: row } of rows) {
-      let metric: Metric | null = null;
-      let sample: MetricSample | null = null;
+      let metric: Metric;
       try {
         metric = await metricsStorage.get(row.metricId);
-        sample = metric.latestSample ?? null;
       } catch {
-        metric = null;
-        sample = null;
+        // Bound Product/System metrics fail closed as not found — omit the KPI.
+        continue;
       }
-      out.push(mapKpi(row, { metric, sample }));
+      out.push(mapKpi(row, { metric, sample: metric.latestSample ?? null }));
     }
     return out;
   },
@@ -860,15 +863,16 @@ export const kpiStorage = {
       .where(combineWithVisibleScope(principal, kpiScope, eq(kpis.id, id)))
       .limit(1);
     assertVisible(principal, row, "KPI");
-    let metric: Metric | null = null;
-    let sample: MetricSample | null = null;
+    let metric: Metric;
     try {
       metric = await metricsStorage.get(row.metricId);
-      sample = metric.latestSample ?? null;
-    } catch {
-      /* metric may be missing */
+    } catch (error) {
+      if ((error as { status?: number })?.status === 404) {
+        throw Object.assign(new Error("KPI not found"), { status: 404 });
+      }
+      throw error;
     }
-    return mapKpi(row, { metric, sample });
+    return mapKpi(row, { metric, sample: metric.latestSample ?? null });
   },
 
   async getByStandingObjective(key: StandingObjectiveKey): Promise<Kpi | null> {

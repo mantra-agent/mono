@@ -98,7 +98,6 @@ export function registerMetricsRoutes(app: Express): void {
   app.get(
     "/api/metrics",
     requireAuth,
-    requirePermission("system:read"),
     async (req: Request, res: Response) => {
       try {
         await ensureReady();
@@ -129,7 +128,6 @@ export function registerMetricsRoutes(app: Express): void {
   app.get(
     ["/api/metrics/range-sample", "/api/metrics/usage-sample"],
     requireAuth,
-    requirePermission("system:read"),
     async (req: Request, res: Response) => {
       try {
         await ensureReady();
@@ -150,7 +148,6 @@ export function registerMetricsRoutes(app: Express): void {
   app.get(
     "/api/metrics/collection",
     requireAuth,
-    requirePermission("system:read"),
     async (req: Request, res: Response) => {
       try {
         await ensureReady();
@@ -172,7 +169,6 @@ export function registerMetricsRoutes(app: Express): void {
   app.get(
     "/api/metrics/:id/query",
     requireAuth,
-    requirePermission("system:read"),
     async (req: Request, res: Response) => {
       try {
         await ensureReady();
@@ -192,7 +188,6 @@ export function registerMetricsRoutes(app: Express): void {
   app.get(
     "/api/metrics/:id",
     requireAuth,
-    requirePermission("system:read"),
     async (req: Request, res: Response) => {
       try {
         await ensureReady();
@@ -256,7 +251,6 @@ export function registerMetricsRoutes(app: Express): void {
   app.get(
     "/api/metrics/:id/samples",
     requireAuth,
-    requirePermission("system:read"),
     async (req: Request, res: Response) => {
       try {
         await ensureReady();
@@ -292,7 +286,6 @@ export function registerMetricsRoutes(app: Express): void {
   app.get(
     "/api/kpis",
     requireAuth,
-    requirePermission("system:read"),
     async (req: Request, res: Response) => {
       try {
         await ensureReady();
@@ -310,7 +303,6 @@ export function registerMetricsRoutes(app: Express): void {
   app.get(
     "/api/kpis/standing-scores",
     requireAuth,
-    requirePermission("system:read"),
     async (req: Request, res: Response) => {
       try {
         await ensureReady();
@@ -327,7 +319,6 @@ export function registerMetricsRoutes(app: Express): void {
   app.get(
     "/api/kpis/:id",
     requireAuth,
-    requirePermission("system:read"),
     async (req: Request, res: Response) => {
       try {
         await ensureReady();

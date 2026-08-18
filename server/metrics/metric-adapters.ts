@@ -8,7 +8,13 @@
 import { createHash } from "crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { metrics } from "@shared/schema";
-import type { Metric, MetricCoverage, MetricSample, MetricSeries } from "@shared/models/metrics";
+import {
+  metricAdapterKeyOf,
+  type Metric,
+  type MetricCoverage,
+  type MetricSample,
+  type MetricSeries,
+} from "@shared/models/metrics";
 import { db } from "../db";
 import type { Principal } from "../principal";
 import { getCurrentPrincipal } from "../principal-context";
@@ -92,8 +98,23 @@ export function canReadPlatformMetrics(principal: Principal): boolean {
   return principalHasPermission(principal, "users:read");
 }
 
+export function canReadSystemMetrics(principal: Principal): boolean {
+  return principalHasPermission(principal, "system:read");
+}
+
 export function isPlatformMetric(metric: Pick<Metric, "ownerKind" | "slug">): boolean {
   return metric.ownerKind === "platform" || PRODUCT_METRIC_SLUGS.has(metric.slug);
+}
+
+export function isSystemMetric(metric: Pick<Metric, "ownerKind" | "adapterConfig">): boolean {
+  const key = metric.adapterConfig?.adapterKey;
+  return metric.ownerKind === "performance" || key === "performance";
+}
+
+export function metricIsVisibleTo(principal: Principal, metric: Pick<Metric, "ownerKind" | "slug" | "adapterConfig">): boolean {
+  if (isPlatformMetric(metric) && !canReadPlatformMetrics(principal)) return false;
+  if (isSystemMetric(metric) && !canReadSystemMetrics(principal)) return false;
+  return true;
 }
 
 function stableAccountMetricId(accountId: string, slug: string, namespace: string): string {
@@ -467,14 +488,7 @@ export const METRIC_ADAPTER_HANDLERS: Record<string, MetricAdapterHandler> = {
 };
 
 export function adapterKeyOf(metric: Metric): string | null {
-  const fromConfig = metric.adapterConfig?.adapterKey;
-  if (typeof fromConfig === "string" && fromConfig.trim()) return fromConfig.trim();
-  if (metric.slug === "meetings") return "meetings";
-  if (isPlatformMetric(metric)) return "product";
-  if (metric.slug === "completed-tasks") return "tasks";
-  if (metric.slug === "opportunity-interactions") return "interactions";
-  if (metric.slug === "wellness-completions") return "wellness";
-  return null;
+  return metricAdapterKeyOf(metric);
 }
 
 export function productCurrentDefinitions() {

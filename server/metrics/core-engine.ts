@@ -23,9 +23,8 @@ import { createLogger } from "../log";
 import { getCurrentPrincipal } from "../principal-context";
 import {
   adapterKeyOf,
-  canReadPlatformMetrics,
   ensureEngagementMetrics,
-  isPlatformMetric,
+  metricIsVisibleTo,
   METRIC_ADAPTER_HANDLERS,
   stampPlatformOwnerOnProductMetrics,
 } from "./metric-adapters";
@@ -41,7 +40,10 @@ export type {
 export {
   ensureEngagementMetrics,
   canReadPlatformMetrics,
+  canReadSystemMetrics,
   isPlatformMetric,
+  isSystemMetric,
+  metricIsVisibleTo,
   stampPlatformOwnerOnProductMetrics,
   PRODUCT_METRIC_SLUGS,
 } from "./metric-adapters";
@@ -108,7 +110,7 @@ export async function queryMetric(
     throw error;
   }
 
-  if (isPlatformMetric(metric) && !canReadPlatformMetrics(principal)) {
+  if (!metricIsVisibleTo(principal, metric)) {
     notFound();
   }
 
