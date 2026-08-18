@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { Check, ChevronRight, Loader2, MoreHorizontal } from "lucide-react";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
@@ -35,6 +36,7 @@ import {
 } from "@shared/models/business-model";
 import type { Kpi } from "@shared/models/metrics";
 import type { BusinessHiringProjection } from "@shared/models/business-hiring";
+import type { BusinessPricing } from "@shared/models/business-pricing";
 import type { JobRole } from "@shared/models/job-roles";
 
 type SaveState = "idle" | "pending" | "saving" | "saved" | "error";
@@ -158,6 +160,14 @@ function fmtPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function formatCatalogMoney(value: number): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
+}
+
+function formatCatalogCount(value: number | null): string {
+  return value === null ? "Unlimited" : String(value);
+}
+
 interface NumericInputProps {
   value: number;
   onChange: (value: number) => void;
@@ -218,9 +228,15 @@ export default function BusinessModelPage() {
     enabled: Boolean(selectedId),
     queryFn: async () => (await apiRequest("GET", hiringUrl)).json(),
   });
+  const pricingUrl = selectedId ? `/api/business/pricing?businessId=${encodeURIComponent(selectedId)}` : "/api/business/pricing";
+  const { data: pricing, isLoading: pricingLoading, isFetching: pricingFetching, error: pricingError, refetch: refetchPricing } = useQuery<BusinessPricing>({
+    queryKey: ["/api/business/pricing", selectedId],
+    enabled: Boolean(selectedId),
+    queryFn: async () => (await apiRequest("GET", pricingUrl)).json(),
+  });
   const kpisUrl = selectedId ? `/api/business/kpis?businessId=${encodeURIComponent(selectedId)}` : "/api/business/kpis";
   const { data: kpisData } = useQuery<{ kpis: Kpi[] }>({ queryKey: [kpisUrl], enabled: Boolean(selectedId) });
-  usePageLoadActivity("page:business-model", isLoading || isFetching || budgetLoading || budgetFetching || hiringLoading || hiringFetching);
+  usePageLoadActivity("page:business-model", isLoading || isFetching || budgetLoading || budgetFetching || hiringLoading || hiringFetching || pricingLoading || pricingFetching);
   const assumptionsPreferenceKey = useMemo(() => {
     if (!user?.id || !principal?.accountId || !selectedId) return null;
     return `${principal.accountId}:${user.id}:${selectedId}`;
@@ -333,7 +349,7 @@ export default function BusinessModelPage() {
     const kpiId = draft?.assumptionKpis?.[key];
     return Boolean(kpiId) && Number.isFinite(kpiById.get(kpiId!)?.score?.value);
   }, [draft, kpiById]);
-  const projection = useMemo(() => liveAssumptions && budget && hiring ? computeProjection(liveAssumptions, rolesData?.roles ?? hiring.roles, budget.departments, hiring.slots) : null, [budget, hiring, liveAssumptions, rolesData]);
+  const projection = useMemo(() => liveAssumptions && budget && hiring && pricing ? computeProjection(liveAssumptions, rolesData?.roles ?? hiring.roles, budget.departments, hiring.slots, pricing) : null, [budget, hiring, liveAssumptions, pricing, rolesData]);
   const periods = useMemo(() => projection ? aggregateMonths(projection.months, period) : [], [projection, period]);
   const staffRoles = useMemo(() => {
     if (!draft || !hiring || periods.length === 0) return [];
@@ -344,19 +360,19 @@ export default function BusinessModelPage() {
     return [...new Set(periods.flatMap((row) => Object.keys(row.staffByRole)))].map((id) => ({ id, label: labels.get(id) ?? id })).sort((left, right) => left.label.localeCompare(right.label));
   }, [draft, hiring, periods]);
 
-  if (error || budgetError) {
+  if (error || budgetError || pricingError) {
     return (
       <div className="w-full p-4">
         <p className="text-sm font-medium text-foreground">Forecast unavailable</p>
-        <p className="mt-1 text-sm text-muted-foreground">{((error ?? budgetError) as Error).message}</p>
-        <Button type="button" variant="outline" size="sm" className="mt-4" disabled={isFetching || budgetFetching} onClick={() => { void refetch(); void refetchBudget(); }}>
-          {(isFetching || budgetFetching) && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />} Try again
+        <p className="mt-1 text-sm text-muted-foreground">{((error ?? budgetError ?? pricingError) as Error).message}</p>
+        <Button type="button" variant="outline" size="sm" className="mt-4" disabled={isFetching || budgetFetching || pricingFetching} onClick={() => { void refetch(); void refetchBudget(); void refetchPricing(); }}>
+          {(isFetching || budgetFetching || pricingFetching) && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />} Try again
         </Button>
       </div>
     );
   }
 
-  if (isLoading || budgetLoading || hiringLoading || !draft || !liveAssumptions || !budget || !hiring || !projection) return null;
+  if (isLoading || budgetLoading || hiringLoading || pricingLoading || !draft || !liveAssumptions || !budget || !hiring || !pricing || !projection) return null;
 
   return (
     <div className="w-full space-y-6 p-4" data-testid="business-model-page">
@@ -365,64 +381,44 @@ export default function BusinessModelPage() {
         <ProfileDetailSection title="Assumptions" open={assumptionsOpen} onOpenChange={changeAssumptionsOpen} headerAction={<SavedIndicator state={saveState} />}>
           <div className="space-y-0">
             <ProfileDetailSection title="Tiers" defaultOpen testId="assumptions-tiers">
-              <ProfileDetailSection title="Max" defaultOpen testId="tier-max">
-                <AssumptionDriver assumptionKey="maxSubscriptionMonthly" label="Max" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-                  <NumericInput ariaLabel="Max monthly price" value={liveAssumptions.maxSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" disabled={sampled("maxSubscriptionMonthly")} onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} />
-                </AssumptionDriver>
-                <AssumptionDriver assumptionKey="maxIncludedParticipants" label="Included Participants" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-                  <NumericInput ariaLabel="Max included Participants" value={liveAssumptions.maxIncludedParticipants} min={0} step={1} disabled={sampled("maxIncludedParticipants")} onChange={(maxIncludedParticipants) => updateGlobal({ maxIncludedParticipants })} />
-                </AssumptionDriver>
-                <AssumptionDriver assumptionKey="maxIncludedTokensMillions" label="Max included tokens" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-                  <NumericInput ariaLabel="Max included tokens in millions" value={liveAssumptions.maxIncludedTokensMillions} min={0} step={1} suffix="M" disabled={sampled("maxIncludedTokensMillions")} onChange={(maxIncludedTokensMillions) => updateGlobal({ maxIncludedTokensMillions })} />
-                </AssumptionDriver>
-                <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
-                  <span className="min-w-0 truncate text-muted-foreground">Principals</span>
-                  <span className="tabular-nums text-sm text-foreground">1</span>
-                </div>
-              </ProfileDetailSection>
-              <ProfileDetailSection title="Max+" defaultOpen testId="tier-max-plus">
-                <AssumptionDriver assumptionKey="maxPlusSubscriptionMonthly" label="Max+" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-                  <NumericInput ariaLabel="Max+ monthly price" value={liveAssumptions.maxPlusSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" disabled={sampled("maxPlusSubscriptionMonthly")} onChange={(maxPlusSubscriptionMonthly) => updateGlobal({ maxPlusSubscriptionMonthly })} />
-                </AssumptionDriver>
-                <AssumptionDriver assumptionKey="maxPlusIncludedParticipants" label="Included Participants" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-                  <NumericInput ariaLabel="Max+ included Participants" value={liveAssumptions.maxPlusIncludedParticipants} min={0} step={1} disabled={sampled("maxPlusIncludedParticipants")} onChange={(maxPlusIncludedParticipants) => updateGlobal({ maxPlusIncludedParticipants })} />
-                </AssumptionDriver>
-                <AssumptionDriver assumptionKey="maxPlusIncludedTokensMillions" label="Max+ included tokens" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-                  <NumericInput ariaLabel="Max+ included tokens in millions" value={liveAssumptions.maxPlusIncludedTokensMillions} min={0} step={1} suffix="M" disabled={sampled("maxPlusIncludedTokensMillions")} onChange={(maxPlusIncludedTokensMillions) => updateGlobal({ maxPlusIncludedTokensMillions })} />
-                </AssumptionDriver>
-                <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
-                  <span className="min-w-0 truncate text-muted-foreground">Principals</span>
-                  <span className="tabular-nums text-sm text-foreground">1</span>
-                </div>
-              </ProfileDetailSection>
-              <ProfileDetailSection title="Enterprise" defaultOpen testId="tier-enterprise">
-                <AssumptionDriver assumptionKey="enterpriseSubscriptionMonthly" label="Enterprise" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-                  <NumericInput ariaLabel="Enterprise monthly floor" value={liveAssumptions.enterpriseSubscriptionMonthly} min={0} step={250} prefix="$" suffix="/ mo" disabled={sampled("enterpriseSubscriptionMonthly")} onChange={(enterpriseSubscriptionMonthly) => updateGlobal({ enterpriseSubscriptionMonthly })} />
-                </AssumptionDriver>
-                <AssumptionDriver assumptionKey="enterpriseIncludedParticipants" label="Included Participants" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-                  <NumericInput ariaLabel="Enterprise included Participants" value={liveAssumptions.enterpriseIncludedParticipants} min={0} step={1} disabled={sampled("enterpriseIncludedParticipants")} onChange={(enterpriseIncludedParticipants) => updateGlobal({ enterpriseIncludedParticipants })} />
-                </AssumptionDriver>
-                <AssumptionDriver assumptionKey="enterpriseIncludedTokensMillions" label="Enterprise included tokens" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-                  <NumericInput ariaLabel="Enterprise included tokens in millions" value={liveAssumptions.enterpriseIncludedTokensMillions} min={0} step={10} suffix="M" disabled={sampled("enterpriseIncludedTokensMillions")} onChange={(enterpriseIncludedTokensMillions) => updateGlobal({ enterpriseIncludedTokensMillions })} />
-                </AssumptionDriver>
-                <AssumptionDriver assumptionKey="enterpriseEntrySharePct" label="Enterprise entry share" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-                  <NumericInput ariaLabel="Enterprise entry volume share" value={liveAssumptions.enterpriseEntrySharePct} min={0} step={5} suffix="%" disabled={sampled("enterpriseEntrySharePct")} onChange={(enterpriseEntrySharePct) => updateGlobal({ enterpriseEntrySharePct })} />
-                </AssumptionDriver>
-                <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
-                  <span className="min-w-0 truncate text-muted-foreground">Principals</span>
-                  <span className="tabular-nums text-sm text-foreground">2</span>
-                </div>
-                <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
-                  <span className="min-w-0 truncate text-muted-foreground">Router</span>
-                  <span className="text-sm text-foreground">Dedicated</span>
-                </div>
-              </ProfileDetailSection>
-              <AssumptionDriver assumptionKey="participantSeatMonthly" label="Extra Participant" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-                <NumericInput ariaLabel="Extra Participant monthly price" value={liveAssumptions.participantSeatMonthly} min={0} step={25} prefix="$" suffix="/ mo" disabled={sampled("participantSeatMonthly")} onChange={(participantSeatMonthly) => updateGlobal({ participantSeatMonthly })} />
+              {pricing.packages.map((pkg) => (
+                <ProfileDetailSection key={pkg.key} title={pkg.name} defaultOpen testId={`tier-${pkg.key}`}>
+                  <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
+                    <span className="min-w-0 truncate text-muted-foreground">Year 1</span>
+                    <span className="tabular-nums text-sm text-foreground">{formatCatalogMoney(pkg.yearOneMonthly)} / mo</span>
+                  </div>
+                  <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
+                    <span className="min-w-0 truncate text-muted-foreground">Year 2</span>
+                    <span className="tabular-nums text-sm text-foreground">{formatCatalogMoney(pkg.yearTwoMonthly)} / mo</span>
+                  </div>
+                  <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
+                    <span className="min-w-0 truncate text-muted-foreground">Included Participants</span>
+                    <span className="tabular-nums text-sm text-foreground">{formatCatalogCount(pkg.includedParticipants)}</span>
+                  </div>
+                  <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
+                    <span className="min-w-0 truncate text-muted-foreground">Included tokens</span>
+                    <span className="tabular-nums text-sm text-foreground">{pkg.includedTokensMillions}M</span>
+                  </div>
+                  <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
+                    <span className="min-w-0 truncate text-muted-foreground">Extra Participant</span>
+                    <span className="tabular-nums text-sm text-foreground">{pkg.extraParticipantMonthly === null ? "—" : `${formatCatalogMoney(pkg.extraParticipantMonthly)} / mo`}</span>
+                  </div>
+                </ProfileDetailSection>
+              ))}
+              <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
+                <span className="min-w-0 truncate text-muted-foreground">Token cost</span>
+                <span className="tabular-nums text-sm text-foreground">{formatCatalogMoney(pricing.extras.workhorseInputPerMillion)} / 1M</span>
+              </div>
+              <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
+                <span className="min-w-0 truncate text-muted-foreground">Extra usage</span>
+                <span className="tabular-nums text-sm text-foreground">{formatCatalogMoney(pricing.extras.extraUsagePerMillion)} / 1M</span>
+              </div>
+              <AssumptionDriver assumptionKey="factoryPlusEntrySharePct" label="Factory+ entry share" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+                <NumericInput ariaLabel="Factory+ entry volume share" value={liveAssumptions.factoryPlusEntrySharePct} min={0} step={5} suffix="%" disabled={sampled("factoryPlusEntrySharePct")} onChange={(factoryPlusEntrySharePct) => updateGlobal({ factoryPlusEntrySharePct, enterpriseEntrySharePct: factoryPlusEntrySharePct })} />
               </AssumptionDriver>
-              <AssumptionDriver assumptionKey="overageMarkupPct" label="Extra usage markup" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-                <NumericInput ariaLabel="Extra usage markup over published API" value={liveAssumptions.overageMarkupPct} min={0} step={25} suffix="%" disabled={sampled("overageMarkupPct")} onChange={(overageMarkupPct) => updateGlobal({ overageMarkupPct })} />
-              </AssumptionDriver>
+              <Link href="/business/pricing" className={cn(HIERARCHY_SESSION_ROW_CLASS, "text-cta hover:text-active")}>
+                Edit catalog on Pricing
+              </Link>
             </ProfileDetailSection>
             <AssumptionDriver assumptionKey="startingAccounts" label="Starting accounts" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
               <NumericInput ariaLabel="Starting paying accounts" value={liveAssumptions.startingAccounts} min={0} step={1} disabled={sampled("startingAccounts")} onChange={(startingAccounts) => updateGlobal({ startingAccounts })} />
@@ -462,9 +458,6 @@ export default function BusinessModelPage() {
             </AssumptionDriver>
             <AssumptionDriver assumptionKey="tokensUsedPerHour" label="Tokens per hour" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
               <NumericInput ariaLabel="Tokens used per hour" value={liveAssumptions.tokensUsedPerHour} min={0} step={10000} disabled={sampled("tokensUsedPerHour")} onChange={(tokensUsedPerHour) => updateGlobal({ tokensUsedPerHour })} />
-            </AssumptionDriver>
-            <AssumptionDriver assumptionKey="blendedTokenCostPerMillion" label="Token cost" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-              <NumericInput ariaLabel="Blended token cost per million" value={liveAssumptions.blendedTokenCostPerMillion} min={0} step={0.25} prefix="$" suffix="/ 1M" disabled={sampled("blendedTokenCostPerMillion")} onChange={(blendedTokenCostPerMillion) => updateGlobal({ blendedTokenCostPerMillion })} />
             </AssumptionDriver>
             <AssumptionDriver assumptionKey="loadedCostMultiplier" label="Loaded comp multiplier" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
               <NumericInput ariaLabel="Fully loaded staff comp multiplier on base salary plus bonus" value={liveAssumptions.loadedCostMultiplier} min={0.5} step={0.05} suffix="×" disabled={sampled("loadedCostMultiplier")} onChange={(loadedCostMultiplier) => updateGlobal({ loadedCostMultiplier })} />
