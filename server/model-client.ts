@@ -2,7 +2,7 @@ import OpenAI, { toFile } from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
-import { ACTIVITY_FRAMING, ACTIVITY_CHAT, type ActivityId } from "./job-profiles";
+import { ACTIVITY_FRAMING, ACTIVITY_CHAT, ACTIVITY_MEDIA, type ActivityId } from "./job-profiles";
 import { resolveModelCandidates, appendFailedAttempt, type ModelRoutingDecision } from "./model-routing";
 import { getMaxOutputTokens, getModel, supportsSelectableEffort, supportsGrokReasoningEffort } from "./model-registry";
 import type { OpenAITierModelConfig, GrokSubscriptionTierModelConfig } from "@shared/model-connectors";
@@ -3836,8 +3836,9 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
 
 // ---------------------------------------------------------------------------
 // Image generation / edit
-// Primary: OpenAI Subscription Responses API
-// Fallback: Grok subscription via xAI Imagine (OpenAI-compatible images API)
+// Same active connector pool as chat/analyze (resolveModelCandidates).
+// Supported providers: openai-subscription (Codex image tool), grok-subscription
+// (xAI Imagine). Other active connectors are skipped with a clear reason.
 // ---------------------------------------------------------------------------
 
 type ImageModalityOptions = {
@@ -3846,34 +3847,8 @@ type ImageModalityOptions = {
   background?: string;
   outputFormat?: string;
   signal?: AbortSignal;
+  routingDecision?: ModelRoutingDecision;
 };
-
-function isOpenAIImageProviderFailure(err: unknown): boolean {
-  if (!err) return false;
-  const msg = err instanceof Error ? err.message : String(err);
-  const lower = msg.toLowerCase();
-  if (
-    lower.includes("usage_limit") ||
-    lower.includes("usage limit") ||
-    lower.includes("rate limit") ||
-    lower.includes("quota") ||
-    lower.includes("insufficient_quota") ||
-    lower.includes("billing") ||
-    lower.includes("unauthorized") ||
-    lower.includes("forbidden") ||
-    lower.includes("expired") ||
-    lower.includes("authentication") ||
-    lower.includes("not configured") ||
-    lower.includes("no openai") ||
-    lower.includes("openai subscription") ||
-    lower.includes("provider_quota") ||
-    lower.includes("codex image")
-  ) {
-    return true;
-  }
-  // HTTP status codes commonly returned when the OpenAI sub path is down.
-  return /\b(401|402|403|429|500|502|503)\b/.test(msg);
-}
 
 function aspectRatioFromSize(size?: string): string | undefined {
   if (!size) return undefined;
@@ -3889,20 +3864,37 @@ function aspectRatioFromSize(size?: string): string | undefined {
   return `${width / d}:${height / d}`;
 }
 
-async function getGrokImageClient(): Promise<OpenAI> {
-  const accessToken = await getGrokSubscriptionAccessToken();
-  return getOpenAIClient(accessToken, GROK_SUBSCRIPTION_API_BASE_URL);
+function codexModelForImageRouting(routing: ModelRoutingDecision): string {
+  const modelInfo = getModel(routing.model);
+  return modelInfo?.codexModelId ?? routing.model ?? "gpt-5.5";
+}
+
+async function resolveImageRoutingCandidates(
+  options?: ImageModalityOptions,
+): Promise<ModelRoutingDecision[]> {
+  const candidates = quotaEligibleCandidates(
+    options?.routingDecision
+      ? [options.routingDecision, ...(options.routingDecision.fallbackCandidates || [])]
+      : await resolveModelCandidates(ACTIVITY_MEDIA, {
+          sessionId: undefined,
+        }),
+  );
+  if (!candidates.length) {
+    throw codedError(
+      "CONNECTOR_NOT_CONFIGURED",
+      "No active model connector can serve image generation/edit",
+    );
+  }
+  return candidates;
 }
 
 async function generateImageViaOpenAISubscription(
   prompt: string,
-  options?: ImageModalityOptions,
+  options: ImageModalityOptions | undefined,
+  routing: ModelRoutingDecision,
 ): Promise<{ buffer: Buffer; format: string }> {
-  const accessToken = await getOpenAISubscriptionAccessToken();
-  const modelString = (await resolveModelCandidates(ACTIVITY_FRAMING))[0].modelString;
-  const { model: rawModel } = parseModelString(modelString);
-  const modelInfo = getModel(rawModel);
-  const codexModel = modelInfo?.codexModelId ?? "gpt-5.5";
+  const accessToken = await getOpenAISubscriptionAccessToken(routing.connectorId);
+  const codexModel = codexModelForImageRouting(routing);
 
   const imageToolDef: Record<string, unknown> = { type: "image_generation" };
   if (options?.size) imageToolDef.size = options.size;
@@ -3954,7 +3946,10 @@ async function generateImageViaOpenAISubscription(
 
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "unknown error");
-      throw modelProviderErrorFromAttempt(codexHttpAttemptError(response, text, scope), attempt + 1, { model: codexModel });
+      throw modelProviderErrorFromAttempt(codexHttpAttemptError(response, text, scope), attempt + 1, {
+        provider: "openai-subscription",
+        model: codexModel,
+      });
     }
 
     let base64Result = "";
@@ -4008,7 +4003,10 @@ async function generateImageViaOpenAISubscription(
     if (earlyFailure) {
       scope.cleanup();
       if (earlyFailure.retryable && attempt < CODEX_MAX_ATTEMPTS - 1) continue;
-      throw modelProviderErrorFromAttempt(earlyFailure, attempt + 1, { model: codexModel });
+      throw modelProviderErrorFromAttempt(earlyFailure, attempt + 1, {
+        provider: "openai-subscription",
+        model: codexModel,
+      });
     }
 
     if (!base64Result) {
@@ -4034,8 +4032,10 @@ async function generateImageViaOpenAISubscription(
 export async function generateImageViaGrokSubscription(
   prompt: string,
   options?: ImageModalityOptions,
+  routing?: ModelRoutingDecision,
 ): Promise<{ buffer: Buffer; format: string }> {
-  const client = await getGrokImageClient();
+  const accessToken = await getGrokSubscriptionAccessToken(routing?.connectorId);
+  const client = getOpenAIClient(accessToken, GROK_SUBSCRIPTION_API_BASE_URL);
   const format = options?.outputFormat === "jpeg" || options?.outputFormat === "webp"
     ? options.outputFormat
     : "png";
@@ -4053,6 +4053,7 @@ export async function generateImageViaGrokSubscription(
 
   log.info("Generating image via Grok subscription (xAI Imagine)", {
     model: GROK_IMAGE_MODEL,
+    connectorId: routing?.connectorId,
     requestedSize: options?.size,
     aspectRatio,
   });
@@ -4072,44 +4073,85 @@ export async function generateImageViaGrokSubscription(
   };
 }
 
+async function generateImageOnRouting(
+  prompt: string,
+  options: ImageModalityOptions | undefined,
+  routing: ModelRoutingDecision,
+): Promise<{ buffer: Buffer; format: string }> {
+  if (routing.provider === "openai-subscription") {
+    return generateImageViaOpenAISubscription(prompt, options, routing);
+  }
+  if (routing.provider === "grok-subscription") {
+    return generateImageViaGrokSubscription(prompt, options, routing);
+  }
+  throw codedError(
+    "PROVIDER_UNCLASSIFIED",
+    `Image generation is not supported on provider ${routing.provider}`,
+  );
+}
+
 /**
- * Generate an image. Tries OpenAI subscription first; on provider failure falls
- * back to Grok subscription / xAI Imagine so image tools keep working when the
- * OpenAI sub is exhausted or unavailable.
+ * Generate an image through the active model-connector pool (same order as chat
+ * and images.analyze). Only openai-subscription and grok-subscription can
+ * produce images; other active connectors are skipped.
  */
 export async function generateImageViaSubscription(
   prompt: string,
   options?: ImageModalityOptions,
 ): Promise<{ buffer: Buffer; format: string }> {
-  try {
-    return await generateImageViaOpenAISubscription(prompt, options);
-  } catch (err) {
-    if (!isOpenAIImageProviderFailure(err)) throw err;
-    log.warn("OpenAI image generation failed; falling back to Grok subscription", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    try {
-      return await generateImageViaGrokSubscription(prompt, options);
-    } catch (fallbackErr) {
-      const primary = err instanceof Error ? err.message : String(err);
-      const fallback = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-      throw new Error(
-        `Image generation failed on OpenAI subscription (${primary}); Grok fallback also failed (${fallback})`,
+  const candidates = await resolveImageRoutingCandidates(options);
+  let failures = candidates[0]?.attempts ?? [];
+  let lastError: unknown;
+  let attempted = 0;
+
+  for (let index = 0; index < candidates.length; index++) {
+    const routing = { ...candidates[index], attempts: failures.length ? failures : candidates[index].attempts };
+    if (routing.provider !== "openai-subscription" && routing.provider !== "grok-subscription") {
+      log.debug(
+        `image generate skip unsupported provider=${routing.provider} connector=${routing.connectorId}`,
       );
+      continue;
+    }
+    attempted += 1;
+    try {
+      return await generateImageOnRouting(prompt, options, routing);
+    } catch (error) {
+      lastError = error;
+      if (isAbortError(error, options?.signal)) throw error;
+      recordConnectorQuotaExhaustion(routing, error);
+      failures = appendFailedAttempt(routing, error);
+      const next = candidates.slice(index + 1).find(
+        (c) => c.provider === "openai-subscription" || c.provider === "grok-subscription",
+      );
+      if (next) {
+        log.warn(
+          `image generate connector fallback connector=${routing.connectorId} provider=${routing.provider} ` +
+          `nextConnector=${next.connectorId} nextProvider=${next.provider} ` +
+          `failure=${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
+
+  if (!attempted) {
+    throw codedError(
+      "CONNECTOR_NOT_CONFIGURED",
+      "No active openai-subscription or grok-subscription connector can generate images",
+    );
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(lastError == null ? "Image generation failed" : String(lastError));
 }
 
 async function editImageViaOpenAISubscription(
   imageBuffers: Array<{ buffer: Buffer; mediaType: string }>,
   prompt: string,
-  options?: ImageModalityOptions,
+  options: ImageModalityOptions | undefined,
+  routing: ModelRoutingDecision,
 ): Promise<{ buffer: Buffer; format: string }> {
-  const accessToken = await getOpenAISubscriptionAccessToken();
-  const modelString = (await resolveModelCandidates(ACTIVITY_FRAMING))[0].modelString;
-  const { model: rawModel } = parseModelString(modelString);
-  const modelInfo = getModel(rawModel);
-  const codexModel = modelInfo?.codexModelId ?? "gpt-5.5";
+  const accessToken = await getOpenAISubscriptionAccessToken(routing.connectorId);
+  const codexModel = codexModelForImageRouting(routing);
 
   const inputBlocks: Array<CodexContentBlock> = [];
   for (const img of imageBuffers) {
@@ -4167,7 +4209,10 @@ async function editImageViaOpenAISubscription(
 
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "unknown error");
-      throw modelProviderErrorFromAttempt(codexHttpAttemptError(response, text, scope), attempt + 1, { model: codexModel });
+      throw modelProviderErrorFromAttempt(codexHttpAttemptError(response, text, scope), attempt + 1, {
+        provider: "openai-subscription",
+        model: codexModel,
+      });
     }
 
     let base64Result = "";
@@ -4219,7 +4264,10 @@ async function editImageViaOpenAISubscription(
     if (earlyFailure) {
       scope.cleanup();
       if (earlyFailure.retryable && attempt < CODEX_MAX_ATTEMPTS - 1) continue;
-      throw modelProviderErrorFromAttempt(earlyFailure, attempt + 1, { model: codexModel });
+      throw modelProviderErrorFromAttempt(earlyFailure, attempt + 1, {
+        provider: "openai-subscription",
+        model: codexModel,
+      });
     }
 
     if (!base64Result) {
@@ -4246,12 +4294,14 @@ export async function editImageViaGrokSubscription(
   imageBuffers: Array<{ buffer: Buffer; mediaType: string }>,
   prompt: string,
   options?: ImageModalityOptions,
+  routing?: ModelRoutingDecision,
 ): Promise<{ buffer: Buffer; format: string }> {
   if (!imageBuffers.length) {
     throw new Error("Grok image edit requires at least one source image");
   }
 
-  const client = await getGrokImageClient();
+  const accessToken = await getGrokSubscriptionAccessToken(routing?.connectorId);
+  const client = getOpenAIClient(accessToken, GROK_SUBSCRIPTION_API_BASE_URL);
   const format = options?.outputFormat === "jpeg" || options?.outputFormat === "webp"
     ? options.outputFormat
     : "png";
@@ -4283,6 +4333,7 @@ export async function editImageViaGrokSubscription(
 
   log.info("Editing image via Grok subscription (xAI Imagine)", {
     model: GROK_IMAGE_MODEL,
+    connectorId: routing?.connectorId,
     sourceCount: imageBuffers.length,
     requestedSize: options?.size,
     aspectRatio,
@@ -4303,30 +4354,75 @@ export async function editImageViaGrokSubscription(
   };
 }
 
+async function editImageOnRouting(
+  imageBuffers: Array<{ buffer: Buffer; mediaType: string }>,
+  prompt: string,
+  options: ImageModalityOptions | undefined,
+  routing: ModelRoutingDecision,
+): Promise<{ buffer: Buffer; format: string }> {
+  if (routing.provider === "openai-subscription") {
+    return editImageViaOpenAISubscription(imageBuffers, prompt, options, routing);
+  }
+  if (routing.provider === "grok-subscription") {
+    return editImageViaGrokSubscription(imageBuffers, prompt, options, routing);
+  }
+  throw codedError(
+    "PROVIDER_UNCLASSIFIED",
+    `Image edit is not supported on provider ${routing.provider}`,
+  );
+}
+
 /**
- * Edit/combine images. Tries OpenAI subscription first; on provider failure
- * falls back to Grok subscription / xAI Imagine.
+ * Edit/combine images through the active model-connector pool (same order as
+ * chat and images.analyze). Only openai-subscription and grok-subscription can
+ * edit images; other active connectors are skipped.
  */
 export async function editImageViaSubscription(
   imageBuffers: Array<{ buffer: Buffer; mediaType: string }>,
   prompt: string,
   options?: ImageModalityOptions,
 ): Promise<{ buffer: Buffer; format: string }> {
-  try {
-    return await editImageViaOpenAISubscription(imageBuffers, prompt, options);
-  } catch (err) {
-    if (!isOpenAIImageProviderFailure(err)) throw err;
-    log.warn("OpenAI image edit failed; falling back to Grok subscription", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    try {
-      return await editImageViaGrokSubscription(imageBuffers, prompt, options);
-    } catch (fallbackErr) {
-      const primary = err instanceof Error ? err.message : String(err);
-      const fallback = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-      throw new Error(
-        `Image edit failed on OpenAI subscription (${primary}); Grok fallback also failed (${fallback})`,
+  const candidates = await resolveImageRoutingCandidates(options);
+  let failures = candidates[0]?.attempts ?? [];
+  let lastError: unknown;
+  let attempted = 0;
+
+  for (let index = 0; index < candidates.length; index++) {
+    const routing = { ...candidates[index], attempts: failures.length ? failures : candidates[index].attempts };
+    if (routing.provider !== "openai-subscription" && routing.provider !== "grok-subscription") {
+      log.debug(
+        `image edit skip unsupported provider=${routing.provider} connector=${routing.connectorId}`,
       );
+      continue;
+    }
+    attempted += 1;
+    try {
+      return await editImageOnRouting(imageBuffers, prompt, options, routing);
+    } catch (error) {
+      lastError = error;
+      if (isAbortError(error, options?.signal)) throw error;
+      recordConnectorQuotaExhaustion(routing, error);
+      failures = appendFailedAttempt(routing, error);
+      const next = candidates.slice(index + 1).find(
+        (c) => c.provider === "openai-subscription" || c.provider === "grok-subscription",
+      );
+      if (next) {
+        log.warn(
+          `image edit connector fallback connector=${routing.connectorId} provider=${routing.provider} ` +
+          `nextConnector=${next.connectorId} nextProvider=${next.provider} ` +
+          `failure=${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
+
+  if (!attempted) {
+    throw codedError(
+      "CONNECTOR_NOT_CONFIGURED",
+      "No active openai-subscription or grok-subscription connector can edit images",
+    );
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(lastError == null ? "Image edit failed" : String(lastError));
 }
