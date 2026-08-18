@@ -71,8 +71,8 @@ export const coreDefinition: CoreDefinition = {
       clientRoute("core.route.vaults", "/vaults", "vaults"),
       clientRoute("core.route.teams", "/teams", "teams"),
       clientRoute("core.route.decisions", "/decisions", "decisions"),
-      clientRoute("core.route.metrics", "/tools/metrics", "business-metrics", { requiredPermissions: ["system:read"] }),
-      clientRoute("core.route.kpis", "/tools/kpis", "business-kpis", { requiredPermissions: ["system:read"] }),
+      clientRoute("core.route.metrics", "/tools/metrics", "business-metrics"),
+      clientRoute("core.route.kpis", "/tools/kpis", "business-kpis"),
       clientRoute("core.route.performance", "/performance", "performance-screen", { requiredPermissions: ["system:read"] }),
     ],
     navigation: [
@@ -100,8 +100,8 @@ export const coreDefinition: CoreDefinition = {
       nav("core.nav.memory-journal", "Memory", "Journal", "ScrollText", "navigation.memoryJournal.open", "core.route.memory", 3),
       nav("core.nav.tags", "Memory", "Tags", "Tags", "navigation.tags.open", "core.route.tags", 4),
       // Tools
-      nav("core.nav.metrics", "Tools", "Metrics", "Activity", "navigation.metrics.open", "core.route.metrics", 7, { requiredPermissions: ["system:read"] }),
-      nav("core.nav.kpis", "Tools", "KPIs", "Gauge", "navigation.kpis.open", "core.route.kpis", 8, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.metrics", "Tools", "Metrics", "Activity", "navigation.metrics.open", "core.route.metrics", 7),
+      nav("core.nav.kpis", "Tools", "KPIs", "Gauge", "navigation.kpis.open", "core.route.kpis", 8),
       nav("core.nav.performance", "System", "Performance", "Gauge", "navigation.performance.open", "core.route.performance", 9, { requiredPermissions: ["system:read"] }),
       // System
 

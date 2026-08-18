@@ -369,11 +369,11 @@ function Router() {
         <Route path="/business/advantage">{() => <Redirect to="/business/plan" />}</Route>
         <Route path="/business/roles">{() => <RequirePermission permission="system:read"><JobRolesPage /></RequirePermission>}</Route>
         <Route path="/business/hiring">{() => <RequirePermission permission="system:read"><BusinessHiringPage /></RequirePermission>}</Route>
-        <Route path="/tools/kpis">{() => <RequirePermission permission="system:read"><BusinessKpisPage /></RequirePermission>}</Route>
-        <Route path="/tools/metrics">{() => <RequirePermission permission="system:read"><BusinessMetricsPage /></RequirePermission>}</Route>
+        <Route path="/tools/kpis" component={BusinessKpisPage} />
+        <Route path="/tools/metrics" component={BusinessMetricsPage} />
         <Route path="/tools/performance">{() => <RequirePermission permission="system:read"><PerformancePage /></RequirePermission>}</Route>
-        <Route path="/business/kpis">{() => <RequirePermission permission="system:read"><BusinessKpisPage /></RequirePermission>}</Route>
-        <Route path="/business/metrics">{() => <RequirePermission permission="system:read"><BusinessMetricsPage /></RequirePermission>}</Route>
+        <Route path="/business/kpis" component={BusinessKpisPage} />
+        <Route path="/business/metrics" component={BusinessMetricsPage} />
         <Route path="/email" component={EmailPage} />
         <Route path="/comms">{() => <Redirect to="/email" />}</Route>
         <Route path="/orientation" component={OrientationPage} />

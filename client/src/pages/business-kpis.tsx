@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Gauge, Loader2, Plus, Target } from "lucide-react";
-import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   HierarchySectionHeader,
@@ -9,12 +8,15 @@ import {
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
-import { useSelectedBusiness } from "@/hooks/use-selected-business";
 import {
+  METRIC_CATALOG_FAMILIES,
+  METRIC_CATALOG_FAMILY_LABEL,
   METRIC_DIRECTIONS,
+  metricCatalogFamilyOf,
   type Kpi,
   type KpiScoreBand,
   type Metric,
+  type MetricCatalogFamily,
   type MetricDirection,
 } from "@shared/models/metrics";
 import { Button } from "@/components/ui/button";
@@ -170,14 +172,23 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
 }
 
 export default function BusinessKpisPage() {
-  const { businesses, selectedId, setSelectedId } = useSelectedBusiness();
   usePageHeader({ title: "KPIs" });
   const [query, setQuery] = useState("");
-  const kpisUrl = selectedId ? `/api/kpis?businessId=${encodeURIComponent(selectedId)}` : "/api/kpis";
-  const metricsUrl = selectedId ? `/api/business/metrics?businessId=${encodeURIComponent(selectedId)}` : "/api/business/metrics";
 
-  const { data, isLoading } = useQuery<KpisResponse>({ queryKey: [kpisUrl], enabled: Boolean(selectedId) });
-  const { data: metricsData } = useQuery<MetricsResponse>({ queryKey: [metricsUrl], enabled: Boolean(selectedId) });
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery<KpisResponse>({
+    queryKey: ["/api/kpis"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/kpis");
+      return response.json();
+    },
+  });
+  const { data: metricsData } = useQuery<MetricsResponse>({
+    queryKey: ["/api/metrics"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/metrics");
+      return response.json();
+    },
+  });
 
   const kpis = useMemo(() => {
     const list = data?.kpis ?? [];
@@ -186,73 +197,117 @@ export default function BusinessKpisPage() {
     return list.filter((k) => k.name.toLowerCase().includes(q) || k.slug.toLowerCase().includes(q));
   }, [data, query]);
 
+  const sections = useMemo(() => {
+    const grouped = new Map<MetricCatalogFamily, Kpi[]>();
+    for (const kpi of kpis) {
+      const family = kpi.metric ? metricCatalogFamilyOf(kpi.metric) : "manual";
+      const bucket = grouped.get(family) ?? [];
+      bucket.push(kpi);
+      grouped.set(family, bucket);
+    }
+    return METRIC_CATALOG_FAMILIES
+      .map((family) => ({ family, items: grouped.get(family) ?? [] }))
+      .filter((section) => section.items.length > 0);
+  }, [kpis]);
+
+  const listErrorMessage = useMemo(() => {
+    if (!isError) return null;
+    if (!(error instanceof Error) || !error.message.trim()) return "Request failed";
+    const raw = error.message.replace(/^\d{3}:\s*/, "").trim();
+    try {
+      const parsed = JSON.parse(raw) as { error?: unknown };
+      if (typeof parsed.error === "string" && parsed.error.trim()) return parsed.error.trim();
+    } catch {
+      // not JSON
+    }
+    return raw || "Request failed";
+  }, [isError, error]);
+
   return (
-    <div className="p-4">
-      <BusinessPageHeader page="KPIs" businesses={businesses} selectedId={selectedId} onSelect={setSelectedId} />
-      <div className={HIERARCHY_TREE_STACK_CLASS}>
-        <HierarchySearchInput
-          value={query}
-          onChange={setQuery}
-          inputTestId="kpis-search"
-          clearTestId="button-clear-kpis-search"
-          ariaLabel="Search KPIs"
-        />
-        <CreateKpiDialog metrics={metricsData?.metrics ?? []} />
-      </div>
+    <div className={HIERARCHY_TREE_STACK_CLASS}>
+      <HierarchySearchInput
+        value={query}
+        onChange={setQuery}
+        inputTestId="kpis-search"
+        clearTestId="button-clear-kpis-search"
+        ariaLabel="Search KPIs"
+      />
+      <CreateKpiDialog metrics={metricsData?.metrics ?? []} />
 
       {isLoading ? (
         <div className="flex items-center justify-center py-16 text-muted-foreground">
           <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading KPIs…
+        </div>
+      ) : isError ? (
+        <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground" data-testid="kpis-list-error">
+          <span className="min-w-0 flex-1 truncate">
+            Couldn’t load KPIs{listErrorMessage ? `: ${listErrorMessage}` : "."}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 shrink-0 px-2 text-sm"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            data-testid="kpis-list-retry"
+          >
+            {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Retry"}
+          </Button>
         </div>
       ) : kpis.length === 0 ? (
         <div className="px-2 py-1.5 text-sm text-muted-foreground">
           No KPIs yet.
         </div>
       ) : (
-        <div className="py-4">
-          <HierarchySectionHeader data-testid="kpi-section-current">Current</HierarchySectionHeader>
-          {kpis.map((kpi) => {
-            const band = kpi.score?.band ?? "unmeasured";
-            const details = [kpi.metric?.name, kpi.targetLabel, kpi.cadence, kpi.ownerLabel].filter(Boolean) as string[];
-            const thresholds = [
-              kpi.bullThreshold != null ? `Bull ≥ ${kpi.bullThreshold}` : null,
-              kpi.onTrackThreshold != null ? `On track ≥ ${kpi.onTrackThreshold}` : null,
-              kpi.bearThreshold != null ? `Bear ≥ ${kpi.bearThreshold}` : null,
-            ].filter(Boolean) as string[];
-            return (
-              <ProfileTreeRow
-                key={kpi.id}
-                label={kpi.name}
-                icon={<Gauge className="h-3.5 w-3.5" />}
-                hasValue
-                showEmpty
-                mobileLayout="inline"
-                valueLayout="compact"
-                testId={`kpi-row-${kpi.slug}`}
-                expandedContent={
-                  details.length > 0 || thresholds.length > 0 ? (
-                    <div className="space-y-1 text-muted-foreground">
-                      {details.length > 0 ? (
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          {kpi.targetLabel ? <Target className="h-3.5 w-3.5" /> : null}
-                          {details.map((detail) => <span key={detail}>{detail}</span>)}
-                        </div>
-                      ) : null}
-                      {thresholds.length > 0 ? <div>{thresholds.join(" · ")}</div> : null}
-                    </div>
-                  ) : undefined
-                }
-              >
-                <span className="whitespace-nowrap font-mono">
-                  {formatValue(kpi.score?.value ?? null, kpi.score?.unit ?? "")}
-                  {band !== "unmeasured" ? (
-                    <span className="ml-2 font-sans text-muted-foreground">{BAND_LABEL[band]}</span>
-                  ) : null}
-                </span>
-              </ProfileTreeRow>
-            );
-          })}
-        </div>
+        sections.map((section) => (
+          <div key={section.family} className="space-y-0">
+            <HierarchySectionHeader data-testid={`kpi-section-${section.family}`}>
+              {METRIC_CATALOG_FAMILY_LABEL[section.family]}
+            </HierarchySectionHeader>
+            {section.items.map((kpi) => {
+              const band = kpi.score?.band ?? "unmeasured";
+              const details = [kpi.metric?.name, kpi.targetLabel, kpi.cadence, kpi.ownerLabel].filter(Boolean) as string[];
+              const thresholds = [
+                kpi.bullThreshold != null ? `Bull ≥ ${kpi.bullThreshold}` : null,
+                kpi.onTrackThreshold != null ? `On track ≥ ${kpi.onTrackThreshold}` : null,
+                kpi.bearThreshold != null ? `Bear ≥ ${kpi.bearThreshold}` : null,
+              ].filter(Boolean) as string[];
+              return (
+                <ProfileTreeRow
+                  key={kpi.id}
+                  label={kpi.name}
+                  icon={<Gauge className="h-3.5 w-3.5" />}
+                  hasValue
+                  showEmpty
+                  mobileLayout="inline"
+                  valueLayout="compact"
+                  testId={`kpi-row-${kpi.slug}`}
+                  expandedContent={
+                    details.length > 0 || thresholds.length > 0 ? (
+                      <div className="space-y-1 text-muted-foreground">
+                        {details.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            {kpi.targetLabel ? <Target className="h-3.5 w-3.5" /> : null}
+                            {details.map((detail) => <span key={detail}>{detail}</span>)}
+                          </div>
+                        ) : null}
+                        {thresholds.length > 0 ? <div>{thresholds.join(" · ")}</div> : null}
+                      </div>
+                    ) : undefined
+                  }
+                >
+                  <span className="whitespace-nowrap font-mono">
+                    {formatValue(kpi.score?.value ?? null, kpi.score?.unit ?? "")}
+                    {band !== "unmeasured" ? (
+                      <span className="ml-2 font-sans text-muted-foreground">{BAND_LABEL[band]}</span>
+                    ) : null}
+                  </span>
+                </ProfileTreeRow>
+              );
+            })}
+          </div>
+        ))
       )}
     </div>
   );
