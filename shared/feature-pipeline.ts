@@ -161,7 +161,7 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
         "Ask clarifying questions only when a consequential choice remains.",
       ],
       evidenceRequirements: [
-        "A durable Library specification (`kind: spec`) that names the smallest coherent implementation, success conditions, target truth, verification path, terminal state, and every governing standard relied upon.",
+        "A durable Library specification (`kind: spec`) written against the resolved Spec shape page. Those headings are the required evidence — do not invent a second outline.",
         "Link that page onto the Feature via `specPageId`. Any expansion beyond the Feature must cite the repository evidence and invariant that require it.",
       ],
       exitCriteria: [
