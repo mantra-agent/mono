@@ -253,7 +253,8 @@ export interface SkillRunConfig {
   excludeSections?: string[];
   activity: ActivityId;
   temperature: number;
-  timeoutMs: number;
+  /** Built-in inactivity budget only. User/skillless session work uses executor idle + hard-cap fallbacks. */
+  timeoutMs?: number;
   sessionType?: "autonomous" | "agent";
   admissionTier?: AdmissionTier;
   /** When true, autonomous runs may mint a visible conversation. Inspect skills stay silent. */
@@ -507,10 +508,9 @@ export async function executeAutonomousSkillRun(
       callType: "full",
       activity: ACTIVITY_WORK,
       temperature: 0.3,
-      timeoutMs: 15 * 60 * 1000,
       sessionType: "agent",
     };
-    logger.log(`[skillless] Using inline config — label="${label}" timeoutMs=${config.timeoutMs}`);
+    logger.log(`[skillless] Using inline config — label="${label}" timeoutMs=session`);
   } else {
     // Instance first: stamped SkillDefault, then DB dynamic fallback for
     // user-created skills.
@@ -538,18 +538,16 @@ export async function executeAutonomousSkillRun(
           config = instanceByName;
           logger.log(`[skill:${requestedId}] Resolved UUID to SkillDefault config via db name="${dbSkill.name}" — timeout=${config.timeoutMs}ms`);
         } else {
-          const DYNAMIC_FALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
           config = {
             skillId: dbSkill.name,
             label: dbSkill.name,
             callType: "full",
             activity: ACTIVITY_WORK,
             temperature: 0.5,
-            timeoutMs: DYNAMIC_FALLBACK_TIMEOUT_MS,
             // No sessionType here — let the top-level default handle it
             // (autonomous for top-level runs, agent for child runs)
           };
-          logger.log(`[skill:${requestedId}] Built dynamic config from database — label="${config.label}" timeoutMs=${config.timeoutMs}`);
+          logger.log(`[skill:${requestedId}] Built dynamic config from database — label="${config.label}" timeoutMs=session`);
         }
       } catch (err: unknown) {
         const errDetail = err instanceof Error ? (err.stack || err.message) : String(err);
@@ -1220,12 +1218,14 @@ async function runSkillPipeline(
   // Deferred: inactivity timer starts only after admission is granted, not while
   // waiting in the admission queue. This prevents the timer from killing runs
   // that are legitimately queued for a slot during high concurrency.
-  const inactivityTimer = createInactivityTimer(config.timeoutMs, () => {
-    logger.warn(`[${sessionId}] Skill pipeline inactivity timeout after ${config.timeoutMs}ms — aborting`);
-    treeLog.warn(`bounds skill=${config.skillId} run=${sessionId} decision=abort reason=inactivity_timeout timeoutMs=${config.timeoutMs}`);
-    abortController.abort("pipeline_timeout");
-  }, { deferred: true });
-  treeLog.log(`bounds skill=${config.skillId} run=${sessionId} timeoutMs=${config.timeoutMs} temp=${config.temperature}`);
+  const inactivityTimer = config.timeoutMs
+    ? createInactivityTimer(config.timeoutMs, () => {
+        logger.warn(`[${sessionId}] Skill pipeline inactivity timeout after ${config.timeoutMs}ms — aborting`);
+        treeLog.warn(`bounds skill=${config.skillId} run=${sessionId} decision=abort reason=inactivity_timeout timeoutMs=${config.timeoutMs}`);
+        abortController.abort("pipeline_timeout");
+      }, { deferred: true })
+    : { start() {}, reset() {}, clear() {} };
+  treeLog.log(`bounds skill=${config.skillId} run=${sessionId} timeoutMs=${config.timeoutMs ?? "session"} temp=${config.temperature}`);
 
   let stallTimer: ReturnType<typeof setTimeout> | null = null;
 
