@@ -220,6 +220,11 @@ export class AgentTimerHandler implements TimerHandler {
       onEvent,
       querySubsystem: "autonomous",
       tier: "background",
+      personaSwitchRefresh: {
+        origin: "timer",
+        profile: "chat",
+        conversationHistory,
+      },
     });
 
     if (result.terminationReason === "yield_to_interactive") {

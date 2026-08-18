@@ -2269,16 +2269,14 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     routingTier?: string,
     runId?: string,
     diagnosticTurnId?: string,
-    refreshAfterPersonaSwitch?: Parameters<typeof agentExecutor.run>[0]["refreshAfterPersonaSwitch"],
     refreshToolSchema?: Parameters<typeof agentExecutor.run>[0]["refreshToolSchema"],
     clientId?: string,
     toolOrigin: "interactive" | "slack_ingress" = "interactive",
+    personaSwitchRefresh?: Parameters<typeof agentExecutor.run>[0]["personaSwitchRefresh"],
   ): Promise<ExecutorRunResult> {
+    // Persona-switch detection lives in executeTool. Chat only forwards the
+    // shared continuation and supplies refresh extras (history / current message).
     const toolExecutor = async (name: string, args: Record<string, any>) => {
-      const shouldTrackPersonaChange = name === "orient" && typeof args.persona !== "undefined";
-      const previousPersonaId = shouldTrackPersonaChange
-        ? (await chatStorage.getSession(sessionId))?.personaId
-        : undefined;
       const toolCallId = generateToolCallId();
       const toolResult = await executeTool(name, toolCallId, args, {
         sessionKey,
@@ -2286,20 +2284,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         clientId,
         authority: { origin: toolOrigin },
       });
-      const nextPersonaId = shouldTrackPersonaChange && !toolResult.error
-        ? (await chatStorage.getSession(sessionId))?.personaId
-        : undefined;
-      const personaChanged =
-        shouldTrackPersonaChange &&
-        !toolResult.error &&
-        nextPersonaId != null &&
-        nextPersonaId !== previousPersonaId;
       return {
         result: toolResult.result,
         error: toolResult.error,
         failure: toolResult.failure,
         sideEffectOnly: toolResult.sideEffectOnly,
-        continuation: personaChanged ? "persona_switch" as const : toolResult.continuation,
+        continuation: toolResult.continuation,
       };
     };
 
@@ -2317,7 +2307,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       contextPressure,
       onEvent,
       diagnosticTurnId,
-      refreshAfterPersonaSwitch,
+      personaSwitchRefresh,
       refreshToolSchema,
     });
   }
@@ -2883,62 +2873,13 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       if (!resolvedRoutingDecision) {
         throw new Error("Chat routing decision was not resolved");
       }
-      const refreshAfterPersonaSwitch: NonNullable<Parameters<typeof agentExecutor.run>[0]["refreshAfterPersonaSwitch"]> = async () => {
-        chatRunLifecycle.assertCurrent(lease);
-        const sessionForRouting = await chatStorage.getSession(sessionId);
-        const sessionTierOverride = normalizeSessionModelTierOverride(sessionForRouting?.modelTier);
-        const routingDecision = (await resolveModelCandidates(
-          ACTIVITY_CHAT,
-          sessionTierOverride
-            ? {
-                semanticTierOverride: sessionTierOverride,
-                overrideReason: "session model tier override",
-                sessionId,
-              }
-            : { sessionId },
-        ))[0];
-
-        let meetingContext: string | undefined;
-        if (sessionForRouting?.type === "meeting" && sessionForRouting.meeting) {
-          try {
-            const { buildMeetingContextPacket, renderMeetingContextPacket } = await import("../../meeting/context-packet");
-            const packet = await buildMeetingContextPacket(sessionForRouting.meeting);
-            meetingContext = packet ? renderMeetingContextPacket(packet) : undefined;
-          } catch (err) {
-            chatLog.warn(`persona switch meeting context degraded sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        }
-
-        const refreshedToolSet = await resolveInteractiveToolSet(sessionId, toolOrigin);
-        const refreshedContext = await assembleContext({
-          profile: "chat",
-          conversationHistory,
-          toolDefinitions: refreshedToolSet.definitions.map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-          })),
-          model: routingDecision.modelString,
-          sessionId,
-          contextBuildId: `${runId}:persona-refresh`,
-          currentMessage: enrichedContent,
-          meetingContext,
-        });
-        const { resolveSessionPersonaSnapshot } = await import("../../session-persona");
-        const persona = await resolveSessionPersonaSnapshot(sessionId);
-        if (assistantDraft && persona) {
-          const updatedDraft = await chatStorage.updateAssistantDraft(sessionId, assistantDraft.id, {
-            model: routingDecision.modelString,
-            persona,
-          });
-          assistantDraft = updatedDraft?.message ?? null;
-        }
-        chatRunLifecycle.assertCurrent(lease);
-        return {
-          routingDecision,
-          systemPrompt: refreshedContext.systemPrompt,
-          tools: refreshedToolSet.definitions,
-          persona,
-        };
+      // Executor owns persona-switch refresh. Chat only supplies history/message
+      // extras and keeps the assistant draft model/persona in sync via model_info.
+      const personaSwitchRefresh: NonNullable<Parameters<typeof agentExecutor.run>[0]["personaSwitchRefresh"]> = {
+        origin: toolOrigin,
+        profile: "chat",
+        conversationHistory,
+        currentMessage: enrichedContent,
       };
 
       const refreshToolSchema: NonNullable<Parameters<typeof agentExecutor.run>[0]["refreshToolSchema"]> = async (toolName) => {
@@ -2967,14 +2908,28 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             if (event.toolCallId) visualizerToolCalls.delete(event.toolCallId);
             if (visualizerToolCalls.size === 0) clearMeetingVisualizerState(sessionId, "tool");
           }
+          // Keep the streaming assistant draft aligned when the executor refreshes
+          // model/persona after orient — previously owned by the chat refresh plugin.
+          if (event.type === "model_info" && assistantDraft && event.persona) {
+            void chatStorage.updateAssistantDraft(sessionId, assistantDraft.id, {
+              model: typeof event.model === "string" ? event.model : undefined,
+              persona: event.persona,
+            }).then((updated) => {
+              if (updated?.message) assistantDraft = updated.message;
+            }).catch((err) => {
+              chatLog.warn(
+                `persona switch draft update degraded sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
+          }
         },
         chatRoutingTier,
         runId,
         diagnosticTurnId,
-        refreshAfterPersonaSwitch,
         refreshToolSchema,
         clientId,
         toolOrigin,
+        personaSwitchRefresh,
       );
       chatLog.log(
         `executor DONE sessionId=${sessionId} contentLen=${result.content?.length || 0} terminationReason=${result.terminationReason || "unknown"} abortReason=${result.abortReason || "none"} durationMs=${result.durationMs ?? "?"} iterations=${result.iterations}`,

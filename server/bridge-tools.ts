@@ -13294,6 +13294,26 @@ export async function executeTool(
     _wwTrackEnd = ww.trackToolDispatchEnd;
   } catch { /* watchdog not available */ }
 
+  // Persona-switch detection is shared: every origin that calls orient must
+  // stamp continuation when the session personaId actually moves. Capture the
+  // pre-mutation pin here so chat wrappers are not the sole detector.
+  let previousPersonaId: number | null | undefined;
+  const shouldTrackPersonaChange =
+    resolvedName === "orient" &&
+    typeof enrichedArgs.persona !== "undefined" &&
+    enrichedArgs.persona !== null &&
+    enrichedArgs.persona !== "" &&
+    typeof context?.sessionId === "string" &&
+    context.sessionId.trim().length > 0;
+  if (shouldTrackPersonaChange) {
+    try {
+      const { chatFileStorage } = await import("./chat-file-storage");
+      previousPersonaId = (await chatFileStorage.getSession(context!.sessionId!))?.personaId ?? null;
+    } catch {
+      previousPersonaId = undefined;
+    }
+  }
+
   try {
     const outcome = await handler(enrichedArgs);
     const durationMs = Date.now() - startTime;
@@ -13334,7 +13354,26 @@ ${outcome.result}`
       outcome.error && !explicitFailureKind && outcomeFailureKind
         ? { failureKind: outcomeFailureKind }
         : {};
-    return { ...outcome, result: resultWithPrelude, sideEffectOnly, durationMs, ...inferredFailureKindAddon };
+    let continuation = outcome.continuation;
+    if (shouldTrackPersonaChange && !outcome.error) {
+      const { detectOrientPersonaSwitch } = await import("./persona-switch");
+      const personaSwitch = await detectOrientPersonaSwitch({
+        toolName: resolvedName,
+        requestedPersona: enrichedArgs.persona,
+        sessionId: context?.sessionId,
+        previousPersonaId,
+        error: !!outcome.error,
+      });
+      if (personaSwitch) continuation = personaSwitch;
+    }
+    return {
+      ...outcome,
+      result: resultWithPrelude,
+      sideEffectOnly,
+      durationMs,
+      ...(continuation !== undefined ? { continuation } : {}),
+      ...inferredFailureKindAddon,
+    };
   } catch (err: any) {
     const durationMs = Date.now() - startTime;
     const thrownFailure = toolFailureFromError(err);

@@ -1413,6 +1413,21 @@ async function runSkillPipeline(
           ? { kind: "runtime", runId: options.runtimeFence.runId, attemptId: options.runtimeFence.attemptId }
           : undefined,
         requireExplicitMissionCompletion: Boolean(options.planId && options.stepId),
+        // Mid-run orient must re-seat routing/prompt/tools on skill runs too —
+        // detection is shared in executeTool; refresh is executor-owned.
+        personaSwitchRefresh: {
+          origin: "autonomous",
+          trustedDelegation,
+          skillId: authoritySkillId,
+          skillName: config.skillId,
+          mayInitiateConversation: skillMayInitiateConversation(config.skillId),
+          runtimeRunId: options.runtimeFence?.runId,
+          runtimeAttemptId: options.runtimeFence?.attemptId,
+          callType: config.callType,
+          includeSections: config.includeSections,
+          excludeSections: config.excludeSections,
+          profile: "background",
+        },
       }),
       abortController.signal,
       15_000,
@@ -1656,6 +1671,12 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
       querySubsystem: "autonomous",
       tier: "request",
       requireExplicitMissionCompletion: conv.spawnerTool === "plan-executor",
+      personaSwitchRefresh: {
+        origin: "autonomous",
+        trustedDelegation,
+        callType: "full",
+        profile: "background",
+      },
     });
 
     if (result.status === "failed" || result.status === "degraded") {
