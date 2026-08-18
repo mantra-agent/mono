@@ -12725,6 +12725,7 @@ const cognitionTools: Record<string, ToolHandler> = {
       "get",
       "list_legacy",
       "create",
+      "add_connector",
       "move_connector",
       "set_account_router",
     ]);
@@ -12748,6 +12749,7 @@ const cognitionTools: Record<string, ToolHandler> = {
         getRouter,
         listLegacyModelConnectors,
         createRouter,
+        addConnectorToRouter,
         moveConnectorToRouter,
         setAccountRouter,
       } = await import("./router-storage");
@@ -12794,6 +12796,33 @@ const cognitionTools: Record<string, ToolHandler> = {
         if (!name) return { result: "Missing name for create", error: true };
         const router = await createRouter(name);
         return { result: JSON.stringify({ router }, null, 2) };
+      }
+
+      if (action === "add_connector") {
+        const routerId = typeof args.routerId === "string" ? args.routerId.trim() : "";
+        const kind = typeof args.kind === "string" ? args.kind.trim() : "";
+        if (!routerId) return { result: "Missing routerId for add_connector", error: true };
+        if (!kind) {
+          return {
+            result: "Missing kind for add_connector (claude-cli | openai-subscription | openai | anthropic | grok-subscription | grok-api)",
+            error: true,
+          };
+        }
+        const connector = await addConnectorToRouter(routerId, kind);
+        return {
+          result: JSON.stringify({
+            connector: {
+              id: connector.id,
+              provider: connector.provider,
+              label: connector.label,
+              status: connector.status,
+              routerId: connector.routerId,
+              sortOrder: connector.sortOrder,
+              priorityPinned: connector.priorityPinned,
+              hasCredential: Boolean(connector.credentialRef),
+            },
+          }, null, 2),
+        };
       }
 
       if (action === "move_connector") {
@@ -12881,7 +12910,7 @@ const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   pronunciation: new Set(["add", "update", "remove"]),
   decisions: new Set(["create", "update", "append", "delete", "lock", "reopen", "add_update", "edit_update", "delete_update", "add_link", "remove_link", "record_judgment"]),
   plan: new Set(["update_step", "add_steps", "pause", "unlink_session"]),
-  routers: new Set(["create", "move_connector", "set_account_router"]),
+  routers: new Set(["create", "add_connector", "move_connector", "set_account_router"]),
   blocking_graph: new Set(["add_blocker", "remove_blocker"]),
 };
 

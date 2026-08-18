@@ -2072,7 +2072,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   },
 
   routers: {
-    description: "Manage named LLM Routers (exclusive model-connector pools) and Account assignment. Distinct from the diagnostic `router` tool. list/get/list_legacy require system:read; create/move/set_account_router require system:write (Account assignment also needs users:write).",
+    description: "Manage named LLM Routers (exclusive model-connector pools) and Account assignment. Distinct from the diagnostic `router` tool. list/get/list_legacy require system:read; create/add_connector/move/set_account_router require system:write (Account assignment also needs users:write).",
     category: "system",
     sideEffectDefault: 2,
     sideEffectActions: { list: 0, get: 0, list_legacy: 0 },
@@ -2081,12 +2081,16 @@ export const TOOLS: Record<string, ToolMeta> = {
       properties: {
         action: {
           type: "string",
-          enum: ["list", "get", "list_legacy", "create", "move_connector", "set_account_router"],
-          description: "Action. list/get/list_legacy are reads; create makes a named Router; move_connector reparents a model connector onto a Router (or null legacy); set_account_router assigns an Account's router_id.",
+          enum: ["list", "get", "list_legacy", "create", "add_connector", "move_connector", "set_account_router"],
+          description: "Action. list/get/list_legacy are reads; create makes a named Router; add_connector creates an empty model connector on a Router (no legacy secret inherit); move_connector reparents onto a Router or null legacy; set_account_router assigns an Account's router_id.",
         },
         id: { type: "string", description: "Router UUID (get)" },
         name: { type: "string", description: "Router display name (create)" },
-        routerId: { type: "string", description: "Destination Router UUID (move_connector, set_account_router). Omit or null on move_connector to return connector to legacy NULL pool during parallel cutover." },
+        routerId: { type: "string", description: "Router UUID (add_connector destination; move_connector/set_account_router destination). Omit or null on move_connector to return connector to legacy NULL pool during parallel cutover." },
+        kind: {
+          type: "string",
+          description: "Connector kind for add_connector: claude-cli | openai-subscription | openai | anthropic | grok-subscription | grok-api",
+        },
         connectorId: { type: "number", description: "provider_connections id for a model connector (move_connector)" },
         accountId: { type: "string", description: "Account UUID (set_account_router)" },
       },
