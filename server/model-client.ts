@@ -657,6 +657,12 @@ function auditRouting(routing: ModelRoutingDecision): Omit<ModelRoutingDecision,
   };
 }
 
+async function resolveAccountRouterIdForStamp(): Promise<string | null> {
+  const { getCurrentPrincipal } = await import("./principal-context");
+  const { getAccountRouterId } = await import("./router-storage");
+  return getAccountRouterId(getCurrentPrincipal()?.accountId ?? null);
+}
+
 async function recordInference(params: {
   startTime: number;
   routing: ModelRoutingDecision;
@@ -752,7 +758,10 @@ async function recordInference(params: {
         connectorId: params.routing.connectorId,
         connectorLabel: params.routing.connectorLabel,
         connectorOrder: params.routing.connectorOrder,
-        routerId: params.routing.routerId ?? null,
+        routerId: params.routing.routerId
+          ?? (params.routing.source === "explicit-override"
+            ? await resolveAccountRouterIdForStamp()
+            : null),
         status: params.status,
         routing: auditRouting(params.routing),
         error: params.error,

@@ -15,6 +15,12 @@ export interface IdentityGraphAccount {
   ownerUserId: string | null;
   routerId?: string | null;
   router?: IdentityGraphRouter | null;
+  includedTokens?: number | null;
+  grantedTokens?: number;
+  usagePeriod?: string | null;
+  periodTokens?: number;
+  emittedOverageTokens?: number;
+  usageStatus?: "ok" | "bar" | "warn" | "pause" | null;
   createdAt: string;
   updatedAt: string;
   lastActiveAt: string | null;

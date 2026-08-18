@@ -1786,6 +1786,13 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_provider_connections_router ON provider_connections (router_id) WHERE router_id IS NOT NULL`);
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS router_id UUID REFERENCES routers(id) ON DELETE RESTRICT`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_accounts_router ON accounts (router_id) WHERE router_id IS NOT NULL`);
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS included_tokens BIGINT`);
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS granted_tokens BIGINT NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS usage_period TEXT`);
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS period_tokens BIGINT NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS emitted_overage_tokens BIGINT NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS usage_status TEXT`);
+    await pool.query(`DO $ BEGIN ALTER TABLE accounts ADD CONSTRAINT accounts_usage_status_check CHECK (usage_status IS NULL OR usage_status IN ('ok', 'bar', 'warn', 'pause')); EXCEPTION WHEN duplicate_object THEN NULL; END $`);
     await pool.query(`
       INSERT INTO routers (name, is_default)
       SELECT 'Default', TRUE
