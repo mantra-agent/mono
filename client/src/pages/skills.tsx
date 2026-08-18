@@ -98,16 +98,6 @@ import { MOD_KEYS, type ModKey } from "@shared/models/mods";
 
 const WRITE_CATEGORIES: SkillWriteCategory[] = ["read-only", "internal-data", "internal-control", "external", "destructive"];
 const INPUT_TYPES: SkillInputType[] = ["task", "people", "memories", "events", "files", "project"];
-const CATEGORY_OPTIONS = ["memory", "thinking", "chat", "goals", "people", "projects", "strategy", "reflection", "other"];
-const ACTIVITY_OPTIONS = [
-  { value: "c7a1e3b4-5d2f-4a89-b6e0-1f8c9d2e3a4b", label: "Chat" },
-  { value: "d8b2f4c5-6e3a-4b90-c7f1-2a9d0e3f4b5c", label: "Work" },
-  { value: "e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d", label: "Framing" },
-  { value: "f0d4b6e7-8a5c-4d12-e9b3-4c1f2a5b6d7e", label: "Recall" },
-  { value: "a1e5c7f8-9b6d-4e23-f0c4-5d2a3b6c7e8f", label: "Memory" },
-  { value: "b2f6d8a9-0c7e-4f34-a1d5-6e3b4c7d8f0a", label: "Thinking" },
-  { value: "c3a7e9b0-1d8f-4a45-b2e6-7f4c5d8e9a1b", label: "Strategy" },
-];
 const FIELD_SELECT_TRIGGER_CLASS = "h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0";
 const SOURCE_MOD_LABELS: Record<"core" | ModKey, string> = {
   core: "Core",
@@ -139,14 +129,12 @@ function downloadJson(data: unknown, filename: string) {
 const SKILL_FIELD_LABELS: Record<string, string> = {
   name: "Name",
   description: "Description",
-  category: "Category",
   whenToUse: "When to use",
   process: "Process",
   outputSpec: "Output spec",
   checklist: "Checklist",
   scoreThreshold: "Score threshold",
   sessionType: "Session type",
-  activity: "Activity",
   recommendedPersonaTemplateId: "Persona",
   addToMemory: "Add to memory",
   pinnedToContext: "Pinned",
@@ -160,14 +148,12 @@ function skillCurrentPayload(skill: SkillWithReferences): Record<string, unknown
   return {
     name: skill.name,
     description: skill.description,
-    category: skill.category,
     whenToUse: skill.whenToUse,
     process: skill.process,
     outputSpec: skill.outputSpec,
     checklist: skill.checklist ?? [],
     scoreThreshold: skill.scoreThreshold ?? null,
     sessionType: skill.sessionType ?? null,
-    activity: skill.activity,
     recommendedPersonaTemplateId: skill.recommendedPersonaTemplateId ?? null,
     addToMemory: skill.addToMemory,
     pinnedToContext: skill.pinnedToContext,
@@ -343,7 +329,26 @@ function SkillTreeRow({
   onPin: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(skill.name);
   const { toast } = useToast();
+  const renameSkill = useMutation({
+    mutationFn: async (name: string) => {
+      await apiRequest("PATCH", `/api/skills/${skill.id}`, { name });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/skills"] }),
+    onError: (err: Error) => toast({ title: "Couldn't rename skill", description: err.message, variant: "destructive" }),
+    onSettled: () => setEditingName(false),
+  });
+  const commitName = () => {
+    const next = nameDraft.trim();
+    if (!next || next === skill.name) {
+      setNameDraft(skill.name);
+      setEditingName(false);
+      return;
+    }
+    renameSkill.mutate(next);
+  };
   const latticeAction = useMutation({
     mutationFn: async ({ action }: { action: "keep-mine" | "use-updated-default" }) => {
       await apiRequest("POST", `/api/skills/${skill.id}/${action}`, {});
@@ -375,7 +380,42 @@ function SkillTreeRow({
         <span className="flex items-center justify-center shrink-0">
           <Lightbulb className={cn("h-3.5 w-3.5 shrink-0", hasFailed && "text-error")} />
         </span>
-        <span className="flex-1 min-w-0 truncate">{skill.name}</span>
+        {editingName ? (
+          <Input
+            autoFocus
+            value={nameDraft}
+            onChange={(event) => setNameDraft(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitName();
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setNameDraft(skill.name);
+                setEditingName(false);
+              }
+            }}
+            onBlur={commitName}
+            className="h-6 flex-1 min-w-0 border-0 bg-muted/40 px-1.5 text-sm font-mono shadow-none focus-visible:ring-1"
+            data-testid={`input-skill-row-name-${skill.id}`}
+          />
+        ) : (
+          <button
+            type="button"
+            className="flex-1 min-w-0 truncate text-left"
+            onClick={(event) => {
+              event.stopPropagation();
+              setNameDraft(skill.name);
+              setEditingName(true);
+            }}
+            data-testid={`text-skill-name-${skill.id}`}
+          >
+            {skill.name}
+          </button>
+        )}
         {/* Lattice marks: green inbound (default advanced), amber local-ahead. */}
         {skill.updateAvailable ? (
           <StatusDot kind="inbound" className="shrink-0" />
@@ -994,12 +1034,8 @@ function SkillEditor({
   const { toast } = useToast();
   const [name, setName] = useState(skill?.name ?? "");
   const [description, setDescription] = useState(skill?.description ?? "");
-  const [category, setCategory] = useState(skill?.category || "other");
-  const [activity, setActivity] = useState(skill?.activity || "e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d");
   const [writeCategory, setWriteCategory] = useState<SkillWriteCategory>((skill?.writeCategory as SkillWriteCategory) || "read-only");
   const [inputs, setInputs] = useState<SkillInputType[]>((skill?.inputs as SkillInputType[]) ?? []);
-  const [estimatedTokens, setEstimatedTokens] = useState(skill?.estimatedTokens ?? 0);
-  const [estimatedDuration, setEstimatedDuration] = useState(skill?.estimatedDuration ?? "5min");
   const [whenToUse, setWhenToUse] = useState(skill?.whenToUse ?? "");
   const [process, setProcess] = useState(skill?.process ?? "");
   const [outputSpec, setOutputSpec] = useState(skill?.outputSpec ?? "");
@@ -1009,19 +1045,14 @@ function SkillEditor({
   const [personaChoice, setPersonaChoice] = useState<number | "recommended">("recommended");
   const personaTouchedRef = useRef(false);
   const [version, setVersion] = useState(skill?.version ?? "1.0");
-  const [author, setAuthor] = useState(skill?.author ?? "user");
   const [references, setReferences] = useState<{ name: string; content: string }[]>(skill?.references.map((ref) => ({ name: ref.name, content: ref.content })) ?? []);
 
   useEffect(() => {
     if (!skill) return;
     setName(skill.name);
     setDescription(skill.description);
-    setCategory(skill.category || "other");
-    setActivity(skill.activity || "e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d");
     setWriteCategory(skill.writeCategory as SkillWriteCategory);
     setInputs(skill.inputs as SkillInputType[]);
-    setEstimatedTokens(skill.estimatedTokens);
-    setEstimatedDuration(skill.estimatedDuration);
     setWhenToUse(skill.whenToUse);
     setProcess(skill.process);
     setOutputSpec(skill.outputSpec);
@@ -1029,7 +1060,6 @@ function SkillEditor({
     setAddToMemory(skill.addToMemory !== false);
     setSessionType(skill.sessionType || "agent");
     setVersion(skill.version);
-    setAuthor(skill.author);
     setReferences(skill.references.map((ref) => ({ name: ref.name, content: ref.content })));
   }, [skill]);
 
@@ -1102,13 +1132,9 @@ function SkillEditor({
     const data = {
       name,
       description,
-      category,
-      activity,
       authority: skill?.authority || "full",
       writeCategory,
       inputs,
-      estimatedTokens,
-      estimatedDuration,
       whenToUse,
       process,
       outputSpec,
@@ -1118,7 +1144,6 @@ function SkillEditor({
       sessionType,
       status: skill?.status || "draft",
       version,
-      author,
       references,
     };
     if (skill) {
@@ -1141,44 +1166,19 @@ function SkillEditor({
   return (
     <div className="space-y-1" data-testid={skill ? `skill-editor-${skill.id}` : "skill-editor-new"}>
       <ProfileDetailSection title="Skill" defaultOpen>
-        <ProfileTreeRow label="Name" hasValue showEmpty mobileLayout="inline" testId="row-skill-name">
-          <Input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="my-skill-name"
-            className="h-7 text-right text-xs font-mono"
-            data-testid="input-skill-name"
-          />
-        </ProfileTreeRow>
-        <ProfileTreeRow label="Category" hasValue showEmpty mobileLayout="inline" testId="row-skill-category">
-          <Select value={category} onValueChange={setCategory}>
-            <SelectTrigger className={FIELD_SELECT_TRIGGER_CLASS} data-testid="select-category">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {CATEGORY_OPTIONS.map((option) => (
-                <SelectItem key={option} value={option}>{option}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </ProfileTreeRow>
+        {!skill ? (
+          <ProfileTreeRow label="Name" hasValue showEmpty mobileLayout="inline" testId="row-skill-name">
+            <Input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="my-skill-name"
+              className="h-7 text-right text-xs font-mono"
+              data-testid="input-skill-name"
+            />
+          </ProfileTreeRow>
+        ) : null}
         <ProfileTreeRow label="Version" hasValue showEmpty mobileLayout="inline" testId="row-skill-version">
           <Input value={version} onChange={(event) => setVersion(event.target.value)} className="h-7 text-right text-xs" data-testid="input-version" />
-        </ProfileTreeRow>
-        <ProfileTreeRow label="Author" hasValue showEmpty mobileLayout="inline" testId="row-skill-author">
-          <Input value={author} onChange={(event) => setAuthor(event.target.value)} className="h-7 text-right text-xs" data-testid="input-author" />
-        </ProfileTreeRow>
-        <ProfileTreeRow label="Activity" hasValue showEmpty mobileLayout="inline" testId="row-skill-activity">
-          <Select value={activity} onValueChange={setActivity}>
-            <SelectTrigger className={FIELD_SELECT_TRIGGER_CLASS} data-testid="input-activity">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {ACTIVITY_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </ProfileTreeRow>
         <ProfileTreeRow label="Persona" hasValue showEmpty mobileLayout="inline" testId="row-skill-persona">
           <Select
@@ -1193,7 +1193,7 @@ function SkillEditor({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="recommended">
-                {recommendedName ? `Recommended · ${recommendedName}` : "Default persona"}
+                {recommendedName ?? "Default persona"}
               </SelectItem>
               {personas.map((persona) => (
                 <SelectItem key={persona.id} value={String(persona.id)}>{persona.name}</SelectItem>
@@ -1223,12 +1223,6 @@ function SkillEditor({
               <SelectItem value="autonomous">Auto</SelectItem>
             </SelectContent>
           </Select>
-        </ProfileTreeRow>
-        <ProfileTreeRow label="Tokens" hasValue showEmpty mobileLayout="inline" testId="row-skill-tokens">
-          <Input type="number" value={estimatedTokens} onChange={(event) => setEstimatedTokens(parseInt(event.target.value) || 0)} className="h-7 text-right text-xs" data-testid="input-estimated-tokens" />
-        </ProfileTreeRow>
-        <ProfileTreeRow label="Duration" hasValue showEmpty mobileLayout="inline" testId="row-skill-duration">
-          <Input value={estimatedDuration} onChange={(event) => setEstimatedDuration(event.target.value)} placeholder="5min" className="h-7 text-right text-xs" data-testid="input-estimated-duration" />
         </ProfileTreeRow>
         <ProfileTreeRow label="Memory" hasValue showEmpty mobileLayout="inline" testId="row-skill-memory">
           <button

@@ -20,9 +20,6 @@ export type SkillStatus = typeof skillStatuses[number];
 export const skillInputTypes = ["task", "people", "memories", "events", "files", "project"] as const;
 export type SkillInputType = typeof skillInputTypes[number];
 
-export const skillCategories = ["memory", "thinking", "chat", "goals", "people", "projects", "strategy", "reflection", "development", "other"] as const;
-export type SkillCategory = typeof skillCategories[number];
-
 export const checklistKinds = ["judgment", "tool_invoked", "child_skill_invoked"] as const;
 export type ChecklistKind = typeof checklistKinds[number];
 
@@ -76,23 +73,16 @@ export const skills = pgTable("skills", {
   name: varchar("name", { length: 64 }).notNull(),
   description: text("description").notNull(),
 
-  category: text("category").notNull().default("other"),
-  activity: text("activity").notNull().default("e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d"),
-
   authority: text("authority").notNull().default("full"),
   writeCategory: text("write_category").notNull().default("read-only"),
 
   allowedTools: text("allowed_tools").array().notNull().default(sql`'{}'::text[]`), // deprecated — no longer enforced; kept for DB compat
   inputs: text("inputs").array().notNull().default(sql`'{}'::text[]`),
 
-  estimatedTokens: integer("estimated_tokens").notNull().default(0),
-  estimatedDuration: text("estimated_duration").notNull().default("5min"),
-
   whenToUse: text("when_to_use").notNull(),
   process: text("process").notNull(),
   outputSpec: text("output_spec").notNull(),
   qualityCriteria: text("quality_criteria").notNull(), // deprecated — superseded by `checklist` JSONB column. Kept for backwards compatibility.
-  budgetBehavior: text("budget_behavior"),
 
   checklist: jsonb("checklist").notNull().default(sql`'[]'::jsonb`),
 
@@ -104,7 +94,6 @@ export const skills = pgTable("skills", {
 
   status: text("status").notNull().default("draft"),
   version: text("version").notNull().default("1.0"),
-  author: text("author").notNull().default("user"),
 
   addToMemory: boolean("add_to_memory").notNull().default(true),
   pinnedToContext: boolean("pinned_to_context").notNull().default(false),
@@ -240,17 +229,11 @@ export const insertSkillSchema = createInsertSchema(skills).omit({
 }).extend({
   name: z.string().min(1).max(64).regex(/^[a-z][a-z0-9-]*$/, "Lowercase letters, numbers, and hyphens only"),
   description: z.string().min(1).max(1024),
-  category: z.string().default("other"),
-  activity: z.string().default("e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d"),
   authority: z.enum(skillAuthorities).default("full"),
   writeCategory: z.enum(skillWriteCategories).default("read-only"),
   inputs: z.array(z.enum(skillInputTypes)).default([]),
-  estimatedTokens: z.number().int().min(0).default(0),
-  estimatedDuration: z.string().default("5min"),
   status: z.enum(skillStatuses).default("draft"),
   version: z.string().default("1.0"),
-  author: z.string().default("user"),
-  budgetBehavior: z.string().nullable().optional(),
   sessionType: z.enum(sessionTypes).nullable().optional(),
   checklist: z.array(checklistItemSchema).optional().default([]),
   scoreThreshold: z.number().min(0).max(1).nullable().optional(),

@@ -28,14 +28,12 @@ const log = createLogger("SkillSeed");
 export interface SkillRevisionPayload {
   name: string;
   description: string;
-  category: string;
   whenToUse: string;
   process: string;
   outputSpec: string;
   checklist: unknown;
   scoreThreshold: number | null;
   sessionType: string | null;
-  activity: string;
   recommendedPersonaTemplateId: number | null;
   addToMemory: boolean;
   pinnedToContext: boolean;
@@ -62,14 +60,12 @@ export function skillPayloadHash(payload: SkillRevisionPayload): string {
 export const SKILL_PAYLOAD_FIELDS: (keyof SkillRevisionPayload)[] = [
   "name",
   "description",
-  "category",
   "whenToUse",
   "process",
   "outputSpec",
   "checklist",
   "scoreThreshold",
   "sessionType",
-  "activity",
   "recommendedPersonaTemplateId",
   "addToMemory",
   "pinnedToContext",
@@ -97,14 +93,12 @@ export type SkillRevisionSource = Pick<
   typeof skills.$inferSelect,
   | "name"
   | "description"
-  | "category"
   | "whenToUse"
   | "process"
   | "outputSpec"
   | "checklist"
   | "scoreThreshold"
   | "sessionType"
-  | "activity"
   | "recommendedPersonaTemplateId"
   | "addToMemory"
   | "pinnedToContext"
@@ -120,14 +114,12 @@ export function skillRevisionPayload(
   return {
     name: row.name,
     description: row.description,
-    category: row.category,
     whenToUse: row.whenToUse,
     process: row.process,
     outputSpec: row.outputSpec,
     checklist: row.checklist ?? [],
     scoreThreshold: row.scoreThreshold ?? null,
     sessionType: row.sessionType ?? null,
-    activity: row.activity,
     recommendedPersonaTemplateId: row.recommendedPersonaTemplateId ?? null,
     addToMemory: row.addToMemory,
     pinnedToContext: row.pinnedToContext,
@@ -155,14 +147,12 @@ export function codeCatalogSkillInputs(): CodeCatalogSkillInput[] {
     input: {
       name: def.name,
       description: def.description,
-      category: def.category,
-      whenToUse: def.whenToUse ?? `Used for ${def.category} operations`,
+      whenToUse: def.whenToUse ?? `Used for ${def.name} operations`,
       process: def.process,
       outputSpec: def.outputSpec ?? "See process instructions",
       checklist: def.checklist ?? [],
       scoreThreshold: def.scoreThreshold ?? null,
       sessionType: def.sessionType ?? null,
-      activity: def.activity,
       addToMemory: def.addToMemory ?? true,
       pinnedToContext: def.pinnedToContext ?? false,
     },
@@ -298,7 +288,7 @@ export async function initializeSkillRevisionLineage(): Promise<void> {
       );
 
       if (row.scope === "global") {
-        if (row.author === "system" && row.customized !== true) {
+        if (row.customized !== true) {
           await tx
             .update(skills)
             .set({ updateState: "following", updatedAt: new Date() })
@@ -675,14 +665,11 @@ export async function seedBuiltinSkills(): Promise<void> {
           await db.update(skills).set({
             name: def.name,
             description: def.description,
-            category: def.category,
-            activity: def.activity,
             process: def.process,
             checklist: def.checklist || [],
             whenToUse: def.whenToUse || "",
             outputSpec: def.outputSpec || "",
             version: defVersion,
-            author: def.author || "system",
             addToMemory: def.addToMemory ?? true,
             pinnedToContext: def.pinnedToContext ?? false,
             updatedAt: new Date(),
@@ -699,7 +686,6 @@ export async function seedBuiltinSkills(): Promise<void> {
           id: skills.id,
           name: skills.name,
           scope: skills.scope,
-          author: skills.author,
           customized: skills.customized,
           version: skills.version,
         })
@@ -742,25 +728,19 @@ export async function seedBuiltinSkills(): Promise<void> {
         ...(CANONICAL_BUILTIN_SKILL_IDS[def.name] ? { id: CANONICAL_BUILTIN_SKILL_IDS[def.name] } : {}),
         name: def.name,
         description: def.description,
-        category: def.category,
-        activity: def.activity,
         authority: "full",
         writeCategory: "read-only",
         allowedTools: [],
         inputs: [],
-        estimatedTokens: 0,
-        estimatedDuration: "5min",
         process: def.process,
-        whenToUse: def.whenToUse ?? `Used for ${def.category} operations`,
+        whenToUse: def.whenToUse ?? `Used for ${def.name} operations`,
         outputSpec: def.outputSpec ?? "See process instructions",
         qualityCriteria: "",
         checklist: def.checklist ?? [],
         scoreThreshold: def.scoreThreshold ?? null,
         status: "active",
-        author: def.author || "system",
         version: defVersion,
         addToMemory: def.addToMemory ?? true,
-        budgetBehavior: null,
         pinnedToContext: def.pinnedToContext ?? false,
         sessionType: def.sessionType ?? null,
         customized: false,
@@ -913,8 +893,8 @@ export async function deprecateRetiredBuiltinSkills(): Promise<void> {
   // Preserve compatibility rows through the rollback window, but make them inert.
   const retired = ["consolidate", "integrate"];
   for (const name of retired) {
-    const [existing] = await db.select({ id: skills.id, author: skills.author, status: skills.status }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
-    if (existing && existing.author === "system" && existing.status !== "deprecated") {
+    const [existing] = await db.select({ id: skills.id, status: skills.status }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
+    if (existing && existing.status !== "deprecated") {
       await db.update(skills).set({ status: "deprecated", addToMemory: false, updatedAt: new Date() }).where(eq(skills.id, existing.id));
       log.info(`Deprecated retired builtin skill "${name}"`);
     }
@@ -990,7 +970,6 @@ export async function migrateSentryRecentChangelistGate(): Promise<void> {
     const [existing] = await db
       .select({
         id: skills.id,
-        author: skills.author,
         customized: skills.customized,
         version: skills.version,
         description: skills.description,
@@ -1000,7 +979,7 @@ export async function migrateSentryRecentChangelistGate(): Promise<void> {
       })
       .from(skills)
       .where(and(eq(skills.scope, "global"), eq(skills.name, "sentry")));
-    if (!existing || existing.author !== "system" || existing.customized === true) return;
+    if (!existing || existing.customized === true) return;
     const versionOrder = compareSkillVersions(existing.version, SENTRY_CHANGESET_GATE_VERSION);
     if (versionOrder === null || versionOrder >= 0) return;
     if (
@@ -1072,7 +1051,6 @@ export async function migrateSentryRecentChangelistGate(): Promise<void> {
       })
       .where(and(
         eq(skills.id, existing.id),
-        eq(skills.author, "system"),
         eq(skills.customized, false),
         eq(skills.version, existing.version),
       ))
@@ -1094,7 +1072,6 @@ export async function migrateSentryRequiredSensorsGate(): Promise<void> {
     const [existing] = await db
       .select({
         id: skills.id,
-        author: skills.author,
         customized: skills.customized,
         version: skills.version,
         process: skills.process,
@@ -1103,7 +1080,7 @@ export async function migrateSentryRequiredSensorsGate(): Promise<void> {
       })
       .from(skills)
       .where(and(eq(skills.scope, "global"), eq(skills.name, "sentry")));
-    if (!existing || existing.author !== "system" || existing.customized === true) return;
+    if (!existing || existing.customized === true) return;
 
     const versionOrder = compareSkillVersions(existing.version, SENTRY_REQUIRED_SENSORS_VERSION);
     if (versionOrder === null) return;
@@ -1162,7 +1139,6 @@ export async function migrateSentryRequiredSensorsGate(): Promise<void> {
       })
       .where(and(
         eq(skills.id, existing.id),
-        eq(skills.author, "system"),
         eq(skills.customized, false),
         eq(skills.version, existing.version),
       ))
@@ -1191,8 +1167,8 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
   ];
 
   for (const { name, sentinel } of migrations) {
-    const [existing] = await db.select({ id: skills.id, author: skills.author, customized: skills.customized, process: skills.process }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
-    if (!existing || existing.author !== "system" || existing.customized === true) continue;
+    const [existing] = await db.select({ id: skills.id, customized: skills.customized, process: skills.process }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
+    if (!existing || existing.customized === true) continue;
     if (!existing.process.includes(sentinel)) {
       const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === name);
       if (!def) continue;
@@ -1206,7 +1182,7 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
 
   const retiredPlanSkill = await getSetting<boolean>("retired_plan_skill_v1");
   if (!retiredPlanSkill) {
-    const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan"), eq(skills.author, "system")));
+    const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
     if (existing) {
       await db.delete(skills).where(eq(skills.id, existing.id));
       log.info(`Retired obsolete global plan Skill id=${existing.id}`);
@@ -1606,12 +1582,12 @@ export async function getSkillProcess(name: string): Promise<string> {
   throw new Error(`Required skill not found in DB: "${name}". Runnable skills must be seeded before use.`);
 }
 
-export async function getSkillEntry(name: string): Promise<{ process: string; activity: string }> {
+export async function getSkillEntry(name: string): Promise<{ process: string }> {
   const { resolveSkillRunName } = await import("./skill-identities");
   const skillName = resolveSkillRunName(PROMPT_NAME_TO_SKILL[name] || name);
   const { storage } = await import("./storage");
   const skill = await storage.getSkillByName(skillName);
-  if (skill) return { process: skill.process, activity: skill.activity };
+  if (skill) return { process: skill.process };
   throw new Error(`Required skill not found in DB: "${name}". Runnable skills must be seeded before use.`);
 }
 

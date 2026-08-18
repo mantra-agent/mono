@@ -134,7 +134,7 @@ export interface IStorage {
   getPromptModuleVersions(moduleId: string): Promise<PromptModuleVersion[]>;
   restorePromptModuleVersion(moduleId: string, versionId: number): Promise<PromptModule | undefined>;
 
-  getSkills(filters?: { status?: string; category?: string }): Promise<SkillWithReferences[]>;
+  getSkills(filters?: { status?: string }): Promise<SkillWithReferences[]>;
   getSkill(id: string): Promise<SkillWithReferences | undefined>;
   getSkillByName(name: string): Promise<SkillWithReferences | undefined>;
   createSkill(data: InsertSkill): Promise<SkillWithReferences>;
@@ -629,10 +629,9 @@ export class HybridStorage implements IStorage {
     });
   }
 
-  async getSkills(filters?: { status?: string; category?: string }): Promise<SkillWithReferences[]> {
+  async getSkills(filters?: { status?: string }): Promise<SkillWithReferences[]> {
     const conditions = [];
     if (filters?.status) conditions.push(eq(skills.status, filters.status));
-    if (filters?.category) conditions.push(eq(skills.category, filters.category));
 
     const predicate = conditions.length > 0 ? and(...conditions) : undefined;
     const rows = await db.select().from(skills).where(this.skillVisible(predicate)).orderBy(desc(skills.updatedAt));
@@ -754,7 +753,6 @@ export class HybridStorage implements IStorage {
     const { references: refs, scope: _scope, ownerUserId: _ownerUserId, accountId: _accountId, vaultId: _vaultId, ...skillData } = normalized;
     const [created] = await db.insert(skills).values({
       ...skillData,
-      author: skillData.author === "system" ? "user" : skillData.author,
       allowedTools: [],
       ...ownedInsertValues(principal, skillScopeColumns),
     }).returning();
@@ -771,7 +769,7 @@ export class HybridStorage implements IStorage {
     if (!principal?.userId || !principal.accountId) {
       throw new Error("Skill updates require an explicit user principal");
     }
-    const { references: refs, scope: _scope, ownerUserId: _ownerUserId, accountId: _accountId, vaultId: _vaultId, author: _author, ...skillData } = data;
+    const { references: refs, scope: _scope, ownerUserId: _ownerUserId, accountId: _accountId, vaultId: _vaultId, ...skillData } = data;
     const updated = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`skill-override:${principal.accountId}:${principal.userId}`}))`);
       const [visible] = await tx.select().from(skills).where(this.skillVisible(eq(skills.id, id)));
@@ -1004,14 +1002,12 @@ export class HybridStorage implements IStorage {
     await tx.update(skills).set({
       name: payload.name,
       description: payload.description,
-      category: payload.category,
       whenToUse: payload.whenToUse,
       process: payload.process,
       outputSpec: payload.outputSpec,
       checklist: (payload.checklist ?? []) as never,
       scoreThreshold: payload.scoreThreshold,
       sessionType: payload.sessionType,
-      activity: payload.activity,
       recommendedPersonaTemplateId: payload.recommendedPersonaTemplateId,
       addToMemory: payload.addToMemory,
       pinnedToContext: payload.pinnedToContext,
