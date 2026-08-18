@@ -12,8 +12,8 @@ import { requireCurrentPrincipal } from "./principal-context";
 import { createLogger } from "./log";
 
 // REST surface over BusinessStorage for the Definition page: identity scalars
-// plus the fixed narrative slots (DNA / Product / Marketing / Success page
-// links, plus Phases and Pitch so existing bindings stay reachable), each a
+// plus the fixed narrative slots (DNA / Product / Marketing / SALES / Success
+// page links, plus Company so existing bindings stay reachable), each a
 // linked Library page resolved through the canonical reference system. Reads
 // enrich the stored `*_page_id` soft-refs into `{ id, title, slug }` so the
 // client can render the shared inline library-page editor without a second
@@ -34,6 +34,7 @@ const NARRATIVE_SLOTS = [
   "differentiators",
   "market",
   "icp",
+  "pricing",
   "activation",
   "moat",
 ] as const;
@@ -52,6 +53,7 @@ const SLOT_LABEL: Record<NarrativeSlot, string> = {
   differentiators: "Differentiators",
   market: "Market",
   icp: "ICP",
+  pricing: "Pricing",
   activation: "Activation",
   moat: "Moat",
 };
@@ -68,6 +70,7 @@ const SLOT_COLUMN: Record<NarrativeSlot, NarrativeColumn> = {
   differentiators: "differentiatorsPageId",
   market: "marketPageId",
   icp: "icpPageId",
+  pricing: "pricingPageId",
   activation: "activationPageId",
   moat: "moatPageId",
 };
@@ -110,6 +113,7 @@ interface BusinessDefinitionView extends Business {
   differentiatorsPage: NarrativePageRef | null;
   marketPage: NarrativePageRef | null;
   icpPage: NarrativePageRef | null;
+  pricingPage: NarrativePageRef | null;
   activationPage: NarrativePageRef | null;
   moatPage: NarrativePageRef | null;
 }
@@ -142,6 +146,7 @@ const patchSchema = z
     differentiatorsPageId: narrativePageIdSchema,
     marketPageId: narrativePageIdSchema,
     icpPageId: narrativePageIdSchema,
+    pricingPageId: narrativePageIdSchema,
     activationPageId: narrativePageIdSchema,
     moatPageId: narrativePageIdSchema,
   })

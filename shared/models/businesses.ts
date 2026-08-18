@@ -31,6 +31,7 @@ export const businesses = pgTable(
     differentiatorsPageId: text("differentiators_page_id"),
     marketPageId: text("market_page_id"),
     icpPageId: text("icp_page_id"),
+    pricingPageId: text("pricing_page_id"),
     activationPageId: text("activation_page_id"),
     moatPageId: text("moat_page_id"),
     // User-configured external destination for the Business data room. The
@@ -98,6 +99,7 @@ export const businessCreateSchema = z.object({
   differentiatorsPageId: z.string().min(1).nullable().optional(),
   marketPageId: z.string().min(1).nullable().optional(),
   icpPageId: z.string().min(1).nullable().optional(),
+  pricingPageId: z.string().min(1).nullable().optional(),
   activationPageId: z.string().min(1).nullable().optional(),
   moatPageId: z.string().min(1).nullable().optional(),
   dataRoomUrl: z.string().url().max(2048).refine((value) => new URL(value).protocol === "https:", "Data Room URL must use HTTPS").nullable().optional(),
@@ -120,6 +122,7 @@ export const businessPatchSchema = z
     differentiatorsPageId: z.string().min(1).nullable().optional(),
     marketPageId: z.string().min(1).nullable().optional(),
     icpPageId: z.string().min(1).nullable().optional(),
+    pricingPageId: z.string().min(1).nullable().optional(),
     activationPageId: z.string().min(1).nullable().optional(),
     moatPageId: z.string().min(1).nullable().optional(),
     dataRoomUrl: z.string().url().max(2048).refine((value) => new URL(value).protocol === "https:", "Data Room URL must use HTTPS").nullable().optional(),
