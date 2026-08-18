@@ -212,6 +212,14 @@ function exceedsBrowserBudget(kind: string, name: string, value: number): boolea
     if (name === "session_match") return value > BROWSER_TELEMETRY_BUDGETS.features.sessionMatchP95Ms;
     if (name === "expand") return value > BROWSER_TELEMETRY_BUDGETS.features.expandP95Ms;
   }
+  if (kind === "home") {
+    if (name === "feed_ready") return value > BROWSER_TELEMETRY_BUDGETS.home.feedReadyMs;
+    if (name === "library_list") return value > BROWSER_TELEMETRY_BUDGETS.home.libraryListMs;
+    if (name === "feed_render") return value > BROWSER_TELEMETRY_BUDGETS.home.feedRenderMs;
+    if (name === "section_commit") return value > BROWSER_TELEMETRY_BUDGETS.home.sectionCommitMs;
+    if (name === "dwell_long_task") return value > BROWSER_TELEMETRY_BUDGETS.home.dwellLongTaskMs;
+    if (name === "dwell_slow_frame") return value > BROWSER_TELEMETRY_BUDGETS.home.dwellSlowFrameMs;
+  }
   return false;
 }
 
@@ -230,7 +238,9 @@ function metadataNumber(metadata: Record<string, unknown>, key: string): number 
 
 function optionalMetadataNumber(metadata: Record<string, unknown>, key: string): number | null {
   const value = metadata[key];
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+  // Preserve closed Home sentinels (−1 = identity was not an initial-pending query).
+  if (typeof value === "number" && Number.isFinite(value) && (value >= 0 || value === -1)) return value;
+  return null;
 }
 
 function metadataString(metadata: Record<string, unknown>, key: string): string {
@@ -372,6 +382,10 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
         slowFrameMaxMs: metadataNumber(metadata, "slowFrameMaxMs"),
         streamActiveMax: metadataNumber(metadata, "streamActiveMax"),
         streamSegmentsMax: metadataNumber(metadata, "streamSegmentsMax"),
+        // Closed Home numeric identities only when present on `/home` traces.
+        homeFeedMs: optionalMetadataNumber(metadata, "homeFeedMs"),
+        libraryListMs: optionalMetadataNumber(metadata, "libraryListMs"),
+        otherInitialQueryCount: optionalMetadataNumber(metadata, "otherInitialQueryCount"),
       },
     });
     if (navigationIncidents.length >= 12) break;

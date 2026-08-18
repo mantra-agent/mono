@@ -397,6 +397,13 @@ function formatMetricTitle(kind: string, name: string): string {
     "features:active_sessions": "Active sessions",
     "features:row_count": "Row count",
     "features:expand": "Expand",
+    "home:feed_ready": "Feed ready",
+    "home:library_list": "Library list",
+    "home:feed_render": "Feed render",
+    "home:section_commit": "Section commit",
+    "home:dwell_long_task": "Dwell long task",
+    "home:dwell_slow_frame": "Dwell slow frame",
+    "home:focus_presence": "Focus presence",
   };
   if (titles[key]) return titles[key];
   // Fallback: measurement name only — never re-prefix the kind (section already names the domain).

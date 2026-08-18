@@ -32,6 +32,10 @@ let initialized = false;
 let lastFrameContentionAt = 0;
 let lastEventLoopProbeAt = 0;
 let lastLongTaskAt = 0;
+/** Module-local Home feed-ready flag for dwell attribution (set by SimpleFeedContent). */
+let homeFeedReady = false;
+let homeEntryId = 0;
+let libraryListEmittedForEntry = -1;
 const chatTurns = new Map<string, { sessionId: string | null; submittedAt: number; ackAt?: number; firstProgressAt?: number; firstTokenAt?: number }>();
 const completedChatTurns = new Set<string>();
 
@@ -106,6 +110,62 @@ export function recordBrowserTelemetry(event: BrowserTelemetryEventInput): void 
     visibility: event.visibility ?? captureVisibility(),
   });
   scheduleFlush();
+}
+
+/** Closed Home attribution events on the existing browser-telemetry sink. */
+export function recordHomeTelemetry(
+  name:
+    | "feed_ready"
+    | "feed_render"
+    | "library_list"
+    | "section_commit"
+    | "dwell_long_task"
+    | "dwell_slow_frame"
+    | "focus_presence",
+  value: number,
+  metadata: Record<string, string | number | boolean> = {},
+): void {
+  recordBrowserTelemetry({
+    kind: "home",
+    name,
+    value,
+    unit: name === "focus_presence" ? "count" : "ms",
+    routeKey: "/home",
+    bucket: name === "focus_presence" ? undefined : bucketDuration(value),
+    metadata,
+  });
+}
+
+/**
+ * Call on SimpleFeedContent mount. Advances the Home entry id used to cap
+ * section_commit / library_list once per entry. Does not change Home behavior.
+ */
+export function beginHomeEntry(): void {
+  homeEntryId += 1;
+  homeFeedReady = false;
+}
+
+/**
+ * Marks Home feed data ready for dwell attribution. Cleared on `/home` unmount.
+ * Does not change feed fetch policy or layout.
+ */
+export function setHomeFeedReady(ready: boolean): void {
+  homeFeedReady = ready;
+}
+
+export function isHomeFeedReady(): boolean {
+  return homeFeedReady;
+}
+
+export function getHomeEntryId(): number {
+  return homeEntryId;
+}
+
+/** Emit closed `library_list` at most once per Home entry (shared React Query cache). */
+export function recordHomeLibraryListOnce(durationMs: number): void {
+  if (libraryListEmittedForEntry === homeEntryId) return;
+  libraryListEmittedForEntry = homeEntryId;
+  recordHomeTelemetry("library_list", durationMs);
 }
 
 export async function flushBrowserTelemetry(useBeacon = false): Promise<void> {
@@ -278,7 +338,11 @@ function observeLongTasks(): void {
         const now = Date.now();
         if (now - lastLongTaskAt < LONG_TASK_MIN_INTERVAL_MS) continue;
         lastLongTaskAt = now;
+        // Leave global long_task rows comparable; add Home-named dwell after feed ready.
         recordBrowserTelemetry({ kind: "long_task", name: "main_thread_blocked", value: entry.duration, unit: "ms", bucket: bucketDuration(entry.duration) });
+        if (homeFeedReady && routeKey() === "/home") {
+          recordHomeTelemetry("dwell_long_task", entry.duration, { phase: "dwell" });
+        }
       }
     });
     observer.observe({ type: "longtask", buffered: true });
@@ -342,6 +406,9 @@ function observeFrameContention(): void {
         bucket: bucketDuration(delta),
         metadata: { resumeGeneration },
       });
+      if (homeFeedReady && routeKey() === "/home") {
+        recordHomeTelemetry("dwell_slow_frame", delta, { phase: "dwell", resumeGeneration });
+      }
     }
     window.requestAnimationFrame(tick);
   };

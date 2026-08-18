@@ -26,6 +26,11 @@ import { useSessionActivityState } from "@/components/thought-indicator";
 import { emitSessionListChanged, emitSessionChanged } from "@/hooks/use-data-sync";
 import { useToast } from "@/hooks/use-toast";
 import { useSidebar } from "@/components/ui/sidebar";
+import {
+  getHomeEntryId,
+  isHomeFeedReady,
+  recordHomeTelemetry,
+} from "@/lib/browser-telemetry";
 
 const log = createLogger("FocusWidget");
 
@@ -207,6 +212,30 @@ function FocusWidgetPanel({ contained }: FocusWidgetPanelProps) {
   }, [setWidgetOpen, route, setLocationNav]);
   const { width: columnWidth, setWidth: setColumnWidth, persist: persistColumnWidth } = useFocusColumnWidth();
   const { width: sidebarWidth, setWidth: setSidebarWidth, persist: persistSidebarWidth } = useFocusSidebarWidth();
+
+  // Observe-only Focus presence on Home. Desktop always mounts this panel; mobile mounts when open.
+  // Do not change mount policy. At most once per Home entry at feed ready + once per dwell minute.
+  const lastFocusPresenceEntryRef = useRef<number | null>(null);
+  const lastFocusPresenceAtRef = useRef(0);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const emitIfDue = () => {
+      if (window.location.pathname !== "/home") return;
+      if (!isHomeFeedReady()) return;
+      const entryId = getHomeEntryId();
+      const now = Date.now();
+      const firstForEntry = lastFocusPresenceEntryRef.current !== entryId;
+      const minuteElapsed = now - lastFocusPresenceAtRef.current >= 60_000;
+      if (!firstForEntry && !minuteElapsed) return;
+      lastFocusPresenceEntryRef.current = entryId;
+      lastFocusPresenceAtRef.current = now;
+      // Panel is mounted ⇒ presence count 1. Desktop is always 1; mobile only when open (this tree).
+      recordHomeTelemetry("focus_presence", 1, { desktop: isDesktop });
+    };
+    emitIfDue();
+    const interval = window.setInterval(emitIfDue, 15_000);
+    return () => window.clearInterval(interval);
+  }, [isDesktop, route]);
 
   // Drag-to-resize: track the starting pointer/width on mousedown, then update
   // width on mousemove (clamped to MIN..viewport*MAX_FRACTION). On mouseup,
