@@ -78,7 +78,7 @@ module.exports = {
     icon: './assets/icon.png',
     scheme: urlScheme,
     userInterfaceStyle: 'dark',
-    newArchEnabled: false, // Disabled: RN 0.76.9 TurboModule void methods crash on NSException (RN #53960). Re-enable after upgrading to RN 0.83+.
+    newArchEnabled: true, // SDK 57 / RN 0.86 — New Architecture is required (SDK 55+ cannot disable).
     ios: iosConfig,
     plugins: [
       ['@sentry/react-native/expo', {
