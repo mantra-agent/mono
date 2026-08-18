@@ -1421,7 +1421,7 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
   const [showAddForm, setShowAddForm] = useState(false);
   const [justConnectedAccountId, setJustConnectedAccountId] = useState<string | null>(null);
   const [selectedVaultId, setSelectedVaultId] = useState("");
-  const [accountPendingRemoval, setAccountPendingRemoval] = useState<{ id: string; email: string } | null>(null);
+  const [accountPendingRemoval, setAccountPendingRemoval] = useState<{ id: string; email: string; confirmToken: string } | null>(null);
   const [removalConfirmation, setRemovalConfirmation] = useState("");
   const { vaults, activeVaultId } = useVaults();
 
@@ -1515,8 +1515,8 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
     },
   });
   const removeMutation = useMutation({
-    mutationFn: async ({ accountId, confirmationEmail }: { accountId: string; confirmationEmail: string }) => {
-      await apiRequest("DELETE", `/api/gmail/accounts/${accountId}`, { confirmationEmail });
+    mutationFn: async ({ accountId, confirmation }: { accountId: string; confirmation: string }) => {
+      await apiRequest("DELETE", `/api/gmail/accounts/${accountId}`, { confirmation });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
@@ -1655,17 +1655,35 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
         const tokenExpired = account.healthy === false;
         const isHealthy = account.healthy === true && !needsReauth;
         const showReauth = needsReauth || tokenExpired;
-        const permAccount = permAccounts.find((permissionAccount) => permissionAccount.email === account.email);
+        const hasEmail = Boolean(account.email && account.email.trim());
+        const permAccount = permAccounts.find((permissionAccount) =>
+          hasEmail
+            ? permissionAccount.email === account.email
+            : permissionAccount.accountId === account.id,
+        ) || permAccounts.find((permissionAccount) => permissionAccount.accountId === account.id);
+        const isOrphan = !hasEmail || !permAccount?.vaultId;
         const vaultRequired = !permAccount?.vaultId;
-        const status = vaultRequired ? "Vault required" : tokenExpired ? "Token expired" : needsReauth ? "Missing permissions" : isHealthy ? "Verified" : "Connected";
+        const status = !hasEmail
+          ? "Orphan"
+          : vaultRequired
+            ? "Vault required"
+            : tokenExpired
+              ? "Token expired"
+              : needsReauth
+                ? "Missing permissions"
+                : isHealthy
+                  ? "Verified"
+                  : "Connected";
         const accountTitleColor = vaultTitleColor(
           permAccount?.vaultId ? [permAccount.vaultId] : undefined,
           vaultById,
           activeVaultId,
           1,
         );
+        const displayLabel = hasEmail ? account.email : `Orphan · ${account.id.slice(0, 18)}…`;
+        const confirmToken = hasEmail ? account.email : account.id;
 
-        const statusIcon = showReauth
+        const statusIcon = showReauth || isOrphan
           ? <XCircle className="h-3.5 w-3.5 text-destructive" />
           : isHealthy
             ? <CheckCircle2 className="h-3.5 w-3.5 text-active" />
@@ -1674,8 +1692,8 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
         return (
           <IntegrationTreeSection
             key={account.id}
-            label={account.email}
-            initialOpen={showReauth || vaultRequired || account.id === justConnectedAccountId}
+            label={displayLabel}
+            initialOpen={showReauth || vaultRequired || isOrphan || account.id === justConnectedAccountId}
             testIdPrefix={`google-account-${account.id}`}
             expanderRight
             variant="item"
@@ -1685,25 +1703,27 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
             actions={(
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="mr-1 h-8 w-8 text-muted-foreground" aria-label={`Actions for ${account.email}`} data-testid={`button-google-account-actions-${account.id}`}>
+                  <Button variant="ghost" size="icon" className="mr-1 h-8 w-8 text-muted-foreground" aria-label={`Actions for ${displayLabel}`} data-testid={`button-google-account-actions-${account.id}`}>
                     <MoreHorizontal className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem
-                    onClick={() => startOAuth(permAccount?.vaultId || vaults[0]?.id, account.id)}
-                    disabled={!permAccount?.vaultId && vaults.length === 0}
-                  >
-                    <RefreshCw className="mr-2 h-4 w-4" /> Reconnect
-                  </DropdownMenuItem>
+                  {hasEmail ? (
+                    <DropdownMenuItem
+                      onClick={() => startOAuth(permAccount?.vaultId || vaults[0]?.id, account.id)}
+                      disabled={!permAccount?.vaultId && vaults.length === 0}
+                    >
+                      <RefreshCw className="mr-2 h-4 w-4" /> Reconnect
+                    </DropdownMenuItem>
+                  ) : null}
                   <DropdownMenuItem
                     className="text-destructive focus:text-destructive"
                     onClick={() => {
-                      setAccountPendingRemoval({ id: account.id, email: account.email });
+                      setAccountPendingRemoval({ id: account.id, email: account.email || "", confirmToken });
                       setRemovalConfirmation("");
                     }}
                   >
-                    <Trash2 className="mr-2 h-4 w-4" /> Remove
+                    <Trash2 className="mr-2 h-4 w-4" /> {isOrphan ? "Destroy" : "Remove"}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1781,14 +1801,18 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove Google account?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {accountPendingRemoval && !accountPendingRemoval.email ? "Destroy orphan Google connector?" : "Remove Google account?"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently deletes the cached emails, enrichment, triage history, drafts, dismissals, and sync cursor for {accountPendingRemoval?.email}. Reconnect instead if you only need to replace OAuth credentials.
+              {accountPendingRemoval && !accountPendingRemoval.email
+                ? `This permanently deletes the dead connector ${accountPendingRemoval.id} and any cached email state bound to it. There is no email to reconnect.`
+                : `This permanently deletes the cached emails, enrichment, triage history, drafts, dismissals, and sync cursor for ${accountPendingRemoval?.email}. Reconnect instead if you only need to replace OAuth credentials.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">
             <Label htmlFor="google-account-removal-confirmation">
-              Type <span className="font-mono text-foreground">{accountPendingRemoval?.email}</span> to confirm
+              Type <span className="font-mono text-foreground break-all">{accountPendingRemoval?.confirmToken}</span> to confirm
             </Label>
             <Input
               id="google-account-removal-confirmation"
@@ -1802,18 +1826,22 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
             <AlertDialogCancel disabled={removeMutation.isPending}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={!accountPendingRemoval || removalConfirmation !== accountPendingRemoval.email || removeMutation.isPending}
+              disabled={!accountPendingRemoval || removalConfirmation !== accountPendingRemoval.confirmToken || removeMutation.isPending}
               onClick={(event) => {
                 event.preventDefault();
-                if (!accountPendingRemoval || removalConfirmation !== accountPendingRemoval.email) return;
+                if (!accountPendingRemoval || removalConfirmation !== accountPendingRemoval.confirmToken) return;
                 removeMutation.mutate({
                   accountId: accountPendingRemoval.id,
-                  confirmationEmail: removalConfirmation,
+                  confirmation: removalConfirmation,
                 });
               }}
               data-testid="button-confirm-google-account-removal"
             >
-              {removeMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Remove account"}
+              {removeMutation.isPending
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : accountPendingRemoval && !accountPendingRemoval.email
+                  ? "Destroy connector"
+                  : "Remove account"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

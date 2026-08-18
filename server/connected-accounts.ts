@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { connectedAccounts, vaults, type ConnectedAccount } from "@shared/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, or, sql } from "drizzle-orm";
 import { requireCurrentPrincipal } from "./principal-context";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "./sensitive-scope";
 import { createLogger } from "./log";
@@ -44,10 +44,21 @@ export async function listVisibleConnectedAccounts(provider?: string): Promise<C
   const principal = requireCurrentPrincipal();
   const predicates = [provider ? eq(connectedAccounts.provider, provider) : undefined];
   if (principal.actorType !== "system") {
-    if (principal.visibleVaultIds.length === 0) return [];
-    predicates.push(inArray(connectedAccounts.vaultId, principal.visibleVaultIds));
+    if (principal.visibleVaultIds.length === 0) {
+      // Still surface owner-scoped connectors with no Vault so auth-dead orphans
+      // remain visible and destroyable instead of only thrashing timers.
+      predicates.push(sql`${connectedAccounts.vaultId} IS NULL`);
+    } else {
+      // Bound Vaults plus unassigned owner rows (null vault_id).
+      predicates.push(
+        or(
+          inArray(connectedAccounts.vaultId, principal.visibleVaultIds),
+          sql`${connectedAccounts.vaultId} IS NULL`,
+        ),
+      );
+    }
   }
-  const domain = predicates.filter(Boolean) as ReturnType<typeof eq>[];
+  const domain = predicates.filter(Boolean) as any[];
   const rows = await db.select().from(connectedAccounts).where(combineWithSensitiveVisible({ ownerUserId: connectedAccounts.ownerUserId, principalAccountId: connectedAccounts.principalAccountId }, domain.length ? and(...domain) : undefined, principal));
   return rows.filter((row) => !isSystemSubscriptionAccount(row.accountId));
 }

@@ -128,16 +128,29 @@ export async function handleAccountOAuthCallback(code: string, stateToken: strin
   return { id: account.accountId, email: account.email || '', label: account.label, addedAt: account.addedAt.toISOString() };
 }
 
-export async function removeGmailAccount(accountId: string, confirmationEmail: string): Promise<void> {
+/**
+ * Destroy a Google connector the principal can see.
+ * Confirm with the account email when present; otherwise confirm the exact accountId
+ * so null-email zombies remain destroyable instead of immortal.
+ */
+export async function removeGmailAccount(accountId: string, confirmation: string): Promise<void> {
   const account = await getAccount(accountId);
-  if (!account || account.provider !== 'google' || !account.email) {
+  if (!account || account.provider !== 'google') {
     throw new Error('Google account not found');
   }
-  if (confirmationEmail !== account.email) {
-    throw new Error('Type the exact Google account email to confirm removal');
+  const expected = (account.email && account.email.trim()) || account.accountId;
+  if (!confirmation || confirmation !== expected) {
+    throw new Error(
+      account.email
+        ? 'Type the exact Google account email to confirm removal'
+        : 'Type the exact Google account id to confirm removal',
+    );
   }
   const cleanup = await storage.cleanupEmailAccountState(accountId);
-  await deleteAccount(accountId);
+  const deleted = await deleteAccount(accountId);
+  if (!deleted) {
+    throw new Error('Google account not found');
+  }
   clearHealthCache(accountId);
   // Fail closed on disconnect: bound Drive trees are readable only through this account's drive.readonly
   // grant. Once the account is gone the pointers are dead, so drop them rather than leave rows that
@@ -147,6 +160,44 @@ export async function removeGmailAccount(accountId: string, confirmationEmail: s
   const { eq } = await import("drizzle-orm");
   const droppedDrive = await db.delete(driveResources).where(eq(driveResources.connectedAccountId, accountId)).returning({ id: driveResources.id });
   log.log(`removeGmailAccount id=${accountId} cleanup=${JSON.stringify(cleanup.deleted)} driveResourcesDropped=${droppedDrive.length}`);
+}
+
+/** Persist auth death on the connector row so fan-out can skip without ERROR thrash. */
+export async function markGoogleAccountAuthDead(
+  accountId: string,
+  error: string = "Token expired or revoked — re-authorization required",
+): Promise<void> {
+  const updated = await updateAccount(accountId, {
+    healthy: false,
+    healthError: error,
+    healthCheckedAt: new Date(),
+  });
+  if (updated) {
+    healthCache.set(accountId, { healthy: false, error, checkedAt: Date.now() });
+  } else {
+    log.warn(`markGoogleAccountAuthDead could not persist unhealthy for accountId=${accountId}`);
+  }
+}
+
+/**
+ * Auth-dead + no email is an unrecoverable zombie: no reconnect target and no
+ * email-confirm destroy path historically. Auto-destroy under the owner principal.
+ */
+export async function destroyAuthDeadOrphanGoogleAccount(accountId: string): Promise<boolean> {
+  const account = await getAccount(accountId);
+  if (!account || account.provider !== "google") return false;
+  if (account.email && account.email.trim()) return false;
+  if (account.healthy !== false) return false;
+  try {
+    await removeGmailAccount(accountId, account.accountId);
+    log.warn(`destroyAuthDeadOrphanGoogleAccount destroyed accountId=${accountId}`);
+    return true;
+  } catch (err: unknown) {
+    log.warn(
+      `destroyAuthDeadOrphanGoogleAccount failed accountId=${accountId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return false;
+  }
 }
 
 export async function updateAccountLabel(accountId: string, label: string): Promise<GmailAccount | null> {

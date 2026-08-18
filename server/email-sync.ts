@@ -3,8 +3,19 @@ import { db } from './db';
 import { pool } from './db';
 import { connectedAccounts, emailMessages, emailSyncCursors, emailDismissals, emailSyncLog, emailEnrichments, emailDrafts, vaults } from '@shared/schema';
 import { eq, and, sql, inArray, or, isNull } from 'drizzle-orm';
-import { listGmailAccounts, listMessages, getMessage, getHistoryList, normalizeGmailMessage, getAccountLabelMap } from './gmail';
+import {
+  listGmailAccounts,
+  listMessages,
+  getMessage,
+  getHistoryList,
+  normalizeGmailMessage,
+  getAccountLabelMap,
+  isInvalidGrantError,
+  markGoogleAccountAuthDead,
+  destroyAuthDeadOrphanGoogleAccount,
+} from './gmail';
 import type { NormalizedMessage } from './gmail';
+import { getAccount } from './connected-accounts';
 import { storage } from './storage';
 import { requireCurrentUserPrincipal } from './principal-context';
 import { combineWithSensitiveVisible, sensitiveOwnershipValues } from './sensitive-scope';
@@ -835,16 +846,33 @@ async function syncAccountForOwner(accountId: string, owner: EmailAccountOwner):
     if (typeof statusRaw === "number") normalized.statusCode = statusRaw;
     else if (typeof statusRaw === "string" && /^\d+$/.test(statusRaw)) normalized.statusCode = Number(statusRaw);
 
-    log.error(
-      "email_sync.account_failed",
-      normalized,
-      emailSyncLogContext({
-        operation: "sync_account",
-        accountId,
-        syncLogId: syncLog.id,
-        statusCode: normalized.statusCode,
-      }),
-    );
+    if (isInvalidGrantError(err) || fallbackCode === "EMAIL_SYNC_AUTH_FAILED") {
+      await markGoogleAccountAuthDead(accountId);
+      const destroyed = await destroyAuthDeadOrphanGoogleAccount(accountId);
+      // Auth death is connector state, not a recurring producer defect — warn once per cycle.
+      log.warn(
+        destroyed
+          ? `email_sync.account_auth_dead_destroyed account=${accountId}`
+          : `email_sync.account_auth_dead account=${accountId} — marked unhealthy; reconnect or remove under Integrations`,
+        emailSyncLogContext({
+          operation: "sync_account",
+          accountId,
+          syncLogId: syncLog.id,
+          statusCode: normalized.statusCode,
+        }),
+      );
+    } else {
+      log.error(
+        "email_sync.account_failed",
+        normalized,
+        emailSyncLogContext({
+          operation: "sync_account",
+          accountId,
+          syncLogId: syncLog.id,
+          statusCode: normalized.statusCode,
+        }),
+      );
+    }
     await upsertCursor(accountId, {
       lastSyncStatus: 'error',
       lastSyncError: normalized.message,
@@ -871,9 +899,39 @@ export async function runEmailSync(): Promise<{ accountsDiscovered: number; acco
   const errors: string[] = [];
   let synced = 0;
   let mutated = false;
+  let attempted = 0;
 
   for (const account of accounts) {
     try {
+      // Null-vault rows stay visible for destroy/UI but never sync (owner scope requires a Vault).
+      const row = await getAccount(account.id);
+      if (!row?.vaultId) {
+        if (row && row.healthy === false) {
+          const destroyed = await destroyAuthDeadOrphanGoogleAccount(account.id);
+          if (destroyed) {
+            mutated = true;
+            log.warn(`runEmailSync destroyed unassigned auth-dead orphan account=${account.id}`);
+          }
+        } else {
+          log.warn(`runEmailSync skipping unassigned Google connector account=${account.id} — assign a Vault or destroy`);
+        }
+        continue;
+      }
+      // Skip already-known auth-dead connectors (no ERROR thrash). Null-email zombies auto-destroy.
+      if (row.healthy === false) {
+        const destroyed = await destroyAuthDeadOrphanGoogleAccount(account.id);
+        if (destroyed) {
+          mutated = true;
+          log.warn(`runEmailSync destroyed auth-dead orphan account=${account.id}`);
+        } else {
+          log.warn(
+            `runEmailSync skipping auth-dead account=${account.id} email=${account.email || "(none)"} — reconnect or remove under Integrations`,
+          );
+        }
+        continue;
+      }
+
+      attempted++;
       const result = await syncAccount(account.id);
       if (result.ok) {
         synced++;
@@ -910,7 +968,7 @@ export async function runEmailSync(): Promise<{ accountsDiscovered: number; acco
     }
   }
 
-  log.log(`[runEmailSync] Completed: ${synced}/${accounts.length} accounts synced, ${errors.length} errors`);
+  log.log(`[runEmailSync] Completed: ${synced}/${attempted} accounts synced (${accounts.length} discovered), ${errors.length} errors`);
   return { accountsDiscovered: accounts.length, accountsSynced: synced, errors, mutated };
 }
 
