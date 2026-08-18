@@ -36,8 +36,8 @@
 <!-- 2026-08-14 People Slack User ID is an address, not a Principal:
 - Assets/data: A01 Person contact identity (`persons.social_profiles.slack`, S1 Slack User ID). No token, mapping, Session, or send authority.
 - Flow/threat: People profile -> typed Slack User ID (`U…`) stored like Instagram. Credible abuse is treating that field as inbound Slack identity, auto-discovering IDs, or posting from it (STRIDE spoofing/elevation; IAM-01/AGENT-03).
-- Deterministic controls/owner: `savePerson` persists only a Slack User ID matching U followed by 1-31 A-Z/0-9 characters. `slack_principal_mappings` remains the only inbound User locator. A Slack tool exists; `social_profiles.slack` still does not grant mapping, Session, or send. No `users:read` or workspace catalog. Owner: Core People. Severity: medium integrity. SLA: immediate.
-- Residual/rollback: a Person Slack ID alone cannot run a Session or send. Revert the socialProfiles.slack field, sanitizer, profile row, and this finding together.
+- Deterministic controls/owner: `savePerson` persists only a Slack User ID matching U followed by 1-31 A-Z/0-9 characters. `slack_principal_mappings` remains the only inbound User locator. A Slack tool exists; `social_profiles.slack` still does not grant mapping, Session, or send. Inbound may once-fill an empty cabinet self Person locator from an already-active mapping's event `U…` (soft-fail; no overwrite; no auto-create People; no directory scopes). No `users:read` or workspace catalog. Owner: Core People + Slack Mod inbound. Severity: medium integrity. SLA: immediate.
+- Residual/rollback: a Person Slack ID alone cannot run a Session or send. Revert the socialProfiles.slack field, sanitizer, profile row, inbound empty-fill stamp, and this finding together.
 -->
 
 <!-- 2026-08-14 Leftover catalog followers rebase:

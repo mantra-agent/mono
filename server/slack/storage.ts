@@ -14,6 +14,7 @@ import { hasActiveModAccess } from "../mods/mod-access";
 import { loadSlackCredentials, postSlackMessage } from "./client";
 
 const outboundLog = createLogger("SlackOutbound");
+const storageLog = createLogger("SlackStorage");
 
 const OUTBOUND_BODY_MAX = 4000;
 const OUTBOUND_DESTINATION_MIN_MS = 2_000;
@@ -291,6 +292,41 @@ export async function resolveMappedPrincipal(event: ClaimedSlackEvent, installat
     };
   }
   return { mappingId: String(row.mapping_id), principal };
+}
+
+/**
+ * After an admitted inbound event resolves an active principal mapping, fill the mapped
+ * User's cabinet self Person `social_profiles.slack` once when empty.
+ * Locator only — never creates People, never overwrites, never authorizes send.
+ */
+export async function stampSelfPersonSlackLocatorIfEmpty(
+  principal: Principal,
+  slackUserId: string,
+): Promise<"stamped" | "already_set" | "no_self_person" | "invalid_id"> {
+  return runWithPrincipal(principal, async () => {
+    let normalized: string;
+    try {
+      normalized = normalizePersonSlackUserId(slackUserId);
+    } catch {
+      return "invalid_id";
+    }
+    const people = await peopleStorage.listPeople();
+    const self = people.find((entry) => entry.cabinetLevel === "user");
+    if (!self) return "no_self_person";
+    const existing =
+      typeof self.socialProfiles?.slack === "string" ? self.socialProfiles.slack.trim() : "";
+    if (existing) return "already_set";
+    await peopleStorage.updatePerson(self.id, {
+      socialProfiles: {
+        ...(self.socialProfiles || {}),
+        slack: normalized,
+      },
+    });
+    storageLog.info("Stamped self Person Slack locator from inbound mapping", {
+      personId: self.id,
+    });
+    return "stamped";
+  });
 }
 
 async function resolveInstallationOwnerPrincipal(installation: SlackInstallationRow): Promise<Principal> {

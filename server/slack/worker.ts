@@ -25,6 +25,7 @@ import {
   resolveMappedPrincipal,
   resolveSessionBinding,
   settleEvent,
+  stampSelfPersonSlackLocatorIfEmpty,
   type ClaimedSlackEvent,
   type SlackInstallationRow,
 } from "./storage";
@@ -222,6 +223,17 @@ async function processEvent(installation: SlackInstallationRow, event: ClaimedSl
       installation = await refreshAllowedChannelName(installation, credentials, event.channelId);
     }
     const mapped = await resolveMappedPrincipal(event, installation);
+    try {
+      const stamp = await stampSelfPersonSlackLocatorIfEmpty(mapped.principal, event.slackUserId);
+      if (stamp === "no_self_person" || stamp === "invalid_id") {
+        log.warn("Slack self locator stamp skipped", { eventRowId: event.id, outcome: stamp });
+      }
+    } catch (error) {
+      log.warn("Slack self locator stamp soft-failed; inbound continues", {
+        eventRowId: event.id,
+        errorName: error instanceof Error ? error.name : "unknown",
+      });
+    }
     const binding = await resolveSessionBinding(mapped.principal, installation, event, mapped.mappingId);
     await acceptCanonicalTurn(mapped.principal, event, binding.bindingId, binding.sessionId, mapped.mappingId);
     if (!(await installationActive(installation))) throw new Error("slack_mod_or_installation_inactive");
