@@ -316,9 +316,10 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
         end_of_speech_silence_ms: 1000,
         interruption_sensitivity: 0.5,
         // Official disable is -1. Omitting this field leaves a stored "One second." filler.
+        // API now requires message ≥1 char even when disabled; keep a inert placeholder.
         soft_timeout_config: {
           timeout_seconds: DISABLED_SOFT_TIMEOUT_SECONDS,
-          message: "",
+          message: " ",
           use_llm_generated_message: false,
         },
       },
