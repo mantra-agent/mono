@@ -537,6 +537,18 @@ export async function renderHistoryProjection(tokenBudget = HISTORY_TOKEN_BUDGET
   return documents.join("\n\n---\n\n");
 }
 
+/** Destroy every History row owned by this holder in one vault. */
+export async function deleteHistoricalContinuityForVault(vaultId: string): Promise<number> {
+  const principal = requireCurrentUserPrincipal();
+  const result = await db.execute(sql`
+    DELETE FROM historical_continuity_entries
+    WHERE owner_user_id=${principal.userId}
+      AND account_id=${principal.accountId}
+      AND vault_id=${vaultId}
+  `);
+  return Number(result.rowCount ?? 0);
+}
+
 export async function getCompletedTurnSummaryMap(sessionId: string, assistantMessageIds: string[]): Promise<Map<string, string>> {
   const principal = requireCurrentUserPrincipal();
   if (!assistantMessageIds.length) return new Map();
