@@ -929,8 +929,11 @@ export async function deprecateRetiredBuiltinSkills(): Promise<void> {
 // customized autonomy seat instead of a fingerprinted in-place patch.
 
 const SENTRY_CHANGESET_GATE_VERSION = "1.10";
+const SENTRY_REQUIRED_SENSORS_VERSION = "1.12";
 const SENTRY_RUN_EVIDENCE_MARKER = "8. Inspect recent `sentry` skill runs and open system issues/tasks/sessions when useful. Deduplicate by normalized signature + environment + likely subsystem. Update or reference an existing incident instead of creating another.";
 const SENTRY_REPORT_MARKER = "## Canonical report page";
+const SENTRY_REQUIRED_SENSORS_MARKER = "## Required sensors (hard — first actions)";
+const SENTRY_RUN_WINDOW_MARKER = "## Run window and evidence";
 const SENTRY_RELIABILITY_OUTCOMES_MARKER = "11. Inspect `system.reliability` for bounded recent windows and explicitly evaluate the canonical success/failure outcomes for tool executions, plan steps, workflow runs, and conversational turns. Split failures into ambers (classified: input|permission|transient|internal) versus errors (unclassified surprises missing failureKind). Count only terminal outcomes in rates; treat excluded/nonterminal counts as separate diagnostic evidence, never as successes or failures. Prefer remediating unclassified errors first; treat high amber volume as avoidable-input/setup signal, not as unexplained instability.";
 const SENTRY_RELIABILITY_CHECKLIST_ITEM = {
   check: "Inspected system.reliability and split ambers (classified) from errors (unclassified) for tools, plans, workflows, and conversational turns",
@@ -939,6 +942,29 @@ const SENTRY_RELIABILITY_CHECKLIST_ITEM = {
   tool: "system",
   action: "reliability",
 } as const;
+const SENTRY_RAILWAY_STATUS_CHECKLIST_ITEM = {
+  check: "Railway evidence collected: the railway tool had at least one successful status invocation this run.",
+  weight: 10,
+  kind: "tool_invoked",
+  tool: "railway",
+  action: "status",
+} as const;
+const SENTRY_PLATFORMS_STATUS_CHECKLIST_ITEM = {
+  check: "Platforms evidence collected: the platforms tool had at least one successful environment-status invocation this run.",
+  weight: 10,
+  kind: "tool_invoked",
+  tool: "platforms",
+  action: "get_environment_status",
+} as const;
+const SENTRY_REQUIRED_SENSORS_SECTION = `## Required sensors (hard — first actions)
+Before any classification, report rewrite, or end-state summary, successfully invoke all of:
+1. \`platforms.get_environment_status\` for environment \`11\`
+2. \`platforms.get_environment_status\` for environment \`12\`
+3. \`railway.status\` with \`platformEnvironmentId: 11\`
+4. \`railway.status\` with \`platformEnvironmentId: 12\`
+
+Do not classify healthy from prior report state, platforms alone, or a previous run. A Sentinel self-degradation caused solely by missing these deterministic tool-coverage checks is a process-compliance miss, not a stage/production incident — cure it by invoking the required tools, not by raising an environment incident. The deterministic checklist terminates the run degraded without successful \`railway:status\` and \`platforms:get_environment_status\`.
+`;
 const SENTRY_CHANGESET_GATE = `## Recent changelist remediation gate
 Before creating or reusing a task, repair handoff, conversation, or attention flag, compare every new or worsening software-defect candidate against recent Mantra Web changelists. Use bounded read-only evidence already available from \`platforms.get_build_status\`, \`platforms.get_environment_status\`, and recent \`railway.deployments\` for environment 11 and 12. Inspect up to 20 stage/main deployments from the last 24 hours, including builds still in progress, so a later deployment does not hide the relevant merged PR or commit.
 
@@ -1053,6 +1079,96 @@ export async function migrateSentryRecentChangelistGate(): Promise<void> {
       .returning({ id: skills.id });
     if (updated.length > 0) {
       log.info(`Migrated Reliability Sentinel ${existing.version} → ${SENTRY_CHANGESET_GATE_VERSION} with recent-changelist remediation gate`);
+      return;
+    }
+  }
+}
+
+/**
+ * Front-load required railway.status + platforms.get_environment_status sensors
+ * so healthy-shortcut runs cannot skip provider evidence and still look green.
+ * Monotonic over the live non-lattice Reliability Sentinel row.
+ */
+export async function migrateSentryRequiredSensorsGate(): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const [existing] = await db
+      .select({
+        id: skills.id,
+        author: skills.author,
+        customized: skills.customized,
+        version: skills.version,
+        process: skills.process,
+        checklist: skills.checklist,
+        scoreThreshold: skills.scoreThreshold,
+      })
+      .from(skills)
+      .where(and(eq(skills.scope, "global"), eq(skills.name, "sentry")));
+    if (!existing || existing.author !== "system" || existing.customized === true) return;
+
+    const versionOrder = compareSkillVersions(existing.version, SENTRY_REQUIRED_SENSORS_VERSION);
+    if (versionOrder === null) return;
+    // Already at/above 1.12 and carrying the required-sensor marker — done.
+    if (versionOrder >= 0 && existing.process.includes(SENTRY_REQUIRED_SENSORS_MARKER)) return;
+    // Below 1.12 without the live report contract cannot be patched safely.
+    if (
+      !existing.process.includes(SENTRY_RUN_EVIDENCE_MARKER)
+      || !existing.process.includes(SENTRY_REPORT_MARKER)
+      || !existing.process.includes(SENTRY_RUN_WINDOW_MARKER)
+    ) {
+      log.warn(`Skipped sentry required-sensors migration from ${existing.version}: expected managed markers were not found`);
+      return;
+    }
+
+    let process = existing.process;
+    if (!process.includes(SENTRY_REQUIRED_SENSORS_MARKER)) {
+      process = process.replace(
+        SENTRY_RUN_WINDOW_MARKER,
+        `${SENTRY_REQUIRED_SENSORS_SECTION}\n${SENTRY_RUN_WINDOW_MARKER}`,
+      );
+      if (!process.includes(SENTRY_REQUIRED_SENSORS_MARKER)) {
+        log.warn(`Skipped sentry required-sensors migration from ${existing.version}: could not insert required-sensors section`);
+        return;
+      }
+    }
+
+    const mappedChecklist = Array.isArray(existing.checklist) ? [...(existing.checklist as any[])] : [];
+    const hasRailwayStatus = mappedChecklist.some(
+      (item: any) => item?.kind === "tool_invoked"
+        && item?.tool === "railway"
+        && item?.action === "status",
+    );
+    const hasPlatformsStatus = mappedChecklist.some(
+      (item: any) => item?.kind === "tool_invoked"
+        && item?.tool === "platforms"
+        && item?.action === "get_environment_status",
+    );
+    const checklist = [
+      ...mappedChecklist,
+      ...(hasRailwayStatus ? [] : [SENTRY_RAILWAY_STATUS_CHECKLIST_ITEM]),
+      ...(hasPlatformsStatus ? [] : [SENTRY_PLATFORMS_STATUS_CHECKLIST_ITEM]),
+    ];
+    const scoreThreshold = typeof existing.scoreThreshold === "number"
+      ? existing.scoreThreshold
+      : 0.8;
+
+    const updated = await db
+      .update(skills)
+      .set({
+        process,
+        checklist,
+        scoreThreshold,
+        version: SENTRY_REQUIRED_SENSORS_VERSION,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(skills.id, existing.id),
+        eq(skills.author, "system"),
+        eq(skills.customized, false),
+        eq(skills.version, existing.version),
+      ))
+      .returning({ id: skills.id });
+    if (updated.length > 0) {
+      log.info(`Migrated Reliability Sentinel ${existing.version} → ${SENTRY_REQUIRED_SENSORS_VERSION} with required railway/platforms sensors`);
       return;
     }
   }

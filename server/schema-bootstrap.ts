@@ -3843,6 +3843,7 @@ export async function runSchemaBootstrap(
       deprecateRetiredBuiltinSkills,
       migrateSkillProcessUpdates,
       migrateSentryRecentChangelistGate,
+      migrateSentryRequiredSensorsGate,
       migrateLegacySkillPersonaPreferences,
       deleteZombieSkills,
       initializeSkillRevisionLineage,
@@ -3859,6 +3860,7 @@ export async function runSchemaBootstrap(
     await deprecateRetiredBuiltinSkills();
     await migrateSkillProcessUpdates();
     await migrateSentryRecentChangelistGate();
+    await migrateSentryRequiredSensorsGate();
     await deleteZombieSkills();
     await verifyRequiredSkills();
     // Skill Default Lattice migration surface (cut 3). The per-skill customized-
