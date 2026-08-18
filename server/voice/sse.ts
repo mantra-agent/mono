@@ -86,6 +86,61 @@ export function sendSSEComment(res: Response, label: string, sessionId?: string)
   }
 }
 
+/** Official custom-LLM first-content buffer. Not speech, not transcript, not a drip. */
+const WRITE_PORT_HANDSHAKE = "... ";
+
+/** One handshake per Response. A second unflushed "... " on the same socket is unrepresentable. */
+const handshakeSent = new WeakSet<Response>();
+
+/**
+ * Cascade first-content handshake — one unflushed "... " per write-port.
+ * Not speakable, not presence, not coalesce/transcript. After this, comments only.
+ */
+export function writeFirstContentHandshake(
+  res: Response,
+  chatId: string,
+  created: number,
+  sessionId?: string,
+): boolean {
+  if (handshakeSent.has(res)) {
+    log.debug(`FIRST_CONTENT_HANDSHAKE skipped=already_sent session=${sessionId || "unknown"}`);
+    return false;
+  }
+  handshakeSent.add(res);
+  if (!isResponseAlive(res)) {
+    log.warn(`WRITE_PORT_DEAD location=writeFirstContentHandshake session=${sessionId || "unknown"}`);
+    return false;
+  }
+  try {
+    res.write(buildSSEChunk(chatId, created, WRITE_PORT_HANDSHAKE, null, false));
+    log.info(`FIRST_CONTENT_HANDSHAKE session=${sessionId || "unknown"}`);
+    return true;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`FIRST_CONTENT_HANDSHAKE_FAILED session=${sessionId || "unknown"} err=${msg}`);
+    return false;
+  }
+}
+
+/** Headers if needed, then the once-per-port handshake. Safe to call again on the same Response. */
+export function openWritePort(
+  res: Response,
+  chatId: string,
+  created: number,
+  sessionId?: string,
+): void {
+  if (!res.headersSent) {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+  }
+  if (res.socket) res.socket.setNoDelay(true);
+  writeFirstContentHandshake(res, chatId, created, sessionId);
+}
+
 // ── SSE Stream Initialization ────────────────────────────────────────────
 
 export function initSSEStream(
@@ -108,6 +163,7 @@ export function initSSEStream(
   ctx.pipelineStagesEmitted.add("writehead_sent");
   log.log(`turn ${currentTurn} TURN_PIPELINE stage=writehead_sent elapsed=${Date.now() - pipelineStart}ms session=${sessionId}`);
   sendSSEComment(res, "writehead", sessionId);
+  writeFirstContentHandshake(res, ctx.chatId, ctx.created, sessionId);
 }
 
 // ── Brief Ack ────────────────────────────────────────────────────────────

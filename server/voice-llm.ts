@@ -66,6 +66,7 @@ import {
   buildSSEChunk,
   isResponseAlive,
   sendSSEComment,
+  openWritePort,
   initSSEStream,
   sendBriefAck,
   closeSSEWithError,
@@ -303,15 +304,7 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
       session.pendingAttach = null;
       session.attachWritePort(req, res);
     } else {
-      if (!res.headersSent) {
-        res.writeHead(200, {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          "Connection": "keep-alive",
-          "X-Accel-Buffering": "no",
-        });
-      }
-      if (res.socket) res.socket.setNoDelay(true);
+      openWritePort(res, `chatcmpl-cascade-retry-${sessionId}`, Math.floor(Date.now() / 1000), sessionId);
       sendSSEComment(res, "write_port_pending", sessionId);
       session.pendingAttach = { req, res };
     }
@@ -560,6 +553,7 @@ async function executeVoiceTurn(
           "register_lock_acquired",
         ]) ctx.pipelineStagesEmitted.add(s);
         logPipelineStage(ctx, session, "inflight_registered", pipelineStart);
+        openWritePort(res, ctx.chatId, ctx.created, session.id);
       } finally {
         releaseLock();
       }

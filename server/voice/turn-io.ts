@@ -2,11 +2,11 @@
  * Voice turn I/O — presence writer, phrase assembler, hold-as-presence.
  *
  * Presence is one discriminant produced only at the speakable write helper.
- * Unflushed non-speech never leaves this module onto the SSE wire.
+ * The once-per-port handshake lives next to this module in sse.ts — not inside writeSpeakable.
  */
 import type { Response } from "express";
 import type { PresenceState, VoiceSession, TurnContext } from "./types";
-import { buildSSEChunk, isResponseAlive, createTrackedWrite, sendSSEComment, setupSSELifecycle } from "./sse";
+import { buildSSEChunk, isResponseAlive, createTrackedWrite, openWritePort, sendSSEComment, setupSSELifecycle } from "./sse";
 import { publishVoiceDiagnostic } from "./session";
 import { createLogger } from "../log";
 import { getVerifiedCascadeTimeoutSeconds, getVerifiedSoftTimeoutSeconds } from "../elevenlabs";
@@ -99,7 +99,7 @@ export interface TurnIOHandlers {
   /** Emit a flushed hold sentence when the cascade-safe window has elapsed. */
   sendPresenceHold: () => void;
   startKeepaliveTimer: () => void;
-  /** @deprecated removed — unflushed ellipsis keepalive is unrepresentable. */
+  /** @deprecated drip — first-content is writeFirstContentHandshake, once per port. */
   sendCascadeKeepalive: () => void;
 }
 
@@ -107,6 +107,7 @@ export function createTurnIOHandlers(
   res: Response, ctx: TurnContext, session: VoiceSession, currentTurn: number,
 ): TurnIOHandlers {
   session.activeWriteRes = res;
+  openWritePort(res, ctx.chatId, ctx.created, session.id);
   const writeRes = (): Response => session.activeWriteRes ?? res;
   const _rawTrackedWrite = createTrackedWrite(writeRes, ctx.lastWrite, ctx.bp, session.id, currentTurn, () => {
     publishVoiceDiagnostic(session, "backpressure", `Backpressure detected (buffered=${ctx.bp.totalBytes} bytes)`, { turn: currentTurn, status: "active" }, ctx);
@@ -292,6 +293,7 @@ export function createTurnIOHandlers(
     const prev = session.activeWriteRes;
     session.activeWriteRes = res;
     sendSSEComment(res, "write_port_attached", session.id);
+    openWritePort(res, ctx.chatId, ctx.created, session.id);
     setupSSELifecycle(req, res, session, ctx, trackedWrite, flushCoalesceBuffer, stopFillerTimer, ctx.turnAbort, getCascadeTimeoutMs);
     if (prev && prev !== res && !prev.writableEnded && !prev.destroyed) {
       try { prev.end(); } catch (e: unknown) {
@@ -321,9 +323,9 @@ export function createTurnIOHandlers(
     );
   };
 
-  /** Demolished: unflushed "... " is unrepresentable. Kept as no-op for stray callers. */
+  /** Demolished drip. First-content is writeFirstContentHandshake — once per port, never on a timer. */
   const sendCascadeKeepalive = (): void => {
-    log.debug(`turn ${currentTurn} CASCADE_KEEPALIVE rejected=unrepresentable ${spineIds(session, ctx)}`);
+    log.debug(`turn ${currentTurn} CASCADE_KEEPALIVE rejected=drip ${spineIds(session, ctx)}`);
   };
 
   const startKeepaliveTimer = (): void => {
