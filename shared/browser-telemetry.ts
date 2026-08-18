@@ -10,6 +10,7 @@ export const BROWSER_TELEMETRY_EVENT_KINDS = [
   "frame_contention",
   "graph",
   "features",
+  "home",
 ] as const;
 
 export type BrowserTelemetryEventKind = typeof BROWSER_TELEMETRY_EVENT_KINDS[number];
@@ -88,6 +89,15 @@ export const BROWSER_TELEMETRY_BUDGETS = {
     sessionMatchP95Ms: 50,
     expandP95Ms: 400,
   },
+  /** Home attribution — decision thresholds, not product SLOs. */
+  home: {
+    feedReadyMs: 2500,
+    libraryListMs: 2500,
+    feedRenderMs: 250,
+    sectionCommitMs: 250,
+    dwellLongTaskMs: 250,
+    dwellSlowFrameMs: 120,
+  },
 } as const;
 
 export interface BrowserTelemetryMetricSummary {
@@ -134,6 +144,10 @@ export interface NavigationTraceIncident {
     slowFrameMaxMs: number;
     streamActiveMax: number;
     streamSegmentsMax: number;
+    /** Closed Home fetch identities on `/home` traces only (−1 = not initial-pending). */
+    homeFeedMs?: number | null;
+    libraryListMs?: number | null;
+    otherInitialQueryCount?: number | null;
   };
 }
 

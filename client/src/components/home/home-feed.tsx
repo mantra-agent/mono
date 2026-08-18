@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { SectionPlanArtifact, SimpleFeed, SimpleFeedItem, SimpleFeedSection } from "@shared/models/simple";
+import type { SectionPlanArtifact, SimpleFeed, SimpleFeedItem, SimpleFeedSection, SimpleSection } from "@shared/models/simple";
+import { SIMPLE_SECTIONS } from "@shared/models/simple";
 import type { LibraryPage, LibraryPageFull } from "@/pages/library/types";
 import { dynamicSectionLabel } from "@shared/models/simple";
 import { SimpleWidgetRenderer } from "./home-widget-renderer";
@@ -27,6 +28,41 @@ import { SimpleTextFrame } from "./simple-text-frame";
 import { useUiInteraction } from "@/hooks/use-ui-interaction";
 import { useHomeSectionDisclosure } from "@/hooks/use-home-section-disclosure";
 import { useFocusSession } from "@/hooks/use-focus-session";
+import { getHomeEntryId, recordHomeLibraryListOnce, recordHomeTelemetry } from "@/lib/browser-telemetry";
+
+const SIMPLE_SECTION_SET = new Set<string>(SIMPLE_SECTIONS);
+
+function performanceNow(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+}
+
+/** At most one section_commit per closed section token per Home entry. */
+function useHomeSectionCommit(section: string, open: boolean, itemCount: number): void {
+  const committedForEntryRef = useRef<number | null>(null);
+  const markStartedAtRef = useRef<number | null>(null);
+
+  // Arm the mark when the section becomes open for this entry.
+  if (open && SIMPLE_SECTION_SET.has(section) && markStartedAtRef.current == null
+      && committedForEntryRef.current !== getHomeEntryId()) {
+    markStartedAtRef.current = performanceNow();
+  }
+
+  useLayoutEffect(() => {
+    if (!open || !SIMPLE_SECTION_SET.has(section)) return;
+    const entryId = getHomeEntryId();
+    if (committedForEntryRef.current === entryId) return;
+    const startedAt = markStartedAtRef.current ?? performanceNow();
+    markStartedAtRef.current = null;
+    committedForEntryRef.current = entryId;
+    recordHomeTelemetry("section_commit", Math.max(0, performanceNow() - startedAt), {
+      section: section as SimpleSection,
+      itemCount,
+      open: true,
+    });
+  }, [open, section, itemCount]);
+}
 
 export function SimpleFeedView({ feed }: { feed: SimpleFeed }) {
   const now = useMemo(() => new Date(feed.generatedAt), [feed.generatedAt]);
@@ -92,6 +128,8 @@ function SimpleSectionGroup({
   const containsGuidedResource = Boolean(guidedResource && items.some((item) => simpleItemContainsReference(item, guidedResource)));
   const hasPlanRow = planArtifact !== undefined;
   const open = preferredOpen || guideOpened || containsGuidedResource;
+  const itemCount = items.length + (hasPlanRow ? 1 : 0);
+  useHomeSectionCommit(sectionKey, open, itemCount);
 
   useEffect(() => {
     if (containsGuidedResource) setGuideOpened(true);
@@ -182,9 +220,12 @@ type MixedInboxItem = { kind: "person"; item: SimpleFeedItem } | { kind: "news";
 function LibrarySurfaceInbox({ peopleItems, newsItems, emailItems, feedItems }: { peopleItems: SimpleFeedItem[]; newsItems: SimpleFeedItem[]; emailItems: SimpleFeedItem[]; feedItems: SimpleFeedItem[] }) {
   const queryClient = useQueryClient();
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const { data: pages = [] } = useQuery<LibraryPage[]>({
+  const libraryQuery = useQuery<LibraryPage[]>({
     queryKey: ["/api/info/library"],
   });
+  const pages = libraryQuery.data ?? [];
+  const libraryMountAtRef = useRef(performanceNow());
+  const libraryListEmittedRef = useRef(false);
   const surfacedPages = useMemo(() => activeSurfacedPages(pages, nowMs), [pages, nowMs]);
   const inboxItems = useMemo<MixedInboxItem[]>(() => [
     ...peopleItems.map(item => ({ kind: "person" as const, item })),
@@ -193,6 +234,14 @@ function LibrarySurfaceInbox({ peopleItems, newsItems, emailItems, feedItems }: 
     ...feedItems.map(item => ({ kind: "feed" as const, item })),
     ...surfacedPages.map(page => ({ kind: "page" as const, page })),
   ].sort((a, b) => inboxSortTime(b.kind === "page" ? b.page : b.item) - inboxSortTime(a.kind === "page" ? a.page : a.item)), [peopleItems, newsItems, emailItems, feedItems, surfacedPages]);
+
+  // Observe-only library list settle (closed identity). Query options untouched.
+  useEffect(() => {
+    if (libraryQuery.isLoading || libraryListEmittedRef.current) return;
+    if (!libraryQuery.isSuccess && !libraryQuery.isError) return;
+    libraryListEmittedRef.current = true;
+    recordHomeLibraryListOnce(Math.max(0, performanceNow() - libraryMountAtRef.current));
+  }, [libraryQuery.isLoading, libraryQuery.isSuccess, libraryQuery.isError]);
 
   useEffect(() => {
     const activeUntilTimes = pages
@@ -232,6 +281,7 @@ function LibrarySurfaceInbox({ peopleItems, newsItems, emailItems, feedItems }: 
   });
 
   const [open, setOpen] = useState(true);
+  useHomeSectionCommit("inbox", open, inboxItems.length);
 
   if (surfacedPages.length === 0 && peopleItems.length === 0 && newsItems.length === 0 && emailItems.length === 0 && feedItems.length === 0) return null;
 
@@ -276,6 +326,9 @@ function LibrarySurfaceSnoozed({ peopleItems, newsItems }: { peopleItems: Simple
   });
   const snoozed = useMemo(() => snoozedSurfacedPages(pages, nowMs), [pages, nowMs]);
   const [expanded, setExpanded] = useState(false);
+  const snoozedItemCount = snoozed.length + peopleItems.length + newsItems.length;
+  // Snoozed stays default-closed; emit only when expanded.
+  useHomeSectionCommit("snoozed", expanded, snoozedItemCount);
 
   const dismissMutation = useMutation({
     mutationFn: async (pageId: string) => {

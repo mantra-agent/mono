@@ -9,6 +9,15 @@ const MAIN_THREAD_TASK_MS = 75;
 const MAIN_THREAD_FRAME_MS = 120;
 const NAVIGATION_BUDGET_MS = 2_500;
 
+/** Closed Home fetch identities — first queryKey segment only, never queryHash. */
+const HOME_FEED_QUERY_IDENTITY = "/api/home/feed";
+const HOME_LIBRARY_QUERY_IDENTITY = "/api/info/library";
+
+interface TrackedQueryMeta {
+  startedAt: number;
+  firstKey: string | null;
+}
+
 interface NavigationTrace {
   id: string;
   fromRoute: string;
@@ -21,7 +30,7 @@ interface NavigationTrace {
   firstCommitAt?: number;
   queryStartedCount: number;
   querySettledCount: number;
-  trackedQueries: Map<string, number>;
+  trackedQueries: Map<string, TrackedQueryMeta>;
   lastQuerySettledAt?: number;
   peakQueries: number;
   longTaskCount: number;
@@ -32,6 +41,10 @@ interface NavigationTrace {
   streamSubscribedMax: number;
   streamActiveMax: number;
   streamSegmentsMax: number;
+  /** Settled durations for closed Home identities (ms). Absent until that identity settles. */
+  homeFeedDurationMs?: number;
+  libraryListDurationMs?: number;
+  otherInitialQueryCount: number;
   deadlineTimer: number;
   settleTimer?: number;
 }
@@ -103,10 +116,35 @@ function beginNavigation(toRoute: string): void {
     streamSubscribedMax: 0,
     streamActiveMax: 0,
     streamSegmentsMax: 0,
+    otherInitialQueryCount: 0,
     deadlineTimer: window.setTimeout(() => finalizeNavigation("deadline"), TRACE_DEADLINE_MS),
   };
   activeTrace = trace;
   lastKnownRoute = toRoute;
+}
+
+function queryFirstKey(query: Query): string | null {
+  const first = query.queryKey[0];
+  return typeof first === "string" ? first.slice(0, 120) : null;
+}
+
+function homeAttributionMetadata(trace: NavigationTrace, endedAt: number): Record<string, number> {
+  if (trace.toRoute !== "/home") return {};
+  let homeFeedMs = typeof trace.homeFeedDurationMs === "number" ? trace.homeFeedDurationMs : -1;
+  let libraryListMs = typeof trace.libraryListDurationMs === "number" ? trace.libraryListDurationMs : -1;
+  let otherInitialQueryCount = trace.otherInitialQueryCount;
+  // Still-pending tracked queries at finalize: count elapsed so far without naming raw keys.
+  for (const meta of trace.trackedQueries.values()) {
+    const elapsed = Math.max(0, endedAt - meta.startedAt);
+    if (meta.firstKey === HOME_FEED_QUERY_IDENTITY) {
+      if (homeFeedMs < 0) homeFeedMs = elapsed;
+    } else if (meta.firstKey === HOME_LIBRARY_QUERY_IDENTITY) {
+      if (libraryListMs < 0) libraryListMs = elapsed;
+    } else {
+      otherInitialQueryCount += 1;
+    }
+  }
+  return { homeFeedMs, libraryListMs, otherInitialQueryCount };
 }
 
 function readinessAt(trace: NavigationTrace): number | undefined {
@@ -180,6 +218,7 @@ function finalizeNavigation(outcome: NavigationTraceOutcome): void {
       streamSubscribedMax: trace.streamSubscribedMax,
       streamActiveMax: trace.streamActiveMax,
       streamSegmentsMax: trace.streamSegmentsMax,
+      ...homeAttributionMetadata(trace, endedAt),
     },
   });
 }
@@ -224,15 +263,26 @@ function observeQueries(): () => void {
       // forced outcome=deadline, and mis-attributed unrelated long tasks /
       // slow frames as main_thread_contention while inflating peakQueries.
       if (isInitialLoadFetch(query) && !trace.trackedQueries.has(queryHash)) {
-        trace.trackedQueries.set(queryHash, now());
+        const firstKey = queryFirstKey(query);
+        trace.trackedQueries.set(queryHash, { startedAt: now(), firstKey });
         trace.queryStartedCount += 1;
         trace.peakQueries = Math.max(trace.peakQueries, trace.trackedQueries.size);
       }
       return;
     }
-    if (trace.trackedQueries.delete(queryHash)) {
+    const tracked = trace.trackedQueries.get(queryHash);
+    if (tracked && trace.trackedQueries.delete(queryHash)) {
+      const settledAt = now();
+      const durationMs = Math.max(0, settledAt - tracked.startedAt);
+      if (tracked.firstKey === HOME_FEED_QUERY_IDENTITY) {
+        trace.homeFeedDurationMs = durationMs;
+      } else if (tracked.firstKey === HOME_LIBRARY_QUERY_IDENTITY) {
+        trace.libraryListDurationMs = durationMs;
+      } else {
+        trace.otherInitialQueryCount += 1;
+      }
       trace.querySettledCount += 1;
-      trace.lastQuerySettledAt = now();
+      trace.lastQuerySettledAt = settledAt;
       scheduleCompletedFinalization();
     }
   });
@@ -278,6 +328,7 @@ function installHistoryObserver(): void {
         streamSubscribedMax: 0,
         streamActiveMax: 0,
         streamSegmentsMax: 0,
+        otherInitialQueryCount: 0,
         deadlineTimer: window.setTimeout(() => finalizeNavigation("deadline"), TRACE_DEADLINE_MS),
       };
       lastKnownRoute = toRoute;
