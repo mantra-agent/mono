@@ -365,7 +365,7 @@ export default function BusinessMetricsPage() {
     const end = new Date();
     return { start: rangeStart(sampleSpan, end), end };
   }, [sampleSpan]);
-  const { data, isLoading } = useQuery<MetricsResponse>({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery<MetricsResponse>({
     queryKey: ["/api/metrics", sampleSpan],
     queryFn: async () => {
       const url = `/api/metrics?start=${encodeURIComponent(samplingRange.start.toISOString())}&end=${encodeURIComponent(samplingRange.end.toISOString())}`;
@@ -374,6 +374,19 @@ export default function BusinessMetricsPage() {
     },
     refetchInterval: 60_000,
   });
+
+  const listErrorMessage = useMemo(() => {
+    if (!isError) return null;
+    if (!(error instanceof Error) || !error.message.trim()) return "Request failed";
+    const raw = error.message.replace(/^\d{3}:\s*/, "").trim();
+    try {
+      const parsed = JSON.parse(raw) as { error?: unknown };
+      if (typeof parsed.error === "string" && parsed.error.trim()) return parsed.error.trim();
+    } catch {
+      // not JSON — use stripped status body
+    }
+    return raw || "Request failed";
+  }, [isError, error]);
 
   const deleteMutation = useMutation({
     mutationFn: async (metric: Metric) => {
@@ -427,6 +440,23 @@ export default function BusinessMetricsPage() {
       {isLoading ? (
         <div className="flex items-center justify-center py-16 text-muted-foreground">
           <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading metrics…
+        </div>
+      ) : isError ? (
+        <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground" data-testid="metrics-list-error">
+          <span className="min-w-0 flex-1 truncate">
+            Couldn’t load metrics{listErrorMessage ? `: ${listErrorMessage}` : "."}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 shrink-0 px-2 text-sm"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            data-testid="metrics-list-retry"
+          >
+            {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Retry"}
+          </Button>
         </div>
       ) : series.length === 0 ? (
         <div className="px-2 py-1.5 text-sm text-muted-foreground">
