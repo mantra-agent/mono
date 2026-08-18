@@ -2,6 +2,7 @@ import { z } from "zod";
 import { budgetMonthlyTotal, departmentMonthlyTotal, type BudgetDepartment } from "./business-budgets";
 import type { JobRole } from "./job-roles";
 import { loadedMonthlyForRole, monthOffset, type BusinessHiringSlot } from "./business-hiring";
+import type { BusinessPricing, PricingPackageView } from "./business-pricing";
 import {
   FORECAST_METRIC_CATALOG,
   type ProjectedMetricSeries,
@@ -125,7 +126,9 @@ export interface Assumptions {
   maxIncludedTokensMillions: number;
   maxPlusIncludedTokensMillions: number;
   enterpriseIncludedTokensMillions: number;
-  /** Baseline Enterprise volume share. Stays 0 until a later forecast rewrite turns it on. */
+  /** Factory+ volume share. Stays 0 until a later forecast rewrite turns it on. */
+  factoryPlusEntrySharePct: number;
+  /** @deprecated Compatibility alias for factoryPlusEntrySharePct. */
   enterpriseEntrySharePct: number;
   hoursUsedPerActiveUser: number;
   meetingsPerHour: number;
@@ -273,6 +276,7 @@ export function defaultAssumptions(): Assumptions {
     maxIncludedTokensMillions: 12,
     maxPlusIncludedTokensMillions: 30,
     enterpriseIncludedTokensMillions: 330,
+    factoryPlusEntrySharePct: 0,
     enterpriseEntrySharePct: 0,
     hoursUsedPerActiveUser: 20,
     meetingsPerHour: 0.5,
@@ -347,7 +351,7 @@ const rawAssumptionsSchema = z.object({
   annualGrossLogoRetentionPct: z.number().optional(), annualNrrPct: z.number().optional(), individualEntrySharePct: z.number().optional(), maxSubscriptionMonthly: z.number().optional(), revenuePerCustomerMonthly: z.number().optional(),
   maxPlusSubscriptionMonthly: z.number().optional(), enterpriseSubscriptionMonthly: z.number().optional(), participantSeatMonthly: z.number().optional(), averageEntrySeatsPerTeamAccount: z.number().optional(),
   maxIncludedParticipants: z.number().optional(), maxPlusIncludedParticipants: z.number().optional(), enterpriseIncludedParticipants: z.number().optional(),
-  maxIncludedTokensMillions: z.number().optional(), maxPlusIncludedTokensMillions: z.number().optional(), enterpriseIncludedTokensMillions: z.number().optional(), enterpriseEntrySharePct: z.number().optional(),
+  maxIncludedTokensMillions: z.number().optional(), maxPlusIncludedTokensMillions: z.number().optional(), enterpriseIncludedTokensMillions: z.number().optional(), factoryPlusEntrySharePct: z.number().optional(), enterpriseEntrySharePct: z.number().optional(),
   hoursUsedPerActiveUser: z.number().optional(), meetingsPerHour: z.number().optional(), internalMeetingSharePct: z.number().optional(), newAccountsPerExternalMeeting: z.number().optional(), expandedUsersPerInternalMeeting: z.number().optional(), tokensUsedPerHour: z.number().optional(), blendedTokenCostPerMillion: z.number().optional(), overageMarkupPct: z.number().optional(),
   nrrSeatSharePct: z.number().optional(), nrrTierSharePct: z.number().optional(), nrrOverageSharePct: z.number().optional(),
   infrastructurePerActiveAccount: z.number().optional(), supportPerActiveAccount: z.number().optional(), seatInferenceAndSupportCost: z.number().optional(), paymentProcessingPct: z.number().optional(), onboardingCostPerNewAccount: z.number().optional(),
@@ -569,7 +573,8 @@ export function normalizeAssumptions(input: unknown): Assumptions {
     enterpriseIncludedParticipants: nonNegative(raw.enterpriseIncludedParticipants, defaults.enterpriseIncludedParticipants),
     maxIncludedTokensMillions: nonNegative(raw.maxIncludedTokensMillions, defaults.maxIncludedTokensMillions), maxPlusIncludedTokensMillions: nonNegative(raw.maxPlusIncludedTokensMillions, defaults.maxPlusIncludedTokensMillions),
     enterpriseIncludedTokensMillions: nonNegative(raw.enterpriseIncludedTokensMillions, defaults.enterpriseIncludedTokensMillions),
-    enterpriseEntrySharePct: bounded(raw.enterpriseEntrySharePct, 0, 100, defaults.enterpriseEntrySharePct),
+    factoryPlusEntrySharePct: bounded(raw.factoryPlusEntrySharePct ?? raw.enterpriseEntrySharePct, 0, 100, defaults.factoryPlusEntrySharePct),
+    enterpriseEntrySharePct: bounded(raw.factoryPlusEntrySharePct ?? raw.enterpriseEntrySharePct, 0, 100, defaults.enterpriseEntrySharePct),
     hoursUsedPerActiveUser: nonNegative(raw.hoursUsedPerActiveUser, defaults.hoursUsedPerActiveUser),
     meetingsPerHour: nonNegative(raw.meetingsPerHour, defaults.meetingsPerHour),
     internalMeetingSharePct: bounded(raw.internalMeetingSharePct, 0, 100, defaults.internalMeetingSharePct),
@@ -721,15 +726,68 @@ function safeRatio(numerator: number, denominator: number): number {
 
 /**
  * Billable extra Participants after the package include.
- * People count stays on averageUsersPerNewAccount; only max(people − included, 0) bills at $200.
- * Baseline volume is Max-shaped until enterpriseEntrySharePct turns Enterprise on in a later forecast rewrite.
+ * People count stays on averageUsersPerNewAccount; only max(people − included, 0) bills.
+ * Null catalog include means unlimited / no seat fee.
+ * Baseline volume is Max-shaped until factoryPlusEntrySharePct turns Factory+ on in a later forecast rewrite.
  */
 export function billableExtraParticipants(peopleCount: number, includedParticipants: number): number {
+  if (!Number.isFinite(includedParticipants)) return 0;
   return Math.max(0, Math.max(0, peopleCount) - Math.max(0, includedParticipants));
 }
 
-function baselineIncludedParticipants(assumptions: Assumptions): number {
-  return assumptions.maxIncludedParticipants;
+/** Package numbers live on BusinessPricing. Forecast may still persist these keys for one-release reads. */
+export const RETIRED_PACKAGE_ASSUMPTION_KEYS = [
+  "maxSubscriptionMonthly",
+  "maxPlusSubscriptionMonthly",
+  "enterpriseSubscriptionMonthly",
+  "participantSeatMonthly",
+  "maxIncludedParticipants",
+  "maxPlusIncludedParticipants",
+  "enterpriseIncludedParticipants",
+  "maxIncludedTokensMillions",
+  "maxPlusIncludedTokensMillions",
+  "enterpriseIncludedTokensMillions",
+  "enterpriseEntrySharePct",
+  "overageMarkupPct",
+  "blendedTokenCostPerMillion",
+] as const;
+
+export type RetiredPackageAssumptionKey = (typeof RETIRED_PACKAGE_ASSUMPTION_KEYS)[number];
+
+const RETIRED_PACKAGE_ASSUMPTION_KEY_SET = new Set<string>(RETIRED_PACKAGE_ASSUMPTION_KEYS);
+
+export function isRetiredPackageAssumptionKey(key: string): key is RetiredPackageAssumptionKey {
+  return RETIRED_PACKAGE_ASSUMPTION_KEY_SET.has(key);
+}
+
+function requirePricing(pricing: BusinessPricing | undefined): BusinessPricing {
+  if (!pricing) {
+    throw new Error("computeProjection requires BusinessPricing; load BusinessPricingStorage.getOrCreate(businessId)");
+  }
+  return pricing;
+}
+
+function catalogPackage(pricing: BusinessPricing, key: "max" | "max_plus"): PricingPackageView {
+  const pkg = pricing.packages.find((row) => row.key === key);
+  if (!pkg) throw new Error(`BusinessPricing is missing package ${key}`);
+  return pkg;
+}
+
+function recognizedMonthly(pkg: PricingPackageView, accountAgeMonths: number): number {
+  return accountAgeMonths < 12 ? pkg.yearOneMonthly : pkg.yearTwoMonthly;
+}
+
+function catalogIncludedParticipants(pkg: PricingPackageView): number {
+  return pkg.includedParticipants ?? Number.POSITIVE_INFINITY;
+}
+
+function catalogExtraParticipantMonthly(pkg: PricingPackageView): number {
+  return pkg.extraParticipantMonthly ?? 0;
+}
+
+function catalogOverageMultiple(pricing: BusinessPricing): number {
+  const cost = pricing.extras.workhorseInputPerMillion;
+  return cost > 0 ? pricing.extras.extraUsagePerMillion / cost : 1;
 }
 
 function roundUp(value: number, increment: number): number {
@@ -745,8 +803,18 @@ interface DerivedHire {
   headcount: number;
 }
 
-export function computeProjection(input: Assumptions | unknown, roles: JobRole[] = [], budgetDepartments?: BudgetDepartment[], hiringSlots?: BusinessHiringSlot[]): Projection {
+export function computeProjection(input: Assumptions | unknown, roles: JobRole[] = [], budgetDepartments?: BudgetDepartment[], hiringSlots?: BusinessHiringSlot[], pricing?: BusinessPricing): Projection {
   const assumptions = normalizeAssumptions(input);
+  const catalog = requirePricing(pricing);
+  const maxPackage = catalogPackage(catalog, "max");
+  const maxPlusPackage = catalogPackage(catalog, "max_plus");
+  const tokenCostPerMillion = catalog.extras.workhorseInputPerMillion;
+  const overagePriceMultiple = catalogOverageMultiple(catalog);
+  const includedParticipants = catalogIncludedParticipants(maxPackage);
+  const extraParticipantMonthly = catalogExtraParticipantMonthly(maxPackage);
+  const maxRecognizedMonthly = (ageMonths: number) => recognizedMonthly(maxPackage, ageMonths);
+  const maxPlusRecognizedMonthly = (ageMonths: number) => recognizedMonthly(maxPlusPackage, ageMonths);
+  const seatDeltaAt = (ageMonths: number) => Math.max(0, maxPlusRecognizedMonthly(ageMonths) - maxRecognizedMonthly(ageMonths));
   const departmentOpex = Object.fromEntries((budgetDepartments ?? []).map((department) => [department.id, departmentMonthlyTotal(department) / 100]));
   const canonicalBudgetOpex = budgetDepartments ? budgetMonthlyTotal(budgetDepartments) / 100 : null;
   const roleById = new Map(roles.map((role) => [role.id, role]));
@@ -772,24 +840,22 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
   const userRetentionMonthly = Math.pow(1 - assumptions.annualExistingAccountUserContractionPct / 100, 1 / 12);
   const netUserMovementMonthly = userExpansionMonthly * userRetentionMonthly;
   const upgradeMonthly = 1 - Math.pow(1 - assumptions.annualAccountUpgradePct / 100, 1 / 12);
-  const includedParticipants = baselineIncludedParticipants(assumptions);
   const representativeStartingUsers = Math.max(1, assumptions.startingAccounts > 0 ? assumptions.startingUsers / assumptions.startingAccounts : assumptions.averageUsersPerNewAccount);
-  const representativeStartingRevenue = assumptions.maxSubscriptionMonthly + billableExtraParticipants(representativeStartingUsers, includedParticipants) * assumptions.participantSeatMonthly;
+  const representativeStartingRevenue = maxRecognizedMonthly(0) + billableExtraParticipants(representativeStartingUsers, includedParticipants) * extraParticipantMonthly;
   const representativeRetainedUsers = Math.max(1, representativeStartingUsers * Math.pow(userExpansionMonthly, 12) * (1 - assumptions.annualExistingAccountUserContractionPct / 100));
   const representativeRetainedRevenue = (1 - assumptions.annualAccountChurnPct / 100) * (
-    assumptions.maxSubscriptionMonthly
-    + billableExtraParticipants(representativeRetainedUsers, includedParticipants) * assumptions.participantSeatMonthly
-    + assumptions.annualAccountUpgradePct / 100 * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly)
+    maxRecognizedMonthly(12)
+    + billableExtraParticipants(representativeRetainedUsers, includedParticipants) * extraParticipantMonthly
+    + assumptions.annualAccountUpgradePct / 100 * seatDeltaAt(12)
   );
   const calculatedAnnualNrrPct = safeRatio(representativeRetainedRevenue, representativeStartingRevenue) * 100;
-  const overagePriceMultiple = 1 + assumptions.overageMarkupPct / 100;
   const overageGrossMargin = overagePriceMultiple > 0 ? 1 - 1 / overagePriceMultiple : 0;
   const startingUsersPerAccount = assumptions.startingAccounts > 0 ? Math.max(1, assumptions.startingUsers / assumptions.startingAccounts) : assumptions.averageUsersPerNewAccount;
-  const entryRevenuePerAccount = assumptions.maxSubscriptionMonthly + billableExtraParticipants(assumptions.averageUsersPerNewAccount, includedParticipants) * assumptions.participantSeatMonthly;
+  const entryRevenuePerAccount = maxRecognizedMonthly(0) + billableExtraParticipants(assumptions.averageUsersPerNewAccount, includedParticipants) * extraParticipantMonthly;
   const tokensUsedPerHour = assumptions.tokensUsedPerHour;
   const entryHoursUsed = assumptions.averageUsersPerNewAccount * hoursUsedPerUser;
   const entryTokensUsed = entryHoursUsed * tokensUsedPerHour;
-  const includedInferencePerAccount = (entryTokensUsed / 1_000_000) * assumptions.blendedTokenCostPerMillion;
+  const includedInferencePerAccount = (entryTokensUsed / 1_000_000) * tokenCostPerMillion;
   const entryVariableCogsPerAccount = includedInferencePerAccount
     + assumptions.averageUsersPerNewAccount * assumptions.seatInferenceAndSupportCost
     + assumptions.infrastructurePerActiveAccount
@@ -839,12 +905,13 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
       const usersPerAccount = Math.max(1, expandedUsersPerAccount * userRetentionMonthly);
       const startUpgradeShare = 1 - Math.pow(1 - upgradeMonthly, startOfMonthAge);
       const upgradeShare = 1 - Math.pow(1 - upgradeMonthly, age);
-      const seatDelta = Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly);
-      const startRevenue = startAccounts * (assumptions.maxSubscriptionMonthly + billableExtraParticipants(startUsersPerAccount, includedParticipants) * assumptions.participantSeatMonthly + startUpgradeShare * seatDelta);
-      const retainedBaseRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + billableExtraParticipants(startUsersPerAccount, includedParticipants) * assumptions.participantSeatMonthly + startUpgradeShare * seatDelta);
-      const retainedExpandedRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + billableExtraParticipants(expandedUsersPerAccount, includedParticipants) * assumptions.participantSeatMonthly + startUpgradeShare * seatDelta);
-      const retainedUserRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + billableExtraParticipants(usersPerAccount, includedParticipants) * assumptions.participantSeatMonthly + startUpgradeShare * seatDelta);
-      const retainedRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + billableExtraParticipants(usersPerAccount, includedParticipants) * assumptions.participantSeatMonthly + upgradeShare * seatDelta);
+      const startSeatDelta = seatDeltaAt(startOfMonthAge);
+      const seatDelta = seatDeltaAt(age);
+      const startRevenue = startAccounts * (maxRecognizedMonthly(startOfMonthAge) + billableExtraParticipants(startUsersPerAccount, includedParticipants) * extraParticipantMonthly + startUpgradeShare * startSeatDelta);
+      const retainedBaseRevenue = survivingAccounts * (maxRecognizedMonthly(startOfMonthAge) + billableExtraParticipants(startUsersPerAccount, includedParticipants) * extraParticipantMonthly + startUpgradeShare * startSeatDelta);
+      const retainedExpandedRevenue = survivingAccounts * (maxRecognizedMonthly(startOfMonthAge) + billableExtraParticipants(expandedUsersPerAccount, includedParticipants) * extraParticipantMonthly + startUpgradeShare * startSeatDelta);
+      const retainedUserRevenue = survivingAccounts * (maxRecognizedMonthly(age) + billableExtraParticipants(usersPerAccount, includedParticipants) * extraParticipantMonthly + startUpgradeShare * startSeatDelta);
+      const retainedRevenue = survivingAccounts * (maxRecognizedMonthly(age) + billableExtraParticipants(usersPerAccount, includedParticipants) * extraParticipantMonthly + upgradeShare * seatDelta);
       activeAccounts += survivingAccounts;
       activeUsers += survivingAccounts * usersPerAccount;
       if (age === 0) newUsers += survivingAccounts * usersPerAccount;
@@ -874,14 +941,14 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
       const after = cohort.accounts * Math.pow(accountSurvivalMonthly, age);
       return sum + Math.max(0, before - after);
     }, 0);
-    const requiredTierUpgrades = Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly) > 0
-      ? tierExpansionRevenue / (assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly)
+    const requiredTierUpgrades = seatDeltaAt(12) > 0
+      ? tierExpansionRevenue / seatDeltaAt(12)
       : 0;
     const overageTokenCogs = overagePriceMultiple > 0 ? overageRevenue / overagePriceMultiple : 0;
-    const requiredOverageTokensMillions = assumptions.blendedTokenCostPerMillion > 0 ? overageTokenCogs / assumptions.blendedTokenCostPerMillion : 0;
+    const requiredOverageTokensMillions = tokenCostPerMillion > 0 ? overageTokenCogs / tokenCostPerMillion : 0;
     const hoursUsed = activeUsers * hoursUsedPerUser;
     const tokensUsed = hoursUsed * tokensUsedPerHour;
-    const tokenCost = (tokensUsed / 1_000_000) * assumptions.blendedTokenCostPerMillion;
+    const tokenCost = (tokensUsed / 1_000_000) * tokenCostPerMillion;
     const includedTokenCogs = tokenCost;
     const seatCogs = activeSeats * assumptions.seatInferenceAndSupportCost;
     const supportCogs = activeAccounts * assumptions.supportPerActiveAccount;
@@ -1045,17 +1112,17 @@ function nextFundraiseStartMonth(projection: Projection): number {
   return Math.max(1, triggerMonth - projection.assumptions.fundraisingLeadMonths);
 }
 
-export function computePhaseOneFinancingScenario(input: Assumptions | unknown, roles: JobRole[], amount: number, budgetDepartments?: BudgetDepartment[]): PhaseOneFinancingScenario {
+export function computePhaseOneFinancingScenario(input: Assumptions | unknown, roles: JobRole[], amount: number, budgetDepartments?: BudgetDepartment[], pricing?: BusinessPricing): PhaseOneFinancingScenario {
   const assumptions = normalizeAssumptions(input);
   const financingEvents = assumptions.financingEvents.map((event) => event.key === "pre_seed" ? { ...event, amount: nonNegative(amount, event.amount) } : event);
-  const baseline = computeProjection({ ...assumptions, financingEvents }, roles, budgetDepartments);
+  const baseline = computeProjection({ ...assumptions, financingEvents }, roles, budgetDepartments, undefined, pricing);
   const viralHaircut = assumptions.accountExpansion90d > 0 ? assumptions.downsideAccountExpansion90d / assumptions.accountExpansion90d : 1;
   const downside = computeProjection({
     ...assumptions,
     financingEvents,
     newAccountsPerExternalMeeting: assumptions.newAccountsPerExternalMeeting * viralHaircut,
     expandedUsersPerInternalMeeting: assumptions.expandedUsersPerInternalMeeting * viralHaircut,
-  }, roles, budgetDepartments);
+  }, roles, budgetDepartments, undefined, pricing);
   const gateIndex = Math.max(0, baseline.financingNeed.gateMonth - 1);
   const baselineCashAtGate = baseline.months[gateIndex]?.endingCash ?? assumptions.openingCash;
   const downsideCashAtGate = downside.months[gateIndex]?.endingCash ?? assumptions.openingCash;

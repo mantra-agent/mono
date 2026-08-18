@@ -617,19 +617,21 @@ async function computeModelBundle(businessId: string, period: "monthly" | "quart
   const { businessModelStorage } = await import("../business-model-storage");
   const { businessBudgetStorage } = await import("../business-budget-storage");
   const { businessHiringStorage } = await import("../business-hiring-storage");
+  const { businessPricingStorage } = await import("../business-pricing-storage");
   const { jobRoleStorage } = await import("../job-role-storage");
   const { aggregateMonths, computeProjection } = await import("@shared/models/business-model");
 
-  const [model, budget, hiring, rolesList] = await Promise.all([
+  const [model, budget, hiring, rolesList, pricing] = await Promise.all([
     businessModelStorage.getOrCreate(businessId),
     businessBudgetStorage.get(businessId),
     businessHiringStorage.projection(businessId),
     jobRoleStorage.list({ limit: 200 }),
+    businessPricingStorage.getOrCreate(businessId),
   ]);
 
   const roles = rolesList.length > 0 ? rolesList : hiring.roles;
   const departments = budget?.departments ?? [];
-  const projection = computeProjection(model.assumptions, roles, departments, hiring.slots);
+  const projection = computeProjection(model.assumptions, roles, departments, hiring.slots, pricing);
   const periods = aggregateMonths(projection.months, period);
   return { model, budget, hiring, projection, periods, departments };
 }
@@ -720,7 +722,13 @@ async function handleModelAction(action: string, args: Record<string, unknown>) 
 
     if (action === "set_assumption") {
       if (typeof valueArg !== "number") return { result: "business.set_assumption requires a numeric value", error: true };
-      const { assumptionsPatchSchema } = await import("@shared/models/business-model");
+      const { assumptionsPatchSchema, isRetiredPackageAssumptionKey } = await import("@shared/models/business-model");
+      if (isRetiredPackageAssumptionKey(assumptionKey)) {
+        return {
+          result: `business.set_assumption rejected "${assumptionKey}": package prices, includes, extras, and markup live on Pricing. Use update_package or update_extras.`,
+          error: true,
+        };
+      }
       // .strict() on the patch schema rejects unknown keys and wrong types, so an
       // invalid assumptionKey or a structured/string target fails closed here.
       const parsed = assumptionsPatchSchema.safeParse({ [assumptionKey]: valueArg });
