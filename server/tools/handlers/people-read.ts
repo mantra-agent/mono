@@ -31,10 +31,10 @@ function clampPeopleOffset(value: unknown): number {
   return Math.floor(n);
 }
 
-type PeopleField = "id" | "name" | "email" | "company" | "role" | "relation" | "professionalRelations" | "cabinetLevel" | "tags" | "introducedBy" | "familiarity" | "trust" | "met" | "lastInteractionDate" | "createdAt" | "updatedAt";
+type PeopleField = "id" | "name" | "email" | "company" | "role" | "relation" | "professionalRelations" | "cabinetLevel" | "tags" | "introducedBy" | "familiarity" | "trust" | "met" | "lastInteractionDate" | "createdAt" | "updatedAt" | "slackUserId";
 type PeopleOperator = "equals" | "empty" | "not_empty" | "contains" | "fuzzy" | "in";
 
-const PEOPLE_QUERY_FIELDS = new Set<PeopleField>(["id", "name", "email", "company", "role", "relation", "professionalRelations", "cabinetLevel", "tags", "introducedBy", "familiarity", "trust", "met", "lastInteractionDate", "createdAt", "updatedAt"]);
+const PEOPLE_QUERY_FIELDS = new Set<PeopleField>(["id", "name", "email", "company", "role", "relation", "professionalRelations", "cabinetLevel", "tags", "introducedBy", "familiarity", "trust", "met", "lastInteractionDate", "createdAt", "updatedAt", "slackUserId"]);
 const PEOPLE_QUERY_OPERATORS = new Set<PeopleOperator>(["equals", "empty", "not_empty", "contains", "fuzzy", "in"]);
 
 function normalizePeopleFields(fields: unknown): PeopleField[] {
@@ -47,8 +47,14 @@ function emailsForPerson(person: Person): string[] {
   return (person.contactInfo || []).filter(ci => ci.type === "email" && ci.value).map(ci => ci.value);
 }
 
+function slackUserIdForPerson(person: Person): string | undefined {
+  const slack = person.socialProfiles?.slack;
+  return typeof slack === "string" && slack.trim() ? slack.trim() : undefined;
+}
+
 function getPeopleFieldValue(person: Person, field: PeopleField): unknown {
   if (field === "email") return emailsForPerson(person);
+  if (field === "slackUserId") return slackUserIdForPerson(person);
   if (field === "lastInteractionDate") {
     const sorted = [...(person.interactions || [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     return sorted[0]?.date;
@@ -106,7 +112,7 @@ async function handlePeopleList(args: Record<string, any> = {}): Promise<ToolHan
     const rows = page.map((p: PersonIndexEntry) => {
       const row: Record<string, unknown> = {};
       for (const field of fields) {
-        if (field === "relation" || field === "professionalRelations" || field === "email" || field === "introducedBy" || field === "familiarity" || field === "trust" || field === "met") continue;
+        if (field === "relation" || field === "professionalRelations" || field === "email" || field === "introducedBy" || field === "familiarity" || field === "trust" || field === "met" || field === "slackUserId") continue;
         row[field] = (p as any)[field];
       }
       return row;
@@ -128,6 +134,8 @@ async function handlePeopleGet(args: Record<string, any>): Promise<ToolHandlerRe
   const contactLines = (person.contactInfo || [])
     .filter(contact => contact.value)
     .map(contact => `  - ${contact.label || contact.type}: ${contact.value}`);
+  const slackUserId = slackUserIdForPerson(person);
+  if (slackUserId) contactLines.push(`  - Slack: ${slackUserId}`);
   const operationalLines = [
     person.company ? `Company: ${person.company}` : null,
     person.role ? `Role: ${person.role}` : null,
