@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
 import { Check, ChevronRight, Loader2, MoreHorizontal } from "lucide-react";
 import { BusinessPageHeader } from "@/components/business/business-page-header";
 import { HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
@@ -49,7 +48,7 @@ const PERIOD_MODES: { key: PeriodMode; label: string }[] = [
 const ASSUMPTIONS_DISCLOSURE_KEY = "mantra.forecast.assumptions-open.v1";
 const FORECAST_TREE_KEY = "mantra.forecast.tree-open.v1";
 const MAX_ASSUMPTION_PREFERENCES = 64;
-const FORECAST_TREE_ROWS = ["utilization", "accounts", "newAccounts", "users", "expandedUsers", "meetings", "grossProfit", "revenue", "cogs", "opex", "staff"] as const;
+const FORECAST_TREE_ROWS = ["utilization", "accounts", "newAccounts", "accountTypes", "users", "expandedUsers", "meetings", "grossProfit", "revenue", "cogs", "opex", "staff"] as const;
 type ForecastTreeRow = (typeof FORECAST_TREE_ROWS)[number];
 type ForecastTreeState = Record<ForecastTreeRow, boolean>;
 
@@ -83,13 +82,26 @@ function emptyForecastTree(): ForecastTreeState {
   return Object.fromEntries(FORECAST_TREE_ROWS.map((row) => [row, false])) as ForecastTreeState;
 }
 
+function normalizeForecastTree(value: unknown): ForecastTreeState | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const next = emptyForecastTree();
+  let sawKnown = false;
+  for (const row of FORECAST_TREE_ROWS) {
+    if (typeof record[row] !== "boolean") continue;
+    next[row] = record[row];
+    sawKnown = true;
+  }
+  return sawKnown ? next : null;
+}
+
 function readForecastTreePreferences(): Record<string, ForecastTreeState> {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(FORECAST_TREE_KEY) ?? "{}") as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, ForecastTreeState] => {
-      const value = entry[1];
-      return Boolean(value && typeof value === "object" && !Array.isArray(value) && FORECAST_TREE_ROWS.every((row) => typeof (value as Record<string, unknown>)[row] === "boolean"));
+    return Object.fromEntries(Object.entries(parsed).flatMap(([key, value]) => {
+      const tree = normalizeForecastTree(value);
+      return tree ? [[key, tree] as const] : [];
     }).slice(-MAX_ASSUMPTION_PREFERENCES));
   } catch {
     return {};
@@ -158,14 +170,6 @@ function formatTokens(value: number): string {
 
 function fmtPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
-}
-
-function formatCatalogMoney(value: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
-}
-
-function formatCatalogCount(value: number | null): string {
-  return value === null ? "Unlimited" : String(value);
 }
 
 interface NumericInputProps {
@@ -380,46 +384,6 @@ export default function BusinessModelPage() {
       <section className="overflow-hidden border-y border-border/20">
         <ProfileDetailSection title="Assumptions" open={assumptionsOpen} onOpenChange={changeAssumptionsOpen} headerAction={<SavedIndicator state={saveState} />}>
           <div className="space-y-0">
-            <ProfileDetailSection title="Tiers" defaultOpen testId="assumptions-tiers">
-              {pricing.packages.map((pkg) => (
-                <ProfileDetailSection key={pkg.key} title={pkg.name} defaultOpen testId={`tier-${pkg.key}`}>
-                  <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
-                    <span className="min-w-0 truncate text-muted-foreground">Year 1</span>
-                    <span className="tabular-nums text-sm text-foreground">{formatCatalogMoney(pkg.yearOneMonthly)} / mo</span>
-                  </div>
-                  <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
-                    <span className="min-w-0 truncate text-muted-foreground">Year 2</span>
-                    <span className="tabular-nums text-sm text-foreground">{formatCatalogMoney(pkg.yearTwoMonthly)} / mo</span>
-                  </div>
-                  <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
-                    <span className="min-w-0 truncate text-muted-foreground">Included Participants</span>
-                    <span className="tabular-nums text-sm text-foreground">{formatCatalogCount(pkg.includedParticipants)}</span>
-                  </div>
-                  <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
-                    <span className="min-w-0 truncate text-muted-foreground">Included tokens</span>
-                    <span className="tabular-nums text-sm text-foreground">{pkg.includedTokensMillions}M</span>
-                  </div>
-                  <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
-                    <span className="min-w-0 truncate text-muted-foreground">Extra Participant</span>
-                    <span className="tabular-nums text-sm text-foreground">{pkg.extraParticipantMonthly === null ? "—" : `${formatCatalogMoney(pkg.extraParticipantMonthly)} / mo`}</span>
-                  </div>
-                </ProfileDetailSection>
-              ))}
-              <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
-                <span className="min-w-0 truncate text-muted-foreground">Token cost</span>
-                <span className="tabular-nums text-sm text-foreground">{formatCatalogMoney(pricing.extras.workhorseInputPerMillion)} / 1M</span>
-              </div>
-              <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default justify-between hover:bg-accent/70")}>
-                <span className="min-w-0 truncate text-muted-foreground">Extra usage</span>
-                <span className="tabular-nums text-sm text-foreground">{formatCatalogMoney(pricing.extras.extraUsagePerMillion)} / 1M</span>
-              </div>
-              <AssumptionDriver assumptionKey="factoryPlusEntrySharePct" label="Factory+ entry share" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-                <NumericInput ariaLabel="Factory+ entry volume share" value={liveAssumptions.factoryPlusEntrySharePct} min={0} step={5} suffix="%" disabled={sampled("factoryPlusEntrySharePct")} onChange={(factoryPlusEntrySharePct) => updateGlobal({ factoryPlusEntrySharePct, enterpriseEntrySharePct: factoryPlusEntrySharePct })} />
-              </AssumptionDriver>
-              <Link href="/business/pricing" className={cn(HIERARCHY_SESSION_ROW_CLASS, "text-cta hover:text-active")}>
-                Edit catalog on Pricing
-              </Link>
-            </ProfileDetailSection>
             <AssumptionDriver assumptionKey="startingAccounts" label="Starting accounts" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
               <NumericInput ariaLabel="Starting paying accounts" value={liveAssumptions.startingAccounts} min={0} step={1} disabled={sampled("startingAccounts")} onChange={(startingAccounts) => updateGlobal({ startingAccounts })} />
             </AssumptionDriver>
@@ -440,6 +404,9 @@ export default function BusinessModelPage() {
             </AssumptionDriver>
             <AssumptionDriver assumptionKey="annualAccountUpgradePct" label="Account upgrades" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
               <NumericInput ariaLabel="Annual account upgrade rate" value={liveAssumptions.annualAccountUpgradePct} min={0} step={5} suffix="% / yr" disabled={sampled("annualAccountUpgradePct")} onChange={(annualAccountUpgradePct) => updateGlobal({ annualAccountUpgradePct })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="factoryPlusEntrySharePct" label="Factory+ entry share" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Factory+ entry volume share" value={liveAssumptions.factoryPlusEntrySharePct} min={0} step={5} suffix="%" disabled={sampled("factoryPlusEntrySharePct")} onChange={(factoryPlusEntrySharePct) => updateGlobal({ factoryPlusEntrySharePct, enterpriseEntrySharePct: factoryPlusEntrySharePct })} />
             </AssumptionDriver>
             <AssumptionDriver assumptionKey="hoursUsedPerActiveUser" label="Hours per user" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
               <NumericInput ariaLabel="Hours used per active user per month" value={liveAssumptions.hoursUsedPerActiveUser} min={0} step={1} suffix="/ mo" disabled={sampled("hoursUsedPerActiveUser")} onChange={(hoursUsedPerActiveUser) => updateGlobal({ hoursUsedPerActiveUser })} />
@@ -514,6 +481,10 @@ export default function BusinessModelPage() {
               {tree.utilization && tree.accounts && <DataRow label="New Accounts" indent={2} periods={periods} render={(row) => row.newAccounts >= 0.05 ? `+${trimNum(row.newAccounts)}` : "—"} onToggle={() => toggleTree("newAccounts")} open={tree.newAccounts} />}
               {tree.utilization && tree.accounts && tree.newAccounts && <DataRow label="From External Meetings" indent={3} periods={periods} render={(row) => row.newAccountsFromMeetings >= 0.05 ? `+${trimNum(row.newAccountsFromMeetings)}` : "—"} />}
               {tree.utilization && tree.accounts && <DataRow label="Churned Accounts" indent={2} periods={periods} render={(row) => row.churnedAccounts >= 0.05 ? `-${trimNum(row.churnedAccounts)}` : "—"} tone={() => "text-muted-foreground"} />}
+              {tree.utilization && tree.accounts && <DataRow label="Types" indent={2} periods={periods} render={() => ""} onToggle={() => toggleTree("accountTypes")} open={tree.accountTypes} />}
+              {tree.utilization && tree.accounts && tree.accountTypes && <DataRow label="Max" indent={3} periods={periods} render={(row) => Math.round(row.maxAccounts).toLocaleString()} />}
+              {tree.utilization && tree.accounts && tree.accountTypes && <DataRow label="Max+" indent={3} periods={periods} render={(row) => Math.round(row.maxPlusAccounts).toLocaleString()} />}
+              {tree.utilization && tree.accounts && tree.accountTypes && <DataRow label="Factory+" indent={3} periods={periods} render={(row) => Math.round(row.factoryPlusAccounts).toLocaleString()} />}
               {tree.utilization && <DataRow label="Users" indent periods={periods} render={(row) => Math.round(row.activeUsers).toLocaleString()} onToggle={() => toggleTree("users")} open={tree.users} />}
               {tree.utilization && tree.users && <DataRow label="New Users" indent={2} periods={periods} render={(row) => row.newUsers >= 0.05 ? `+${trimNum(row.newUsers)}` : "—"} />}
               {tree.utilization && tree.users && <DataRow label="Expanded Users" indent={2} periods={periods} render={(row) => row.expandedUsers >= 0.05 ? `+${trimNum(row.expandedUsers)}` : "—"} onToggle={() => toggleTree("expandedUsers")} open={tree.expandedUsers} />}

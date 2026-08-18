@@ -153,6 +153,10 @@ Memory UI should distinguish memory entries from session mirrors and archive/raw
 
 `/business/pricing` is the closed Max / Max+ / Factory+ catalog. Use `BusinessPageHeader`, a Hierarchy Tree of the three package rows plus Extras, and in-place field edits. Do not add a New tier control, cards, or a Library essay. Year-one monthly is derived display. Identity.pricingPageId stays narrative.
 
+## Business Model UI
+
+`/business/model` consumes Pricing; it does not reprint catalog Year 1 / Year 2 / includes / extras. Mix and volume stay on Assumptions. Forecast Accounts → Types shows period-end Max / Max+ / Factory+ counts only.
+
 ## Page Architecture
 
 56 pages organized by domain. Each page is a route-level component:
