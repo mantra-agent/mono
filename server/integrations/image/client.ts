@@ -10,7 +10,7 @@ export interface ImageGenerationOptions {
 
 /**
  * Generate an image and return as Buffer.
- * Routes through model-client (OpenAI subscription primary, Grok/xAI Imagine fallback).
+ * Routes through model-client active connector pool (same order as chat/analyze).
  */
 export async function generateImageBuffer(
   prompt: string,
@@ -29,7 +29,7 @@ export async function generateImageBuffer(
 
 /**
  * Edit/combine multiple images into a composite.
- * Routes through model-client (OpenAI subscription primary, Grok/xAI Imagine fallback).
+ * Routes through model-client active connector pool (same order as chat/analyze).
  */
 export async function editImages(
   imageFiles: string[],
