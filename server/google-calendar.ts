@@ -284,6 +284,15 @@ export async function listAllEvents(
     if (!hasAccess) continue;
 
     try {
+      const { getAccount } = await import("./connected-accounts");
+      const row = await getAccount(account.id);
+      if (row && row.healthy === false) {
+        const { destroyAuthDeadOrphanGoogleAccount } = await import("./gmail");
+        await destroyAuthDeadOrphanGoogleAccount(account.id);
+        log.warn(`listAllEvents skipping auth-dead account=${account.id}`);
+        continue;
+      }
+
       const events = await listEvents(account.id, {
         timeMin: options.timeMin,
         timeMax: options.timeMax,
@@ -291,8 +300,10 @@ export async function listAllEvents(
       });
       allEvents.push(...events);
     } catch (err: unknown) {
-      const { isInvalidGrantError } = await import("./gmail");
+      const { isInvalidGrantError, markGoogleAccountAuthDead, destroyAuthDeadOrphanGoogleAccount } = await import("./gmail");
       if (isInvalidGrantError(err)) {
+        await markGoogleAccountAuthDead(account.id);
+        await destroyAuthDeadOrphanGoogleAccount(account.id);
         log.warn(`listAllEvents skipping account=${account.id} — token expired or revoked (invalid_grant)`);
       } else {
         const message = err instanceof Error ? err.message : String(err);
