@@ -16,9 +16,9 @@ import {
 import type { ToolHandler } from "./contracts";
 import { inputFailure, internalFailure } from "../tool-failure";
 
-// The Business Mod's `business` tool composes Business identity, Budgets,
-// Plans, KPIs, and Metrics behind one bounded action surface. Every action
-// delegates to its domain's canonical principal/Vault-scoped storage.
+// The Business Mod's `business` tool composes Business identity, Pricing,
+// Budgets, Plans, KPIs, and Metrics behind one bounded action surface. Every
+// action delegates to its domain's canonical principal/Vault-scoped storage.
 
 function planResult(plan: BusinessPlan) {
   return {
@@ -597,6 +597,7 @@ async function handleHiringAction(action: string, args: Record<string, unknown>)
   if (!slotId) return { result: "business.update_hiring_slot requires hiringSlotId", error: true };
   return { result: safeStringify(await businessHiringStorage.update(slotId, { businessId, plannedStartMonth: optionalStr(args, "plannedStartMonth"), clearFields: stringArray(args.clearFields) as ["plannedStartMonth"] | undefined, idempotencyKey }), { label: "bridge.business.hiring.update" }) };
 }
+const PRICING_ACTIONS = new Set(["get_pricing", "update_package", "update_extras"]);
 const BUDGET_ACTIONS = new Set(["get_budget", ...Object.keys(BUDGET_MUTATION_ACTIONS)]);
 const MODEL_WRITE_ACTIONS = new Set(["set_assumption", "link_assumption_kpi", "clear_assumption_kpi"]);
 const MODEL_ACTIONS = new Set(["get_model", ...MODEL_WRITE_ACTIONS]);
@@ -768,12 +769,50 @@ async function handleModelAction(action: string, args: Record<string, unknown>) 
   return { result: safeStringify(modelGetPayload(bundle, period), { label: "bridge.business.model.get" }) };
 }
 
+async function handlePricingAction(action: string, args: Record<string, unknown>) {
+  const businessId = requiredStr(args, "businessId");
+  if (!businessId) return { result: `business.${action} requires businessId`, error: true };
+  const { businessPricingStorage } = await import("../business-pricing-storage");
+  if (action === "get_pricing") {
+    return { result: safeStringify(await businessPricingStorage.getOrCreate(businessId), { label: "bridge.business.pricing.get" }) };
+  }
+  const { businessPricingMutationSchema } = await import("@shared/models/business-pricing");
+  if (action === "update_package") {
+    const key = requiredStr(args, "key");
+    if (!key) return { result: "business.update_package requires key", error: true };
+    const patch: Record<string, unknown> = {};
+    for (const field of [
+      "name", "listMonthly", "yearOneCash", "yearTwoMonthly", "includedAgents", "includedPrincipals",
+      "includedParticipants", "extraAgentMonthly", "extraPrincipalMonthly", "extraParticipantMonthly",
+      "includedTokensMillions", "factory", "router", "customization", "support",
+    ] as const) {
+      if (args[field] !== undefined) patch[field] = args[field];
+    }
+    const clearFields = stringArray(args.clearFields);
+    if (clearFields) patch.clearFields = clearFields;
+    const parsed = businessPricingMutationSchema.safeParse({ action: "update_package", key, patch });
+    if (!parsed.success) {
+      return { result: `business.update_package invalid: ${parsed.error.issues[0]?.message ?? "bad input"}`, error: true };
+    }
+    return { result: safeStringify(await businessPricingStorage.mutate(businessId, parsed.data), { label: "bridge.business.pricing.update_package" }) };
+  }
+  const extrasPatch: Record<string, unknown> = {};
+  if (args.extraUsagePerMillion !== undefined) extrasPatch.extraUsagePerMillion = args.extraUsagePerMillion;
+  if (args.workhorseInputPerMillion !== undefined) extrasPatch.workhorseInputPerMillion = args.workhorseInputPerMillion;
+  const parsed = businessPricingMutationSchema.safeParse({ action: "update_extras", patch: extrasPatch });
+  if (!parsed.success) {
+    return { result: `business.update_extras invalid: ${parsed.error.issues[0]?.message ?? "bad input"}`, error: true };
+  }
+  return { result: safeStringify(await businessPricingStorage.mutate(businessId, parsed.data), { label: "bridge.business.pricing.update_extras" }) };
+}
+
 export const handleBusiness: ToolHandler = async (args) => {
   const action = String(args.action || "list");
   try {
     let outcome;
     if (ENTITY_ACTIONS.has(action)) outcome = await handleEntityAction(action, args);
     else if (MODEL_ACTIONS.has(action)) outcome = await handleModelAction(action, args);
+    else if (PRICING_ACTIONS.has(action)) outcome = await handlePricingAction(action, args);
     else if (BUDGET_ACTIONS.has(action)) outcome = await handleBudgetAction(action, args);
     else if (HIRING_ACTIONS.has(action)) outcome = await handleHiringAction(action, args);
     else if (KPI_ACTIONS.has(action)) outcome = await handleKpiAction(action, args);

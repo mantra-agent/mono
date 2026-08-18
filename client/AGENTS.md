@@ -149,6 +149,10 @@ Memory UI should distinguish memory entries from session mirrors and archive/raw
 
 `/business/plan` is the Business Plan screen; `/business/advantage` is a compatibility redirect. The Plan name is the Plan selector and inline editor. Vault membership belongs to the owning Business and must not be redefined on the Plan screen. Thematic Goal and Initiative Project rows use `ProfileTreeRow.menuContent` plus the universal `ReferencePicker` restricted to the relevant reference type for replacement. Each initiative reveals exactly one leading Metric and one lagging KPI binding through the same canonical reference primitives; legacy plan-level KPI rows remain compatibility projection only. Do not add local selectors or a parallel Plan switcher.
 
+## Business Pricing UI
+
+`/business/pricing` is the closed Max / Max+ / Factory+ catalog. Use `BusinessPageHeader`, a Hierarchy Tree of the three package rows plus Extras, and in-place field edits. Do not add a New tier control, cards, or a Library essay. Year-one monthly is derived display. Identity.pricingPageId stays narrative.
+
 ## Page Architecture
 
 56 pages organized by domain. Each page is a route-level component:

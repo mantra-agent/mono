@@ -74,6 +74,7 @@ export async function convergeBootSchema(): Promise<void> {
         const { ensureBusinessPlansSchema } = await import("./business-plan-storage");
         const { ensureBusinessesSchema } = await import("./business-storage");
         const { ensureBusinessBudgetsSchema } = await import("./business-budget-schema");
+        const { ensureBusinessPricingSchema } = await import("./business-pricing-schema");
         const { ensureConversationSchema } = await import("./conversation-schema");
         const { ensurePermissionSchema } = await import("./permissions");
         const { ensureMeetingAudioRetentionSchema } = await import("./meeting/audio-retention-schema");
@@ -86,6 +87,7 @@ export async function convergeBootSchema(): Promise<void> {
         await ensureWorkOwnerPersonSchema(pool);
         await ensureBusinessesSchema();
         await ensureBusinessBudgetsSchema(pool);
+        await ensureBusinessPricingSchema(pool);
         await ensureMetricsDefinitionsSchema();
         await ensureBusinessPlansSchema();
         await ensureConversationSchema(pool);
