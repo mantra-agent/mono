@@ -218,6 +218,13 @@ async function idempotent(action: PeopleImportAction, input: ImportDecisionInput
 export async function listImportCandidates(options: { limit?: number; offset?: number } = {}): Promise<ImportCandidateListResult> {
   const limit = Math.max(1, Math.min(options.limit || 50, MAX_LIST_LIMIT));
   const offset = Math.max(0, options.offset || 0);
+  // Soft-fail backlog drain before projecting pending (Spec §10).
+  try {
+    const { maybeRunAutoImportBackfill } = await import("./people-import-auto");
+    await maybeRunAutoImportBackfill();
+  } catch {
+    // Leave queue projection intact if evaluator degrades.
+  }
   const [pending, summary] = await Promise.all([getPendingCandidatesFromDb(), getQueueSummaryFromDb()]);
   const candidates = pending.slice(offset, offset + limit).map(candidate => ({ candidateId: candidateIdFor(candidate), candidate }));
   const totalPending = pending.length;
