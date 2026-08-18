@@ -116,10 +116,17 @@ export interface Assumptions {
   individualEntrySharePct: number;
   maxSubscriptionMonthly: number;
   maxPlusSubscriptionMonthly: number;
+  enterpriseSubscriptionMonthly: number;
   participantSeatMonthly: number;
   averageEntrySeatsPerTeamAccount: number;
+  maxIncludedParticipants: number;
+  maxPlusIncludedParticipants: number;
+  enterpriseIncludedParticipants: number;
   maxIncludedTokensMillions: number;
   maxPlusIncludedTokensMillions: number;
+  enterpriseIncludedTokensMillions: number;
+  /** Baseline Enterprise volume share. Stays 0 until a later forecast rewrite turns it on. */
+  enterpriseEntrySharePct: number;
   hoursUsedPerActiveUser: number;
   meetingsPerHour: number;
   internalMeetingSharePct: number;
@@ -257,10 +264,16 @@ export function defaultAssumptions(): Assumptions {
     individualEntrySharePct: 85,
     maxSubscriptionMonthly: 500,
     maxPlusSubscriptionMonthly: 1_000,
+    enterpriseSubscriptionMonthly: 5_000,
     participantSeatMonthly: 200,
     averageEntrySeatsPerTeamAccount: 5,
+    maxIncludedParticipants: 0,
+    maxPlusIncludedParticipants: 3,
+    enterpriseIncludedParticipants: 10,
     maxIncludedTokensMillions: 12,
     maxPlusIncludedTokensMillions: 30,
+    enterpriseIncludedTokensMillions: 330,
+    enterpriseEntrySharePct: 0,
     hoursUsedPerActiveUser: 20,
     meetingsPerHour: 0.5,
     internalMeetingSharePct: 70,
@@ -332,8 +345,10 @@ const rawAssumptionsSchema = z.object({
   startingAccounts: z.number().optional(), startingCustomers: z.number().optional(), startingUsers: z.number().optional(), quarterOneNewAccounts: z.number().optional(), averageUsersPerNewAccount: z.number().optional(), accountExpansion90d: z.number().optional(), downsideAccountExpansion90d: z.number().optional(),
   annualAccountChurnPct: z.number().optional(), annualExistingAccountUserGrowthPct: z.number().optional(), annualExistingAccountUserContractionPct: z.number().optional(), annualAccountUpgradePct: z.number().optional(),
   annualGrossLogoRetentionPct: z.number().optional(), annualNrrPct: z.number().optional(), individualEntrySharePct: z.number().optional(), maxSubscriptionMonthly: z.number().optional(), revenuePerCustomerMonthly: z.number().optional(),
-  maxPlusSubscriptionMonthly: z.number().optional(), participantSeatMonthly: z.number().optional(), averageEntrySeatsPerTeamAccount: z.number().optional(),
-  maxIncludedTokensMillions: z.number().optional(), maxPlusIncludedTokensMillions: z.number().optional(), hoursUsedPerActiveUser: z.number().optional(), meetingsPerHour: z.number().optional(), internalMeetingSharePct: z.number().optional(), newAccountsPerExternalMeeting: z.number().optional(), expandedUsersPerInternalMeeting: z.number().optional(), tokensUsedPerHour: z.number().optional(), blendedTokenCostPerMillion: z.number().optional(), overageMarkupPct: z.number().optional(),
+  maxPlusSubscriptionMonthly: z.number().optional(), enterpriseSubscriptionMonthly: z.number().optional(), participantSeatMonthly: z.number().optional(), averageEntrySeatsPerTeamAccount: z.number().optional(),
+  maxIncludedParticipants: z.number().optional(), maxPlusIncludedParticipants: z.number().optional(), enterpriseIncludedParticipants: z.number().optional(),
+  maxIncludedTokensMillions: z.number().optional(), maxPlusIncludedTokensMillions: z.number().optional(), enterpriseIncludedTokensMillions: z.number().optional(), enterpriseEntrySharePct: z.number().optional(),
+  hoursUsedPerActiveUser: z.number().optional(), meetingsPerHour: z.number().optional(), internalMeetingSharePct: z.number().optional(), newAccountsPerExternalMeeting: z.number().optional(), expandedUsersPerInternalMeeting: z.number().optional(), tokensUsedPerHour: z.number().optional(), blendedTokenCostPerMillion: z.number().optional(), overageMarkupPct: z.number().optional(),
   nrrSeatSharePct: z.number().optional(), nrrTierSharePct: z.number().optional(), nrrOverageSharePct: z.number().optional(),
   infrastructurePerActiveAccount: z.number().optional(), supportPerActiveAccount: z.number().optional(), seatInferenceAndSupportCost: z.number().optional(), paymentProcessingPct: z.number().optional(), onboardingCostPerNewAccount: z.number().optional(),
   productizedOnboardingMonth: z.number().optional(), productizedOnboardingCostPerNewAccount: z.number().optional(),
@@ -547,8 +562,14 @@ export function normalizeAssumptions(input: unknown): Assumptions {
     annualGrossLogoRetentionPct: 100 - bounded(raw.annualAccountChurnPct, 0, 100, 100 - bounded(raw.annualGrossLogoRetentionPct, 0, 100, defaults.annualGrossLogoRetentionPct)), annualNrrPct: nonNegative(compatibility.annualNrrPct, defaults.annualNrrPct),
     individualEntrySharePct: bounded(raw.individualEntrySharePct, 0, 100, defaults.individualEntrySharePct),
     maxSubscriptionMonthly: nonNegative(compatibility.maxSubscriptionMonthly, defaults.maxSubscriptionMonthly), maxPlusSubscriptionMonthly: nonNegative(raw.maxPlusSubscriptionMonthly, defaults.maxPlusSubscriptionMonthly),
+    enterpriseSubscriptionMonthly: nonNegative(raw.enterpriseSubscriptionMonthly, defaults.enterpriseSubscriptionMonthly),
     participantSeatMonthly: nonNegative(raw.participantSeatMonthly, defaults.participantSeatMonthly), averageEntrySeatsPerTeamAccount: nonNegative(raw.averageEntrySeatsPerTeamAccount, defaults.averageEntrySeatsPerTeamAccount),
+    maxIncludedParticipants: nonNegative(raw.maxIncludedParticipants, defaults.maxIncludedParticipants),
+    maxPlusIncludedParticipants: nonNegative(raw.maxPlusIncludedParticipants, defaults.maxPlusIncludedParticipants),
+    enterpriseIncludedParticipants: nonNegative(raw.enterpriseIncludedParticipants, defaults.enterpriseIncludedParticipants),
     maxIncludedTokensMillions: nonNegative(raw.maxIncludedTokensMillions, defaults.maxIncludedTokensMillions), maxPlusIncludedTokensMillions: nonNegative(raw.maxPlusIncludedTokensMillions, defaults.maxPlusIncludedTokensMillions),
+    enterpriseIncludedTokensMillions: nonNegative(raw.enterpriseIncludedTokensMillions, defaults.enterpriseIncludedTokensMillions),
+    enterpriseEntrySharePct: bounded(raw.enterpriseEntrySharePct, 0, 100, defaults.enterpriseEntrySharePct),
     hoursUsedPerActiveUser: nonNegative(raw.hoursUsedPerActiveUser, defaults.hoursUsedPerActiveUser),
     meetingsPerHour: nonNegative(raw.meetingsPerHour, defaults.meetingsPerHour),
     internalMeetingSharePct: bounded(raw.internalMeetingSharePct, 0, 100, defaults.internalMeetingSharePct),
@@ -698,6 +719,19 @@ function safeRatio(numerator: number, denominator: number): number {
   return denominator > 0 ? numerator / denominator : 0;
 }
 
+/**
+ * Billable extra Participants after the package include.
+ * People count stays on averageUsersPerNewAccount; only max(people − included, 0) bills at $200.
+ * Baseline volume is Max-shaped until enterpriseEntrySharePct turns Enterprise on in a later forecast rewrite.
+ */
+export function billableExtraParticipants(peopleCount: number, includedParticipants: number): number {
+  return Math.max(0, Math.max(0, peopleCount) - Math.max(0, includedParticipants));
+}
+
+function baselineIncludedParticipants(assumptions: Assumptions): number {
+  return assumptions.maxIncludedParticipants;
+}
+
 function roundUp(value: number, increment: number): number {
   return Math.ceil(Math.max(0, value) / increment) * increment;
 }
@@ -738,18 +772,20 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
   const userRetentionMonthly = Math.pow(1 - assumptions.annualExistingAccountUserContractionPct / 100, 1 / 12);
   const netUserMovementMonthly = userExpansionMonthly * userRetentionMonthly;
   const upgradeMonthly = 1 - Math.pow(1 - assumptions.annualAccountUpgradePct / 100, 1 / 12);
+  const includedParticipants = baselineIncludedParticipants(assumptions);
   const representativeStartingUsers = Math.max(1, assumptions.startingAccounts > 0 ? assumptions.startingUsers / assumptions.startingAccounts : assumptions.averageUsersPerNewAccount);
-  const representativeStartingRevenue = assumptions.maxSubscriptionMonthly + Math.max(0, representativeStartingUsers - 1) * assumptions.participantSeatMonthly;
+  const representativeStartingRevenue = assumptions.maxSubscriptionMonthly + billableExtraParticipants(representativeStartingUsers, includedParticipants) * assumptions.participantSeatMonthly;
+  const representativeRetainedUsers = Math.max(1, representativeStartingUsers * Math.pow(userExpansionMonthly, 12) * (1 - assumptions.annualExistingAccountUserContractionPct / 100));
   const representativeRetainedRevenue = (1 - assumptions.annualAccountChurnPct / 100) * (
     assumptions.maxSubscriptionMonthly
-    + Math.max(0, Math.max(1, representativeStartingUsers * Math.pow(userExpansionMonthly, 12) * (1 - assumptions.annualExistingAccountUserContractionPct / 100)) - 1) * assumptions.participantSeatMonthly
+    + billableExtraParticipants(representativeRetainedUsers, includedParticipants) * assumptions.participantSeatMonthly
     + assumptions.annualAccountUpgradePct / 100 * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly)
   );
   const calculatedAnnualNrrPct = safeRatio(representativeRetainedRevenue, representativeStartingRevenue) * 100;
   const overagePriceMultiple = 1 + assumptions.overageMarkupPct / 100;
   const overageGrossMargin = overagePriceMultiple > 0 ? 1 - 1 / overagePriceMultiple : 0;
   const startingUsersPerAccount = assumptions.startingAccounts > 0 ? Math.max(1, assumptions.startingUsers / assumptions.startingAccounts) : assumptions.averageUsersPerNewAccount;
-  const entryRevenuePerAccount = assumptions.maxSubscriptionMonthly + Math.max(0, assumptions.averageUsersPerNewAccount - 1) * assumptions.participantSeatMonthly;
+  const entryRevenuePerAccount = assumptions.maxSubscriptionMonthly + billableExtraParticipants(assumptions.averageUsersPerNewAccount, includedParticipants) * assumptions.participantSeatMonthly;
   const tokensUsedPerHour = assumptions.tokensUsedPerHour;
   const entryHoursUsed = assumptions.averageUsersPerNewAccount * hoursUsedPerUser;
   const entryTokensUsed = entryHoursUsed * tokensUsedPerHour;
@@ -803,11 +839,12 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
       const usersPerAccount = Math.max(1, expandedUsersPerAccount * userRetentionMonthly);
       const startUpgradeShare = 1 - Math.pow(1 - upgradeMonthly, startOfMonthAge);
       const upgradeShare = 1 - Math.pow(1 - upgradeMonthly, age);
-      const startRevenue = startAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, startUsersPerAccount - 1) * assumptions.participantSeatMonthly + startUpgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
-      const retainedBaseRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, startUsersPerAccount - 1) * assumptions.participantSeatMonthly + startUpgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
-      const retainedExpandedRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, expandedUsersPerAccount - 1) * assumptions.participantSeatMonthly + startUpgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
-      const retainedUserRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, usersPerAccount - 1) * assumptions.participantSeatMonthly + startUpgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
-      const retainedRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + Math.max(0, usersPerAccount - 1) * assumptions.participantSeatMonthly + upgradeShare * Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly));
+      const seatDelta = Math.max(0, assumptions.maxPlusSubscriptionMonthly - assumptions.maxSubscriptionMonthly);
+      const startRevenue = startAccounts * (assumptions.maxSubscriptionMonthly + billableExtraParticipants(startUsersPerAccount, includedParticipants) * assumptions.participantSeatMonthly + startUpgradeShare * seatDelta);
+      const retainedBaseRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + billableExtraParticipants(startUsersPerAccount, includedParticipants) * assumptions.participantSeatMonthly + startUpgradeShare * seatDelta);
+      const retainedExpandedRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + billableExtraParticipants(expandedUsersPerAccount, includedParticipants) * assumptions.participantSeatMonthly + startUpgradeShare * seatDelta);
+      const retainedUserRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + billableExtraParticipants(usersPerAccount, includedParticipants) * assumptions.participantSeatMonthly + startUpgradeShare * seatDelta);
+      const retainedRevenue = survivingAccounts * (assumptions.maxSubscriptionMonthly + billableExtraParticipants(usersPerAccount, includedParticipants) * assumptions.participantSeatMonthly + upgradeShare * seatDelta);
       activeAccounts += survivingAccounts;
       activeUsers += survivingAccounts * usersPerAccount;
       if (age === 0) newUsers += survivingAccounts * usersPerAccount;
