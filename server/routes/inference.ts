@@ -21,7 +21,12 @@ import { principalHasPermission, requirePermission } from "../permissions";
 import { requireAuth } from "../auth";
 import { runWithApiCallReportingScope } from "../file-storage/api-calls";
 import { listModelConnectors, reorderModelConnectors, updateModelConnector } from "../model-connectors";
-import { claudeCliTierMappingsSchema, modelTierMappingsSchema, openAITierMappingsSchema } from "@shared/model-connectors";
+import {
+  claudeCliTierMappingsSchema,
+  grokSubscriptionTierMappingsSchema,
+  modelTierMappingsSchema,
+  openAITierMappingsSchema,
+} from "@shared/model-connectors";
 import { projectPerformanceMetrics } from "../mods/performance-metrics-adapter";
 
 const INFERENCE_DEBUG_KEY = "system.inference_debug";
@@ -965,7 +970,12 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid connector id" });
       const body = z.object({
         status: z.enum(["active", "inactive"]).optional(),
-        tierMappings: z.union([modelTierMappingsSchema, openAITierMappingsSchema, claudeCliTierMappingsSchema]).optional(),
+        tierMappings: z.union([
+          modelTierMappingsSchema,
+          openAITierMappingsSchema,
+          claudeCliTierMappingsSchema,
+          grokSubscriptionTierMappingsSchema,
+        ]).optional(),
         priorityPinned: z.boolean().optional(),
       }).parse(req.body);
       const connector = await updateModelConnector(id, body);
