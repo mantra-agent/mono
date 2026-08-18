@@ -96,7 +96,7 @@ App-shell consumers of live Session state must read `SessionActivityProvider` th
 - **Exclusive session ownership.** Each live session binds to at most one Feature. Title match is exact launch title only (`${actionLabel|Discuss}: ${summary}` truncated to 80) — never `title.includes(summary)`. Page builds `titleSessionOwners` (sessionId → featureId); collisions prefer the longest summary and leave equal-length ties unowned. Linked/launched claims must not steal a session title-owned by another Feature.
 - **Child session widget is expand-only.** `FeatureActiveSessionStrip` / `ChildSessionBlock` mounts only when the Feature row is expanded. Collapsed rows keep humming chrome (pulse title, spinner, Stop) without mounting the strip.
 - Linked `/api/features/:id/sessions` is enabled only when the row launched a session, owns a title-matched session, or is expanded — never N fan-out because some other Feature is humming.
-- History (`/api/features/:id/history`) is expand-only (`ProfileTreeRow.onOpenChange`).
+- History (`/api/features/:id/history`) is expand-only (collapsed Feature rows use `HIERARCHY_SESSION_ROW_CLASS`; click-to-expand still owns `rowExpanded`).
 - `FeatureRow` is `memo`ized. Browser telemetry kind `features` records `list_fetch`, `first_paint`, `session_match`, `expand`, `row_count`, `active_sessions` through `recordBrowserTelemetry`.
 
 ## Browser navigation telemetry
