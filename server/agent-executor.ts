@@ -295,13 +295,34 @@ export interface ExecutorRunOptions {
   voiceSessionId?: string;
   /** Outer Diagnostic span created before context assembly. */
   diagnosticTurnId?: string;
-  /** Refresh prompt, routing, visible identity, and callable schemas after orient changes the session persona. */
-  refreshAfterPersonaSwitch?: () => Promise<{
-    routingDecision: ModelRoutingDecision;
-    systemPrompt: string;
-    tools: ToolDefinition[];
-    persona?: PersonaSnapshot;
-  }>;
+  /**
+   * Optional extras for the executor-owned persona-switch refresh path.
+   * When sessionId is set, the executor always re-resolves routing, system
+   * prompt, tools, and persona after a mid-run orient switch — callers no
+   * longer supply a refresh plugin.
+   */
+  personaSwitchRefresh?: {
+    origin?: import("./agent-authority").ToolInvocationOrigin;
+    trustedDelegation?: import("./agent-authority").TrustedEngineeringDelegation;
+    skillId?: string;
+    skillName?: string;
+    mayInitiateConversation?: boolean;
+    runtimeRunId?: string;
+    runtimeAttemptId?: string;
+    callType?: import("@shared/context-spine").ContextCallType;
+    includeSections?: string[];
+    excludeSections?: string[];
+    profile?: "chat" | "voice" | "background";
+    conversationHistory?: Array<{
+      role: "user" | "assistant" | "tool" | "system";
+      content: string;
+      toolCallId?: string;
+      toolCalls?: unknown[];
+      thinking?: string;
+    }>;
+    currentMessage?: string;
+    meetingContext?: string;
+  };
   /** Resolve one authority-allowed tool schema after tools.get requests progressive hydration. */
   refreshToolSchema?: (toolName: string) => Promise<ToolDefinition | null>;
   /**
@@ -5025,12 +5046,38 @@ export class AgentExecutor extends EventEmitter {
         }
 
         if (result.personaSwitchRequested) {
-          if (!options.refreshAfterPersonaSwitch) {
-            throw new Error("Persona changed mid-turn, but no continuation refresh handler is configured");
+          const sessionIdForRefresh = options.sessionId?.trim();
+          if (!sessionIdForRefresh) {
+            throw new Error(
+              "Persona changed mid-turn, but this run has no sessionId — cannot re-resolve routing, prompt, or tools",
+            );
           }
           const previousModel = modelString;
           const previousPersonaId = routingDecision.personaId;
-          const refreshed = await options.refreshAfterPersonaSwitch();
+          const { refreshRunAfterPersonaSwitch } = await import("./persona-switch");
+          const refreshExtras = options.personaSwitchRefresh ?? {};
+          const refreshed = await refreshRunAfterPersonaSwitch({
+            sessionId: sessionIdForRefresh,
+            activity: options.activity || "agent",
+            contextBuildId: `${runId}:persona-refresh`,
+            sessionKey: options.sessionKey,
+            origin: refreshExtras.origin,
+            trustedDelegation: refreshExtras.trustedDelegation,
+            skillId: refreshExtras.skillId,
+            skillName: refreshExtras.skillName,
+            mayInitiateConversation: refreshExtras.mayInitiateConversation,
+            runtimeRunId: refreshExtras.runtimeRunId
+              ?? (options.capacityOwner?.kind === "runtime" ? options.capacityOwner.runId : undefined),
+            runtimeAttemptId: refreshExtras.runtimeAttemptId
+              ?? (options.capacityOwner?.kind === "runtime" ? options.capacityOwner.attemptId : undefined),
+            callType: refreshExtras.callType,
+            includeSections: refreshExtras.includeSections,
+            excludeSections: refreshExtras.excludeSections,
+            profile: refreshExtras.profile,
+            conversationHistory: refreshExtras.conversationHistory,
+            currentMessage: refreshExtras.currentMessage,
+            meetingContext: refreshExtras.meetingContext,
+          });
           routingDecision = refreshed.routingDecision;
           modelString = routingDecision.modelString;
           routingTier = routingDecision.tier;

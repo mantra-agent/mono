@@ -295,6 +295,12 @@ export async function runExecutorPhase(
       activity: ACTIVITY_VOICE,
       thinking: voiceThinking,
       signal: turnAbort.signal,
+      personaSwitchRefresh: session.chatSessionId
+        ? {
+            origin: "voice",
+            profile: "voice",
+          }
+        : undefined,
       onEvent: (event) => {
         if (event.type === "ttft_breakdown") {
           const breakdown = (event as unknown as { breakdown: Record<string, unknown> }).breakdown;
