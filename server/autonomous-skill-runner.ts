@@ -31,11 +31,9 @@ const lifecycleLog = createLogger("AutonomousLifecycle");
 // before calling this module. Missing principal context fails closed below;
 // Skill execution never guesses an account or falls back to system authority.
 const treeLog = createLogger("SessionTree");
-const councilLog = createLogger("Council");
 const xMsgLog = createLogger("CrossSessionMsg");
 
 export const sessionTreeLogger = treeLog;
-export const councilLogger = councilLog;
 export const crossSessionMsgLogger = xMsgLog;
 
 async function conversationExists(sessionId: string): Promise<boolean> {
@@ -459,23 +457,19 @@ export async function executeAutonomousSkillRun(
     /**
      * Optional explicit model identifier (e.g. "anthropic/claude-opus-4-6").
      * When set, the agent executor pins to this model instead of routing by
-     * activity. Used by Council to fan one skill into per-provider runs.
+     * activity. Prefer ordinary activity routing unless a caller truly needs
+     * an explicit override with a documented reason.
      */
     modelOverride?: string;
     /**
      * Optional override for the per-call sessionKey written to api_calls.
      * Defaults to `auto:${skillId}` (shared across all runs of that skill).
-     * Council uses this to scope cumulative usage per council run by setting
-     * a unique key like `council:${runId}` on every spawned advocate, so
-     * `WHERE session_key = $1` reliably aggregates the run's child spend.
      */
     sessionKeyOverride?: string;
     /**
      * Optional override for the human-readable session title used by
      * `createAutonomousSession` and the initial `saveSession`. When set,
-     * the runner uses this in place of `config.label` so callers (e.g.
-     * Council spawning per-round advocates) can encode round/role context
-     * into the sidebar title (e.g. "Advocate A — Round 2").
+     * the runner uses this in place of `config.label`.
      */
     titleOverride?: string;
     /** Explicit persona applied before context assembly and first inference. */
@@ -605,7 +599,7 @@ export async function executeAutonomousSkillRun(
 
   // Global per-skill dedupe is for top-level autoruns (e.g. cron-triggered
   // skills that should never overlap themselves). Parented child spawns
-  // (e.g. Council fanning two `advocate` runs in parallel) are
+  // (e.g. parallel child skill runs) are
   // already deduped at the spawn-tree level by the advisory lock + the
   // (parent, reason, skillRun) unique tuple in `session_tree`. Bypassing
   // this gate when a `parentSessionId` is present is required for
@@ -883,10 +877,7 @@ export async function executeAutonomousSkillRun(
       logger.warn(`[SkillChat] [${sessionId}] Failed to emit child session block: ${lcErr instanceof Error ? lcErr.message : String(lcErr)}`);
     }
 
-    if (skillId === "council" || config.skillId === "council") {
-      councilLog.log(`spawn skill=${skillId} run=${sessionId} parent=${options.parentSessionId} timeoutMs=${config.timeoutMs}`);
     }
-  }
 
   await chatFileStorage.updateSessionTitle(sessionId, effectiveTitle, {
     // When a parent provides titleOverride (e.g. "Step 1: ..."), lock the title
@@ -930,9 +921,7 @@ export async function executeAutonomousSkillRun(
   }
 
   try {
-    const result = config.skillId === "council"
-      ? await runCouncilPipeline(config, sessionId, options)
-      : await runSkillPipeline(config, sessionId, options, authoritySkillId);
+    const result = await runSkillPipeline(config, sessionId, options, authoritySkillId);
 
     if (result.status === "yielded") {
       const error = "Execution yielded under genuine capacity pressure. The parent may retry or resume this child.";
@@ -1039,10 +1028,6 @@ export async function executeAutonomousSkillRun(
       if (options.parentSessionId) {
         treeLog.log(`end skill=${skillId} run=${sessionId} parent=${options.parentSessionId} status=${result.status} sessionStatus=${finalSessionStatus} endReason=${endReason} durationMs=${result.durationMs}`);
       }
-      if (skillId === "council" || config.skillId === "council") {
-        councilLog.log(`end skill=${skillId} run=${sessionId} status=${result.status} durationMs=${result.durationMs}`);
-      }
-
       const existingSession = await chatFileStorage.getSession(sessionId).catch(() => undefined);
       const titleToUse = existingSession?.title || config.label;
       if (finalSessionStatus === "saved") {
@@ -1191,10 +1176,6 @@ export async function executeAutonomousSkillRun(
       if (options.parentSessionId) {
         treeLog.warn(`abort skill=${skillId} run=${sessionId} parent=${options.parentSessionId} reason=${failureReason} err=${errMsg} durationMs=${durationMs}`);
       }
-      if (skillId === "council" || config.skillId === "council") {
-        councilLog.error(`abort skill=${skillId} run=${sessionId} err=${errMsg} durationMs=${durationMs}`);
-      }
-
       await recordAutonomousAttention(sessionId, "error", {
         errorType: "something_went_wrong",
         description: `Skill run failed: ${errMsg}`,
@@ -1243,61 +1224,6 @@ export async function executeAutonomousSkillRun(
     } catch {
       // best effort — session may not have been registered
     }
-  }
-}
-
-async function runCouncilPipeline(
-  config: SkillRunConfig,
-  sessionId: string,
-  options: { preContext?: string; parentSessionId?: string; spawnReason?: string; spawnerTool?: string; spawnerSkillRun?: string; modelOverride?: string; sessionKeyOverride?: string },
-): Promise<AutonomousRunResult> {
-  const startTime = Date.now();
-  const question = (options.preContext ?? "").trim();
-  if (!question) {
-    const msg = "Council requires a question (preContext) to deliberate on";
-    councilLog.error(`[Council] ${sessionId} ${msg}`);
-    await chatFileStorage.createMessage(sessionId, "system", `[Council] ${msg}`).catch(() => undefined);
-    return { sessionId, status: "failed", error: msg, durationMs: Date.now() - startTime };
-  }
-
-  const { runCouncil, buildProductionDeps } = await import("./council");
-  const { getModelForTier, initProfiles } = await import("./job-profiles");
-  await initProfiles();
-  const deps = buildProductionDeps(sessionId, sessionId);
-  try {
-    const result = await runCouncil(
-      {
-        parentSessionId: sessionId,
-        question,
-        runId: sessionId,
-        advocates: [
-          { role: "Advocate A", model: getModelForTier("max") },
-          { role: "Advocate B", model: getModelForTier("max") },
-        ],
-      },
-      deps,
-    );
-    const durationMs = Date.now() - startTime;
-    // Propagate structured non-success outcomes so the runner status,
-    // skill_runs row, and downstream telemetry reflect what actually
-    // happened. "degraded" still produced a synthesis so it counts as a
-    // success at the runner layer, with the degradation noted in the
-    // synthesis body.
-    if (result.status === "failed") {
-      return { sessionId, status: "failed", error: `council failed after ${result.rounds} round(s)`, durationMs };
-    }
-    const summaryPrefix = result.status === "degraded" ? "[degraded] " : "";
-    return {
-      sessionId,
-      status: "succeeded",
-      summary: `${summaryPrefix}${result.synthesis}`.slice(0, 2000),
-      durationMs,
-    };
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    councilLog.error(`[Council] ${sessionId} pipeline crashed: ${msg}`);
-    await chatFileStorage.createMessage(sessionId, "system", `[Council] Council orchestration crashed: ${msg}`).catch(() => undefined);
-    return { sessionId, status: "failed", error: msg, durationMs: Date.now() - startTime };
   }
 }
 

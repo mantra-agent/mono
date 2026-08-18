@@ -22,7 +22,6 @@ export const SKILL_NAME_ALIASES: Record<string, string> = {
   "idea-generation": "ideate",
   "landscape-scan": "scan",
   "opportunity-research": "research",
-  "council-advocate": "advocate",
   "coaching-model-1-0": "coach",
   "news-curation": "curate",
   "reliability-sentinel": "sentry",

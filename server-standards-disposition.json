@@ -40,13 +40,13 @@
       "reviewTrigger": "Memory source, claim, retrieval, lifecycle, or compatibility changes"
     },
     {
-      "id": "server-council",
+      "id": "server-council-retired",
       "status": "reviewed",
       "prefixes": ["server/council/"],
-      "owner": "Council",
-      "principles": ["Session Ownership", "Principal Scope", "Bounded Deliberation", "Observability"],
-      "evidence": "Reviewed under server/council/AGENTS.md against session-tree messaging and council execution boundaries.",
-      "reviewTrigger": "Council or session-tree execution changes"
+      "owner": "Agent Runtime",
+      "principles": ["Leave No Zombies", "Single Source of Truth"],
+      "evidence": "Council deliberation subsystem retired; stubs fail closed. Session-tree ownership lives under server/sessions/AGENTS.md and server-runtime-tools.",
+      "reviewTrigger": "Any attempt to reintroduce council orchestration"
     },
     {
       "id": "server-voice",
