@@ -136,6 +136,8 @@ const PERSONAL_RULES: ApiPolicyRule[] = [
       "/api/agendas",
       "/api/finance",
       "/api/business",
+      "/api/metrics",
+      "/api/kpis",
       "/api/health",
       "/api/wellness",
       "/api/workflows",
