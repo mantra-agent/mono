@@ -13,7 +13,7 @@
       },
       "ios": {
         "simulator": false,
-        "image": "macos-sequoia-15.6-xcode-16.4"
+        "image": "sdk-57"
       }
     },
     "preview": {
@@ -24,7 +24,7 @@
         "SENTRY_DISABLE_AUTO_UPLOAD": "true"
       },
       "ios": {
-        "image": "macos-sequoia-15.6-xcode-16.4"
+        "image": "sdk-57"
       }
     },
     "production": {
@@ -34,7 +34,7 @@
         "EXPO_PUBLIC_BACKEND_TARGET": "production"
       },
       "ios": {
-        "image": "macos-sequoia-15.6-xcode-16.4"
+        "image": "sdk-57"
       }
     }
   }

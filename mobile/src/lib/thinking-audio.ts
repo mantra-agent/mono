@@ -1,4 +1,4 @@
-import { Audio } from 'expo-av';
+import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 import {
   renderVoiceThinkingTexture,
   VOICE_THINKING_LOOP_SECONDS,
@@ -11,8 +11,7 @@ const OUTPUT_PEAK = 0.32;
 const PLAYBACK_VOLUME = 0.044;
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-let sound: Audio.Sound | null = null;
-let loadingPromise: Promise<Audio.Sound> | null = null;
+let player: AudioPlayer | null = null;
 let playbackRequestVersion = 0;
 
 function writeString(view: DataView, offset: number, value: string) {
@@ -69,37 +68,28 @@ function buildThinkingLoopDataUri(): string {
   return `data:audio/wav;base64,${encodeBase64(new Uint8Array(buffer))}`;
 }
 
-async function getSound(): Promise<Audio.Sound> {
-  if (sound) return sound;
-  if (loadingPromise) return loadingPromise;
-
-  loadingPromise = Audio.Sound.createAsync(
-    { uri: buildThinkingLoopDataUri() },
-    { isLooping: true, shouldPlay: false, volume: PLAYBACK_VOLUME },
-  ).then(({ sound: created }) => {
-    sound = created;
-    return created;
-  }).finally(() => {
-    loadingPromise = null;
-  });
-
-  return loadingPromise;
+function getPlayer(): AudioPlayer {
+  if (player) return player;
+  // Imperative player only — do not take AVAudioSession from LiveKit/WebRTC.
+  const created = createAudioPlayer({ uri: buildThinkingLoopDataUri() });
+  created.loop = true;
+  created.volume = PLAYBACK_VOLUME;
+  player = created;
+  return created;
 }
 
 export async function startThinkingAudioLoop(): Promise<void> {
   const requestVersion = ++playbackRequestVersion;
   try {
-    const activeSound = await getSound();
+    const activePlayer = getPlayer();
     if (requestVersion !== playbackRequestVersion) return;
-    await activeSound.setStatusAsync({
-      isLooping: true,
-      volume: PLAYBACK_VOLUME,
-      positionMillis: 0,
-    });
+    activePlayer.loop = true;
+    activePlayer.volume = PLAYBACK_VOLUME;
+    await activePlayer.seekTo(0);
     if (requestVersion !== playbackRequestVersion) return;
-    await activeSound.playAsync();
+    activePlayer.play();
     if (requestVersion !== playbackRequestVersion) {
-      await activeSound.stopAsync();
+      activePlayer.pause();
     }
   } catch (error) {
     Logger.warn(LOG_TAG, 'Failed to start thinking audio', { error: error instanceof Error ? error.message : String(error) });
@@ -109,10 +99,10 @@ export async function startThinkingAudioLoop(): Promise<void> {
 export async function stopThinkingAudioLoop(): Promise<void> {
   playbackRequestVersion += 1;
   try {
-    const activeSound = sound;
-    if (!activeSound) return;
-    await activeSound.setVolumeAsync(0);
-    await activeSound.stopAsync();
+    const activePlayer = player;
+    if (!activePlayer) return;
+    activePlayer.volume = 0;
+    activePlayer.pause();
   } catch (error) {
     Logger.warn(LOG_TAG, 'Failed to stop thinking audio', { error: error instanceof Error ? error.message : String(error) });
   }
@@ -121,11 +111,11 @@ export async function stopThinkingAudioLoop(): Promise<void> {
 export async function unloadThinkingAudioLoop(): Promise<void> {
   playbackRequestVersion += 1;
   try {
-    const activeSound = sound;
-    sound = null;
-    loadingPromise = null;
-    if (!activeSound) return;
-    await activeSound.unloadAsync();
+    const activePlayer = player;
+    player = null;
+    if (!activePlayer) return;
+    activePlayer.pause();
+    activePlayer.release();
   } catch (error) {
     Logger.warn(LOG_TAG, 'Failed to unload thinking audio', { error: error instanceof Error ? error.message : String(error) });
   }

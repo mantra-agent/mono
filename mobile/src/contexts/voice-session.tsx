@@ -482,7 +482,7 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
         // globals are already registered.
         //
         // Mic permissions are handled by the OS via NSMicrophoneUsageDescription
-        // in Info.plist — no need for expo-av.
+        // in Info.plist — no need for a separate audio-permission module.
         // Force-install web-streams-polyfill globals BEFORE registerGlobals().
         // iOS 26 has native ReadableStream/WritableStream but they're
         // incompatible with LiveKit's internals. Conditional guards
