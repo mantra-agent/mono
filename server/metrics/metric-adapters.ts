@@ -6,6 +6,7 @@
  * through to warehouse metric_samples in queryMetric.
  */
 import { createHash } from "crypto";
+import { and, eq, isNull } from "drizzle-orm";
 import { metrics } from "@shared/schema";
 import type { Metric, MetricCoverage, MetricSample, MetricSeries } from "@shared/models/metrics";
 import { db } from "../db";
@@ -13,6 +14,7 @@ import type { Principal } from "../principal";
 import { getCurrentPrincipal } from "../principal-context";
 import { principalHasPermission } from "../permissions";
 import { hasActiveWellnessAccess } from "../mods/wellness-access";
+import { isUniqueViolationError } from "../postgres-errors";
 import { userDateStr, userDayBounds } from "../utils/user-time";
 import { queryMergedPrSeries } from "../integrations/merged-pr-ledger";
 import { countCompletedMeetingsWithNotesInRange } from "../meetings/meeting-index";
@@ -167,22 +169,61 @@ function singleRangeSample(
   };
 }
 
+/**
+ * Resolve an existing engagement definition on the real uniqueness key
+ * (account, vault, slug) — metrics_account_vault_slug_uidx — or by stable id.
+ */
+async function findEngagementDefinitionId(
+  accountId: string,
+  vaultId: string | null | undefined,
+  slug: string,
+  desiredId: string,
+): Promise<string | null> {
+  const vaultPredicate =
+    vaultId == null || vaultId === ""
+      ? isNull(metrics.vaultId)
+      : eq(metrics.vaultId, vaultId);
+  const [byKey] = await db
+    .select({ id: metrics.id })
+    .from(metrics)
+    .where(and(eq(metrics.accountId, accountId), vaultPredicate, eq(metrics.slug, slug)))
+    .limit(1);
+  if (byKey?.id) return byKey.id;
+
+  const [byId] = await db
+    .select({ id: metrics.id })
+    .from(metrics)
+    .where(eq(metrics.id, desiredId))
+    .limit(1);
+  return byId?.id ?? null;
+}
+
+/**
+ * Provision one engagement Metric row. Idempotent on the real unique key
+ * metrics_account_vault_slug_uidx (account, COALESCE(vault,''), slug), not only metrics.id.
+ * Concurrent callers and pre-existing slug rows converge on the surviving id.
+ */
 async function ensureEngagementDefinition(
   principal: Principal,
   definition: (typeof ENGAGEMENT_DEFINITIONS)[number],
 ): Promise<string> {
-  const id = stableAccountMetricId(principal.accountId!, definition.slug, "engagement");
-  await db
-    .insert(metrics)
-    .values({
-      id,
+  const accountId = principal.accountId!;
+  const vaultId = principal.activeVaultId ?? null;
+  const desiredId = stableAccountMetricId(accountId, definition.slug, "engagement");
+
+  const existing = await findEngagementDefinitionId(accountId, vaultId, definition.slug, desiredId);
+  if (existing) return existing;
+
+  try {
+    await db.insert(metrics).values({
+      id: desiredId,
       scope: "user",
       ownerUserId: principal.userId,
-      accountId: principal.accountId,
-      vaultId: principal.activeVaultId,
+      accountId,
+      vaultId,
       createdByUserId: principal.userId,
       ownerKind: "account",
-      ownerId: principal.accountId,
+      ownerId: accountId,
       businessId: null,
       name: definition.name,
       slug: definition.slug,
@@ -193,9 +234,16 @@ async function ensureEngagementDefinition(
       adapterKind: "internal",
       adapterConfig: { adapterKey: definition.adapterKey },
       status: "active",
-    })
-    .onConflictDoNothing({ target: metrics.id });
-  return id;
+    });
+  } catch (error) {
+    // PK or metrics_account_vault_slug_uidx race / pre-existing row — converge.
+    if (!isUniqueViolationError(error)) throw error;
+  }
+
+  const resolved = await findEngagementDefinitionId(accountId, vaultId, definition.slug, desiredId);
+  if (resolved) return resolved;
+  // Insert succeeded without a subsequent read hit (should be rare); return desired id.
+  return desiredId;
 }
 
 /** Provision engagement Metric rows for the current principal (Performance-style). */
