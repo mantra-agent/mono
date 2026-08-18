@@ -1271,8 +1271,25 @@ async function resolveActiveTasks(): Promise<string> {
  */
 async function resolveActiveWorkDependencies(): Promise<string> {
   try {
-    const { collectActiveWorkAddresses } = await import("./work-dependency-consumers");
-    const addresses = await collectActiveWorkAddresses();
+    const [allTodo, allProjects] = await Promise.all([
+      fileTaskStorage.getTodoTasks(),
+      fileProjectStorage.getProjects({}),
+    ]);
+    const addresses: string[] = [];
+    for (const task of allTodo) {
+      if (task.status === "active" || task.status === "ready") {
+        addresses.push(`@task:${task.id}`);
+      }
+      if (addresses.length >= 25) break;
+    }
+    if (addresses.length < 25) {
+      for (const project of allProjects) {
+        if (project.status === "active" || project.status === "planning") {
+          addresses.push(`@project:${project.id}`);
+        }
+        if (addresses.length >= 25) break;
+      }
+    }
     if (addresses.length === 0) return "";
 
     const {
