@@ -62,6 +62,7 @@ import {
   Share2,
   SlidersHorizontal,
   Swords,
+  Tag,
   Tags,
   Target,
   User,
@@ -175,6 +176,7 @@ const MOD_NAV_ICONS = {
   Share2,
   SlidersHorizontal,
   Swords,
+  Tag,
   Tags,
   Target,
   User,
@@ -295,6 +297,7 @@ const navSections: NavSection[] = [
     defaultOpen: false,
     items: [
       navItem("Identity", "navigation.definition.open", FileText),
+      navItem("Pricing", "navigation.pricing.open", Tag),
       navItem("Plan", "navigation.advantage.open", Target),
       navItem("Model", "navigation.businessModel.open", LineChart),
       navItem("Budgets", "navigation.budgets.open", DollarSign),

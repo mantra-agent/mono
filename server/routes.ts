@@ -15,6 +15,7 @@ import { registerPdfRoutes } from "./routes/pdf";
 import { registerCompanyRoutes } from "./company-routes";
 import { registerBusinessModelRoutes } from "./business-model-routes";
 import { registerBusinessBudgetRoutes } from "./business-budget-routes";
+import { registerBusinessPricingRoutes } from "./business-pricing-routes";
 import { registerBusinessHiringRoutes } from "./business-hiring-routes";
 import { registerBusinessPlanRoutes } from "./business-plan-routes";
 import { registerJobRoleRoutes } from "./job-role-routes";
@@ -222,6 +223,7 @@ export async function registerRoutes(
   registerCompanyRoutes(app);
   registerBusinessModelRoutes(app);
   registerBusinessBudgetRoutes(app);
+  registerBusinessPricingRoutes(app);
   registerBusinessHiringRoutes(app);
   registerBusinessPlanRoutes(app);
   registerJobRoleRoutes(app);

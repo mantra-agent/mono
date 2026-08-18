@@ -371,6 +371,7 @@ Operations     — `script/` production build plus `scripts/`, `migrations/`, an
 | Email | PostgreSQL | `email_messages`, `email_enrichments` (7 tables) |
 | Finance | PostgreSQL (Plaid) | 26 tables in `shared/models/finance.ts` |
 | Business Plans | PostgreSQL | `business_plans`; `/business/advantage` is the Business Plan screen (formerly Mandate) |
+| Business Pricing | PostgreSQL | `business_pricing`; closed Max / Max+ / Factory+ catalog plus extras |
 | Wellness | PostgreSQL | `wellness_activities`, `wellness_logs` |
 | Social content | PostgreSQL | `content_queue` |
 | Decisions | PostgreSQL | `decisions`, `decision_updates`, `decision_links` |

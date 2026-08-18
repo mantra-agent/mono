@@ -194,6 +194,7 @@ const business: ModDefinition = {
     ],
     clientRoutes: [
       clientRoute("business.route.definition", "/business/identity", "business-identity", { requiredPermissions: ["system:read"] }),
+      clientRoute("business.route.pricing", "/business/pricing", "business-pricing", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.business-model", "/business/model", "business-model", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.budgets", "/business/budgets", "business-budgets", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.advantage", "/business/plan", "business-plan"),
@@ -202,7 +203,8 @@ const business: ModDefinition = {
     ],
     navigation: [
       nav("business.nav.definition", "Business", "Identity", "FileText", "navigation.definition.open", "business.route.definition", 0, { requiredPermissions: ["system:read"] }),
-      nav("business.nav.advantage", "Business", "Plan", "Target", "navigation.advantage.open", "business.route.advantage", 1),
+      nav("business.nav.pricing", "Business", "Pricing", "Tag", "navigation.pricing.open", "business.route.pricing", 1, { requiredPermissions: ["system:read"] }),
+      nav("business.nav.advantage", "Business", "Plan", "Target", "navigation.advantage.open", "business.route.advantage", 2),
       nav("business.nav.business-model", "Business", "Model", "LineChart", "navigation.businessModel.open", "business.route.business-model", 3, { requiredPermissions: ["system:read"] }),
       nav("business.nav.budgets", "Business", "Budgets", "DollarSign", "navigation.budgets.open", "business.route.budgets", 4, { requiredPermissions: ["system:read"] }),
       nav("business.nav.job-roles", "Business", "Roles", "Briefcase", "navigation.roles.open", "business.route.job-roles", 5, { requiredPermissions: ["system:read"] }),

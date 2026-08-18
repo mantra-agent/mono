@@ -24,6 +24,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.scenarios.open": { href: "/scenarios", description: "Model scenarios and play out the moves." },
   "navigation.tags.open": { href: "/tags", description: "Organize everything with your tags." },
   "navigation.definition.open": { href: "/business/identity", permission: "system:read", description: "Define who your business is." },
+  "navigation.pricing.open": { href: "/business/pricing", permission: "system:read", description: "Lock the package catalog." },
   "navigation.businessModel.open": { href: "/business/model", permission: "system:read", description: "Map how your business makes money." },
   "navigation.budgets.open": { href: "/business/budgets", permission: "system:read", description: "Plan and track your budgets." },
   "navigation.advantage.open": { href: "/business/plan", description: "Shape your business plan and strategy." },

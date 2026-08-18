@@ -1276,6 +1276,28 @@ export const businessBudgets = pgTable("business_budgets", {
 
 export type BusinessBudgetRow = typeof businessBudgets.$inferSelect;
 
+// ── Business Pricing (closed Max / Max+ / Factory+ catalog) ──────
+// One catalog per Business. Code owns the package keys; extras are shared.
+// Year-one recognized monthly is derived (yearOneCash / 12), never stored.
+export const businessPricing = pgTable("business_pricing", {
+  id: text("id").primaryKey(),
+  businessId: text("business_id").notNull().references(() => businesses.id, { onDelete: "restrict" }),
+  packages: jsonb("packages").notNull().default([]),
+  extras: jsonb("extras").notNull().default({}),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  createdByUserId: text("created_by_user_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  uniqueIndex("uq_business_pricing_business").on(table.businessId),
+  index("idx_business_pricing_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_business_pricing_account").on(table.accountId),
+]);
+
+export type BusinessPricingRow = typeof businessPricing.$inferSelect;
+
 // ── Job Roles (headcount cost inputs) ────────────────────────────
 // Account-owned role definitions. Hiring plans will reference these stable
 // IDs instead of copying compensation assumptions into the financial model.
