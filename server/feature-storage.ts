@@ -212,7 +212,8 @@ export const featureStorage = {
    * Recheck the Stage join for one Feature. Does not launch Smoke and does not
    * leave/re-enter the room. If the newest enter-declaring-room history row has
    * a NULL change_sha, fill it through resolveChangeShaForStamp only. Never
-   * overwrite a real SHA. Then re-project availability from the Product clock.
+   * overwrite a real SHA. Same-room status writes are not identity.
+   * Then re-project that one Feature against the Product clock.
    */
   async recheckAvailability(id: string) {
     const current = await this.get(id);
@@ -227,6 +228,7 @@ export const featureStorage = {
         FROM feature_history
         WHERE feature_id = ${id}
           AND to_stage = ${stage}
+          AND from_stage IS DISTINCT FROM to_stage
         ORDER BY created_at DESC
         LIMIT 1
       `);

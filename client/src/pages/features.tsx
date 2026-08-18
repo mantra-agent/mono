@@ -634,7 +634,6 @@ const FeatureRow = memo(function FeatureRow({
           );
         });
       }
-      void queryClient.invalidateQueries({ queryKey: ["/api/features"] });
     },
     onError: (error: unknown) =>
       toast({

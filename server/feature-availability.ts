@@ -2,8 +2,9 @@
  * Feature Test availability projection.
  *
  * One Stage clock per Product. Stage already attests activeCommitSha + lifecycle.state
- * via composeStageLifecycleStatus. Features join through stamped feature_history.change_sha.
- * Client never derives commit identity. Fail closed to unknown.
+ * via composeStageLifecycleStatus. Features join through stamped enter-room
+ * feature_history.change_sha against activeCommitSha. Environment ready is a
+ * different discriminant. Client never derives commit identity. Fail closed to unknown.
  *
  * Spec: @page:a4072542-81c0-4311-b003-3190b78a4b42
  */
@@ -300,7 +301,8 @@ async function loadProductStageClock(productId: number): Promise<StageClockSnaps
 
 /**
  * Newest enter-room change_sha for each Feature among rooms that declare the identity.
- * One query per product batch.
+ * Enter = to_stage in the declaring set and from_stage distinct from to_stage.
+ * Status-only writes (same room) are not identity. One query per product batch.
  */
 async function loadNewestChangeShas(
   featureIds: string[],
@@ -316,6 +318,7 @@ async function loadNewestChangeShas(
       AND change_sha IS NOT NULL
       AND btrim(change_sha) <> ''
       AND to_stage IN (${sql.join(toStages.map((s) => sql`${s}`), sql`, `)})
+      AND from_stage IS DISTINCT FROM to_stage
     ORDER BY feature_id, created_at DESC
   `);
 
@@ -368,13 +371,10 @@ function deriveAvailabilityState(args: {
   ancestry: boolean | null;
 }): FeatureAvailabilityState {
   if (!args.changeSha) return "unknown";
-  if (!args.clock || !args.clock.state || !args.clock.activeCommitSha) return "unknown";
-
-  const lifecycle = args.clock.state;
-  if (lifecycle === "syncing" || lifecycle === "restarting" || lifecycle === "rebuilding") {
-    return "waiting";
-  }
-  if (lifecycle !== "ready") return "unknown";
+  if (!args.clock) return "unknown";
+  // Environment ready (Active == Target/main) is a different discriminant.
+  // on_stage is ancestry against the served tree SHA, even while Warm is syncing.
+  if (!args.clock.activeCommitSha) return "waiting";
   if (args.ancestry === true) return "on_stage";
   if (args.ancestry === false) return "waiting";
   return "unknown";
@@ -426,13 +426,7 @@ export async function projectFeatureAvailability<T extends Record<string, unknow
     // Distinct SHAs only for ancestry compares on this Product.
     const distinctShas = [...new Set([...changeShas.values()])];
     const ancestryBySha = new Map<string, boolean | null>();
-    if (
-      clock?.state === "ready" &&
-      clock.activeCommitSha &&
-      clock.owner &&
-      clock.repo &&
-      distinctShas.length > 0
-    ) {
+    if (clock?.activeCommitSha && clock.owner && clock.repo && distinctShas.length > 0) {
       await Promise.all(
         distinctShas.map(async (sha) => {
           const proved = await proveAncestorOrEqual({
