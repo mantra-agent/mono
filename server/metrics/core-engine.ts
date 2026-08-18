@@ -6,6 +6,9 @@
  * retained metrics-storage compatibility path. The underlying storage remains
  * unchanged during this additive cut, preserving identifiers, samples, scope,
  * and historical provenance.
+ *
+ * queryMetric(id, range) is the sole single-metric read: principal-visible
+ * definition → platform gate (users:read) → adapterKey dispatch → series + residual.
  */
 export {
   ensureMetricsDefinitionsSchema,
@@ -15,14 +18,137 @@ export {
   upsertInternalPeriodSample,
 } from "../metrics-storage";
 
-import type { MetricCollection } from "@shared/models/metrics";
+import type { Metric, MetricCollection, MetricCoverage, MetricSample, MetricSeries } from "@shared/models/metrics";
+import { createLogger } from "../log";
+import { getCurrentPrincipal } from "../principal-context";
+import {
+  adapterKeyOf,
+  canReadPlatformMetrics,
+  ensureEngagementMetrics,
+  isPlatformMetric,
+  METRIC_ADAPTER_HANDLERS,
+  stampPlatformOwnerOnProductMetrics,
+} from "./metric-adapters";
 
-export async function queryMetricCollection(businessId: string, start: Date, end: Date): Promise<MetricCollection> {
-  return metricsStorage.collection(businessId, start, end);
-}
+const log = createLogger("MetricsCoreEngine");
 
 export type {
   InternalBusinessMetricDefinition,
   InternalBusinessMetricRef,
   InternalPeriodSampleInput,
 } from "../metrics-storage";
+
+export {
+  ensureEngagementMetrics,
+  canReadPlatformMetrics,
+  isPlatformMetric,
+  stampPlatformOwnerOnProductMetrics,
+  PRODUCT_METRIC_SLUGS,
+} from "./metric-adapters";
+
+function notFound(): never {
+  throw Object.assign(new Error("Metric not found"), { status: 404 });
+}
+
+async function warehouseSeries(
+  metric: Metric,
+  range: { start: Date; end: Date },
+): Promise<MetricSeries> {
+  const samples = await metricsStorage.listSamplesInRange(metric.id, range.start, range.end);
+  return {
+    metric: { ...metric, latestSample: samples[0] ?? metric.latestSample ?? null },
+    samples,
+    valueStatus: "actual",
+    coverage: { status: "finalized" },
+  };
+}
+
+/**
+ * Canonical single-metric read.
+ * Unauthorized platform metrics fail closed as not found (same as ordinary scope miss).
+ */
+export async function queryMetric(
+  metricId: string,
+  range: { start: Date; end: Date },
+): Promise<MetricSeries> {
+  if (
+    !range?.start ||
+    !range?.end ||
+    !Number.isFinite(range.start.getTime()) ||
+    !Number.isFinite(range.end.getTime()) ||
+    range.end <= range.start
+  ) {
+    throw Object.assign(new Error("start and end must form a valid sampling range"), { status: 400 });
+  }
+
+  const principal = getCurrentPrincipal();
+  if (!principal?.userId || !principal.accountId) {
+    throw Object.assign(new Error("Authentication required"), { status: 401 });
+  }
+
+  // Best-effort engagement provisioning + product owner stamp (idempotent).
+  await Promise.all([
+    ensureEngagementMetrics(principal).catch((error) => {
+      log.warn("engagement metric provision failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }),
+    stampPlatformOwnerOnProductMetrics().catch((error) => {
+      log.warn("product metric owner stamp failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }),
+  ]);
+
+  let metric: Metric;
+  try {
+    metric = await metricsStorage.get(metricId);
+  } catch (error) {
+    if ((error as { status?: number })?.status === 404) notFound();
+    throw error;
+  }
+
+  if (isPlatformMetric(metric) && !canReadPlatformMetrics(principal)) {
+    notFound();
+  }
+
+  const key = adapterKeyOf(metric);
+  const handler = key ? METRIC_ADAPTER_HANDLERS[key] : undefined;
+  if (!handler) {
+    return warehouseSeries(metric, range);
+  }
+
+  try {
+    const series = await handler(metric, range, principal);
+    if (!series) notFound();
+    return series;
+  } catch (error) {
+    if ((error as { status?: number })?.status === 404) throw error;
+    log.error("metric adapter failed", {
+      metricId: metric.id,
+      adapterKey: key,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      metric: { ...metric, latestSample: null },
+      samples: [],
+      valueStatus: "actual",
+      coverage: {
+        status: "unavailable",
+        reason: error instanceof Error ? error.message : "Adapter failed",
+      } satisfies MetricCoverage,
+    };
+  }
+}
+
+export async function queryMetricCollection(
+  businessId: string,
+  start: Date,
+  end: Date,
+): Promise<MetricCollection> {
+  // Same handlers + product gate as queryMetric; storage.collection applies the gate.
+  return metricsStorage.collection(businessId, start, end);
+}
+
+/** Re-export sample type helpers used by adapters/routes. */
+export type { MetricSample, MetricSeries, MetricCoverage };

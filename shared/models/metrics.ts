@@ -326,7 +326,9 @@ export type MetricValueStatus = "actual" | "estimated" | "projected";
 export type MetricCoverage =
   | { status: "finalized" }
   | { status: "provisional"; finalizesAt: string }
-  | { status: "partial"; availableFrom: string | null; reason: string };
+  | { status: "partial"; availableFrom: string | null; reason: string }
+  | { status: "unbound"; reason: string }
+  | { status: "unavailable"; reason: string };
 
 /** One canonical read shape regardless of whether a Metric is materialized or
  * resolved from an owning domain at query time. */

@@ -60,11 +60,15 @@
     {
       "id": "server-metrics-core",
       "status": "reviewed",
-      "paths": ["server/metrics/core-engine.ts"],
+      "paths": [
+        "server/metrics/core-engine.ts",
+        "server/metrics/metric-adapters.ts",
+        "server/metrics/engagement-series.ts"
+      ],
       "owner": "Core Measurement Engine",
-      "principles": ["Single Source of Truth", "Modular Systems", "Canonical Mutation Path", "Principal Scope", "Replayability"],
-      "evidence": "Neutral Core measurement facade delegates definitions, samples, ingest, query, freshness, and KPI evaluation to the existing principal-scoped metrics storage without duplicating persistence or changing identifiers.",
-      "reviewTrigger": "Core measurement engine contract, metric/KPI storage, sample ingest, or domain adapter migration"
+      "principles": ["Single Source of Truth", "Modular Systems", "Canonical Mutation Path", "Principal Scope", "Replayability", "Access Control is Centralized"],
+      "evidence": "Neutral Core measurement facade owns queryMetric dispatch, product users:read gate, and engagement series collectors; definitions/samples remain principal-scoped metrics storage without duplicating persistence or changing identifiers.",
+      "reviewTrigger": "Core measurement engine contract, metric/KPI storage, sample ingest, adapter dispatch, or domain adapter migration"
     },
     {
       "id": "server-routes",
