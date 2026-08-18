@@ -19,8 +19,8 @@ import { getCurrentPrincipal } from "./principal-context";
 import type { TrustedEngineeringDelegation } from "./agent-authority";
 import { filterModToolSchemas, requireModSkillAccess } from "./mods/mod-access";
 import { buildStructuralRunEvidence, evaluateStructuralItem } from "./skill-scoring";
-import { BUILD_OWNED_SKILL_FALLBACK_INSTRUCTIONS, BUILD_OWNED_SKILL_NAME_SET, resolveSkillRunName, type BuildOwnedSkillName } from "./skill-identities";
-import { BUILTIN_SKILL_DEFAULTS } from "./skill-defaults";
+import { resolveSkillRunName } from "./skill-identities";
+import { BUILTIN_SKILL_DEFAULTS, type SkillDefault } from "./skill-defaults";
 import type { ChecklistItem } from "@shared/schema";
 import type { ChildMissionTerminalOutcome, SystemNotice } from "@shared/models/chat";
 
@@ -357,14 +357,18 @@ export function releaseSkillRun(skillId: string, intentionId?: string): void {
   activeSkillRuns.delete(getSkillRunKey(skillId, intentionId));
 }
 
-function skillDefaultRunConfig(skillName: string): SkillRunConfig | undefined {
+function findBuiltinSkillDefault(skillName: string): SkillDefault | undefined {
   const canonical = resolveSkillRunName(skillName);
-  const def = BUILTIN_SKILL_DEFAULTS.find(
+  return BUILTIN_SKILL_DEFAULTS.find(
     (row) =>
       row.name === skillName
       || row.name === canonical
       || resolveSkillRunName(row.name) === canonical,
   );
+}
+
+function skillDefaultRunConfig(skillName: string): SkillRunConfig | undefined {
+  const def = findBuiltinSkillDefault(skillName);
   if (!def?.callType || def.timeoutMs === undefined) return undefined;
   const resolvedActivity = resolveActivityId(def.activity || "");
   const activity: ActivityId = BUILTIN_ACTIVITY_IDS.includes(resolvedActivity)
@@ -1347,27 +1351,28 @@ async function runSkillPipeline(
       try {
         skillProcessText = await getSkillProcess(promptId);
       } catch (error: unknown) {
-        // Build-owned skills are code-owned: the optional global Skill row may be
-        // absent (it predates the bootstrap fixture and is not a builtin default),
-        // and their scheduled launch path supplies no preContext. When the row is
-        // missing, run launch-supplied instructions if present, otherwise the
-        // single code-owned fallback contract. Everything else stays fail-closed.
+        // Optional global Skill row may be absent. Skills stamped
+        // allowMissingDefinition continue with launch preContext, else the
+        // SkillDefault.process seed. Name-sets are gone — the instance flag
+        // is the only discriminant. Fail closed when both are empty.
         const isMissingSkill = error instanceof Error
           && error.message.startsWith("Required skill not found in DB:");
-        const buildOwnedName = resolveSkillRunName(promptId);
-        const isBuildOwnedSkill = BUILD_OWNED_SKILL_NAME_SET.has(buildOwnedName);
-        const codeOwnedInstructions = isBuildOwnedSkill
-          ? BUILD_OWNED_SKILL_FALLBACK_INSTRUCTIONS[buildOwnedName as BuildOwnedSkillName]
-          : undefined;
+        const skillDefault = findBuiltinSkillDefault(promptId);
+        const allowMissingDefinition = skillDefault?.allowMissingDefinition === true;
+        const defaultProcess = skillDefault?.process?.trim() || undefined;
         const hasLaunchInstructions = Boolean(options.preContext?.trim());
-        if (!isMissingSkill || !isBuildOwnedSkill || (!hasLaunchInstructions && !codeOwnedInstructions?.trim())) {
+        if (
+          !isMissingSkill
+          || !allowMissingDefinition
+          || (!hasLaunchInstructions && !defaultProcess)
+        ) {
           throw error;
         }
         if (!hasLaunchInstructions) {
-          skillProcessText = codeOwnedInstructions;
+          skillProcessText = defaultProcess;
         }
         logger.warn(
-          `[SkillChat] [${sessionId}] Build-owned skill "${promptId}" has no DB definition; using ${hasLaunchInstructions ? "launch" : "code-owned managed"} instructions`,
+          `[SkillChat] [${sessionId}] Skill "${promptId}" has no DB definition; allowMissingDefinition using ${hasLaunchInstructions ? "launch" : "SkillDefault.process"} instructions`,
         );
       }
       instructions = `[SKILL — ${config.label}]\n\n${skillProcessText ?? options.preContext}`;

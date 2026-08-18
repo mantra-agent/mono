@@ -44,6 +44,12 @@ import {
     timeoutMs?: number;
     admissionTier?: "communication" | "realtime" | "request" | "background";
     temperature?: number;
+    /**
+     * When true, runSkillPipeline may continue if the optional global Skill row
+     * is missing: launch preContext wins, else this seed's process. Fail closed
+     * when both are empty. Instance flag — not a name-set.
+     */
+    allowMissingDefinition?: boolean;
     /** When true, autonomous runs may mint a visible conversation. Inspect skills stay silent. */
     mayInitiateConversation?: boolean;
   }
@@ -184,7 +190,7 @@ import {
     category: "build",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "1.12",
+    version: "1.13",
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "autonomous",
@@ -192,6 +198,7 @@ import {
     timeoutMs: 15 * 60 * 1000,
     admissionTier: "background",
     temperature: 0.2,
+    allowMissingDefinition: true,
     scoreThreshold: 0.8,
     whenToUse:
       "Runs on the Build-managed Reliability Sentinel timer while Build is installed. May be invoked manually for the same bounded stage/main health and repair contract.",
@@ -295,7 +302,7 @@ End each run with a compact structured outcome containing overall classification
     category: "build",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "1.1",
+    version: "1.2",
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "autonomous",
@@ -303,6 +310,7 @@ End each run with a compact structured outcome containing overall classification
     timeoutMs: 20 * 60 * 1000,
     admissionTier: "background",
     temperature: 0.2,
+    allowMissingDefinition: true,
     whenToUse:
       "Runs on the Build-managed Security Sentinel Weekly timer while Build is installed. Immediate off-schedule runs are triggered manually after auth, data-ownership, execution, secret, webhook, or infrastructure changes.",
     outputSpec:
@@ -1436,7 +1444,7 @@ If the page has already been created but you later decide it should be surfaced,
     category: "engineering",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "2.3",
+    version: "2.4",
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "autonomous",
@@ -1444,6 +1452,7 @@ If the page has already been created but you later decide it should be surfaced,
     timeoutMs: 3 * 60 * 60 * 1000,
     admissionTier: "background",
     temperature: 0.2,
+    allowMissingDefinition: true,
     whenToUse:
       "Runs automatically after a genuinely new deployed build through the Timer scheduler, or manually from Skills when an operator wants to recheck and dispose open Issues.",
     outputSpec:
