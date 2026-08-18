@@ -411,19 +411,18 @@ export function validateQuestionResponse(
   const invalidId = response.selectedOptionIds.find((id) => !validIds.has(id));
   if (invalidId) return { ok: false, error: `Unknown option id: ${invalidId}` };
   // Other is always admitted; otherText validity is enforced by normalizeQuestionResponse.
-  // Principle revisions may come from the prompt shortlist or a searchable picker.
+  // Principle revisions may come from the prompt shortlist. The widget no longer
+  // exposes a picker; recommended or already-persisted ids still pass through.
   // Existence is enforced by recordJudgment when the answer is accepted.
-  const acceptedResponse = prompt.allowResponseReasoning
-    ? response
-    : { ...response, reasoning: undefined };
-
+  // Reasoning is optional on the selected answer; do not strip a typed note
+  // because the agent omitted allowResponseReasoning.
   const selectionCount = response.selectedOptionIds.length + (response.otherText ? 1 : 0);
   if (selectionCount === 0) return { ok: false, error: "Choose at least one answer." };
   if (prompt.selectionMode === "single" && selectionCount !== 1) {
     return { ok: false, error: "Choose exactly one answer." };
   }
 
-  return { ok: true, value: acceptedResponse };
+  return { ok: true, value: response };
 }
 
 export function formatQuestionResponseContent(prompt: QuestionPrompt, response: QuestionResponseMeta): string {

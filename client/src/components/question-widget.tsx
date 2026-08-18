@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Loader2, MessageCircleQuestion, Search, X } from "lucide-react";
+import { ChevronRight, Loader2, MessageCircleQuestion } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
+import { SIMPLE_TEXT_FRAME_CLASS } from "@/components/home/simple-text-frame";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { createLogger } from "@/lib/logger";
 import {
   normalizeQuestionPrompt,
-  type QuestionPrincipleOption,
   type QuestionPrompt,
   type QuestionResponseMeta,
 } from "@shared/question-prompt";
@@ -31,12 +32,8 @@ export interface QuestionRenderProvenance {
   occurrence: number;
 }
 
-type PrincipleListItem = {
-  id: string;
-  title: string;
-  layer1?: string | null;
-  currentRevisionId?: string | null;
-};
+const ANSWER_NOTE_TEXTAREA_CLASS =
+  "min-h-0 w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-xs leading-relaxed md:text-xs text-white shadow-none focus-visible:ring-0 focus-visible:ring-offset-0";
 
 export function questionPromptFromToolCall(input: {
   toolName?: string;
@@ -145,44 +142,38 @@ function ExpandableDetailRow({
   );
 }
 
-function PrincipleSearchInput({
+function AnswerNoteField({
   value,
   onChange,
   disabled,
+  placeholder,
   testId,
-  clearTestId,
+  id,
+  label,
 }: {
   value: string;
   onChange: (value: string) => void;
   disabled: boolean;
+  placeholder: string;
   testId: string;
-  clearTestId: string;
+  id?: string;
+  label: string;
 }) {
   return (
-    <div className="relative min-w-0">
-      <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-      <input
-        type="search"
+    <div className={cn(SIMPLE_TEXT_FRAME_CLASS, "ml-[26px] mt-1 w-[calc(100%-26px)] flex flex-col")}>
+      <label htmlFor={id} className="sr-only">
+        {label}
+      </label>
+      <Textarea
+        id={id}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         disabled={disabled}
-        aria-label="Search principles"
-        placeholder="Search"
-        className="h-7 w-full rounded-md border border-input bg-background pl-7 pr-7 text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+        rows={2}
+        placeholder={placeholder}
+        className={ANSWER_NOTE_TEXTAREA_CLASS}
         data-testid={testId}
       />
-      {value ? (
-        <button
-          type="button"
-          onClick={() => onChange("")}
-          disabled={disabled}
-          aria-label="Clear search"
-          className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground disabled:cursor-not-allowed"
-          data-testid={clearTestId}
-        >
-          <X className="h-3 w-3" />
-        </button>
-      ) : null}
     </div>
   );
 }
@@ -210,23 +201,12 @@ export function QuestionWidget({
   );
   const [otherSelected, setOtherSelected] = useState(Boolean(response?.otherText));
   const [otherText, setOtherText] = useState(response?.otherText ?? "");
-  const [selectedPrinciples, setSelectedPrinciples] = useState<string[]>(
-    () =>
-      response?.selectedPrincipleRevisionIds ??
-      recommendation?.principleRevisionIds ??
-      [],
-  );
-  const [principleCatalog, setPrincipleCatalog] = useState<QuestionPrincipleOption[]>(prompt.principles);
-  const [principleQuery, setPrincipleQuery] = useState("");
-  const [principlesLoading, setPrinciplesLoading] = useState(false);
+  const selectedPrinciples =
+    response?.selectedPrincipleRevisionIds ??
+    recommendation?.principleRevisionIds ??
+    [];
   const [reasoning, setReasoning] = useState(
-    () => prompt.allowResponseReasoning
-      ? response?.reasoning ?? recommendation?.reasoning ?? ""
-      : "",
-  );
-  // Principles stay collapsed unless the agent already checked some.
-  const [showContext, setShowContext] = useState(
-    () => Boolean(recommendation?.principleRevisionIds?.length),
+    () => response?.reasoning ?? recommendation?.reasoning ?? "",
   );
   const [showAnsweredDetails, setShowAnsweredDetails] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -321,59 +301,9 @@ export function QuestionWidget({
     setSelected(response.selectedOptionIds);
     setOtherSelected(Boolean(response.otherText));
     setOtherText(response.otherText ?? "");
-    setSelectedPrinciples(response.selectedPrincipleRevisionIds ?? []);
     setReasoning(response.reasoning ?? "");
     if (response.decisionId) setLocalDecisionId(response.decisionId);
   }, [response]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadPrinciples = async () => {
-      setPrinciplesLoading(true);
-      try {
-        const res = await fetch("/api/principles");
-        if (!res.ok) return;
-        const body = await res.json().catch(() => null);
-        const items: PrincipleListItem[] = Array.isArray(body)
-          ? body
-          : Array.isArray(body?.principles)
-            ? body.principles
-            : Array.isArray(body?.items)
-              ? body.items
-              : [];
-        if (cancelled) return;
-        const mapped: QuestionPrincipleOption[] = items
-          .map((item) => {
-            const revisionId = item.currentRevisionId;
-            if (!revisionId || !item.id || !item.title) return null;
-            return {
-              principleId: item.id,
-              revisionId,
-              title: item.title,
-              layer1: item.layer1 ?? "",
-            } satisfies QuestionPrincipleOption;
-          })
-          .filter((item): item is QuestionPrincipleOption => Boolean(item));
-        if (mapped.length === 0) return;
-        setPrincipleCatalog((current) => {
-          const byRevision = new Map(current.map((p) => [p.revisionId, p]));
-          for (const principle of mapped) byRevision.set(principle.revisionId, principle);
-          return Array.from(byRevision.values()).sort((a, b) => a.title.localeCompare(b.title));
-        });
-      } catch (loadError) {
-        log.warn("QUESTION_WIDGET:PRINCIPLES_LOAD_FAILED", {
-          toolCallId: prompt.toolCallId,
-          error: loadError instanceof Error ? loadError.message : String(loadError),
-        });
-      } finally {
-        if (!cancelled) setPrinciplesLoading(false);
-      }
-    };
-    void loadPrinciples();
-    return () => {
-      cancelled = true;
-    };
-  }, [prompt.toolCallId]);
 
   const answeredLabels = useMemo(
     () => (response ? responseLabels(prompt, response) : []),
@@ -382,31 +312,25 @@ export function QuestionWidget({
 
   const isSingle = prompt.selectionMode === "single";
 
-  const filteredPrinciples = useMemo(() => {
-    const q = principleQuery.trim().toLowerCase();
-    if (!q) return principleCatalog;
-    return principleCatalog.filter((principle) => {
-      const haystack = `${principle.title} ${principle.layer1}`.toLowerCase();
-      return haystack.includes(q);
-    });
-  }, [principleCatalog, principleQuery]);
-
   const selectedPrincipleLabels = useMemo(() => {
     const ids = response?.selectedPrincipleRevisionIds ?? selectedPrinciples;
     if (!ids.length) return [];
-    const byRevision = new Map(principleCatalog.map((p) => [p.revisionId, p]));
-    for (const principle of prompt.principles) byRevision.set(principle.revisionId, principle);
+    const byRevision = new Map(prompt.principles.map((p) => [p.revisionId, p]));
     return ids
       .map((id) => byRevision.get(id)?.title)
       .filter((title): title is string => Boolean(title));
-  }, [principleCatalog, prompt.principles, response?.selectedPrincipleRevisionIds, selectedPrinciples]);
+  }, [prompt.principles, response?.selectedPrincipleRevisionIds, selectedPrinciples]);
 
   const selectOption = (optionId: string) => {
     setError(null);
     if (isSingle) {
       setSelected([optionId]);
-      setOtherSelected(false);
-      setOtherText("");
+      if (otherSelected) {
+        const carried = otherText.trim();
+        if (carried && !reasoning.trim()) setReasoning(carried);
+        setOtherSelected(false);
+        setOtherText("");
+      }
       return;
     }
     setSelected((current) =>
@@ -419,18 +343,13 @@ export function QuestionWidget({
     setOtherSelected((current) => {
       const next = !current;
       if (!next) setOtherText("");
-      if (next && isSingle) setSelected([]);
+      if (next && isSingle) {
+        const carried = reasoning.trim();
+        if (carried && !otherText.trim()) setOtherText(carried);
+        setSelected([]);
+      }
       return next;
     });
-  };
-
-  const togglePrinciple = (revisionId: string) => {
-    setError(null);
-    setSelectedPrinciples((current) =>
-      current.includes(revisionId)
-        ? current.filter((id) => id !== revisionId)
-        : [...current, revisionId],
-    );
   };
 
   const decisionId = response?.decisionId ?? localDecisionId;
@@ -455,7 +374,7 @@ export function QuestionWidget({
       selectedOptionIds: selected,
       ...(normalizedOther ? { otherText: normalizedOther } : {}),
       ...(selectedPrinciples.length > 0 ? { selectedPrincipleRevisionIds: selectedPrinciples } : {}),
-      ...(prompt.allowResponseReasoning && trimmedReasoning ? { reasoning: trimmedReasoning } : {}),
+      ...(trimmedReasoning ? { reasoning: trimmedReasoning } : {}),
     };
     try {
       const submitted = await onSubmit(nextResponse);
@@ -561,22 +480,35 @@ export function QuestionWidget({
       <div className="space-y-0.5 px-2 py-2">
         {prompt.options.map((option) => {
           const isRecommended = recommendedOptionIds.has(option.id);
+          const optionSelected = selected.includes(option.id);
           return (
-            <ExpandableDetailRow
-              key={option.id}
-              checked={selected.includes(option.id)}
-              disabled={controlsDisabled}
-              label={option.label}
-              detail={option.description}
-              testId={`question-option-${prompt.toolCallId}-${option.id}`}
-              onSelect={() => selectOption(option.id)}
-              emphasized={isRecommended}
-              badge={
-                isRecommended && typeof recommendedConfidence === "number"
-                  ? `${recommendedConfidence}% confidence`
-                  : undefined
-              }
-            />
+            <div key={option.id}>
+              <ExpandableDetailRow
+                checked={optionSelected}
+                disabled={controlsDisabled}
+                label={option.label}
+                detail={option.description}
+                testId={`question-option-${prompt.toolCallId}-${option.id}`}
+                onSelect={() => selectOption(option.id)}
+                emphasized={isRecommended}
+                badge={
+                  isRecommended && typeof recommendedConfidence === "number"
+                    ? `${recommendedConfidence}% confidence`
+                    : undefined
+                }
+              />
+              {optionSelected ? (
+                <AnswerNoteField
+                  id={`question-reasoning-${prompt.toolCallId}-${option.id}`}
+                  value={reasoning}
+                  onChange={setReasoning}
+                  disabled={controlsDisabled}
+                  placeholder="Reasoning (optional)"
+                  label="Reasoning (optional)"
+                  testId={`question-reasoning-${prompt.toolCallId}-${option.id}`}
+                />
+              ) : null}
+            </div>
           );
         })}
         <div>
@@ -587,92 +519,19 @@ export function QuestionWidget({
             testId={`question-option-${prompt.toolCallId}-other`}
             onSelect={toggleOther}
           />
-          {/* Other row is structural; free-text hatch opens only after Other is selected. */}
+          {/* Other is the same selected-answer note: free-text hatch after selection. */}
           {otherSelected ? (
-            <textarea
+            <AnswerNoteField
               value={otherText}
-              onChange={(event) => {
-                setOtherText(event.target.value);
-              }}
+              onChange={setOtherText}
               disabled={controlsDisabled}
-              rows={2}
               placeholder="Add your answer"
-              className="ml-[26px] mt-1 w-[calc(100%-26px)] resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
-              data-testid={`question-other-text-${prompt.toolCallId}`}
+              label="Other answer"
+              testId={`question-other-text-${prompt.toolCallId}`}
             />
           ) : null}
         </div>
       </div>
-      {prompt.allowResponseReasoning ? (
-        <div className="space-y-1.5 border-t border-border/40 px-3 py-2">
-          <label
-            htmlFor={`question-reasoning-${prompt.toolCallId}`}
-            className="sr-only"
-          >
-            Reasoning (optional)
-          </label>
-          <textarea
-            id={`question-reasoning-${prompt.toolCallId}`}
-            value={reasoning}
-            onChange={(event) => setReasoning(event.target.value)}
-            disabled={controlsDisabled}
-            rows={2}
-            placeholder="Reasoning (optional)"
-            className="w-full resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
-            data-testid={`question-reasoning-${prompt.toolCallId}`}
-          />
-        </div>
-      ) : null}
-      <Collapsible
-        open={showContext}
-        onOpenChange={setShowContext}
-        className="border-t border-border/40"
-      >
-        <CollapsibleTrigger
-          disabled={controlsDisabled}
-          className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:bg-accent/30 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-          data-testid={`question-provenance-toggle-${prompt.toolCallId}`}
-        >
-          <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform", showContext && "rotate-90")} />
-          <span className="min-w-0 flex-1">Principles</span>
-          {principlesLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
-          {selectedPrinciples.length > 0 ? (
-            <span className="text-[10px] font-normal text-muted-foreground/70">{selectedPrinciples.length}</span>
-          ) : null}
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div className="space-y-2 px-2 pb-2">
-            <PrincipleSearchInput
-              value={principleQuery}
-              onChange={setPrincipleQuery}
-              disabled={controlsDisabled}
-              testId={`question-principle-search-${prompt.toolCallId}`}
-              clearTestId={`question-principle-search-clear-${prompt.toolCallId}`}
-            />
-            <div className="max-h-40 space-y-0.5 overflow-y-auto">
-              {filteredPrinciples.length === 0 ? (
-                <p className="px-2 py-1 text-xs text-muted-foreground">
-                  {principleCatalog.length === 0
-                    ? "No principles available yet."
-                    : "No principles match that search."}
-                </p>
-              ) : (
-                filteredPrinciples.map((principle) => (
-                  <ExpandableDetailRow
-                    key={principle.revisionId}
-                    checked={selectedPrinciples.includes(principle.revisionId)}
-                    disabled={controlsDisabled}
-                    label={principle.title}
-                    detail={principle.layer1 || undefined}
-                    testId={`question-principle-${prompt.toolCallId}-${principle.revisionId}`}
-                    onSelect={() => togglePrinciple(principle.revisionId)}
-                  />
-                ))
-              )}
-            </div>
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
       <div className="flex items-center justify-between gap-3 border-t border-border/40 px-3 py-2">
         {error ? <p className="text-xs text-error">{error}</p> : <span />}
         <div className="flex items-center gap-2">
