@@ -18,7 +18,7 @@ import type {
   ClaudeCliThinkingMode,
   ModelConnectorProvider,
 } from "@shared/model-connectors";
-import { SEMANTIC_TIERS } from "@shared/model-connectors";
+import { allowedGrokReasoningEfforts, SEMANTIC_TIERS } from "@shared/model-connectors";
 
 // UI-level tier config: covers the wire format from the API where legacy string mappings
 // coexist with rich per-provider objects. The canonical shared types
@@ -67,9 +67,7 @@ const REASONING_SUMMARIES: readonly OpenAIReasoningSummary[] = ["auto", "concise
 const VERBOSITIES: readonly OpenAIVerbosity[] = ["low", "medium", "high"];
 const SERVICE_TIERS: readonly OpenAIServiceTier[] = ["auto", "default", "flex", "priority"];
 const CLAUDE_EFFORT_OPTIONS = ["activity-default", "low", "medium", "high", "max"] as const;
-// Grok 4.5 supports low/medium/high; Grok 4.6 additionally supports xhigh.
-const GROK_EFFORT_OPTIONS = ["activity-default", "low", "medium", "high"] as const;
-const GROK_46_EFFORT_OPTIONS = [...GROK_EFFORT_OPTIONS, "xhigh"] as const;
+const GROK_ACTIVITY_DEFAULT = "activity-default" as const;
 const CLAUDE_THINKING_OPTIONS = ["activity-default", "adaptive", "disabled"] as const;
 
 function tierConfigModel(value: TierModelConfig): string {
@@ -115,9 +113,14 @@ function sanitizeOpenAITierConfig(provider: ModelConnectorDetail["provider"], co
   return sanitized;
 }
 
+function grokEffortOptions(modelId: string): readonly string[] {
+  return [GROK_ACTIVITY_DEFAULT, ...allowedGrokReasoningEfforts(modelId)];
+}
+
 function sanitizeGrokTierConfig(config: Exclude<TierModelConfig, string>): Exclude<TierModelConfig, string> {
   const sanitized: Exclude<TierModelConfig, string> = { model: config.model };
-  if ((config.model === "grok-4.5" || config.model === "grok-4.6") && config.reasoningEffort !== undefined) {
+  const allowed = allowedGrokReasoningEfforts(config.model);
+  if (config.reasoningEffort !== undefined && allowed.includes(config.reasoningEffort as typeof allowed[number])) {
     sanitized.reasoningEffort = config.reasoningEffort;
   }
   return sanitized;
@@ -233,7 +236,9 @@ function ConnectorTierTree({
                       } else if (isGrok) {
                         updateTier(tier, {
                           model: modelId,
-                          reasoningEffort: modelId === "grok-4.5" || modelId === "grok-4.6" ? config.reasoningEffort : undefined,
+                          reasoningEffort: allowedGrokReasoningEfforts(modelId).includes(config.reasoningEffort as never)
+                            ? config.reasoningEffort
+                            : undefined,
                         });
                       } else {
                         const nextModel = models.find((item) => item.id === modelId);
@@ -306,13 +311,13 @@ function ConnectorTierTree({
                       </div>
                     </>
                   )}
-                  {isGrok && (config.model === "grok-4.5" || config.model === "grok-4.6") && (
+                  {isGrok && allowedGrokReasoningEfforts(config.model).length > 0 && (
                     <TierSettingSelect
                       label="Reasoning effort"
-                      value={(config.reasoningEffort ?? "activity-default") as typeof GROK_46_EFFORT_OPTIONS[number]}
-                      options={config.model === "grok-4.6" ? GROK_46_EFFORT_OPTIONS : GROK_EFFORT_OPTIONS}
+                      value={config.reasoningEffort ?? GROK_ACTIVITY_DEFAULT}
+                      options={grokEffortOptions(config.model)}
                       disabled={mutation.isPending}
-                      onChange={(value) => updateTier(tier, { reasoningEffort: value === "activity-default" ? undefined : value })}
+                      onChange={(value) => updateTier(tier, { reasoningEffort: value === GROK_ACTIVITY_DEFAULT ? undefined : value })}
                     />
                   )}
                   {supported?.reasoningEffort && <TierSettingSelect label="Reasoning effort" value={config.reasoningEffort ?? "medium"} options={REASONING_EFFORTS} disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningEffort: value })} />}

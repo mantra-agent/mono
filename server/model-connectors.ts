@@ -6,7 +6,9 @@ import { combineWithVisibleScope } from "./scoped-storage";
 import { getSetting } from "./system-settings";
 import { providerConnections } from "@shared/models/platforms";
 import {
+  allowedGrokReasoningEfforts,
   claudeCliTierMappingsSchema,
+  getConnectorTierModelString,
   grokSubscriptionTierMappingsSchema,
   modelConnectorConfigSchema,
   modelConnectorProviderSchema,
@@ -25,8 +27,7 @@ import {
   type OpenAITierModelConfig,
   type OpenAITierMappings,
 } from "@shared/model-connectors";
-import { getConnectorTierModelString } from "@shared/model-connectors";
-import { getModel, supportsGrokReasoningEffort, type ModelInfo } from "./model-registry";
+import { getModel, type ModelInfo } from "./model-registry";
 
 const log = createLogger("ModelConnectors");
 const LEGACY_PROFILE_KEY = "model_profiles";
@@ -157,8 +158,10 @@ function validateGrokTierConfig(config: GrokSubscriptionTierModelConfig): GrokSu
   const model = validateModelBelongsToProvider("grok-subscription", config.model);
   const normalized: GrokSubscriptionTierModelConfig = { model: model.id };
   if (config.reasoningEffort !== undefined) {
-    if (!supportsGrokReasoningEffort(model.id)) throw new Error(`Model '${config.model}' does not support reasoning effort`);
-    if (config.reasoningEffort === "xhigh" && model.id !== "grok-4.6") throw new Error(`Model '${config.model}' does not support xhigh reasoning effort`);
+    const allowed = allowedGrokReasoningEfforts(model.id);
+    if (!allowed.includes(config.reasoningEffort)) {
+      throw new Error(`Model '${config.model}' does not support reasoning effort '${config.reasoningEffort}'`);
+    }
     normalized.reasoningEffort = config.reasoningEffort;
   }
   return normalized;

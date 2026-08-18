@@ -952,7 +952,7 @@ function resolvedGrokConfig(options: Pick<ChatCompletionOptions, "routingDecisio
 // directly, gated to Grok models that accept the parameter.
 function applyGrokConnectorConfig(params: Record<string, any>, model: string, options: ChatCompletionOptions): void {
   const config = resolvedGrokConfig(options);
-  if (config?.reasoningEffort && supportsGrokReasoningEffort(model)) {
+  if (typeof config?.reasoningEffort === "string" && supportsGrokReasoningEffort(model)) {
     params.reasoning_effort = config.reasoningEffort;
   }
 }
