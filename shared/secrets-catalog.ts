@@ -6,6 +6,7 @@ export type SecretSection =
   | "cartesia"
   | "brave"
   | "notion"
+  | "stripe"
   | "plaid"
   | "quickbooks"
   | "google"
@@ -38,6 +39,9 @@ export const SECRET_CATALOG: SecretSpec[] = [
   { name: "ELEVENLABS_AGENT_ID", section: "elevenlabs", label: "ElevenLabs Agent ID", description: "Conversational AI agent ID. Required for voice sessions." },
   { name: "BRAVE_API_KEY", section: "brave", label: "Brave Search API Key", description: "Enables web search." },
   { name: "NOTION_API_KEY", section: "notion", label: "Notion API Key", description: "Optional global Notion integration token." },
+  { name: "STRIPE_SECRET_KEY", section: "stripe", label: "Stripe Secret Key", description: "Server Billing API key (sk_test_… or sk_live_…). Never returned to the model." },
+  { name: "STRIPE_PUBLISHABLE_KEY", section: "stripe", label: "Stripe Publishable Key", description: "Checkout-only publishable key (pk_test_… or pk_live_…)." },
+  { name: "STRIPE_WEBHOOK_SECRET", section: "stripe", label: "Stripe Webhook Secret", description: "whsec_… signing secret for POST /api/webhooks/stripe." },
   { name: "PLAID_CLIENT_ID", section: "plaid", label: "Plaid Client ID" },
   { name: "PLAID_SECRET", section: "plaid", label: "Plaid Secret" },
   { name: "PLAID_ENV", section: "plaid", label: "Plaid Environment", description: "sandbox | development | production" },
