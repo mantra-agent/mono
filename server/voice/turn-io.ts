@@ -6,7 +6,7 @@
  */
 import type { Response } from "express";
 import type { PresenceState, VoiceSession, TurnContext } from "./types";
-import { buildSSEChunk, isResponseAlive, createTrackedWrite, sendSSEComment } from "./sse";
+import { buildSSEChunk, isResponseAlive, createTrackedWrite, sendSSEComment, setupSSELifecycle } from "./sse";
 import { publishVoiceDiagnostic } from "./session";
 import { createLogger } from "../log";
 import { getVerifiedCascadeTimeoutSeconds, getVerifiedSoftTimeoutSeconds } from "../elevenlabs";
@@ -150,34 +150,25 @@ export function createTurnIOHandlers(
     if (!content) return false;
     if (!isResponseAlive(writeRes())) {
       log.warn(
-        `CONTENT_DROPPED_DEAD_RESPONSE location=writeSpeakable kind=${kind} trigger=${trigger} contentBytes=${content.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
+        `WRITE_PORT_DEAD location=writeSpeakable kind=${kind} trigger=${trigger} contentBytes=${content.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
       );
-      if (!ctx.contentDroppedPublished) {
-        ctx.contentDroppedPublished = true;
-        publishVoiceDiagnostic(
-          session,
-          "content_dropped",
-          `Content dropped — response dead (${content.length} bytes)`,
-          { turn: currentTurn, status: "error" },
-          ctx,
-        );
-      }
       return false;
     }
 
     const now = Date.now();
     const sincePriorFlushed = now - ctx.lastFlushedSpeakableAt;
-    ctx.lastFlushedSpeakableId += 1;
-    const speakableId = ctx.lastFlushedSpeakableId;
-    ctx.lastFlushedSpeakableAt = now;
-    ctx.lastContentSentAt = now;
-    ctx.lastContentAt.ts = now;
-    ctx.lastAudibleDeltaAt = now;
-    session.inflightChunksDelivered++;
-    const sessionGap = now - session.lastDataDeliveryAt;
-    if (sessionGap > session.longestDataGapMs) session.longestDataGapMs = sessionGap;
-    session.lastDataDeliveryAt = now;
+    const speakableId = ctx.lastFlushedSpeakableId + 1;
 
+    const ok = trackedWrite(
+      buildSSEChunk(ctx.chatId, ctx.created, content, null, true),
+      kind === "hold" ? `presence_hold_${ctx.fillerCount + 1}` : `coalesced_${ctx.coalesceFlushCount}`,
+    );
+    if (!ok) {
+      log.debug(
+        `turn ${currentTurn} SSE_WRITE kind=${kind} speakableId=${speakableId} ok=false ${spineIds(session, ctx)}`,
+      );
+      return false;
+    }
     if (kind === "model") {
       setPresence(ctx, "speaking");
       ctx.chunkCounter.count++;
@@ -185,7 +176,6 @@ export function createTurnIOHandlers(
       if (ctx.firstChunk.sentAt === null) ctx.firstChunk.sentAt = now;
       if (ctx.firstRealContentAt.ts === null) ctx.firstRealContentAt.ts = now;
       ctx.lastRealContentAt.ts = now;
-      // Scan backwards past system entries to find the last content entry to merge into.
       let lastContentIdx = -1;
       for (let i = ctx.segmentChronology.length - 1; i >= 0; i--) {
         const entry = ctx.segmentChronology[i];
@@ -204,16 +194,19 @@ export function createTurnIOHandlers(
       setPresence(ctx, "holding");
       ctx.fillerCount++;
       ctx.lastFillerSentAt = now;
-      // Holds are presence, not content — never segmentChronology / transcript.
       log.info(
         `turn ${currentTurn} PRESENCE_HOLD fillerCount=${ctx.fillerCount} sinceLastFlushedSpeakable=${sincePriorFlushed}ms speakableId=${speakableId} ${spineIds(session, ctx)}`,
       );
     }
-
-    const ok = trackedWrite(
-      buildSSEChunk(ctx.chatId, ctx.created, content, null, true),
-      kind === "hold" ? `presence_hold_${ctx.fillerCount}` : `coalesced_${ctx.coalesceFlushCount}`,
-    );
+    ctx.lastFlushedSpeakableId = speakableId;
+    ctx.lastFlushedSpeakableAt = now;
+    ctx.lastContentSentAt = now;
+    ctx.lastContentAt.ts = now;
+    ctx.lastAudibleDeltaAt = now;
+    session.inflightChunksDelivered++;
+    const sessionGap = now - session.lastDataDeliveryAt;
+    if (sessionGap > session.longestDataGapMs) session.longestDataGapMs = sessionGap;
+    session.lastDataDeliveryAt = now;
     log.debug(
       `turn ${currentTurn} SSE_WRITE kind=${kind} speakableId=${speakableId} ok=${ok} ${spineIds(session, ctx)}`,
     );
@@ -228,18 +221,8 @@ export function createTurnIOHandlers(
     if (!ctx.coalesceBuf.value) return;
     if (!isResponseAlive(writeRes())) {
       log.warn(
-        `CONTENT_DROPPED_DEAD_RESPONSE location=flushCoalesceBuffer trigger=${trigger} contentBytes=${ctx.coalesceBuf.value.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
+        `WRITE_PORT_DEAD location=flushCoalesceBuffer trigger=${trigger} holdingBytes=${ctx.coalesceBuf.value.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
       );
-      if (!ctx.contentDroppedPublished) {
-        ctx.contentDroppedPublished = true;
-        publishVoiceDiagnostic(
-          session,
-          "content_dropped",
-          `Content dropped — response dead (${ctx.coalesceBuf.value.length} bytes)`,
-          { turn: currentTurn, status: "error" },
-          ctx,
-        );
-      }
       return;
     }
 
@@ -247,6 +230,7 @@ export function createTurnIOHandlers(
       && (trigger === "turn_end" || trigger === "overflow" || trigger === "guide_introduction" || trigger === "drain");
 
     let content: string;
+    let remainder = "";
     if (forceEmpty) {
       content = ctx.coalesceBuf.value;
       ctx.coalesceBuf.value = "";
@@ -263,20 +247,54 @@ export function createTurnIOHandlers(
         return;
       }
       content = split.speakable;
-      ctx.coalesceBuf.value = split.remainder;
+      remainder = split.remainder;
+      ctx.coalesceBuf.value = remainder;
     }
 
     ctx.coalesceFlushCount++;
-    writeSpeakable(content, "model", trigger || "unspecified");
+    const wrote = writeSpeakable(content, "model", trigger || "unspecified");
+    if (!wrote) {
+      ctx.coalesceBuf.value = content + remainder;
+      ctx.coalesceFlushCount = Math.max(0, ctx.coalesceFlushCount - 1);
+      log.warn(
+        `WRITE_PORT_HOLD location=flushCoalesceBuffer trigger=${trigger} restoredBytes=${ctx.coalesceBuf.value.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
+      );
+    }
   };
-  session.flushAttachedWritePort = () => {
+
+  session.attachWritePort = (req, res) => {
+    if (!res.headersSent) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+    }
+    if (res.socket) res.socket.setNoDelay(true);
+    const prev = session.activeWriteRes;
+    session.activeWriteRes = res;
+    sendSSEComment(res, "write_port_attached", session.id);
+    setupSSELifecycle(req, res, session, ctx, trackedWrite, flushCoalesceBuffer, stopFillerTimer, ctx.turnAbort, getCascadeTimeoutMs);
+    if (prev && prev !== res && !prev.writableEnded && !prev.destroyed) {
+      try { prev.end(); } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        log.warn(`WRITE_PORT_PREV_END_FAILED turn=${currentTurn} session=${session.id} error=${msg}`);
+      }
+    }
     flushCoalesceBuffer("write_port_attached");
   };
+
+  if (session.pendingAttach) {
+    const pending = session.pendingAttach;
+    session.pendingAttach = null;
+    session.attachWritePort(pending.req, pending.res);
+  }
 
   const sendPresenceHold = (): void => {
     const port = writeRes();
     if (!isResponseAlive(port)) {
-      log.warn(`CONTENT_DROPPED_DEAD_RESPONSE location=sendPresenceHold turn=${currentTurn} ${spineIds(session, ctx)}`);
+      log.warn(`WRITE_PORT_DEAD location=sendPresenceHold turn=${currentTurn} ${spineIds(session, ctx)}`);
       return;
     }
     sendSSEComment(port, "presence_hold", session.id);
@@ -305,17 +323,9 @@ export function createTurnIOHandlers(
       const now = Date.now();
       const sinceFlushed = now - ctx.lastFlushedSpeakableAt;
       if (!isResponseAlive(writeRes())) {
-        log.warn(
-          `turn ${currentTurn} PRESENCE_HOLD_TICK response_dead sinceFlushed=${sinceFlushed}ms — self-terminating ${spineIds(session, ctx)}`,
+        log.debug(
+          `turn ${currentTurn} PRESENCE_HOLD_TICK write_port_dead sinceFlushed=${sinceFlushed}ms — holding ${spineIds(session, ctx)}`,
         );
-        publishVoiceDiagnostic(
-          session,
-          "keepalive_dead",
-          `Presence hold detected dead response — self-terminating`,
-          { turn: currentTurn, status: "error", elapsedMs: now - ctx.turnStart },
-          ctx,
-        );
-        stopFillerTimer("response_dead");
         return;
       }
 

@@ -17,7 +17,8 @@ let cachedVoiceId: string | null = null;
 onSecretChange((name) => {
   if (name === "ELEVENLABS_API_KEY") cachedApiKey = null;
 });
-let verifiedCascadeTimeoutSeconds: number = 8;
+const DEFAULT_CASCADE_TIMEOUT_SECONDS = 30;
+let verifiedCascadeTimeoutSeconds: number = DEFAULT_CASCADE_TIMEOUT_SECONDS;
 let verifiedSoftTimeoutSeconds: number = 5;
 
 export function getVerifiedCascadeTimeoutSeconds(): number {
@@ -433,14 +434,14 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
       const effectiveCascade = rawCascade != null ? Number(rawCascade) : undefined;
       const cascadeSource = cascadeInCustomLlm != null ? "custom_llm" : cascadeInTurn != null ? "turn" : cascadeInBackupLlms != null ? "backup_llms" : null;
       if (cascadeSource == null) {
-        verifiedCascadeTimeoutSeconds = 15;
-        log.warn(`setupAgentCallbackUrl: CASCADE TIMEOUT ABSENT — not found in custom_llm, turn, or backup_llms config. The API may not accept this field via PATCH. Using requested value of 15s for internal calibration. Set it manually via the ElevenLabs dashboard or set VOICE_CASCADE_TIMEOUT_SECONDS env var if different. Code timing constants calibrated to ${verifiedCascadeTimeoutSeconds}s.`);
+        verifiedCascadeTimeoutSeconds = DEFAULT_CASCADE_TIMEOUT_SECONDS;
+        log.warn(`setupAgentCallbackUrl: CASCADE TIMEOUT ABSENT — not found in custom_llm, turn, or backup_llms config. The API may not accept this field via PATCH. Using requested value of ${DEFAULT_CASCADE_TIMEOUT_SECONDS}s for internal calibration. Set it manually via the ElevenLabs dashboard or set VOICE_CASCADE_TIMEOUT_SECONDS env var if different. Code timing constants calibrated to ${verifiedCascadeTimeoutSeconds}s.`);
       } else if (effectiveCascade != null && effectiveCascade > 0) {
         verifiedCascadeTimeoutSeconds = effectiveCascade;
         log.debug(`setupAgentCallbackUrl: CASCADE TIMEOUT VERIFIED at ${verifiedCascadeTimeoutSeconds}s from ${cascadeSource} in API response`);
       } else {
-        verifiedCascadeTimeoutSeconds = 15;
-        log.warn(`setupAgentCallbackUrl: CASCADE TIMEOUT INVALID — got ${rawCascade ?? "(not set)"} from ${cascadeSource} (parsed=${effectiveCascade}). Using requested value of 15s. Set it manually via the ElevenLabs dashboard or set VOICE_CASCADE_TIMEOUT_SECONDS env var if different.`);
+        verifiedCascadeTimeoutSeconds = DEFAULT_CASCADE_TIMEOUT_SECONDS;
+        log.warn(`setupAgentCallbackUrl: CASCADE TIMEOUT INVALID — got ${rawCascade ?? "(not set)"} from ${cascadeSource} (parsed=${effectiveCascade}). Using requested value of ${DEFAULT_CASCADE_TIMEOUT_SECONDS}s. Set it manually via the ElevenLabs dashboard or set VOICE_CASCADE_TIMEOUT_SECONDS env var if different.`);
       }
 
       const envCascadeOverride = process.env.VOICE_CASCADE_TIMEOUT_SECONDS;

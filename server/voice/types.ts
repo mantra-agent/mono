@@ -48,8 +48,10 @@ export interface VoiceSession {
   inflightDoneResolve: (() => void) | null;
   /** Hot-swappable custom-LLM SSE write port. Socket death replaces this; it must not abort the generator. */
   activeWriteRes: import("express").Response | null;
-  /** Flush completed speakables after a retry attaches a new write port. */
-  flushAttachedWritePort: (() => void) | null;
+  /** Bind a cascade-retry socket under the live generator. Installs lifecycle and flushes held remainder. */
+  attachWritePort: ((req: import("express").Request, res: import("express").Response) => void) | null;
+  /** Cascade retry that arrived before turn I/O existed. Consumed once attachWritePort is installed. */
+  pendingAttach: { req: import("express").Request; res: import("express").Response } | null;
   inflightContextPromise: Promise<string> | null;
   inflightContextFocusKey: string | null;
   lastDataDeliveryAt: number;

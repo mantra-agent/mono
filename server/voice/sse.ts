@@ -154,10 +154,11 @@ export function closeSSEWithError(
 ): void {
   const chatId = `chatcmpl-${session.id}-${currentTurn}`;
   const created = Math.floor(Date.now() / 1000);
-  const errChunk = buildSSEChunk(chatId, created, ` ${errorMsg}`);
   const finish = buildSSEChunk(chatId, created, "", "stop");
   try {
-    res.write(errChunk);
+    if (errorMsg) {
+      log.warn(`closeSSEWithError turn=${currentTurn} session=${session.id} spoken=false reasonBytes=${errorMsg.length}`);
+    }
     res.write(finish);
     res.write("data: [DONE]\n\n");
   } catch (e: unknown) {
@@ -312,9 +313,8 @@ export function setupSSELifecycle(
   });
 
   req.on("close", () => {
+    if (session.activeWriteRes && session.activeWriteRes !== res) return;
     if (!res.writableEnded) {
-      ctx.turnEndCause = "req_close";
-      stopFillerTimer("req_close");
       log.warn(`REQ_CLOSE turn=${ctx.currentTurn} elapsed=${Date.now() - ctx.turnStart}ms chunks=${ctx.chunkCounter.count} session=${session.id}`);
       publishVoiceDiagnostic(session, "req_close", `Request closed before response finished (turn ${ctx.currentTurn})`, { turn: ctx.currentTurn, status: "error", elapsedMs: Date.now() - ctx.turnStart }, ctx);
       const { logTurnForensics } = require("./pipeline-log");

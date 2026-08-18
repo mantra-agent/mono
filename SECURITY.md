@@ -1,3 +1,10 @@
+<!-- 2026-08-18 Voice live write-port attach:
+- Assets/data: A02/S2 live custom-LLM SSE speakables and turn remainder; A07 write-port/cascade diagnostics (ids/counts only). No new route, secret, lease, or Principal class.
+- Flow/threat: cascade retry swapping sockets without a live write handle could drop extracted sentences or replay already-flushed speakables onto a second socket (STRIDE tampering/repudiation; DATA-01/OBS-01). Widening logs with transcript bodies would add disclosure.
+- Deterministic controls/owner: HMAC callback + exact owned lease stay the only ingress. `attachWritePort` is the sole bind; remainder stays in `coalesceBuf` until a live flushed write succeeds; already-flushed speakable ids are not replayed. Diagnostics stay content-free. Owner: Voice Platform. Severity: medium integrity. SLA: same PR.
+- Residual/rollback: a race can still leave one pending attach before turn I/O exists; the pending socket gets headers + comment only. Revert attachWritePort, remainder restore, 30s cascade default, and this finding together.
+-->
+
 <!-- 2026-08-17 Document Template Shapes (map of pages + /api/templates + templates tool):
 - Assets/data: A04 account catalog `document_templates` / `skill_template_bindings` (S2 map pointers); ordinary Library shape pages (already scoped). No secrets, no new principal class.
 - Flow/threat: cross-account map read/write; resolving a Library page the principal cannot see; binding another account's template id into this tenant; skill key/kind confusion (STRIDE information disclosure/tampering; DATA-01/IAM-01/AGENT-03).

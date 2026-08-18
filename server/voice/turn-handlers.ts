@@ -143,7 +143,7 @@ export async function handleTurnError(
   // Note: the "error" journal entry above also drives SessionManager.applyEvent
   // which handles the terminal event. No separate "done" needed here.
   persistVoiceErrorMessage(session, "I ran into a problem processing that. Could you try again?").catch((e: any) => log.debug(`persistVoiceErrorMessage failed session=${session.id}: ${e?.message}`));
-  sendErrorResponse(res, trackedWrite, err, currentTurn, session.id, ctx.lastWrite, ctx.currentToolName);
+  sendErrorResponse(session.activeWriteRes ?? res, trackedWrite, err, currentTurn, session.id, ctx.lastWrite, ctx.currentToolName);
 }
 
 // ── runExecutorPhase ─────────────────────────────────────────────────────
@@ -172,12 +172,10 @@ export async function runExecutorPhase(
     ? createThinkingFilter(sendChunk)
     : createPassthroughThinkingFilter(sendChunk);
 
+  const livePort = (): Response => session.activeWriteRes ?? res;
   let coalesceTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
-    if (!isResponseAlive(res)) {
-      const elapsed = Date.now() - ctx.turnStart;
-      log.warn(`TIMER_STOPPED_DEAD_RESPONSE location=coalesceTimer turn=${currentTurn} session=${session.id}`);
-      publishVoiceDiagnostic(session, "coalesce_timer_dead", `Coalesce timer stopped — response dead (turn ${currentTurn}, ${elapsed}ms)`, { turn: currentTurn, status: "error", elapsedMs: elapsed });
-      if (coalesceTimer) { clearInterval(coalesceTimer); coalesceTimer = null; }
+    if (!isResponseAlive(livePort())) {
+      log.debug(`TIMER_HOLD_DEAD_PORT location=coalesceTimer turn=${currentTurn} session=${session.id}`);
       return;
     }
     if (ctx.bp.active) {
@@ -198,14 +196,12 @@ export async function runExecutorPhase(
   }, COALESCE_INTERVAL_MS);
 
   let keepaliveTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
-    if (!isResponseAlive(res)) {
-      const elapsed = Date.now() - ctx.turnStart;
-      log.warn(`TIMER_STOPPED_DEAD_RESPONSE location=sseKeepaliveTimer turn=${currentTurn} session=${session.id}`);
-      publishVoiceDiagnostic(session, "sse_keepalive_dead", `SSE keepalive stopped — response dead (turn ${currentTurn}, ${elapsed}ms)`, { turn: currentTurn, status: "error", elapsedMs: elapsed });
-      if (keepaliveTimer) { clearInterval(keepaliveTimer); keepaliveTimer = null; }
+    const port = livePort();
+    if (!isResponseAlive(port)) {
+      log.debug(`TIMER_HOLD_DEAD_PORT location=sseKeepaliveTimer turn=${currentTurn} session=${session.id}`);
       return;
     }
-    sendSSEComment(res, "keepalive", session.id);
+    sendSSEComment(port, "keepalive", session.id);
   }, SSE_KEEPALIVE_INTERVAL_MS);
 
   log.debug(`turn ${currentTurn} VOICE_DIAG systemPromptBytes=${systemPromptBytes} voiceRuns=${getActiveVoiceRunCount()} session=${session.id}`);
