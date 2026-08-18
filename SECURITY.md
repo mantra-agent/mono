@@ -20,10 +20,10 @@
 -->
 
 <!-- 2026-08-18 Voice legal PATCH:
-- Assets/data: A04/A07 ElevenLabs agent turn + custom_llm config (soft_timeout_config, cascade_timeout_seconds); A02/S2 spoken custom-LLM SSE. No new route, secret, lease, or Principal.
-- Flow/threat: empty soft_timeout message 400s the PATCH so stored "One second." survives; cascade 30 is outside 2–15 so hang stays ~8s. Warn-and-continue GET plus swallowed start setup lets a session mint against that stored filler (STRIDE tampering; DATA-01).
-- Deterministic controls/owner: PATCH timeout_seconds=-1 with schema-tax message "."; custom_llm.cascade_timeout_seconds=15 only (not turn.*). GET must store -1, ".", and 15 or setup throws. Start rethrows so a 400/mismatch cannot mint a signed URL. Writer still strips stall openers. Owner: Voice Platform. Severity: medium integrity. SLA: same PR.
-- Residual/rollback: dummy message is schema tax — if GET is -1/"." and Ray still hears "One second.", stop; filler is not this field. If 15 stores and tool-first turns still die at ~8s, next cut is the turn model, not 30. Revert legal payload, fail-closed GET, start rethrow, AGENTS room 3, and this finding together.
+- Assets/data: A04/A07 ElevenLabs agent turn + prompt.backup_llm_config (soft_timeout_config, cascade_timeout_seconds); A02/S2 spoken custom-LLM SSE. No new route, secret, lease, or Principal.
+- Flow/threat: empty soft_timeout message 400s the PATCH so stored "One second." survives; cascade 30 is outside 2–15 so hang stays ~8s. Dual-write to custom_llm/turn PATCHes and GET-echoes neither, so a folklore-home GET gate aborts start. Warn-and-continue GET plus swallowed start setup lets a session mint against stored filler (STRIDE tampering; DATA-01).
+- Deterministic controls/owner: PATCH timeout_seconds=-1 with schema-tax message "."; prompt.backup_llm_config.cascade_timeout_seconds=15 only (not custom_llm.*, not turn.*). GET must store -1, ".", and official 15 or setup throws. Start rethrows so a 400/mismatch cannot mint a signed URL. Writer still strips stall openers. Owner: Voice Platform. Severity: medium integrity. SLA: same PR.
+- Residual/rollback: dummy message is schema tax — if GET is -1/"." and Ray still hears "One second.", stop; filler is not this field. If official 15 stores and tool-first turns still die at ~8s, next cut is the turn model, not 30. If GET still omits backup_llm_config.cascade_timeout_seconds, recut the gate — do not invent a third home. Revert legal payload, fail-closed GET, start rethrow, AGENTS room 3, and this finding together.
 -->
 
 <!-- 2026-08-18 Voice soft-timeout disable:
@@ -37,7 +37,7 @@
 - Assets/data: A02/S2 live custom-LLM SSE speakables and turn remainder; A07 write-port/cascade diagnostics (ids/counts only). No new route, secret, lease, or Principal class.
 - Flow/threat: cascade retry swapping sockets without a live write handle could drop extracted sentences or replay already-flushed speakables onto a second socket (STRIDE tampering/repudiation; DATA-01/OBS-01). Widening logs with transcript bodies would add disclosure.
 - Deterministic controls/owner: HMAC callback + exact owned lease stay the only ingress. `attachWritePort` is the sole bind; remainder stays in `coalesceBuf` until a live flushed write succeeds; already-flushed speakable ids are not replayed. Diagnostics stay content-free. Owner: Voice Platform. Severity: medium integrity. SLA: same PR.
-- Residual/rollback: a race can still leave one pending attach before turn I/O exists; that socket now gets the same once-per-port handshake as attach. Revert attachWritePort, remainder restore, handshake helper, and this finding together. Cascade default is the legal 15s custom_llm field (Voice legal PATCH), not 30.
+- Residual/rollback: a race can still leave one pending attach before turn I/O exists; that socket now gets the same once-per-port handshake as attach. Revert attachWritePort, remainder restore, handshake helper, and this finding together. Cascade default is the legal 15s prompt.backup_llm_config field (Voice legal PATCH), not 30.
 -->
 
 <!-- 2026-08-17 Document Template Shapes (map of pages + /api/templates + templates tool):
