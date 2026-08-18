@@ -128,6 +128,12 @@ const LARGE_ROW_TABLES = new Set<string>([
   // email_drafts has the same body_html shape — pre-emptively guard
   // it so the next sync doesn't repeat the OOM on a different table.
   "email_drafts",
+  // Session/document aggregates store large JSON content blobs. The
+  // general-pool buffered path hit statement_timeout (57014 →
+  // QUERY_CONTRACT_FAILED) on Live brain export at ~10s while reading
+  // full rows with LIMIT. Dedicated streaming cursor disables that
+  // ceiling and bounds memory per FETCH.
+  "document_store_documents",
 ]);
 
 // FETCH window for the streaming-cursor path. Small enough that a single
