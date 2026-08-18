@@ -1,7 +1,8 @@
 const DEFAULT_META_BUNDLE_ID = 'com.oniops.firstglasses';
 const DEFAULT_META_URL_SCHEME = 'agentglasses';
 const DEFAULT_META_UNIVERSAL_LINK_HOST = 'raymondkallmeyer.com';
-const IOS_DEPLOYMENT_TARGET = '16.0';
+// SDK 57 expo-build-properties floor is 16.4+ (Spec: take Expo's floor when higher).
+const IOS_DEPLOYMENT_TARGET = '16.4';
 
 function envFlag(name, defaultValue) {
   const value = process.env[name];
