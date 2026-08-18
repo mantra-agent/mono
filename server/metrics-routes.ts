@@ -8,6 +8,7 @@ import {
   metricsStorage,
   queryMetric,
   stampPlatformOwnerOnProductMetrics,
+  ensureProductCatalogDefinitions,
 } from "./metrics/core-engine";
 import {
   kpiCreateSchema,
@@ -106,6 +107,7 @@ export function registerMetricsRoutes(app: Express): void {
         if (principal) {
           await Promise.all([
             ensureEngagementMetrics(principal).catch(() => undefined),
+            ensureProductCatalogDefinitions().catch(() => undefined),
             stampPlatformOwnerOnProductMetrics().catch(() => undefined),
           ]);
         }

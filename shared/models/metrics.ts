@@ -39,9 +39,11 @@ const PRODUCT_CATALOG_SLUGS = new Set([
   "accounts",
   "registered-users",
   "shipped-prs",
+  "user-memory",
+  "achieved-goals",
 ]);
 
-const ENGAGEMENT_ADAPTER_KEYS = new Set(["tasks", "interactions", "wellness", "meetings"]);
+const ENGAGEMENT_ADAPTER_KEYS = new Set(["tasks", "interactions", "wellness", "meetings", "goals"]);
 
 export function metricAdapterKeyOf(metric: {
   slug: string;
@@ -55,6 +57,8 @@ export function metricAdapterKeyOf(metric: {
   if (metric.slug === "completed-tasks") return "tasks";
   if (metric.slug === "opportunity-interactions") return "interactions";
   if (metric.slug === "wellness-completions") return "wellness";
+  if (metric.slug === "personal-achieved-goals") return "goals";
+  if (metric.slug === "achieved-goals" && metric.ownerKind !== "platform") return "goals";
   if (metric.ownerKind === "health") return "oura";
   if (metric.ownerKind === "performance") return "performance";
   return null;
@@ -333,6 +337,8 @@ export interface Metric {
   createdAt: string;
   updatedAt: string;
   latestSample?: MetricSample | null;
+  /** Catalog overlay residual from queryMetric; omitted on warehouse-only reads. */
+  coverage?: MetricCoverage;
 }
 
 export interface Kpi {

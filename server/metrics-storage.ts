@@ -433,7 +433,7 @@ export const metricsStorage = {
       // Engine gate: never advertise Product without users:read or System without system:read.
       allowPlatform
         ? undefined
-        : sql`(${metrics.ownerKind} IS DISTINCT FROM 'platform' AND ${metrics.slug} NOT IN ('hours-used','active-users','current-users','new-users','accounts','registered-users','shipped-prs'))`,
+        : sql`(${metrics.ownerKind} IS DISTINCT FROM 'platform' AND ${metrics.slug} NOT IN ('hours-used','active-users','current-users','new-users','accounts','registered-users','shipped-prs','user-memory','achieved-goals'))`,
       allowSystem
         ? undefined
         : sql`(${metrics.ownerKind} IS DISTINCT FROM 'performance' AND COALESCE(${metrics.adapterConfig}->>'adapterKey', '') IS DISTINCT FROM 'performance')`,
@@ -450,7 +450,9 @@ export const metricsStorage = {
       if (!metricIsVisibleTo(principal, mapped)) continue;
       out.push(await overlayIdentityStockSample(mapped));
     }
-    return out;
+    if (!range) return out;
+    const { overlayCatalogSeries } = await import("./metrics/core-engine");
+    return overlayCatalogSeries(out, range);
   },
 
   async get(id: string): Promise<Metric> {
