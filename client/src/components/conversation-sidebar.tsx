@@ -75,7 +75,7 @@ export interface SessionGroup {
 
 const SESSION_SECTION_STATE_KEY = "mantra:sessions-menu:section-state";
 const SESSION_SEARCH_DEBOUNCE_MS = 250;
-/** Expanded System/Archive mount budget — search still covers the full set. */
+/** Session Menu mount budget: System/Archive expansion pages and Recent hard cap. */
 const SESSION_EXPANSION_PAGE_SIZE = 25;
 
 type SessionSectionState = Record<string, boolean>;
@@ -193,6 +193,14 @@ export function groupSessions(sessions: ChatSession[], opts?: { liveVoiceConvers
     } else {
       past.push(conv);
     }
+  }
+
+  // Recent is hot attention, not a full dump. Keep the newest
+  // SESSION_EXPANSION_PAGE_SIZE qualifiers; overflow joins Today so the menu
+  // stays bounded without hiding sessions (already sorted by last activity).
+  if (recentUrgent.length > SESSION_EXPANSION_PAGE_SIZE) {
+    today.push(...recentUrgent.splice(SESSION_EXPANSION_PAGE_SIZE));
+    today.sort(sortByUpdated);
   }
 
   const groups: SessionGroup[] = [];
