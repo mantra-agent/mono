@@ -128,6 +128,13 @@ const LARGE_ROW_TABLES = new Set<string>([
   // email_drafts has the same body_html shape — pre-emptively guard
   // it so the next sync doesn't repeat the OOM on a different table.
   "email_drafts",
+  // document_store_documents.content holds whole chat session blobs
+  // (and legacy transcript projections). The general-pool buffered
+  // LIMIT 5000 path hits the 10s statement_timeout (57014) and
+  // surfaces as BrainRoutes DOCUMENT_STORE_DOCUMENTS_FAILED. Stream
+  // on the dedicated brain-export client (statement_timeout=0) like
+  // the other large-row tables.
+  "document_store_documents",
 ]);
 
 // FETCH window for the streaming-cursor path. Small enough that a single
