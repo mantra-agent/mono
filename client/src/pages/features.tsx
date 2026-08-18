@@ -902,7 +902,7 @@ const FeatureRow = memo(function FeatureRow({
               {feature.summary}
             </button>
           )}
-          <div className="ml-auto flex shrink-0 items-center justify-end pr-7">
+          <div className="ml-auto flex shrink-0 items-center justify-end pr-14">
             {isSessionInProgress ? (
               <Button
                 type="button"
@@ -944,7 +944,7 @@ const FeatureRow = memo(function FeatureRow({
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
                     <span className="relative inline-flex h-3 w-3 items-center justify-center">
-                      {/* Search is leftover mute (same as Play); only Sparkles keeps CTA. */}
+                      {/* Search stays leftover mute; only Sparkles keeps CTA. */}
                       <Search className="h-3 w-3" />
                       {/* Tiny badge on glass corner — must not inherit button [&_svg]:size-*. */}
                       <Sparkles className="pointer-events-none absolute -right-px -top-px !h-1.5 !w-1.5 text-cta" strokeWidth={2.5} />
@@ -991,8 +991,9 @@ const FeatureRow = memo(function FeatureRow({
                   : availabilityState === "unknown"
                     ? "Recheck stage"
                     : produceContract.actionLabel;
-                const playClass =
-                  "h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground/70 hover:bg-accent hover:text-foreground [&_svg]:size-3";
+                const playClass = needsRecheck
+                  ? "h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground/70 hover:bg-accent hover:text-foreground [&_svg]:size-3"
+                  : "h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-cta hover:bg-accent hover:text-cta [&_svg]:size-3";
                 return (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1032,7 +1033,7 @@ const FeatureRow = memo(function FeatureRow({
                         ) : produceLaunchPending ? (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         ) : (
-                          <Play className="h-3 w-3" />
+                          <Play className="h-3 w-3 fill-current" />
                         )}
                       </Button>
                     </TooltipTrigger>
@@ -1042,6 +1043,19 @@ const FeatureRow = memo(function FeatureRow({
               })()
             )}
           </div>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            handleRowOpenChange(!rowExpanded);
+          }}
+          className="absolute right-8 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+          aria-label={rowExpanded ? `Collapse ${feature.summary}` : `Expand ${feature.summary}`}
+          aria-expanded={rowExpanded}
+          data-testid={`button-feature-expand-${feature.id}`}
+        >
+          <ChevronRight className={cn("h-3 w-3 transition-transform", rowExpanded && "rotate-90")} />
+        </button>
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <button
@@ -1120,7 +1134,7 @@ const FeatureRow = memo(function FeatureRow({
                 {produceLaunchPending ? (
                   <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                 ) : (
-                  <Play className="mr-2 h-3.5 w-3.5" />
+                  <Play className="mr-2 h-3.5 w-3.5 fill-current text-cta" />
                 )}
                 {produceContract.actionLabel}
               </DropdownMenuItem>
