@@ -1550,6 +1550,21 @@ export async function deleteZombieSkills(): Promise<void> {
     log.debug(`Retired autonomy predecessor cleanup v13 complete: ${countV13} changed`);
   }
 
+  const deletedV14 = await getSetting<boolean>("retired_council_skills_deleted_v14");
+  if (!deletedV14) {
+    const retiredCouncilSkills = ["council", "advocate", "council-advocate"];
+    let countV14 = 0;
+    for (const name of retiredCouncilSkills) {
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
+      if (existing) {
+        await db.delete(skills).where(eq(skills.id, existing.id));
+        log.debug(`Deleted retired council skill "${name}" id=${existing.id}`);
+        countV14++;
+      }
+    }
+    await setSetting("retired_council_skills_deleted_v14", true);
+    log.debug(`Retired council skill cleanup v14 complete: ${countV14} deleted`);
+  }
 
   // Delete any skill with an empty name (sleep ghost)
   const emptyNameRows = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "")));

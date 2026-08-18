@@ -20,7 +20,7 @@ export interface SpawnRecord {
 export interface SpawnChildSessionOptions {
   /**
    * Identifier of the skill/model to invoke for the child session. This is
-   * the "model" of behavior the child runs (e.g. a skill ID like "council").
+   * the "model" of behavior the child runs (e.g. a skill ID).
    * `skillId` is accepted as a backwards-compatible alias.
    */
   model?: string;
@@ -32,22 +32,18 @@ export interface SpawnChildSessionOptions {
   waitForCompletion?: boolean;
   /**
    * Optional explicit model identifier (e.g. "anthropic/claude-opus-4-6").
-   * When set, the runner will pin the agent executor to this model instead
-   * of routing by the skill's activity tier. Used by Council to fan a
-   * single skill ("advocate") into per-provider frontier-tier runs.
+   * When set, the runner pins the agent executor to this model instead of
+   * routing by the skill's activity tier.
    */
   modelOverride?: string;
   /**
    * Optional override for the per-call `session_key` written to `api_calls`
    * by `cost-tracker`. Defaults to `auto:${skillId}` inside the runner.
-   * Used by Council to scope cumulative cost/token aggregation per run.
    */
   sessionKeyOverride?: string;
   /**
    * Optional human-readable title for the spawned child session. Forwarded
    * to the runner which uses it in place of the skill's default label.
-   * Used by Council to encode per-round role context (e.g. "Advocate A — Round 2")
-   * directly in the sidebar.
    */
   titleOverride?: string;
   /** Explicit persona applied before child context assembly and first inference. */
