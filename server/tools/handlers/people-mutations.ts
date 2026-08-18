@@ -109,6 +109,21 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
       { type: "email", label: "primary", value: email },
     ];
   }
+  if (typeof args.slackUserId === "string" && args.slackUserId.trim()) {
+    const { normalizePersonSlackUserId } = await import("../../people-storage");
+    let slack: string;
+    try {
+      slack = normalizePersonSlackUserId(args.slackUserId);
+    } catch {
+      return { result: "slackUserId must look like U…", error: true };
+    }
+    const existing = await peopleStorage.getPerson(resolved.id);
+    if (!existing) return { result: `Person not found: ${resolved.id}`, error: true };
+    updates.socialProfiles = {
+      ...(existing.socialProfiles || {}),
+      slack,
+    };
+  }
 
   const companyIdValue = typeof args.companyId === "string" ? args.companyId.trim() : "";
 
@@ -128,7 +143,7 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
   }
 
   if (!requestedNewName && Object.keys(updates).length === 0 && !companyIdValue) {
-    return { result: "No updatable fields provided. Supported: newName (with expectedCurrentName), email, quickSummary, cabinetLevel, companyId, company, role, relation, professionalRelations, familiarity, trust, tags.", error: true };
+    return { result: "No updatable fields provided. Supported: newName (with expectedCurrentName), email, slackUserId, quickSummary, cabinetLevel, companyId, company, role, relation, professionalRelations, familiarity, trust, tags.", error: true };
   }
 
   let renamed = false;
@@ -163,7 +178,7 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
   const changed = [
     ...(renamed ? [`name (was "${expectedCurrentName}", preserved as nickname)`] : []),
     ...(companyIdValue ? ["companyId"] : []),
-    ...Object.keys(updates).map(field => field === "contactInfo" ? "email" : field),
+    ...Object.keys(updates).map(field => field === "contactInfo" ? "email" : field === "socialProfiles" ? "slackUserId" : field),
   ].join(", ");
   const ignoredNote = ignoredTags.length
     ? `\n\nIgnored redundant tags: ${ignoredTags.map(t => `${t.tag} (${t.reason})`).join(", ")}`
@@ -196,6 +211,15 @@ async function handlePeopleCreate(args: Record<string, any>): Promise<ToolHandle
     Array.isArray(args.tags) ? args.tags.filter((t: unknown): t is string => typeof t === "string") : [],
     { companyName: args.company, role: args.role },
   );
+  let slackUserId: string | undefined;
+  if (typeof args.slackUserId === "string" && args.slackUserId.trim()) {
+    const { normalizePersonSlackUserId } = await import("../../people-storage");
+    try {
+      slackUserId = normalizePersonSlackUserId(args.slackUserId);
+    } catch {
+      return { result: "slackUserId must look like U…", error: true };
+    }
+  }
   const person = await peopleStorage.createPerson({
     name,
     nicknames: [],
@@ -209,7 +233,9 @@ async function handlePeopleCreate(args: Record<string, any>): Promise<ToolHandle
     familiarity: args.familiarity || undefined,
     trust: args.trust || undefined,
     dailyContact: args.dailyContact || undefined,
-    socialProfiles: {},
+    socialProfiles: slackUserId
+      ? { slack: slackUserId }
+      : {},
     contactInfo,
     importantDates: [],
     notes: [],
