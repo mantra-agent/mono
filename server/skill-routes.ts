@@ -159,6 +159,11 @@ export function registerSkillRoutes(app: Express): void {
       const { requireCurrentUserPrincipal } = await import("./principal-context");
       const { enqueueSkillExecutionRuntimeRun } = await import("./runtime/proof-path-handlers");
       const principal = requireCurrentUserPrincipal();
+      const { skillRequiresInstanceManager } = await import("./skill-defaults");
+      if (skillRequiresInstanceManager(skill.name)) {
+        const { requirePinnedInstanceManager } = await import("./user-portrait");
+        await requirePinnedInstanceManager(principal);
+      }
       const launchKey = `ui/${skill.id}/${crypto.randomUUID()}`;
       const launched = await enqueueSkillExecutionRuntimeRun(principal, {
         skillId: skill.id,
@@ -168,8 +173,9 @@ export function registerSkillRoutes(app: Express): void {
       log.info("skill.runtime.accepted", { skillId: skill.id, skillName: skill.name, runtimeRunId: launched.run.id, disposition: launched.disposition });
       res.status(202).json({ accepted: true, skillId: skill.id, skillName: skill.name, runtimeRunId: launched.run.id, status: launched.run.phase });
     } catch (err: any) {
+      const status = err?.status === 403 ? 403 : 500;
       log.error(`POST /api/skills/${req.params.id}/run error:`, err.message);
-      res.status(500).json({ error: err.message || "Failed to run skill" });
+      res.status(status).json({ error: err.message || "Failed to run skill" });
     }
   });
 

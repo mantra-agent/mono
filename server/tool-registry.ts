@@ -947,13 +947,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     sideEffectDefault: 1,
     sideEffectActions: {
       list_library_pages: 0, get_library_page: 0, search_library_pages: 0, search: 0,
-      browse_tree: 0, tree: 0, list_vaults: 0, list_notes: 0, get_note: 0,
+      browse_tree: 0, tree: 0, list_vaults: 0, find_user_portrait: 0, list_notes: 0, get_note: 0,
     },
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list_library_pages", "get_library_page", "create_library_page", "update_library_page", "edit_library_page", "dismiss_library_page", "delete_library_page", "search_library_pages", "search", "browse_tree", "tree", "list_vaults", "link_pages", "annotate"], description: "Action" },
+        action: { type: "string", enum: ["list_library_pages", "get_library_page", "create_library_page", "update_library_page", "edit_library_page", "dismiss_library_page", "delete_library_page", "search_library_pages", "search", "browse_tree", "tree", "list_vaults", "find_user_portrait", "ensure_user_portrait", "link_pages", "annotate"], description: "Action" },
         id: { type: "string", description: "Page ID/slug" },
         title: { type: "string", description: "Title (create/update)" },
         plainTextContent: { type: "string", description: "Markdown content for pages (automatically converted to rich TipTap JSON and stored as the single source of truth)" },

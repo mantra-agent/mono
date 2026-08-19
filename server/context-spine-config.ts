@@ -213,6 +213,17 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     rootOwned: true,
     defaultIncluded: true,
   },
+  {
+    id: "world_model.people.partner.portrait",
+    title: "Portrait",
+    parentId: "world_model.people.partner",
+    sourceType: "dynamic",
+    freshnessPolicy: "per-session",
+    priority: 1.5,
+    includedIn: ["full", "world"],
+    rootOwned: true,
+    defaultIncluded: true,
+  },
 
   {
     id: "world_model.people.partner.goals",
