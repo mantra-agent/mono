@@ -7,7 +7,12 @@ import { getVisibleProduct, getWritableProduct } from "./platforms/platform-acce
 import { getSessionsByArtifact } from "./session-artifacts";
 import { chatFileStorage } from "./chat-file-storage";
 import { eventBus } from "./event-bus";
-import { FEATURE_STAGES, FEATURE_STATUSES, type FeatureStage, type FeatureStatus } from "@shared/feature-pipeline";
+import {
+  FEATURE_STAGES,
+  FEATURE_STATUSES,
+  isFeatureHistorySetback,
+  type FeatureAttentionProjection,
+} from "@shared/feature-pipeline";
 import {
   featureRoomDeclaresAvailability,
   projectFeatureAvailability,
@@ -47,6 +52,61 @@ async function assertProduct(id: number, writable: boolean) {
   const result = writable ? await getWritableProduct(id) : await getVisibleProduct(id);
   if (!result) throw Object.assign(new Error("Product not found or not visible"), { status: 404 });
   return result.product;
+}
+
+/**
+ * Project attention.setback from the newest feature_history row.
+ * One DISTINCT ON join — never N /history fetches. Omit the field when
+ * the latest transition is not a setback. Never parse historyNote.
+ */
+async function projectFeatureAttention<T extends Record<string, unknown>>(
+  rows: T[],
+): Promise<Array<T & { attention?: FeatureAttentionProjection }>> {
+  if (rows.length === 0) return rows;
+  const featureIds = rows
+    .map((row) => (typeof row.id === "string" ? row.id : ""))
+    .filter(Boolean);
+  if (featureIds.length === 0) return rows;
+
+  const result = await db.execute(sql`
+    SELECT DISTINCT ON (feature_id) feature_id, from_stage, to_stage, from_status, to_status
+    FROM feature_history
+    WHERE feature_id IN (${sql.join(featureIds.map((id) => sql`${id}`), sql`, `)})
+    ORDER BY feature_id, created_at DESC
+  `);
+
+  const setbackIds = new Set<string>();
+  for (const history of result.rows as Array<{
+    feature_id?: string;
+    from_stage?: string | null;
+    to_stage?: string | null;
+    from_status?: string | null;
+    to_status?: string | null;
+  }>) {
+    const id = typeof history.feature_id === "string" ? history.feature_id : "";
+    if (
+      id &&
+      isFeatureHistorySetback(
+        history.from_stage,
+        history.to_stage,
+        history.from_status,
+        history.to_status,
+      )
+    ) {
+      setbackIds.add(id);
+    }
+  }
+
+  return rows.map((row) => {
+    const id = typeof row.id === "string" ? row.id : "";
+    if (!id || !setbackIds.has(id)) return row;
+    return { ...row, attention: { state: "setback" as const } };
+  });
+}
+
+async function projectFeatureListRows<T extends Record<string, unknown>>(rows: T[]) {
+  const withAvailability = await projectFeatureAvailability(rows);
+  return projectFeatureAttention(withAvailability);
 }
 
 function historyNote(value: unknown, fallback: string): string {
@@ -102,7 +162,7 @@ export const featureStorage = {
     ].filter((condition): condition is Exclude<typeof condition, undefined> => condition !== undefined);
     const where = conditions.reduce<ReturnType<typeof sql>>((query, condition) => sql`${query} AND ${condition}`);
     const result = await db.execute(sql`SELECT f.*, p.name AS product_name FROM features f JOIN products p ON p.id = f.product_id WHERE ${where} ORDER BY f.stage, f.updated_at DESC LIMIT 500`);
-    return projectFeatureAvailability(result.rows as Record<string, unknown>[]);
+    return projectFeatureListRows(result.rows as Record<string, unknown>[]);
   },
   async get(id: string) {
     const rows = await this.list();
@@ -202,10 +262,9 @@ export const featureStorage = {
       });
     }
     if (row) publishFeaturesChanged("updated", id);
-    // Return projected availability so get/update consumers see the Play gate.
+    // Return projected availability + attention so get/update consumers see Play and setback.
     if (!row) return row;
-    if (!featureRoomDeclaresAvailability(String((row as any).stage))) return row;
-    const [projected] = await projectFeatureAvailability([row as Record<string, unknown>]);
+    const [projected] = await projectFeatureListRows([row as Record<string, unknown>]);
     return projected ?? row;
   },
   /**
@@ -251,7 +310,7 @@ export const featureStorage = {
       }
     }
 
-    const [projected] = await projectFeatureAvailability([current as Record<string, unknown>]);
+    const [projected] = await projectFeatureListRows([current as Record<string, unknown>]);
     if (projected) publishFeaturesChanged("updated", id);
     return projected ?? current;
   },
