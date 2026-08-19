@@ -2182,37 +2182,16 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     );
     const artifactsByMetadataId = await buildMeetingArtifactMap(metadataList.map(m => m.id));
 
-    // Ordinary focus blocks stay limited to today. The next Responsive focus block
-    // remains visible wherever it falls in the look-ahead window because it owns the
-    // relationship-outreach queue in Simple.
-    const upcomingResponsiveFocus = relevant
-      .filter(event => {
-        const meta = metaByKey.get(`${event.id}::${event.accountId}::${event.calendarId}`);
-        const isFocus = meta?.eventType === "focus_block" || classifyEventByTitle(event.summary) === "focus_block";
-        const start = event.start.dateTime ? new Date(event.start.dateTime).getTime() : Number.NaN;
-        return isFocus && meta?.capacityType === "responsive" && Number.isFinite(start) && start >= Date.now();
-      })
-      .sort((a, b) => new Date(a.start.dateTime!).getTime() - new Date(b.start.dateTime!).getTime())[0];
-
+    // Ordinary focus blocks stay limited to today.
     const visible = relevant.filter(event => {
       const meta = metaByKey.get(`${event.id}::${event.accountId}::${event.calendarId}`);
       const isFocus = meta?.eventType === "focus_block" || classifyEventByTitle(event.summary) === "focus_block";
       if (!isFocus) return true;
-      if (event === upcomingResponsiveFocus) return true;
       const startDate = (event.start.dateTime ?? event.start.date ?? "").slice(0, 10);
       return startDate === today;
     });
 
     const eventsToSurface = visible.slice(0, 15);
-    if (upcomingResponsiveFocus && !eventsToSurface.includes(upcomingResponsiveFocus)) {
-      if (eventsToSurface.length >= 15) eventsToSurface.pop();
-      eventsToSurface.push(upcomingResponsiveFocus);
-      eventsToSurface.sort((a, b) => {
-        const aStart = new Date(a.start.dateTime ?? a.start.date ?? 0).getTime();
-        const bStart = new Date(b.start.dateTime ?? b.start.date ?? 0).getTime();
-        return aStart - bStart;
-      });
-    }
 
     eventsToSurface.forEach((event, index) => {
         const section = meetingSection(event, today, tomorrow, weekEnd);
@@ -2261,22 +2240,6 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   const milestoneItemsByKey = new Map<string, SimpleFeedItem>();
   const projectById = new Map(activeProjects.map(project => [project.id, project] as const));
   const nestedItemIds = new Set<string>();
-
-  const nextResponsiveFocus = items
-    .filter(item => item.payload?.kind === "meeting"
-      && item.payload?.eventType === "focus_block"
-      && item.payload?.capacityType === "responsive"
-      && typeof item.actionTime === "string"
-      && new Date(item.actionTime).getTime() >= Date.now())
-    .sort((a, b) => new Date(a.actionTime!).getTime() - new Date(b.actionTime!).getTime())[0];
-
-  if (nextResponsiveFocus) {
-    for (const item of items) {
-      if (item.section !== "inbox" || item.payload?.kind !== "relationship_outreach") continue;
-      nestChild(nextResponsiveFocus, { ...item, section: nextResponsiveFocus.section, time: undefined });
-      nestedItemIds.add(item.id);
-    }
-  }
 
   for (const item of items) {
     if (item.payload?.kind === "goal") {
