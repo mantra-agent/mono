@@ -21,6 +21,8 @@ type AuthErrorCode =
   | "AUTH_USER_SESSIONS_LIST_FAILED"
   | "AUTH_SESSION_DESTROY_AFTER_REVOKE_FAILED"
   | "AUTH_USER_SESSION_REVOKE_FAILED"
+  | "AUTH_RESET_REQUEST_FAILED"
+  | "AUTH_RESET_FAILED"
   | "AUTH_UNCLASSIFIED";
 
 /** Upper-snake machine code for error aggregates (mirrors shared/error-callsite). */
@@ -104,6 +106,8 @@ import { getClientPresenceSnapshot } from "./client-presence";
 import { normalizeEmailAddress } from "./email-normalization";
 import { db, acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, runWithDatabaseTransaction } from "./db";
 import { claimInvitedSubjectInTransaction } from "./invited-subject-service";
+import { sendNotification } from "./notifications";
+import { getRuntimePublicBaseUrl } from "./runtime-identity";
 
 const setupSchema = z.object({
   email: z.string().email(),
@@ -1276,25 +1280,65 @@ export function setupAuth(app: Express) {
   app.post(
     "/api/auth/reset-request",
     requireAuth,
-    requirePermission("users:write"),
+    enforceAuthBudget("reset-request", 5),
     async (req: Request, res: Response) => {
       try {
-        const { email } = req.body;
-        if (!email) return res.status(400).json({ error: "Email is required" });
-
-        const user = await storage.getUserByEmail(email);
-        if (!user) return res.status(404).json({ error: "User not found" });
+        const principal = getPrincipal(req);
+        if (!principal?.userId) {
+          return res.status(401).json({ error: "User session required" });
+        }
+        const user = await storage.getUser(principal.userId);
+        if (!user?.email) {
+          return res.status(400).json({ error: "No email is on file for this account" });
+        }
 
         const token = crypto.randomBytes(32).toString("hex");
-        const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
-
+        const expires = new Date(Date.now() + 60 * 60 * 1000);
         await storage.updateUser(user.id, {
           resetToken: capabilityDigest(token),
           resetExpires: expires,
         });
-        res.json({ token, email, expiresAt: expires.toISOString() });
-      } catch {
-        res.status(500).json({ error: "Failed to create reset link" });
+
+        const publicUrl = await getRuntimePublicBaseUrl();
+        if (!publicUrl) {
+          await storage.updateUser(user.id, { resetToken: null, resetExpires: null });
+          return res.status(500).json({ error: "Reset email could not be sent" });
+        }
+
+        const resetUrl = `${publicUrl}/reset/${token}`;
+        const result = await sendNotification({
+          channel: "email",
+          to: user.email,
+          subject: "Reset your Mantra password",
+          body: [
+            "Set a new password with this link:",
+            resetUrl,
+            "",
+            "This link expires in one hour and can be used once.",
+            "If you did not ask for this, you can ignore the email.",
+          ].join("\n"),
+          html: `<div style="font-family:Inter,Arial,sans-serif;background:#0a0a0a;color:#f5f5f5;padding:40px 24px"><div style="max-width:560px;margin:0 auto"><p style="font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#a3a3a3">Mantra</p><h1 style="font-size:32px;line-height:1.15;margin:28px 0 18px">Set a new password</h1><p style="font-size:17px;line-height:1.6;color:#d4d4d4">Use the link below. It expires in one hour and works once.</p><p style="margin:28px 0"><a href="${resetUrl}" style="color:#1A9BDB">Reset password</a></p><p style="font-size:15px;line-height:1.6;color:#a3a3a3">If you did not ask for this, ignore the email.</p></div></div>`,
+          metadata: { source: "password-reset", userId: user.id },
+        });
+
+        if (!result.ok) {
+          await storage.updateUser(user.id, { resetToken: null, resetExpires: null });
+          log.error(
+            "Reset password email was not accepted",
+            attributableAuthError(result.error ?? "send failed", "AUTH_RESET_REQUEST_FAILED"),
+            { status: result.status },
+          );
+          return res.status(500).json({ error: "Reset email could not be sent" });
+        }
+
+        log.info("Reset password email accepted", { userId: user.id });
+        res.json({ ok: true });
+      } catch (error) {
+        log.error(
+          "Reset password request failed",
+          attributableAuthError(error, "AUTH_RESET_REQUEST_FAILED"),
+        );
+        res.status(500).json({ error: "Reset email could not be sent" });
       }
     },
   );
@@ -1305,7 +1349,7 @@ export function setupAuth(app: Express) {
       if (!user || !user.resetExpires || user.resetExpires < new Date()) {
         return res.status(404).json({ error: "Invalid or expired reset link" });
       }
-      res.json({ email: user.email });
+      res.json({ ok: true });
     } catch {
       res.status(500).json({ error: "Failed to verify reset token" });
     }
@@ -1337,7 +1381,11 @@ export function setupAuth(app: Express) {
       await pool.query(`DELETE FROM "session" WHERE sess->>'userId' = $1`, [user.id]);
 
       res.json({ ok: true });
-    } catch {
+    } catch (error) {
+      log.error(
+        "Password reset failed",
+        attributableAuthError(error, "AUTH_RESET_FAILED"),
+      );
       res.status(500).json({ error: "Password reset failed" });
     }
   });
@@ -2163,7 +2211,7 @@ export async function requireAuth(
 
 function adminPermissionForRequest(req: Request): string {
   const write = req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS";
-  if (req.path.startsWith("/api/auth/users") || req.path.startsWith("/api/auth/invite") || req.path.startsWith("/api/auth/reset-request")) {
+  if (req.path.startsWith("/api/auth/users") || req.path.startsWith("/api/auth/invite")) {
     return write ? "users:write" : "users:read";
   }
   if (

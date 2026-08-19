@@ -6,6 +6,7 @@ import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -79,6 +80,17 @@ export default function AccountPage() {
       description: error.message,
       variant: "destructive",
     }),
+  });
+
+  const requestReset = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/auth/reset-request", {});
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Reset email sent" });
+    },
+    onError: () => toast({ title: "Could not send reset email", variant: "destructive" }),
   });
 
   const changePassword = useMutation({
@@ -175,6 +187,16 @@ export default function AccountPage() {
           showEmpty
           mobileLayout="inline"
           testId="account-email-row"
+          menuVisibility="always"
+          menuContent={(
+            <DropdownMenuItem
+              disabled={requestReset.isPending}
+              onSelect={() => requestReset.mutate()}
+              data-testid="menu-reset-password"
+            >
+              {requestReset.isPending ? "Sending…" : "Reset Password"}
+            </DropdownMenuItem>
+          )}
         >
           <div className="flex min-w-0 items-center justify-end gap-1">
             <Input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} data-testid="input-email" />
