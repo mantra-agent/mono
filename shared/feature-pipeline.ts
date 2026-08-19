@@ -171,14 +171,14 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
       actionLabel: "Frame",
       persona: "Visionary",
       purpose:
-        "Frame why this Feature exists. Name the failed or missing invariant, who it is for, and what is out of scope. Do not write the full specification — that is Spec's produce job.",
+        "Frame why this Feature exists. Write Problem, Solution, and External. Do not write the full specification — that is Spec's produce job.",
       entryCriteria: [
         "Start from the Feature context in this session. Do not widen the request.",
-        "Inspect only enough product/runtime signal to name the invariant and the boundary of the Feature.",
+        "Inspect only enough product/runtime signal to write Problem, Solution, and External.",
         "Ask clarifying questions only when a consequential choice remains.",
       ],
       evidenceRequirements: [
-        "Write Feature `description` with: failed/missing invariant, why this Feature exists, who it is for, and explicit out of scope.",
+        "Write Feature `description` as markdown with headings **Problem**, **Solution**, **External**. Problem is who is stuck and what is broken, then inspected evidence. Solution is done when these concrete conditions hold — not Scope and not a later Spec. External is what the outside world touches and what they see or receive.",
         "Do not create or link a Library spec page in this job.",
       ],
       exitCriteria: [
@@ -207,8 +207,8 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
       purpose:
         "Write the smallest coherent specification for this Feature from the approved frame. Name every governing standard the spec must satisfy.",
       entryCriteria: [
-        "Load the Feature description frame and stay inside it.",
-        "Inspect the repository and runtime only as needed to identify the failed invariant, the smallest coherent repair, and the named governing standards.",
+        "Load the Feature description frame and stay inside Problem / Solution / External; deepen those three.",
+        "Inspect the repository and runtime only as needed to write Scope / Out-of-scope / Internal / Acceptance Criteria against the resolved Spec shape, and to name the governing standards.",
         "Ask clarifying questions only when a consequential choice remains.",
       ],
       evidenceRequirements: [
