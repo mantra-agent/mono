@@ -1505,9 +1505,11 @@ function itemFromProject(project: Project, section: SimpleSection, index: number
 }
 
 // ─── Session review Inbox ───
-// Mirrors Session Menu REVIEW: undismissed error/warning, unanswered question,
-// plan needs_review, and pending session-linked email drafts. One Home row per
-// session with the highest-urgency review kind for navigation.
+// Mirrors Session Menu REVIEW: undismissed error/warning (system:read only),
+// unanswered question, plan needs_review, and pending session-linked email
+// drafts. One Home row per session with the highest-urgency review kind for
+// navigation. System-notice error/warning is an operator diagnostic — same
+// gate as server/integrations/chat/routes.ts session list.
 
 const SESSION_REVIEW_INBOX_LIMIT = 25;
 const SESSION_REVIEW_PLAN_CHUNK = 100;
@@ -1694,6 +1696,10 @@ async function collectSessionReviewInboxItems(timezone: string): Promise<SimpleF
   const principal = requireCurrentPrincipal();
   if (principal.actorType !== "user") return [];
 
+  // Match Session Menu: system-notice error/warning is operator diagnostic only.
+  // Ordinary users still see question / plan / email review without this perm.
+  const canSeeSystemAttention = principal.permissions.includes("system:read");
+
   const sessions = await chatFileStorage.getAllSessions();
   const candidates = sessions.filter((session) => !session.archivedAt);
   if (candidates.length === 0) return [];
@@ -1718,11 +1724,13 @@ async function collectSessionReviewInboxItems(timezone: string): Promise<SimpleF
     // Errors/warnings follow two clocks, mirroring the reported-issue INBOX:
     // they surface only within 48h, and anything still sitting past 7d is
     // durably dismissed so a later session update cannot resurrect it.
+    // Projection requires system:read — same as Session Menu REVIEW.
     const severity =
-      session.errorSeverity === "error"
+      canSeeSystemAttention && session.errorSeverity === "error"
         ? "error"
-        : session.errorSeverity === "warning" ||
-            (session.errorSeverity as string | null | undefined) === "warn"
+        : canSeeSystemAttention &&
+            (session.errorSeverity === "warning" ||
+              (session.errorSeverity as string | null | undefined) === "warn")
           ? "warning"
           : null;
     if (severity) {
@@ -1734,6 +1742,7 @@ async function collectSessionReviewInboxItems(timezone: string): Promise<SimpleF
       ) {
         // Durable clear of the owning system notices; never touches questions,
         // plans, or drafts. Fail-soft so one bad row cannot break the feed.
+        // Only operators reach this branch (severity requires system:read).
         try {
           await chatFileStorage.dismissAllSystemNotices(session.id);
           autoClears += 1;
