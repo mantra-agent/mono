@@ -445,6 +445,11 @@ export function resolveFeaturePipelineJob(status: FeatureStatus): FeaturePipelin
   return status === "needs_review" ? "review" : "produce";
 }
 
+/** Fast Forward walks Play/Review only. Maintain and Deprecate are not eligible. */
+export function featureAllowsFastForward(stage: FeatureStage): boolean {
+  return stage !== "maintain" && stage !== "deprecate";
+}
+
 export function getFeatureJobContract(
   stage: FeatureStage,
   job: FeaturePipelineJob,
