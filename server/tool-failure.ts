@@ -252,7 +252,7 @@ export function toolFailureFromError(err: unknown): ToolFailure | null {
     return permissionFailure("integration_auth_failed", message || undefined);
   }
 
-  // Sentry issue-search syntax rejects (Boolean OR/AND, parse errors) are
+  // Sentry issue-search syntax rejects and missing resources are
   // caller-correctable input — never integration auth or internal defects.
   if (e.name === "SentryApiError") {
     const code = (err as { code?: unknown }).code;
@@ -263,6 +263,12 @@ export function toolFailureFromError(err: unknown): ToolFailure | null {
         : details == null
           ? ""
           : JSON.stringify(details);
+    if (
+      code === "resource_not_found"
+      || (typeof e.status === "number" && e.status === 404)
+    ) {
+      return inputFailure("system_input_invalid", "sentry_resource_not_found");
+    }
     if (
       code === "invalid_search_query"
       || (typeof e.status === "number"
