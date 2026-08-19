@@ -5,7 +5,7 @@ import {
   documentTemplates,
   skillTemplateBindings,
 } from "@shared/models/document-templates";
-import { libraryPages } from "@shared/models/info";
+import { libraryPageTrash, libraryPages } from "@shared/models/info";
 import { skills } from "@shared/models/skills";
 import { db } from "./db";
 import { createLogger } from "./log";
@@ -240,25 +240,17 @@ async function ensureShapePage(seed: (typeof SHAPE_SEEDS)[number]): Promise<void
       .select({
         id: libraryPages.id,
         scope: libraryPages.scope,
+        slug: libraryPages.slug,
+        status: libraryPages.status,
         plainTextContent: libraryPages.plainTextContent,
+        trashPageId: libraryPageTrash.pageId,
       })
       .from(libraryPages)
+      .leftJoin(libraryPageTrash, eq(libraryPageTrash.pageId, libraryPages.id))
       .where(eq(libraryPages.id, seed.pageId))
       .limit(1)) ?? [];
-  const [bySlug] = existing
-    ? []
-    : await db
-        .select({
-          id: libraryPages.id,
-          scope: libraryPages.scope,
-          plainTextContent: libraryPages.plainTextContent,
-        })
-        .from(libraryPages)
-        .where(eq(libraryPages.slug, seed.pageId))
-        .limit(1);
-  const row = existing ?? bySlug;
 
-  if (!row) {
+  if (!existing) {
     await db.insert(libraryPages).values({
       id: seed.pageId,
       title: seed.title,
@@ -274,10 +266,34 @@ async function ensureShapePage(seed: (typeof SHAPE_SEEDS)[number]): Promise<void
     return;
   }
 
+  if (existing.trashPageId) {
+    await db.delete(libraryPageTrash).where(eq(libraryPageTrash.pageId, existing.id));
+    log.info("restored official shape page from trash", { pageId: seed.pageId });
+  }
+
+  if (existing.scope !== "global" || existing.slug !== seed.pageId || existing.status !== "active") {
+    await db
+      .update(libraryPages)
+      .set({
+        scope: "global",
+        slug: seed.pageId,
+        status: "active",
+        ownerUserId: null,
+        accountId: null,
+        vaultId: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(libraryPages.id, existing.id));
+    log.info("healed official shape page identity", {
+      pageId: seed.pageId,
+      priorScope: existing.scope,
+    });
+  }
+
   // Official Spec and recut Weekly Summary vessels may converge. Daily/Brief/Stand-up
-  // stay insert-only. Never touch account overlays or non-global pages.
-  if ((seed.templateId !== "spec" && seed.templateId !== "weekly-summary") || row.scope !== "global") return;
-  if (normalizeShapeMarkdown(row.plainTextContent) === nextPlain) return;
+  // stay insert-only for body text. Identity (live + global + canonical id) is not optional.
+  if (seed.templateId !== "spec" && seed.templateId !== "weekly-summary") return;
+  if (normalizeShapeMarkdown(existing.plainTextContent) === nextPlain) return;
 
   await db
     .update(libraryPages)
@@ -289,17 +305,26 @@ async function ensureShapePage(seed: (typeof SHAPE_SEEDS)[number]): Promise<void
       status: "active",
       updatedAt: new Date(),
     })
-    .where(eq(libraryPages.id, row.id));
-  log.info("converged official spec shape page", { pageId: row.id });
+    .where(eq(libraryPages.id, existing.id));
+  log.info("converged official spec shape page", { pageId: existing.id });
 }
 
 async function ensureGlobalTemplate(seed: (typeof SHAPE_SEEDS)[number]): Promise<void> {
   const [existing] = await db
-    .select({ id: documentTemplates.id })
+    .select({ id: documentTemplates.id, pageId: documentTemplates.pageId })
     .from(documentTemplates)
     .where(and(eq(documentTemplates.id, seed.templateId), eq(documentTemplates.scope, "global")))
     .limit(1);
-  if (existing) return;
+  if (existing) {
+    if (existing.pageId !== seed.pageId) {
+      await db
+        .update(documentTemplates)
+        .set({ pageId: seed.pageId, updatedAt: new Date() })
+        .where(and(eq(documentTemplates.id, seed.templateId), eq(documentTemplates.scope, "global")));
+      log.info("retargeted global template pageId", { templateId: seed.templateId, pageId: seed.pageId });
+    }
+    return;
+  }
 
   await db.insert(documentTemplates).values({
     id: seed.templateId,
@@ -357,7 +382,7 @@ async function unbindRetiredSkillKey(skillName: string, key: "spec" | "daily" | 
   }
 }
 
-/** Day-one shape pages, global map rows, and skill binds. Spec and recut weekly-summary may converge; Daily/Brief/Stand-up stay insert-only. Never overwrites account overlays. */
+/** Day-one shape pages, global map rows, and skill binds. Identity (live + global + canonical id) heals on every boot. Spec and recut weekly-summary may also converge body text. Never overwrites account overlays. */
 export async function ensureDocumentTemplateSeeds(): Promise<void> {
   for (const seed of SHAPE_SEEDS) {
     await ensureShapePage(seed);

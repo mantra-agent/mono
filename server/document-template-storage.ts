@@ -17,6 +17,7 @@ import type { Principal } from "./principal";
 import { ADVISORY_LOCK_NS, acquireAdvisoryTransactionLock, db } from "./db";
 import { createLogger } from "./log";
 import { requireCurrentUserPrincipal } from "./principal-context";
+import { libraryPageIsLive } from "./library-trash";
 import {
   assertVisible,
   combineWithVisibleScope,
@@ -120,7 +121,13 @@ async function assertPageVisible(
       vaultId: libraryPages.vaultId,
     })
     .from(libraryPages)
-    .where(combineWithVisibleScope(principal, libraryScopeColumns, eq(libraryPages.id, pageId)))
+    .where(
+      combineWithVisibleScope(
+        principal,
+        libraryScopeColumns,
+        and(eq(libraryPages.id, pageId), libraryPageIsLive()),
+      ),
+    )
     .limit(1);
   if (!page) throw new Error("Library page not found or not visible");
   assertVisible(principal, page, "Library page");
