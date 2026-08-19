@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
-import { SIMPLE_TEXT_FRAME_CLASS } from "@/components/home/simple-text-frame";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
@@ -33,7 +32,7 @@ export interface QuestionRenderProvenance {
 }
 
 const ANSWER_NOTE_TEXTAREA_CLASS =
-  "min-h-0 w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-xs leading-relaxed md:text-xs text-white shadow-none focus-visible:ring-0 focus-visible:ring-offset-0";
+  "min-h-0 w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-xs leading-relaxed md:text-xs text-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0";
 
 export function questionPromptFromToolCall(input: {
   toolName?: string;
@@ -56,7 +55,7 @@ function responseLabels(prompt: QuestionWidgetPrompt, response: QuestionResponse
   return labels;
 }
 
-function ExpandableDetailRow({
+function OptionRow({
   checked,
   disabled,
   label,
@@ -64,7 +63,6 @@ function ExpandableDetailRow({
   testId,
   onSelect,
   badge,
-  emphasized,
 }: {
   checked: boolean;
   disabled: boolean;
@@ -73,71 +71,50 @@ function ExpandableDetailRow({
   testId: string;
   onSelect: () => void;
   badge?: string;
-  emphasized?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const detailText = detail?.trim() || "";
-  const hasDetail = detailText.length > 0;
 
   return (
     <div
       className={cn(
         "rounded-sm transition-colors",
-        checked || emphasized ? "bg-accent/60" : "hover:bg-accent/40",
-        emphasized && "ring-1 ring-primary/30",
+        checked ? "bg-accent/40" : "hover:bg-accent/20",
         disabled && "opacity-60",
       )}
     >
-      <div className="flex w-full items-start gap-1">
-        {hasDetail ? (
-          <button
-            type="button"
-            aria-expanded={expanded}
-            aria-label={expanded ? `Collapse details for ${label}` : `Expand details for ${label}`}
-            disabled={disabled}
-            onClick={() => setExpanded((value) => !value)}
-            className="mt-1.5 shrink-0 rounded-sm p-0.5 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed"
-            data-testid={`${testId}-expand`}
-          >
-            <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-90")} />
-          </button>
-        ) : (
-          <span className="mt-1.5 w-4 shrink-0" aria-hidden />
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={onSelect}
+        className={cn(
+          "flex min-w-0 w-full items-start gap-2.5 px-2 py-1.5 text-left",
+          disabled && "cursor-not-allowed",
         )}
-        <button
-          type="button"
-          role="checkbox"
-          aria-checked={checked}
-          disabled={disabled}
-          onClick={onSelect}
-          className={cn(
-            "flex min-w-0 flex-1 items-start gap-2.5 px-1 py-1.5 pr-2 text-left",
-            disabled && "cursor-not-allowed",
-          )}
-          data-testid={testId}
-        >
-          <SimpleCheckCircle checked={checked} interactive={false} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="block min-w-0 flex-1 text-sm text-foreground">{label}</span>
-              {badge ? (
-                <Badge
-                  variant="secondary"
-                  className="shrink-0 text-[10px] font-medium tabular-nums"
-                  data-testid={`${testId}-confidence`}
-                >
-                  {badge}
-                </Badge>
-              ) : null}
-            </span>
+        data-testid={testId}
+      >
+        <SimpleCheckCircle checked={checked} interactive={false} className="mt-0.5 shrink-0" />
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="block min-w-0 flex-1 text-sm text-foreground">{label}</span>
+            {badge ? (
+              <Badge
+                variant="secondary"
+                className="shrink-0 text-[10px] font-medium tabular-nums"
+                data-testid={`${testId}-confidence`}
+              >
+                {badge}
+              </Badge>
+            ) : null}
           </span>
-        </button>
-      </div>
-      {hasDetail && expanded ? (
-        <p className="pb-2 pl-9 pr-2 text-xs text-muted-foreground" data-testid={`${testId}-detail`}>
-          {detailText}
-        </p>
-      ) : null}
+          {checked && detailText ? (
+            <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`${testId}-detail`}>
+              {detailText}
+            </p>
+          ) : null}
+        </span>
+      </button>
     </div>
   );
 }
@@ -160,7 +137,7 @@ function AnswerNoteField({
   label: string;
 }) {
   return (
-    <div className={cn(SIMPLE_TEXT_FRAME_CLASS, "ml-[26px] mt-1 w-[calc(100%-26px)] flex flex-col")}>
+    <div className="ml-[26px] mt-1 flex w-[calc(100%-26px)] flex-col">
       <label htmlFor={id} className="sr-only">
         {label}
       </label>
@@ -483,14 +460,13 @@ export function QuestionWidget({
           const optionSelected = selected.includes(option.id);
           return (
             <div key={option.id}>
-              <ExpandableDetailRow
+              <OptionRow
                 checked={optionSelected}
                 disabled={controlsDisabled}
                 label={option.label}
                 detail={option.description}
                 testId={`question-option-${prompt.toolCallId}-${option.id}`}
                 onSelect={() => selectOption(option.id)}
-                emphasized={isRecommended}
                 badge={
                   isRecommended && typeof recommendedConfidence === "number"
                     ? `${recommendedConfidence}% confidence`
@@ -512,7 +488,7 @@ export function QuestionWidget({
           );
         })}
         <div>
-          <ExpandableDetailRow
+          <OptionRow
             checked={otherSelected}
             disabled={controlsDisabled}
             label="Other"
