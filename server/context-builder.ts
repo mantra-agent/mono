@@ -149,11 +149,16 @@ const INVALIDATION_EVENT_MAP: Record<string, string[]> = {
     "world_model.people", "world_model.people.self", "world_model.people.self.identity",
     "world_model.people.self.voice", "world_model.people.self.persona",
     "world_model.people.partner", "world_model.people.partner.identity",
+    "world_model.people.partner.portrait",
     "world_model.people.partner.goals", "world_model.people.others",
   ],
   "data:profiles_changed": [
     "world_model.people.self.identity",
     "world_model.people.partner.identity",
+    "world_model.people.partner.portrait",
+  ],
+  "data:library_changed": [
+    "world_model.people.partner.portrait",
   ],
   "data:principles_changed": ["world_model.people.self.principles"],
   "data:tasks_changed": [
@@ -293,6 +298,7 @@ const sectionResolvers: Record<string, SectionResolver> = {
   "world_model.people.self.rules": resolveActiveRules,
   "world_model.people.partner": async () => "",
   "world_model.people.partner.identity": resolvePartnerIdentity,
+  "world_model.people.partner.portrait": resolvePartnerPortrait,
   "world_model.people.partner.goals": resolveGoalsAll,
   "world_model.people.partner.goals.today": resolveGoalsToday,
   "world_model.people.partner.goals.this_week": resolveGoalsThisWeek,
@@ -642,6 +648,11 @@ async function resolvePartnerIdentity(): Promise<string> {
   } catch (err) { log.warn(`resolvePartnerIdentity failed: ${safeStringify(err, { maxBytes: 4 * 1024, label: "ctx.resolvePartnerIdentity.err" })}`); }
 
   return identity.join("\n\n");
+}
+
+async function resolvePartnerPortrait(): Promise<string> {
+  const { resolveCurrentUserPortraitDigest } = await import("./user-portrait");
+  return resolveCurrentUserPortraitDigest();
 }
 
 function getRecommendedTags(valence: number, arousal: number): string[] {
@@ -2000,7 +2011,7 @@ const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
   goals: "Manage life goals by domain and time horizon. Actions: list, get, create, update, delete, search, set_parent, unlink_parent.",
   intentions: `DEPRECATED — intentions system removed. Use the autonomy skill instead.`,
   router: "Call and inspect the model routing layer. Actions: eval, list_inference_calls, get_inference_call.",
-  library: "Manage wiki pages, notes, and annotations. Actions: list_library_pages, get_library_page, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, link_pages, annotate.",
+  library: "Manage wiki pages, notes, and annotations. Actions: list_library_pages, get_library_page, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, link_pages, annotate, find_user_portrait, ensure_user_portrait.",
   meetings: "Manage calendar events. Actions: add, list, update, delete.",
   memory: "Unified memory — read/write knowledge files, search vNext claims, manage links and provenance, and run vNext lifecycle, REM, and GSI operations. Legacy layer propagation is retired.",
   notion: "Search, read, and browse Notion pages and databases. Actions: status, search, get_page, get_content, list_databases, query_database.",

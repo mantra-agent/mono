@@ -311,6 +311,8 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
       update_library_page: { description: "Full replacement of a library page's content and/or metadata. Use edit_library_page instead when making targeted changes to large pages.", requiredParams: ["id"], optionalParams: ["title", "plainTextContent", "parentId", "tags", "status", "oneLiner", "summary", "surface", "surfaceDurationHours", "surfaceReason", "surfaceSection"] },
       browse_tree: { description: "Render the page hierarchy grouped by Vault as an indented outline; each top-level node is a Vault and pages nest beneath their owning Vault. Optional vaultId renders a single Vault.", requiredParams: [], optionalParams: ["vaultId"] },
       list_vaults: { description: "Enumerate the account's Vaults with id, name, live page count, and whether each is currently visible/active. The id-to-name key for resolving which Vault a page belongs to.", requiredParams: [], optionalParams: [] },
+      find_user_portrait: { description: "Exists-only lookup of this User's Portrait slot. Does not mint. Returns the page id if a live owner-scoped slug=portrait row exists.", requiredParams: [], optionalParams: [] },
+      ensure_user_portrait: { description: "Get-or-create this User's Portrait in an exclusive Vault. Instance Managers only. Search-by-title is not a slot.", requiredParams: [], optionalParams: [] },
     },
   },
   converse: {

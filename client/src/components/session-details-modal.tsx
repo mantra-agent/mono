@@ -98,6 +98,7 @@ const SECTION_GROUPS: SectionGroup[] = [
     label: "Partner",
     sections: [
       { id: "world_model.people.partner.identity", label: "Identity", defaultIncluded: true },
+      { id: "world_model.people.partner.portrait", label: "Portrait", defaultIncluded: true },
     ],
   },
   {

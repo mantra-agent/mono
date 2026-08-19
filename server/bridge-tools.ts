@@ -4685,6 +4685,16 @@ ${lines.join("\n")}` };
           let targetSkill = await storage.getSkill(requestedSkill);
           if (!targetSkill) targetSkill = await storage.getSkillByName(requestedSkill);
           if (!targetSkill) return { result: `Skill "${requestedSkill}" not found`, error: true };
+          const { skillRequiresInstanceManager } = await import("./skill-defaults");
+          if (skillRequiresInstanceManager(targetSkill.name)) {
+            const { requirePinnedInstanceManager } = await import("./user-portrait");
+            try {
+              await requirePinnedInstanceManager(principal);
+            } catch (err: unknown) {
+              const message = err instanceof Error ? err.message : String(err);
+              return { result: message, error: true };
+            }
+          }
           const skillId = targetSkill.id;
 
           const callingConversationId = args._sessionId;
@@ -8549,6 +8559,36 @@ ${refs}` : ""),
         return { result: `Vaults (${vaultRows.length}) for this account:\n${lines.join("\n")}${unassignedLine}` };
       }
 
+      if (action === "find_user_portrait") {
+        const { findUserPortraitPage } = await import("./user-portrait");
+        if (!principal.userId || !principal.accountId) {
+          return { result: "User principal required to find Portrait.", error: true };
+        }
+        const page = await findUserPortraitPage({
+          ownerUserId: principal.userId,
+          accountId: principal.accountId,
+        });
+        if (!page) return { result: "Portrait not started" };
+        return { result: `Portrait exists: @page:${page.id} in vault ${page.vaultId ?? "none"}` };
+      }
+
+      if (action === "ensure_user_portrait") {
+        try {
+          const { ensureUserPortraitPage } = await import("./user-portrait");
+          const page = await ensureUserPortraitPage(principal);
+          const { recordSessionArtifact } = await import("./session-artifacts");
+          await recordSessionArtifact(args._sessionId, "library_page", page.slug, {
+            title: page.title,
+            pageId: page.id,
+          });
+          return { result: `Portrait ready: @page:${page.id} (/${page.slug}) in exclusive vault ${page.vaultId}` };
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          const code = err && typeof err === "object" && "code" in err ? String((err as { code?: unknown }).code) : "";
+          return { result: code ? `${message} (${code})` : message, error: true };
+        }
+      }
+
       // ─── Library page mutations ────────────────────────────────────────
       // create/update/edit/delete coordinate through the Library service or
       // direct transactions that acquire the same parent advisory locks used
@@ -9001,7 +9041,7 @@ ${refs}` : ""),
         return { result: `Annotation added to page [${page.id}] **${page.title}**: [${annotation.annotationType}] ${annotation.content}` };
       }
 
-      return { result: `Unknown library action: ${action}. Available: list_library_pages, get_library_page, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, list_vaults, link_pages, annotate`, error: true };
+      return { result: `Unknown library action: ${action}. Available: list_library_pages, get_library_page, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, list_vaults, find_user_portrait, ensure_user_portrait, link_pages, annotate`, error: true };
     } catch (err: any) {
       return { result: `library tool error: ${err.message}`, error: true };
     }

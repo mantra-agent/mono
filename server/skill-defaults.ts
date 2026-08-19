@@ -39,6 +39,15 @@ import { composeFeaturePipelineSkillProcess } from "@shared/feature-pipeline";
     allowMissingDefinition?: boolean;
     /** When true, autonomous runs may mint a visible conversation. Inspect skills stay silent. */
     mayInitiateConversation?: boolean;
+    /** When true, launch and write require pinned Instance membership role=manager. */
+    requiresInstanceManager?: boolean;
+  }
+
+  export function skillRequiresInstanceManager(skillName?: string | null): boolean {
+    if (!skillName) return false;
+    return BUILTIN_SKILL_DEFAULTS.some(
+      (def) => def.requiresInstanceManager === true && def.name === skillName,
+    );
   }
 
   export const TRIAGE_LOOKBACK_DAYS = 3;
@@ -1763,5 +1772,49 @@ This is developmental coaching, not medical or mental-health treatment. If Ray i
       { check: "Did not invent a second Feature or leave a resolved Issue shell behind on success", weight: 3 },
     ],
     process: composeIssueFeatureSkillProcess(),
+  },
+  {
+    name: "portrait",
+    recommendedPersona: "Coach",
+    description: "Sit one living first-person Portrait cut for this User. Inspect residuals, converse until one sentence is true, write it dated, stop.",
+    version: "1.0",
+    addToMemory: false,
+    pinnedToContext: false,
+    sessionType: "agent",
+    mayInitiateConversation: false,
+    requiresInstanceManager: true,
+    whenToUse: "Launched on demand by an Instance Manager to deepen this User's Portrait. Never scheduled. Never a quiz. Never a fourth Template key.",
+    outputSpec: "One dated first-person sentence the User affirmed, appended or revised on their exclusive-Vault Portrait page. Completeness is not the exit.",
+    checklist: [
+      { check: "Resolved this User's Portrait through library.ensure_user_portrait (mint if missing) rather than searching by title", weight: 15, kind: "tool_invoked", tool: "library", action: "ensure_user_portrait" },
+      { check: "Contrasted the page with Person-linked memory and named one residual (missing first room, thin, or stale)", weight: 15 },
+      { check: "Sat one highest-investment cut and wrote only User-affirmed first-person sentences, dated YYYY-MM-DD, without replacing the page", weight: 20 },
+      { check: "Stopped after one cut; did not grow schema, write persons.identity_content, or file into a shared Vault", weight: 15 },
+    ],
+    scoreThreshold: 0.75,
+    process: `You sit this User's living Portrait. One cut. Then stop.
+
+## Authority
+Launch and write require pinned Instance membership role=manager. If library.ensure_user_portrait fails closed, stop. Do not invent a page. Do not search-by-title. Do not open a conversation with session.initiate.
+
+## Geometry
+Three objects. Do not collapse them.
+1. Authored Portrait — this User's Library page in a Vault only they can see.
+2. Self Person — cabinetLevel=user visible to this principal. Subject index only. persons.identity_content is the name stub, not the Portrait.
+3. Instance memory — amalgamated knowing, entity-linked to that Person.
+
+## Run
+1. Call library(action: "ensure_user_portrait"). That is the only mint path. Remember the returned @page.
+2. Resolve this User's self Person (cabinetLevel=user). Contrast memory entity-linked to that Person. Do not write the page from claims.
+3. Residuals = missing first rooms, thin sentences, or stale sentences (older than 90 days, or contradicted by later affirmed sentences / Person-linked claims). First empty rooms: Ikigai, type, blind spots, growth edges. Not required headings. Not columns. You may name a new mode of knowing after looking. You may not grow schema.
+4. Pick one cut — highest investment, not completeness.
+5. Converse until a first-person sentence is true. The User must affirm it. Unrefused text does not land. Write it dated YYYY-MM-DD via library.edit_library_page (append or revise in place). Never replace the page. Never store \`mbti: ENTJ\`.
+6. Stop. Leave the rest.
+
+## vNext
+Ordinary Session + Library source intake. Entity-link new Portrait-derived claims to the author's cabinetLevel=user Person. No new source type.
+
+## Safety
+This is identity investment, not therapy. If the User indicates imminent danger, self-harm, or severe impairment, prioritize immediate human support and do not extract wounds onto the page.`,
   },
 ];
