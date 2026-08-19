@@ -42,9 +42,74 @@ async function conversationExists(sessionId: string): Promise<boolean> {
 }
 
 /**
+ * Skill identity for system-attention collapse. Autonomous top-level runs use
+ * sessionKey `auto:${skillId}` and triggerType/triggerId skill provenance.
+ * Prefer those over free-text titles so rename cannot fork the open slot.
+ */
+function autonomousSkillAttentionKey(input: {
+  skillId?: string | null;
+  sessionKey?: string | null;
+  triggerType?: string | null;
+  triggerId?: string | null;
+}): string | null {
+  const skillId = typeof input.skillId === "string" ? input.skillId.trim() : "";
+  if (skillId) return `skill:${skillId}`;
+  const sessionKey = typeof input.sessionKey === "string" ? input.sessionKey.trim() : "";
+  if (sessionKey.startsWith("auto:") && sessionKey.length > "auto:".length) {
+    return `skill:${sessionKey.slice("auto:".length)}`;
+  }
+  if (input.triggerType === "skill") {
+    const triggerId = typeof input.triggerId === "string" ? input.triggerId.trim() : "";
+    if (triggerId) return `skill:${triggerId}`;
+  }
+  return null;
+}
+
+/**
+ * At most one open system-attention session per skill per principal.
+ * Dismiss undismissed notices on every other open session for the same skill
+ * before writing the current run's notice — replaces the prior warning instead
+ * of stacking Home INBOX rows.
+ */
+async function clearPriorSkillSystemAttention(
+  currentSessionId: string,
+  skillAttentionKey: string,
+): Promise<void> {
+  try {
+    const sessions = await chatFileStorage.getAllSessions();
+    const stale = sessions.filter((session) => {
+      if (session.id === currentSessionId) return false;
+      if (session.archivedAt) return false;
+      if (!session.errorSeverity) return false;
+      const key = autonomousSkillAttentionKey({
+        sessionKey: session.sessionKey,
+        triggerType: session.triggerType,
+        triggerId: session.triggerId,
+      });
+      return key === skillAttentionKey;
+    });
+    for (const session of stale) {
+      await chatFileStorage.dismissAllSystemNotices(session.id).catch((err: unknown) => {
+        logger.warn(
+          `[SkillChat] failed to clear prior skill attention session=${session.id} key=${skillAttentionKey}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
+  } catch (err: unknown) {
+    logger.warn(
+      `[SkillChat] prior skill attention scan failed key=${skillAttentionKey}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
  * One attention state for autonomous runs: transcript system_notice widget +
  * session errorSeverity. Severity-only writes leave Inbox lit with an empty
  * opened session.
+ *
+ * Skill-scoped runs keep a single open attention slot: prior open sessions for
+ * the same skill are cleared, then this session is stamped with a stable
+ * per-skill artifactKey so same-session retries also replace in place.
  */
 async function recordAutonomousAttention(
   sessionId: string,
@@ -56,8 +121,17 @@ async function recordAutonomousAttention(
     artifactKey?: string;
     terminationReason?: string;
     degradationReason?: string;
+    /** When set, collapses to one open system-attention session for this skill. */
+    skillId?: string | null;
   },
 ): Promise<void> {
+  const skillAttentionKey = autonomousSkillAttentionKey({
+    skillId: params.skillId,
+  });
+  if (skillAttentionKey) {
+    await clearPriorSkillSystemAttention(sessionId, skillAttentionKey);
+  }
+
   const notice: SystemNotice = {
     severity,
     errorType: params.errorType,
@@ -68,8 +142,14 @@ async function recordAutonomousAttention(
       ? { degradationReason: params.degradationReason as SystemNotice["degradationReason"] }
       : {}),
   };
+  const artifactKey =
+    typeof params.artifactKey === "string" && params.artifactKey.trim()
+      ? params.artifactKey.trim()
+      : skillAttentionKey
+        ? `autonomous-attention:${skillAttentionKey}`
+        : `autonomous-attention:session:${sessionId}`;
   await chatFileStorage.recordSessionAttention(sessionId, notice, {
-    artifactKey: params.artifactKey,
+    artifactKey,
   });
 }
 
@@ -153,13 +233,22 @@ async function applyPendingSessionEndAfterTools(sessionId: string): Promise<bool
   }
 
   if (pending.status === "failed") {
+    const session = await chatFileStorage.getSession(sessionId).catch(() => undefined);
+    const skillAttentionKey = autonomousSkillAttentionKey({
+      sessionKey: session?.sessionKey,
+      triggerType: session?.triggerType,
+      triggerId: session?.triggerId,
+    });
+    const skillIdFromKey = skillAttentionKey?.startsWith("skill:")
+      ? skillAttentionKey.slice("skill:".length)
+      : null;
     await recordAutonomousAttention(sessionId, "error", {
       errorType: "something_went_wrong",
       description: pending.summary?.trim()
         ? `Session ended failed: ${pending.summary.trim()}`
         : "This autonomous run ended failed after deferred session status was applied.",
       actionHint: "Open the session, review the transcript, and retry or continue if needed.",
-      artifactKey: `autonomous-attention:deferred-failed:${sessionId}`,
+      skillId: skillIdFromKey,
       terminationReason: "deferred_session_end_failed",
     }).catch(() => undefined);
   }
@@ -794,7 +883,7 @@ export async function executeAutonomousSkillRun(
         errorType: "something_went_wrong",
         description: "Failed to persist the skill-run lineage row for this autonomous session.",
         actionHint: "Retry the run. If it keeps failing, inspect skill_runs persistence and database health.",
-        artifactKey: `autonomous-attention:skill-run-lineage:${sessionId}`,
+        skillId: config.skillId || skillId,
         terminationReason: "skill_run_lineage_persistence_failed",
       }).catch(() => undefined);
       await chatFileStorage.updateSessionStatus(sessionId, "failed").catch(() => undefined);
@@ -902,7 +991,7 @@ export async function executeAutonomousSkillRun(
           errorType: "processing_stopped",
           description: "Execution yielded under genuine capacity pressure. The parent may retry or resume this child.",
           actionHint: "Retry or resume this child when interactive capacity is available.",
-          artifactKey: `autonomous-attention:yielded:${sessionId}`,
+          skillId: config.skillId || skillId,
           terminationReason: "yield_to_interactive",
         }).catch(() => undefined);
         await chatFileStorage.updateSessionStatus(sessionId, "failed");
@@ -963,7 +1052,7 @@ export async function executeAutonomousSkillRun(
             ? `This autonomous run failed: ${result.error.trim()}`
             : "This autonomous run failed before producing a clean completion.",
           actionHint: "Open the session transcript, inspect the failure, and retry if needed.",
-          artifactKey: `autonomous-attention:failed:${sessionId}`,
+          skillId: config.skillId || skillId,
           terminationReason: result.error || "failed",
         }).catch((e: unknown) => {
           logger.error(`[SkillChat] [${sessionId}] Failed to record error attention: ${e instanceof Error ? e.message : String(e)}`);
@@ -978,7 +1067,7 @@ export async function executeAutonomousSkillRun(
             ? `This autonomous run finished degraded: ${result.error.trim()}`
             : "This autonomous run finished in a degraded state. Completed work was preserved.",
           actionHint: "Review the warning in this session, then continue or retry if the outcome is incomplete.",
-          artifactKey: `autonomous-attention:degraded:${sessionId}`,
+          skillId: config.skillId || skillId,
           terminationReason: result.error || "degraded",
           degradationReason: result.degradationReason,
         }).catch((e: unknown) => {
@@ -1081,7 +1170,7 @@ export async function executeAutonomousSkillRun(
               ? `This autonomous run finished degraded: ${terminalFailureReason}`
               : "This autonomous run finished degraded after structural requirements failed.",
             actionHint: "Review the warning in this session, then continue or retry if the outcome is incomplete.",
-            artifactKey: `autonomous-attention:degraded:${sessionId}`,
+            skillId: config.skillId || skillId,
             terminationReason: terminalFailureReason || "structural_requirements_failed",
             degradationReason: reconcileDegradationReason,
           }).catch((e: unknown) => {
@@ -1150,7 +1239,7 @@ export async function executeAutonomousSkillRun(
         errorType: "something_went_wrong",
         description: `Skill run failed: ${errMsg}`,
         actionHint: "Open the session transcript, inspect the crash, and retry if needed.",
-        artifactKey: `autonomous-attention:crash:${sessionId}`,
+        skillId: config.skillId || skillId,
         terminationReason: failureReason,
       }).catch((e: unknown) => {
         logger.error(`[SkillChat] [${sessionId}] Failed to record crash attention: ${e instanceof Error ? e.message : String(e)}`);

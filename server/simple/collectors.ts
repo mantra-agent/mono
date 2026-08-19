@@ -1509,7 +1509,10 @@ function itemFromProject(project: Project, section: SimpleSection, index: number
 // unanswered question, plan needs_review, and pending session-linked email
 // drafts. One Home row per session with the highest-urgency review kind for
 // navigation. System-notice error/warning is an operator diagnostic — same
-// gate as server/integrations/chat/routes.ts session list.
+// gate as server/integrations/chat/routes.ts session list. Autonomous skill
+// failures also collapse to one open attention session per skill at the
+// producer; Home still collapses legacy stacked skill warning rows by
+// sessionKey/triggerId so operators do not clear N identical skill warnings.
 
 const SESSION_REVIEW_INBOX_LIMIT = 25;
 const SESSION_REVIEW_PLAN_CHUNK = 100;
@@ -1523,6 +1526,27 @@ const SESSION_REVIEW_MAX_AUTO_CLEARS_PER_COLLECT = 50;
 const SESSION_REVIEW_TITLE_MAX_CHARS = 22;
 
 type HomeSessionReviewKind = "error" | "warning" | "question" | "approval";
+
+/**
+ * Collapse key for operator error/warning rows that share one skill identity.
+ * Matches autonomous-skill-runner: sessionKey `auto:${skillId}` or skill trigger.
+ * Interactive / non-skill sessions return null and stay one-row-per-session.
+ */
+function sessionReviewSkillCollapseKey(session: {
+  sessionKey?: string | null;
+  triggerType?: string | null;
+  triggerId?: string | null;
+}): string | null {
+  const sessionKey = typeof session.sessionKey === "string" ? session.sessionKey.trim() : "";
+  if (sessionKey.startsWith("auto:") && sessionKey.length > "auto:".length) {
+    return `skill:${sessionKey.slice("auto:".length)}`;
+  }
+  if (session.triggerType === "skill") {
+    const triggerId = typeof session.triggerId === "string" ? session.triggerId.trim() : "";
+    if (triggerId) return `skill:${triggerId}`;
+  }
+  return null;
+}
 
 function truncateSessionReviewTitle(title: string): string {
   const cleaned = title.replace(/\s+/g, " ").trim();
@@ -1712,8 +1736,15 @@ async function collectSessionReviewInboxItems(timezone: string): Promise<SimpleF
 
   const nowMs = Date.now();
   const items: SimpleFeedItem[] = [];
+  // Newest-first: skill collapse keeps the first (newest) open warning/error.
+  const sortedCandidates = [...candidates].sort(
+    (a, b) =>
+      new Date(b.updatedAt || b.createdAt || 0).getTime() -
+      new Date(a.updatedAt || a.createdAt || 0).getTime(),
+  );
+  const claimedSkillAttention = new Set<string>();
   let autoClears = 0;
-  for (const session of candidates) {
+  for (const session of sortedCandidates) {
     const observedAt = session.updatedAt || session.createdAt || new Date().toISOString();
     const kinds: SessionReviewKind[] = [];
     if (session.awaitingQuestionResponse) kinds.push("question");
@@ -1750,7 +1781,14 @@ async function collectSessionReviewInboxItems(timezone: string): Promise<SimpleF
           // Best-effort: a failed auto-clear just leaves the row off Home.
         }
       } else if (ageMs !== null && ageMs <= SESSION_REVIEW_ERROR_SURFACE_WINDOW_MS) {
-        kinds.push(severity);
+        const skillKey = sessionReviewSkillCollapseKey(session);
+        if (skillKey && claimedSkillAttention.has(skillKey)) {
+          // Legacy stacked skill warnings: keep newest only on Home. Producer
+          // already replaces going forward; this drains the backlog display.
+        } else {
+          if (skillKey) claimedSkillAttention.add(skillKey);
+          kinds.push(severity);
+        }
       }
     }
 
