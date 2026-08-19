@@ -88,10 +88,22 @@ function stripHtml(html: string): string {
 export const webTools: Record<string, ToolHandler> = {
   async web_search(args) {
     const query = args.query;
-    if (!query) return { result: "Missing search query", error: true };
+    if (!query) {
+      return {
+        result: "Missing search query",
+        error: true,
+        failure: inputFailure("web_search_input_invalid", "missing_query"),
+      };
+    }
 
     const apiKey = getSecretSync("BRAVE_API_KEY") || getSecretSync("BRAVE_SEARCH_API_KEY");
-    if (!apiKey) return { result: "Brave Search API key not configured (BRAVE_API_KEY)", error: true };
+    if (!apiKey) {
+      return {
+        result: "Brave Search API key not configured (BRAVE_API_KEY)",
+        error: true,
+        failure: inputFailure("web_search_not_configured", "brave_api_key_missing"),
+      };
+    }
 
     try {
       const count = args.count || 10;
@@ -109,7 +121,16 @@ export const webTools: Record<string, ToolHandler> = {
       clearTimeout(searchTimeout);
 
       if (!response.ok) {
-        return { result: `Brave Search error: ${response.status} ${response.statusText}`, error: true };
+        const status = response.status;
+        const failure =
+          status === 408 || status === 429 || status >= 500
+            ? transientFailure("web_search_transient", `http_${status}`)
+            : inputFailure("web_search_http_error", `http_${status}`);
+        return {
+          result: `Brave Search error: ${response.status} ${response.statusText}`,
+          error: true,
+          failure,
+        };
       }
 
       const data = await response.json() as any;
@@ -122,7 +143,14 @@ export const webTools: Record<string, ToolHandler> = {
       );
       return { result: `Search results for "${query}":\n\n${lines.join("\n\n")}` };
     } catch (err: any) {
-      return { result: `Web search error: ${err.message}`, error: true };
+      const thrown = classifyWebFetchThrownError(err);
+      return {
+        result: `Web search error: ${err.message}`,
+        error: true,
+        failure:
+          thrown ??
+          transientFailure("web_search_transient", String(err?.message ?? err).slice(0, 120)),
+      };
     }
   },
 
@@ -308,13 +336,20 @@ export const webTools: Record<string, ToolHandler> = {
       }
     } catch (err: any) {
       if (err.name === "AbortError") {
-        return { result: `Fetch timed out for ${url}`, error: true };
+        return {
+          result: `Fetch timed out for ${url}`,
+          error: true,
+          failure: transientFailure("web_fetch_timeout"),
+        };
       }
+      const thrown = classifyWebFetchThrownError(err);
       return {
-      result: `Fetch error: ${err.message}`,
-      error: true,
-      failure: classifyWebFetchThrownError(err),
-    };
+        result: `Fetch error: ${err.message}`,
+        error: true,
+        failure:
+          thrown ??
+          transientFailure("web_fetch_transient", String(err?.message ?? err).slice(0, 120)),
+      };
     }
   },
 
@@ -414,10 +449,25 @@ export const webTools: Record<string, ToolHandler> = {
           failure: inputFailure(`web_test_${result.outcome}`, result.errorMessage?.slice(0, 160)),
         };
       }
-      return { result: body, error: true };
+      // capture_failed and any future non-correctable outcomes are provider/
+      // browser environment faults (DNS, admission, Chromium crash) — amber
+      // transient, never uncoded TOOL_FAILED_WEB.
+      return {
+        result: body,
+        error: true,
+        failure: transientFailure(
+          `web_test_${result.outcome}`,
+          result.errorMessage?.slice(0, 160),
+        ),
+      };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      return { result: `web.test failed: ${msg}`, error: true };
+      const thrown = classifyWebFetchThrownError(e);
+      return {
+        result: `web.test failed: ${msg}`,
+        error: true,
+        failure: thrown ?? transientFailure("web_test_capture_failed", msg.slice(0, 160)),
+      };
     }
   },
 };
