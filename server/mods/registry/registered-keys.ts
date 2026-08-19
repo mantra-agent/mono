@@ -246,7 +246,6 @@ export const REGISTERED_TIMER_TEMPLATE_KEYS = [
   "build-security-sentinel-weekly",
   "post-build-regression",
   "build-self-heal-nightly",
-  "weekly-reflection",
   "monthly-reflection",
   "reflect-daily",
   "daily-brief",

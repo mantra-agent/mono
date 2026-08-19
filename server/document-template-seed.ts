@@ -18,6 +18,7 @@ export const SHAPE_PAGE_IDS = {
   "daily-digest": "template-shape-daily-digest",
   "weekly-summary": "template-shape-weekly-summary",
   "daily-brief": "template-shape-daily-brief",
+  "stand-up": "template-shape-stand-up",
 } as const;
 
 const SPEC_SHAPE_MARKDOWN = `# Spec shape
@@ -84,31 +85,48 @@ Always. Rows or \`None\`.
 
 const WEEKLY_SUMMARY_SHAPE_MARKDOWN = `# Weekly Summary shape
 
-Lifted from live reflect weekly.
+Work-ledger close. Process stays on the skill.
 
-## Summary
+## Does Not Add Up
 
-Week in 2-3 factual sentences.
+Contradictions across the week's board. None when it agrees.
 
-## Plan vs Reality
+## Unlocks
 
-What the plan committed to vs what happened.
+What still unlocks next week, ranked by fan-in. None when no unresolved edges.
 
-## Wins
+## Moved
 
-Work, family, personal, or capability wins.
+What actually completed or advanced this week.
 
-## Drift and Friction
+omit if empty
 
-What slipped, overloaded, or stayed unresolved.
+## Still Blocked
 
-## Patterns
+What stayed blocked.
 
-What repeated across days.
+omit if empty
 
-## Carry Forward
+## Board
 
-1-5 concrete items for the next planning cycle.
+Week-close board: active projects, milestones, live tasks.
+`;
+
+const STAND_UP_SHAPE_MARKDOWN = `# Stand Up shape
+
+Work-ledger open. Process stays on the skill.
+
+## Does Not Add Up
+
+Inspected contradictions. None when the board and graph agree.
+
+## Unlocks
+
+Highest-leverage incomplete work, ranked by blocked_by fan-in. None when no unresolved edges.
+
+## Board
+
+Active projects, their milestones, and live tasks.
 `;
 
 const DAILY_BRIEF_SHAPE_MARKDOWN = `# Daily Brief shape
@@ -192,13 +210,22 @@ const SHAPE_SEEDS: Array<{
     markdown: DAILY_BRIEF_SHAPE_MARKDOWN,
     tags: ["template-shape", "daily-brief", "system"],
   },
+  {
+    templateId: "stand-up",
+    name: "Stand Up",
+    pageId: SHAPE_PAGE_IDS["stand-up"],
+    title: "Template Shape — Stand Up",
+    markdown: STAND_UP_SHAPE_MARKDOWN,
+    tags: ["template-shape", "stand-up", "system"],
+  },
 ];
 
 const DAY_ONE_BINDS: Array<{ skillName: string; key: "spec" | "daily" | "weekly"; templateId: string }> = [
   { skillName: "feature-pipeline", key: "spec", templateId: "spec" },
   { skillName: "reflect", key: "daily", templateId: "daily-digest" },
-  { skillName: "reflect", key: "weekly", templateId: "weekly-summary" },
   { skillName: "brief-daily", key: "daily", templateId: "daily-brief" },
+  { skillName: "stand-up", key: "daily", templateId: "stand-up" },
+  { skillName: "stand-up", key: "weekly", templateId: "weekly-summary" },
 ];
 
 function normalizeShapeMarkdown(markdown: string): string {
@@ -247,9 +274,9 @@ async function ensureShapePage(seed: (typeof SHAPE_SEEDS)[number]): Promise<void
     return;
   }
 
-  // Official Spec vessel only. Daily/Weekly/Brief stay insert-only. Never touch
-  // account overlays or non-global pages.
-  if (seed.templateId !== "spec" || row.scope !== "global") return;
+  // Official Spec and recut Weekly Summary vessels may converge. Daily/Brief/Stand-up
+  // stay insert-only. Never touch account overlays or non-global pages.
+  if ((seed.templateId !== "spec" && seed.templateId !== "weekly-summary") || row.scope !== "global") return;
   if (normalizeShapeMarkdown(row.plainTextContent) === nextPlain) return;
 
   await db
@@ -263,7 +290,7 @@ async function ensureShapePage(seed: (typeof SHAPE_SEEDS)[number]): Promise<void
       updatedAt: new Date(),
     })
     .where(eq(libraryPages.id, row.id));
-  log.info("converged official spec shape page", { pageId: row.id });
+  log.info("converged official shape page", { pageId: row.id, templateId: seed.templateId });
 }
 
 async function ensureGlobalTemplate(seed: (typeof SHAPE_SEEDS)[number]): Promise<void> {
@@ -313,12 +340,30 @@ async function ensureSkillBinding(bind: (typeof DAY_ONE_BINDS)[number]): Promise
   log.info("seeded skill template binding", { skillName: bind.skillName, key: bind.key, templateId: bind.templateId });
 }
 
-/** Day-one shape pages, global map rows, and skill binds. Spec shape may converge; Daily/Weekly/Brief stay insert-only. Never overwrites account overlays. */
+async function unbindRetiredSkillKey(skillName: string, key: "spec" | "daily" | "weekly"): Promise<void> {
+  const [skill] = await db
+    .select({ id: skills.id })
+    .from(skills)
+    .where(and(eq(skills.name, skillName), eq(skills.scope, "global")))
+    .limit(1);
+  if (!skill) return;
+
+  const deleted = await db
+    .delete(skillTemplateBindings)
+    .where(and(eq(skillTemplateBindings.skillId, skill.id), eq(skillTemplateBindings.key, key)))
+    .returning({ id: skillTemplateBindings.id });
+  if (deleted.length > 0) {
+    log.info("unbound retired skill template binding", { skillName, key, count: deleted.length });
+  }
+}
+
+/** Day-one shape pages, global map rows, and skill binds. Spec and recut weekly-summary may converge; Daily/Brief/Stand-up stay insert-only. Never overwrites account overlays. */
 export async function ensureDocumentTemplateSeeds(): Promise<void> {
   for (const seed of SHAPE_SEEDS) {
     await ensureShapePage(seed);
     await ensureGlobalTemplate(seed);
   }
+  await unbindRetiredSkillKey("reflect", "weekly");
   for (const bind of DAY_ONE_BINDS) {
     await ensureSkillBinding(bind);
   }

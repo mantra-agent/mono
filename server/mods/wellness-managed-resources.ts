@@ -27,28 +27,6 @@ export interface WellnessManagedTimerDefinition extends InsertTimer {
  */
 export const WELLNESS_MANAGED_TIMER_DEFINITIONS: readonly WellnessManagedTimerDefinition[] = [
   {
-    contributionId: "wellness.timer.weekly-reflection",
-    systemKey: "weekly-reflection",
-    legacyNames: ["Weekly Reflection"],
-    legacySkillIds: ["reflect-weekly"],
-    name: "Weekly Reflection",
-    description:
-      "Weekly review using parameterized Reflect — produces a surfaced Library brief for the completed week",
-    type: "skill",
-    skillId: "reflect",
-    prompt: "cadence=weekly",
-    schedules: [
-      {
-        id: "sys-skill-reflect-weekly-1",
-        frequency: "weekly",
-        daysOfWeek: ["sun"],
-        timeOfDay: "20:00",
-      },
-    ],
-    enabled: true,
-    timezone: "__USER_TZ__",
-  },
-  {
     contributionId: "wellness.timer.monthly-reflection",
     systemKey: "monthly-reflection",
     legacyNames: ["Monthly Reflection"],
