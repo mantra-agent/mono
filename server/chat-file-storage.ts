@@ -4618,18 +4618,36 @@ export const chatFileStorage: IChatFileStorage = {
             message.role === "system_notice" && message.artifactKey === artifactKey,
         );
         if (existing) {
-          // Replay-safe: keep the existing notice identity and only raise
-          // severity when a later attention write is more severe.
-          if (data.errorSeverity === "error" || data.errorSeverity === severity) {
-            return;
+          // Same attention slot (e.g. one open skill warning): keep the notice
+          // message id, replace body, and raise severity when needed. Do not
+          // stack a second undismissed notice for the same artifactKey.
+          const now = new Date().toISOString();
+          let previous: Record<string, unknown> = {};
+          try {
+            previous = JSON.parse(existing.content) as Record<string, unknown>;
+          } catch {
+            previous = {};
           }
-          data.errorSeverity = severity;
-          data.updatedAt = new Date().toISOString();
+          const { dismissedAt: _dismissedAt, ...rest } = previous;
+          existing.content = JSON.stringify({
+            ...rest,
+            ...normalizedNotice,
+            severity,
+          });
+          existing.updatedAt = now;
+          data.errorSeverity =
+            data.errorSeverity === "error" || severity === "error" ? "error" : "warning";
+          data.updatedAt = now;
           await writeConv(data);
           invalidateSessionsCache({
             action: "updated",
             sessionId: id,
             session: convToMeta(data),
+          });
+          eventBus.publish({
+            category: "system",
+            event: "data:session_messages_changed",
+            payload: { sessionId: id },
           });
           return;
         }
