@@ -162,7 +162,7 @@
 <!-- 2026-08-14 Persona overlays are job cards:
 - Assets/data: A04/A06 selectable Persona prompt overlays and session-pinned revisions (S2 identity/config). No new principal, Vault, secret, or tool authority.
 - Flow/threat: boot reconciles seed overlays from SEED_PERSONAS; user copies stay owner-scoped revisions. A method-list overlay lets seats collapse into each other (Architect debugs, Companion coaches, Advocate invents the idea). Prompt text never grants tools or scope (STRIDE spoofing/elevation analogue; AGENT-03).
-- Deterministic controls/owner: SEED_PERSONAS remains the catalog SSOT. Selectable overlays are Job / Failed-if / method / named DNA / Boundaries / Handoffs, plus an output contract only when the seat has a recurring artifact. Root stays voice. Router stays a classifier. Tool bundles, permissions, and Vault scope remain independent. Owner: Core Persona/Context. Severity: medium integrity. SLA: immediate.
+- Deterministic controls/owner: SEED_PERSONAS remains the catalog SSOT. Selectable overlays are Job / Failed-if / method / named DNA / Handoffs, plus an output contract only when the seat has a recurring artifact. Root stays voice. Router stays a classifier. Tool bundles, permissions, and Vault scope remain independent. Owner: Core Persona/Context. Severity: medium integrity. SLA: immediate.
 - Residual/rollback: user copies do not inherit overlay rewrites on boot; live seats must be published as owner revisions or they keep the old method lists. Revert the seven seed overlays, this finding, and those live revisions together.
 -->
 
