@@ -1,4 +1,5 @@
-import { sql } from "drizzle-orm";
+import { and, count, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
+import { memoryVnextClaims } from "@shared/schema";
 import { db } from "./db";
 import { createLogger } from "./log";
 import { ensureMetricsSamplesSchema, metricsDb } from "./metrics-db";
@@ -10,13 +11,13 @@ import {
 
 const log = createLogger("UserMemory");
 const ROLLUP_INTERVAL_MS = 60 * 60 * 1000;
+const STOCK_STAGES = ["canonical", "linked"] as const;
 let rollupTimer: NodeJS.Timeout | null = null;
 
 /**
- * User Memory: the count of durable knowledge Mantra holds for an account —
- * active (non-retired) vNext claims that reached the canonical or linked lifecycle
- * stage. Per-account and user-scoped; the platform-wide total is the sum across
- * accounts, computed the same way the usage dashboard aggregates Hours Used.
+ * User Memory: the count of durable knowledge Mantra holds —
+ * vNext claims that have reached canonical or linked. Point-in-time stock.
+ * queryMetric answers any range.end; hourly warehouse rows remain a projection.
  */
 const USER_MEMORY_METRIC_DEFINITION: InternalBusinessMetricDefinition = {
   key: "user-memory",
@@ -24,23 +25,56 @@ const USER_MEMORY_METRIC_DEFINITION: InternalBusinessMetricDefinition = {
   unit: "claims",
   description: "Active canonical and linked vNext memory claims held across Mantra.",
   direction: "higher_is_better",
-  samplePeriod: "daily",
+  samplePeriod: "point",
 };
 
 export const USER_MEMORY_PLATFORM_DEFINITION = USER_MEMORY_METRIC_DEFINITION;
+
+export const USER_MEMORY_STOCK_PARTIAL_REASON =
+  "Reconstructed as of range.end from created and lifecycle timestamps; stage history is incomplete.";
+
+export async function sampleUserMemoryStock(): Promise<number> {
+  const [row] = await db
+    .select({ value: count() })
+    .from(memoryVnextClaims)
+    .where(inArray(memoryVnextClaims.lifecycleStage, [...STOCK_STAGES]));
+  return Number(row?.value ?? 0);
+}
+
+/**
+ * Reconstruct User Memory as of `at`.
+ *
+ * There is no SCD. A claim is treated as in-stock at `at` when it existed
+ * (`createdAt < at`) and is either still linked/canonical, or left those
+ * stages later (`retired` after `at` from linked/canonical). Mid-life stage
+ * flips that later reverse are invisible — callers must mark coverage partial.
+ */
+export async function sampleUserMemoryStockAsOf(at: Date): Promise<number> {
+  const lastFrom = sql<string>`COALESCE(${memoryVnextClaims.metadata}->'lifecycle'->'lastTransition'->>'from', '')`;
+  const [row] = await db
+    .select({ value: count() })
+    .from(memoryVnextClaims)
+    .where(
+      and(
+        lt(memoryVnextClaims.createdAt, at),
+        or(
+          inArray(memoryVnextClaims.lifecycleStage, [...STOCK_STAGES]),
+          and(
+            eq(memoryVnextClaims.lifecycleStage, "retired"),
+            gte(memoryVnextClaims.lifecycleStageUpdatedAt, at),
+            inArray(lastFrom, [...STOCK_STAGES]),
+          ),
+        ),
+      ),
+    );
+  return Number(row?.value ?? 0);
+}
 
 async function rollupUserMemory(now = new Date()): Promise<void> {
   await ensureMetricsSamplesSchema();
   const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const dayKey = dayStart.toISOString().slice(0, 10);
-  const rows = await db.execute(sql`
-    SELECT count(*)::int AS claim_count
-    FROM memory_vnext_claims
-    WHERE lifecycle_stage IN ('canonical', 'linked')
-  `);
-  const resultRows = (Array.isArray(rows) ? rows : (rows as unknown as { rows?: unknown[] }).rows ?? []) as Array<{
-    claim_count: number;
-  }>;
+  const value = await sampleUserMemoryStock();
   const metric = (await ensurePlatformBusinessMetrics([USER_MEMORY_METRIC_DEFINITION])).get("user-memory");
   if (!metric) return;
   await metricsDb.execute(sql`
@@ -53,7 +87,7 @@ async function rollupUserMemory(now = new Date()): Promise<void> {
     accountId: metric.accountId,
     ownerUserId: metric.ownerUserId,
     vaultId: metric.vaultId,
-    value: Number(resultRows[0]?.claim_count ?? 0),
+    value,
     unit: "claims",
     observedAt: now,
     sourceRef: "internal/user-memory-v2",

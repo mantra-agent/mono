@@ -409,38 +409,32 @@ async function handleProduct(
   }
 
   if (metric.slug === "user-memory") {
-    const { metricSamples } = await import("@shared/schema");
-    const { metricsDb, ensureMetricsSamplesSchema } = await import("../metrics-db");
-    const { desc } = await import("drizzle-orm");
-    await ensureMetricsSamplesSchema();
-    const rows = await metricsDb
-      .select()
-      .from(metricSamples)
-      .where(and(
-        eq(metricSamples.metricId, metric.id),
-        sql`${metricSamples.observedAt} >= ${range.start}`,
-        sql`${metricSamples.observedAt} < ${range.end}`,
-      ))
-      .orderBy(desc(metricSamples.observedAt));
-    const samples = rows.map((row) => ({
-      id: row.id,
-      metricId: row.metricId,
-      accountId: row.accountId,
-      vaultId: row.vaultId ?? null,
-      value: row.value,
-      unit: row.unit ?? metric.unit,
-      observedAt: row.observedAt instanceof Date ? row.observedAt.toISOString() : String(row.observedAt),
-      sourceRef: row.sourceRef ?? "internal/user-memory-v2",
-      evidence: row.evidence ?? "Platform count of active canonical and linked vNext memory claims.",
-      periodStart: row.periodStart instanceof Date ? row.periodStart.toISOString() : row.periodStart ? String(row.periodStart) : null,
-      periodEnd: row.periodEnd instanceof Date ? row.periodEnd.toISOString() : row.periodEnd ? String(row.periodEnd) : null,
-      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt ?? new Date().toISOString()),
-    }));
+    const {
+      sampleUserMemoryStock,
+      sampleUserMemoryStockAsOf,
+      USER_MEMORY_STOCK_PARTIAL_REASON,
+    } = await import("../user-memory-metric");
+    const current = identityStockCanAnswerRange(range);
+    const value = current
+      ? await sampleUserMemoryStock()
+      : await sampleUserMemoryStockAsOf(range.end);
+    const sample = singleRangeSample(
+      metric,
+      value,
+      range,
+      "internal/user-memory-query-v1",
+      current
+        ? "Platform count of active canonical and linked vNext memory claims."
+        : "User Memory reconstructed as of range.end from created and lifecycle timestamps.",
+      current,
+    );
     return {
-      metric: { ...metric, latestSample: samples[0] ?? metric.latestSample ?? null },
-      samples,
+      metric: { ...metric, latestSample: sample },
+      samples: [sample],
       valueStatus: "actual",
-      coverage: { status: "finalized" },
+      coverage: current
+        ? { status: "finalized" }
+        : { status: "partial", availableFrom: null, reason: USER_MEMORY_STOCK_PARTIAL_REASON },
     };
   }
 
