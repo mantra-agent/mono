@@ -4,7 +4,7 @@ import { createLogger } from "./log";
 import { requireCurrentPrincipal } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { getSetting } from "./system-settings";
-import { providerConnections } from "@shared/models/platforms";
+import { providerConnections, routers } from "@shared/models/platforms";
 import {
   allowedGrokReasoningEfforts,
   claudeCliTierMappingsSchema,
@@ -352,6 +352,27 @@ function splitModel(value: string): { provider: ModelConnectorProvider; modelId:
   return { provider: provider.data, modelId: value };
 }
 
+/** Model connectors require router_id (CHECK provider_connections_model_router_required). */
+async function requireDefaultRouterId(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+): Promise<string> {
+  const [existing] = await tx
+    .select({ id: routers.id })
+    .from(routers)
+    .where(eq(routers.isDefault, true))
+    .limit(1);
+  if (existing) return existing.id;
+  const [created] = await tx
+    .insert(routers)
+    .values({ name: "Default", isDefault: true })
+    .onConflictDoNothing()
+    .returning({ id: routers.id });
+  if (created) return created.id;
+  const [retry] = await tx.select({ id: routers.id }).from(routers).where(eq(routers.isDefault, true)).limit(1);
+  if (!retry) throw new Error("Default router required for model connector seed");
+  return retry.id;
+}
+
 export async function migrateLegacyModelProfiles(): Promise<void> {
   const legacy = await getSetting<LegacyProfiles>(LEGACY_PROFILE_KEY);
   if (!legacy?.tiers) return;
@@ -366,6 +387,7 @@ export async function migrateLegacyModelProfiles(): Promise<void> {
 
   const insertedProviders = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('model-connectors:legacy-migration'))`);
+    const defaultRouterId = await requireDefaultRouterId(tx);
     const existingRows = await tx.select().from(providerConnections)
       .where(eq(providerConnections.connectorKind, "model"));
     const migratedRows: string[] = [];
@@ -402,6 +424,7 @@ export async function migrateLegacyModelProfiles(): Promise<void> {
           : { kind: "model" as const, tierMappings, migratedFrom: "model_profiles" as const },
         sortOrder: nextSortOrder + offset,
         scope: "global",
+        routerId: defaultRouterId,
       }];
     });
     if (connectorValues.length > 0) await tx.insert(providerConnections).values(connectorValues);
@@ -418,6 +441,7 @@ export async function migrateLegacyModelProfiles(): Promise<void> {
 export async function ensureGrokSubscriptionConnector(): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('model-connectors:grok-seed'))`);
+    const defaultRouterId = await requireDefaultRouterId(tx);
     const existing = await tx.select({ id: providerConnections.id, connectorConfig: providerConnections.connectorConfig }).from(providerConnections)
       .where(and(
         eq(providerConnections.connectorKind, "model"),
@@ -466,6 +490,7 @@ export async function ensureGrokSubscriptionConnector(): Promise<void> {
       connectorConfig,
       sortOrder: modelRows.length,
       scope: "global",
+      routerId: defaultRouterId,
     });
     log.info("seeded grok-subscription model connector");
   });
