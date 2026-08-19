@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import type { JSONContent } from "@tiptap/core";
 import { usePageHeader } from "@/hooks/use-page-header";
 // focus context removed — inline expansion, no selection model
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -11,10 +12,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { PROFILE_DESCRIPTION_FRAME_CLASS } from "@/components/profile-description-style";
+import { RichTextEditor } from "@/components/rich-text-editor";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { markdownToTiptap, normalizeTiptapDoc, tiptapToMarkdown } from "@shared/markdown-tiptap";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -119,18 +120,26 @@ function skillFieldValueClass(changed?: boolean): string {
   return changed ? "text-white" : "text-muted-foreground";
 }
 
-/** Skill Process/description preview: plain markdown only. Never chat MarkdownContent
- * (reference chips + chat heading scale turn long process text into unreadable salad). */
-const SKILL_MARKDOWN_PREVIEW_CLASS = cn(
-  "prose prose-sm dark:prose-invert max-w-none break-words text-[14px] leading-snug",
-  "[&_p]:my-1.5 [&_p]:text-[14px] [&_p]:leading-snug",
-  "[&_ul]:my-1.5 [&_ol]:my-1.5 [&_li]:my-0.5 [&_li]:text-[14px]",
-  "[&_h1]:my-2 [&_h2]:my-2 [&_h3]:my-1.5",
-  "[&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-medium",
-  "[&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-primary/20 [&_pre]:bg-background/60 [&_pre]:p-2 [&_pre]:text-xs",
-  "[&_code]:break-all [&_code]:text-xs [&_code]:font-mono",
-  "[&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/30 [&_blockquote]:pl-3",
+/** Skill Process editor: Library-style TipTap so formatting stays live while editing.
+ * Compact type scale only — never chat MarkdownContent reference chips. */
+const SKILL_PROCESS_EDITOR_CLASS = cn(
+  "!border-0 !bg-transparent !p-0 !shadow-none",
+  "[&_.ProseMirror]:px-0 [&_.ProseMirror]:py-0 [&_.ProseMirror]:text-[14px] [&_.ProseMirror]:leading-snug",
+  "[&_.ProseMirror_p]:my-1.5 [&_.ProseMirror_p]:!text-[14px] [&_.ProseMirror_p]:!leading-snug",
+  "[&_.ProseMirror_ul]:my-1.5 [&_.ProseMirror_ol]:my-1.5 [&_.ProseMirror_li]:my-0.5 [&_.ProseMirror_li]:!text-[14px]",
+  "[&_.ProseMirror_h1]:my-2 [&_.ProseMirror_h2]:my-2 [&_.ProseMirror_h3]:my-1.5",
+  "[&_.ProseMirror_h1]:!text-sm [&_.ProseMirror_h2]:!text-sm [&_.ProseMirror_h3]:!text-sm",
+  "[&_.ProseMirror_h1]:font-semibold [&_.ProseMirror_h2]:font-semibold [&_.ProseMirror_h3]:font-medium",
+  "[&_.ProseMirror_pre]:my-2 [&_.ProseMirror_pre]:overflow-x-auto [&_.ProseMirror_pre]:rounded-md [&_.ProseMirror_pre]:border [&_.ProseMirror_pre]:border-primary/20 [&_.ProseMirror_pre]:bg-background/60 [&_.ProseMirror_pre]:p-2 [&_.ProseMirror_pre]:text-xs",
+  "[&_.ProseMirror_code]:break-all [&_.ProseMirror_code]:text-xs [&_.ProseMirror_code]:font-mono",
+  "[&_.ProseMirror_blockquote]:my-2 [&_.ProseMirror_blockquote]:border-l-2 [&_.ProseMirror_blockquote]:border-primary/30 [&_.ProseMirror_blockquote]:pl-3",
 );
+
+function markdownDocFromValue(markdown: string): JSONContent | null {
+  const trimmed = markdown.trim();
+  if (!trimmed) return null;
+  return normalizeTiptapDoc(markdownToTiptap(markdown)) ?? (markdownToTiptap(markdown) as JSONContent);
+}
 
 function SkillDescriptionEditor({
   value,
@@ -158,10 +167,15 @@ function SkillDescriptionEditor({
   markdown?: boolean;
 }) {
   const [draft, setDraft] = useState(value);
-  const [editing, setEditing] = useState(false);
+  const [doc, setDoc] = useState<JSONContent | null>(() => (markdown ? markdownDocFromValue(value) : null));
+  const draftRef = useRef(value);
+  const focusedRef = useRef(false);
   useEffect(() => {
+    if (focusedRef.current) return;
     setDraft(value);
-  }, [value]);
+    draftRef.current = value;
+    if (markdown) setDoc(markdownDocFromValue(value));
+  }, [value, markdown]);
   const persist = (next: string) => {
     if (onCommit) {
       if (next !== value) onCommit(next);
@@ -169,11 +183,16 @@ function SkillDescriptionEditor({
     }
     onChange?.(next);
   };
-  const showMarkdownPreview = markdown && !editing;
-  const commitDraft = () => {
-    persist(draft);
-    setEditing(false);
+  const commitDraft = (next = draftRef.current) => {
+    persist(next);
   };
+  const handleRichChange = useCallback((json: JSONContent) => {
+    const next = tiptapToMarkdown(json).trimEnd();
+    draftRef.current = next;
+    setDraft(next);
+    setDoc(json);
+    onChange?.(next);
+  }, [onChange]);
   const showMenu = Boolean((onApplyField || onRevertField) && applyField);
   return (
     <div className="group/editor grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-0 px-2 py-1.5">
@@ -183,41 +202,39 @@ function SkillDescriptionEditor({
             <StatusDot kind="local" />
           </div>
         ) : null}
-        {showMarkdownPreview ? (
-          <button
-            type="button"
-            className={cn(
-              minHeightClass,
-              "w-full cursor-text rounded-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-ring",
-            )}
-            onClick={() => setEditing(true)}
-            data-testid={testId}
+        {markdown ? (
+          <div
+            className={cn(minHeightClass, skillFieldValueClass(changed), "w-full")}
+            data-testid={testId === "input-process" ? "skill-process-preview" : undefined}
           >
-            {value.trim() ? (
-              <div
-                className={cn(SKILL_MARKDOWN_PREVIEW_CLASS, skillFieldValueClass(changed))}
-                data-testid={testId === "input-process" ? "skill-process-preview" : undefined}
-              >
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
-              </div>
-            ) : (
-              <span className="text-[14px] leading-tight text-muted-foreground">{placeholder}</span>
-            )}
-          </button>
+            <RichTextEditor
+              value={doc}
+              onChange={handleRichChange}
+              placeholder={placeholder}
+              plainTextFallback={value}
+              className="h-auto"
+              contentClassName={cn(SKILL_PROCESS_EDITOR_CLASS, minHeightClass, "[&_.ProseMirror]:!min-h-[inherit]")}
+              onFocusChange={(focused) => {
+                focusedRef.current = focused;
+                if (!focused) commitDraft();
+              }}
+              data-testid={testId}
+            />
+          </div>
         ) : (
           <Textarea
-            value={onCommit || markdown ? draft : value}
-            autoFocus={markdown}
+            value={onCommit ? draft : value}
             onChange={(event) => {
               const next = event.target.value;
-              if (onCommit || markdown) setDraft(next);
-              else onChange?.(next);
-            }}
-            onFocus={() => {
-              if (markdown) setEditing(true);
+              if (onCommit) {
+                setDraft(next);
+                draftRef.current = next;
+              } else {
+                onChange?.(next);
+              }
             }}
             onBlur={() => {
-              if (onCommit || markdown) commitDraft();
+              if (onCommit) commitDraft();
             }}
             placeholder={placeholder}
             className={cn(
