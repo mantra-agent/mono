@@ -4287,7 +4287,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
           if (!response.ok) {
             const errText = await response.text().catch(() => "unknown error");
-            const failure = classifyGitHubApiStatus(response.status);
+            const failure = classifyGitHubApiStatus(response.status, errText);
             return { result: `GitHub API error (${response.status}): ${scrubTokens(errText)}`, error: true, ...(failure ? { failure } : {}) };
           }
 
@@ -4328,7 +4328,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
           if (!prResponse.ok) {
             const errText = await prResponse.text().catch(() => "unknown error");
-            const failure = classifyGitHubApiStatus(prResponse.status);
+            const failure = classifyGitHubApiStatus(prResponse.status, errText);
             return { result: `GitHub API error (${prResponse.status}): ${scrubTokens(errText)}`, error: true, ...(failure ? { failure } : {}) };
           }
 
@@ -4348,7 +4348,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
           if (!response.ok) {
             const errText = await response.text().catch(() => "unknown error");
-            const failure = classifyGitHubApiStatus(response.status);
+            const failure = classifyGitHubApiStatus(response.status, errText);
             return { result: `GitHub API error (${response.status}): ${scrubTokens(errText)}`, error: true, ...(failure ? { failure } : {}) };
           }
 
@@ -4408,7 +4408,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
           if (!response.ok && response.status !== 422) {
             const errText = await response.text().catch(() => "unknown error");
-            const failure = classifyGitHubApiStatus(response.status);
+            const failure = classifyGitHubApiStatus(response.status, errText);
             return { result: `GitHub API error (${response.status}): ${scrubTokens(errText)}`, error: true, ...(failure ? { failure } : {}) };
           }
 
