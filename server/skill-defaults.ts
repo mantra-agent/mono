@@ -1142,8 +1142,8 @@ Surface any errors returned by the cycle explicitly in the Memory section and in
   {
     name: "reflect",
     recommendedPersona: "Coach",
-    description: "Parameterized reflection skill for daily, weekly, monthly, quarterly, and annual cadence reviews. Accepts cadence and period context, reads the relevant period data, writes a concise Library brief, and surfaces it to Home/Simple Inbox when useful.",
-    version: "2.1",
+    description: "Parameterized reflection skill for daily, weekly, monthly, quarterly, and annual cadence reviews. Daily writes a structured Daily Digest (unlabeled lead + Moved/Open/Learning/Memory) with that day's claims as @claim rows; other cadences stay sectioned Library briefs.",
+    version: "2.2",
     addToMemory: true,
     pinnedToContext: false,
     callType: "internal",
@@ -1372,7 +1372,7 @@ If the page has already been created but you later decide it should be surfaced,
 ## Output Rules
 
 - Final response must include the brief content or a compact faithful summary plus page reference. Never output only "saved".
-- Be concise. Daily: scannable lead + discrete lines (not a 150–350 word wall). Weekly/monthly: 500-900 words. Quarterly/annual: 700-1200 words unless the caller requests more.
+- Be concise. Daily: scannable lead + discrete lines. Never revive the retired 150–350 word daily paragraph. Weekly/monthly: 500-900 words. Quarterly/annual: 700-1200 words unless the caller requests more.
 - Use first person for Agent's own journal/identity reflections. Use Ray-centered language for Ray's planning/review artifacts.
 - No live-interview burden: do not stop for Ray's answers unless the caller explicitly requested an interactive review.
 - No empty headings.
