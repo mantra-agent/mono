@@ -28,6 +28,29 @@ import { isValidReferenceIdentifier } from "@shared/references";
 
 const log = createLogger("EmailDraftWidget");
 
+type CodedError = Error & { code: string };
+
+/** Status-specific load codes so missing/stale drafts are not one opaque ERRORS identity. */
+function loadFailureCode(status: number): string {
+  if (status === 400) return "LOAD_HTTP_400";
+  if (status === 401) return "LOAD_HTTP_401";
+  if (status === 403) return "LOAD_HTTP_403";
+  if (status === 404) return "LOAD_HTTP_404";
+  if (status >= 500) return "LOAD_HTTP_500";
+  return "LOAD_HTTP";
+}
+
+/** 4xx on GET draft is missing/stale/unauthorized input — UI shows failure, ERRORS must not page. */
+function isInputLoadStatus(status: number): boolean {
+  return status === 400 || status === 401 || status === 403 || status === 404;
+}
+
+function codedLoadError(message: string, code: string): CodedError {
+  const error = new Error(message) as CodedError;
+  error.code = code;
+  return error;
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -249,8 +272,15 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
       log.debug("EMAIL_DRAFT_WIDGET:LOAD_START", { draftId });
       const res = await fetch(`/api/email-drafts/${draftId}`, { credentials: "include" });
       if (!res.ok) {
-        log.error("EMAIL_DRAFT_WIDGET:LOAD_FAILED", { draftId, status: res.status });
-        throw new Error(`Failed to load draft (${res.status})`);
+        const code = loadFailureCode(res.status);
+        const failure = codedLoadError(`Failed to load draft (${res.status})`, code);
+        // Server GET returns 404 for missing/invisible drafts — input, not a producer defect.
+        if (isInputLoadStatus(res.status)) {
+          log.warn("EMAIL_DRAFT_WIDGET:LOAD_INPUT", { draftId, status: res.status, code });
+        } else {
+          log.error("EMAIL_DRAFT_WIDGET:LOAD_FAILED", { draftId, status: res.status, code }, failure);
+        }
+        throw failure;
       }
       const payload = await res.json();
       log.debug("EMAIL_DRAFT_WIDGET:LOAD_SUCCESS", {
