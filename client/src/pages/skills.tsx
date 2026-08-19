@@ -12,6 +12,8 @@ import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { PROFILE_DESCRIPTION_FRAME_CLASS } from "@/components/profile-description-style";
 import { MarkdownContent } from "@/components/chat-shared";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { createReferenceRef } from "@shared/references";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -96,6 +98,7 @@ import type {
   CheckResult,
 } from "@shared/models/skills";
 import type { PromptModule } from "@shared/models/prompt-modules";
+import type { Timer } from "@shared/models/timers";
 import { MOD_KEYS, type ModKey } from "@shared/models/mods";
 
 const FIELD_SELECT_TRIGGER_CLASS = "h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0";
@@ -115,10 +118,16 @@ function skillFieldValueClass(changed?: boolean): string {
   return changed ? "text-white" : "text-muted-foreground";
 }
 
+const SKILL_PROSE_TYPE_CLASS = "text-[14px] leading-tight [&_p]:text-[14px] [&_li]:text-[14px] [&_ul]:text-[14px] [&_ol]:text-[14px] [&_h1]:text-[14px] [&_h2]:text-[14px] [&_h3]:text-[14px] [&_h1]:font-medium [&_h2]:font-medium [&_h3]:font-medium [&_code]:text-[14px] [&_pre]:text-[14px]";
+
 function SkillDescriptionEditor({
   value,
   changed,
   onChange,
+  onCommit,
+  onApplyField,
+  onRevertField,
+  applyField,
   placeholder = "Add description",
   testId = "input-description",
   minHeightClass = "min-h-[2.75rem]",
@@ -126,7 +135,11 @@ function SkillDescriptionEditor({
 }: {
   value: string;
   changed?: boolean;
-  onChange: (next: string) => void;
+  onChange?: (next: string) => void;
+  onCommit?: (next: string) => void;
+  onApplyField?: (field: string) => void;
+  onRevertField?: (field: string) => void;
+  applyField?: string;
   placeholder?: string;
   testId?: string;
   minHeightClass?: string;
@@ -137,11 +150,19 @@ function SkillDescriptionEditor({
   useEffect(() => {
     setDraft(value);
   }, [value]);
+  const persist = (next: string) => {
+    if (onCommit) {
+      if (next !== value) onCommit(next);
+      return;
+    }
+    onChange?.(next);
+  };
   const showMarkdownPreview = markdown && !editing;
   const commitDraft = () => {
-    if (draft !== value) onChange(draft);
+    persist(draft);
     setEditing(false);
   };
+  const showMenu = Boolean((onApplyField || onRevertField) && applyField);
   return (
     <div className="group/editor grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-0 px-2 py-1.5">
       <div className={cn(PROFILE_DESCRIPTION_FRAME_CLASS, "min-w-0")}>
@@ -162,29 +183,31 @@ function SkillDescriptionEditor({
           >
             {value.trim() ? (
               <div className={cn(
-                "prose prose-sm dark:prose-invert max-w-none break-words text-[14px] leading-tight",
+                SKILL_PROSE_TYPE_CLASS,
+                "[&_.prose]:text-[14px] [&_.prose]:leading-tight [&_p]:!text-[14px] [&_p]:!leading-tight [&_li]:!text-[14px] [&_h1]:!text-[14px] [&_h2]:!text-[14px] [&_h3]:!text-[14px] [&_h1]:!leading-tight [&_h2]:!leading-tight [&_h3]:!leading-tight",
                 skillFieldValueClass(changed),
-                "prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:overflow-x-auto",
+                "prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-1 prose-pre:overflow-x-auto",
               )}>
                 <MarkdownContent content={value} compact />
               </div>
             ) : (
-              <span className="text-muted-foreground">{placeholder}</span>
+              <span className="text-[14px] leading-tight text-muted-foreground">{placeholder}</span>
             )}
           </button>
         ) : (
           <Textarea
-            value={markdown ? draft : value}
+            value={onCommit || markdown ? draft : value}
             autoFocus={markdown}
             onChange={(event) => {
-              if (markdown) setDraft(event.target.value);
-              else onChange(event.target.value);
+              const next = event.target.value;
+              if (onCommit || markdown) setDraft(next);
+              else onChange?.(next);
             }}
             onFocus={() => {
               if (markdown) setEditing(true);
             }}
             onBlur={() => {
-              if (markdown) commitDraft();
+              if (onCommit || markdown) commitDraft();
             }}
             placeholder={placeholder}
             className={cn(
@@ -197,7 +220,25 @@ function SkillDescriptionEditor({
           />
         )}
       </div>
-      <span className="h-6 w-6 shrink-0" aria-hidden="true" />
+      {showMenu ? (
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="flex h-6 min-h-6 w-6 min-w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/editor:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
+              aria-label={`${applyField} actions`}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
+            {onApplyField && applyField ? <DropdownMenuItem onSelect={() => onApplyField(applyField)}>Apply to Default</DropdownMenuItem> : null}
+            {onRevertField && applyField ? <DropdownMenuItem onSelect={() => onRevertField(applyField)}>Revert to Default</DropdownMenuItem> : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <span className="h-6 w-6 shrink-0" aria-hidden="true" />
+      )}
     </div>
   );
 }
@@ -320,78 +361,36 @@ function buildSkillRevertField(skill: SkillWithReferences, field: string): Pendi
  * Default. Reset is Revert — it keeps the user copy. Renders nothing when there
  * is no drift, no inbound update, and no default to publish to.
  */
-function SkillLatticeSection({ skill }: { skill: SkillWithReferences }) {
+function useSkillLattice(skill: SkillWithReferences) {
   const { hasPermission } = useAuth();
   const canApply = hasPermission("system:write");
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
   const sync = useDefaultSync(refresh);
-
   const templateId = skillTemplateId(skill);
-  const isUserCopy = skill.scope !== "global";
-  const hasBaseline = skill.platformBaseline != null;
-  // Publishing to the default is admin-gated; reverting a user's own copy is
-  // owner-authed (the /reset + PATCH routes are user-writable, not system:write).
   const canPublish = canApply && templateId != null;
-  const canRevert = hasBaseline && isUserCopy;
-  const drift = skill.changedFields ?? [];
-  // One cell decides the whole-skill moves; per-field apply/revert below stay
-  // as editing affordances on individual drift rows.
+  const canRevert = skill.platformBaseline != null && skill.scope !== "global";
   const cell = computeLatticeCell({
-    localChanged: drift.length > 0,
+    localChanged: (skill.changedFields?.length ?? 0) > 0,
     defaultAdvanced: Boolean(skill.updateAvailable),
     isAdmin: canPublish,
   });
-  const showRevertAll = cell.showRevert && canRevert;
-  const showPublishAll = cell.showPublish;
-
-  if (drift.length === 0 && !showRevertAll && !showPublishAll) return null;
-
-  return (
-    <div className="space-y-2 rounded-md border border-border/40 bg-muted/10 p-2" data-testid={`skill-lattice-${skill.id}`}>
-      {drift.length > 0 && (
-        <div className="space-y-0.5">
-          {drift.map((field) => (
-            <div key={field} className="flex items-center gap-2 text-xs" data-testid={`skill-drift-${skill.id}-${field}`}>
-              <StatusDot kind="local" className="shrink-0" />
-              <span className="min-w-0 flex-1 truncate text-foreground">{skillLabelFor(field)}</span>
-              {(canPublish || canRevert) && (
-                <DropdownMenu modal={false}>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
-                      aria-label={`${skillLabelFor(field)} actions`}
-                    >
-                      <MoreHorizontal className="h-3 w-3" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {canPublish && <DropdownMenuItem onClick={() => sync.request(() => buildSkillApplyField(skill, templateId!, field))}>Apply to Default</DropdownMenuItem>}
-                    {canRevert && <DropdownMenuItem onClick={() => sync.request(() => buildSkillRevertField(skill, field))}>Revert to Default</DropdownMenuItem>}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      {(showPublishAll || showRevertAll) && (
-        <div className="flex flex-wrap gap-2 pt-0.5">
-          {showRevertAll && (
-            <Button size="sm" variant="outline" onClick={() => sync.request(() => buildSkillRevertAll(skill))}>
-              Revert
-            </Button>
-          )}
-          {showPublishAll && (
-            <Button size="sm" variant="outline" onClick={() => sync.request(() => buildSkillApplyAll(skill, templateId!))}>
-              Publish
-            </Button>
-          )}
-        </div>
-      )}
-      <DefaultSyncDialog sync={sync} />
-    </div>
-  );
+  return {
+    sync,
+    templateId,
+    canPublish,
+    canRevert,
+    cell,
+    applyField: (field: string) => {
+      if (!templateId) return;
+      sync.request(() => buildSkillApplyField(skill, templateId, field));
+    },
+    revertField: (field: string) => sync.request(() => buildSkillRevertField(skill, field)),
+    revertAll: () => sync.request(() => buildSkillRevertAll(skill)),
+    publishAll: () => {
+      if (!templateId) return;
+      sync.request(() => buildSkillApplyAll(skill, templateId));
+    },
+  };
 }
 
 function SkillTreeRow({
@@ -443,13 +442,8 @@ function SkillTreeRow({
   });
   const onKeepMine = () => latticeAction.mutate({ action: "keep-mine" });
   const onUseUpdatedDefault = () => latticeAction.mutate({ action: "use-updated-default" });
-  // Inbound consume moves resolve through the single cell: Update when only the
-  // default advanced, the Keep Mine / Take Theirs fork when local also changed.
-  const cell = computeLatticeCell({
-    localChanged: (skill.changedFields?.length ?? 0) > 0,
-    defaultAdvanced: Boolean(skill.updateAvailable),
-    isAdmin: false,
-  });
+  const lattice = useSkillLattice(skill);
+  const cell = lattice.cell;
 
   return (
     <div data-testid={`skill-row-${skill.id}`}>
@@ -545,17 +539,21 @@ function SkillTreeRow({
             <DropdownMenuItem onClick={() => { setMenuOpen(false); onToggleExpand(); }} data-testid="menu-edit-skill">
               <Pencil className="h-3.5 w-3.5 mr-2" /> Edit
             </DropdownMenuItem>
-            {cell.showUpdate && (
+            {(cell.showRevert && lattice.canRevert) || cell.showUpdate || cell.showMerge || (cell.showPublish && lattice.canPublish) ? (
+              <DropdownMenuSeparator />
+            ) : null}
+            {cell.showRevert && lattice.canRevert ? (
+              <DropdownMenuItem onClick={() => { setMenuOpen(false); lattice.revertAll(); }} data-testid="menu-revert-skill">
+                Revert
+              </DropdownMenuItem>
+            ) : null}
+            {cell.showUpdate ? (
+              <DropdownMenuItem onClick={() => { setMenuOpen(false); onUseUpdatedDefault(); }} data-testid="menu-update-skill">
+                Update
+              </DropdownMenuItem>
+            ) : null}
+            {cell.showMerge ? (
               <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => { setMenuOpen(false); onUseUpdatedDefault(); }} data-testid="menu-update-skill">
-                  Update
-                </DropdownMenuItem>
-              </>
-            )}
-            {cell.showMerge && (
-              <>
-                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => { setMenuOpen(false); onKeepMine(); }} data-testid="menu-keep-mine-skill">
                   Merge · Keep Mine
                 </DropdownMenuItem>
@@ -563,7 +561,12 @@ function SkillTreeRow({
                   Merge · Take Theirs
                 </DropdownMenuItem>
               </>
-            )}
+            ) : null}
+            {cell.showPublish && lattice.canPublish ? (
+              <DropdownMenuItem onClick={() => { setMenuOpen(false); lattice.publishAll(); }} data-testid="menu-publish-skill">
+                Publish
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onClick={() => { setMenuOpen(false); onExport(); }} data-testid="menu-export-skill">
               <Download className="h-3.5 w-3.5 mr-2" /> Export
             </DropdownMenuItem>
@@ -579,8 +582,9 @@ function SkillTreeRow({
         </DropdownMenu>
       </div>
       {expanded && (
-        <SkillEditor skill={skill} />
+        <SkillEditor skill={skill} lattice={lattice} />
       )}
+      <DefaultSyncDialog sync={lattice.sync} />
     </div>
   );
 }
@@ -1113,10 +1117,12 @@ function RunHistorySection({ skillName }: { skillName: string }) {
 
 function SkillEditor({
   skill,
+  lattice,
   onCreated,
   onCancel,
 }: {
   skill?: SkillWithReferences | null;
+  lattice?: ReturnType<typeof useSkillLattice>;
   onCreated?: () => void;
   onCancel?: () => void;
 }) {
@@ -1151,6 +1157,17 @@ function SkillEditor({
     queryKey: ["/api/skills/persona-config"],
   });
 
+  const { data: timers = [] } = useQuery<Timer[]>({
+    queryKey: ["/api/timers"],
+    enabled: Boolean(skill),
+  });
+
+  const drivingTimers = useMemo(() => {
+    if (!skill) return [];
+    const keys = new Set([skill.id, skill.name, skill.templateSkillId].filter((value): value is string => Boolean(value)));
+    return timers.filter((timer) => timer.skillId && keys.has(timer.skillId));
+  }, [skill, timers]);
+
   useEffect(() => {
     personaTouchedRef.current = false;
     const saved = skill ? personaConfig?.preferences[skill.id] : undefined;
@@ -1161,22 +1178,65 @@ function SkillEditor({
     ? personaConfig?.recommendations[skill.id]?.name ?? null
     : null;
 
-  const savePersonaPreference = async (skillId: string) => {
-    if (!personaTouchedRef.current) return;
+  const savePersonaPreference = async (skillId: string, nextChoice: number | "recommended") => {
     await apiRequest("PUT", `/api/skills/${skillId}/persona-preference`, {
-      personaId: personaChoice === "recommended" ? null : personaChoice,
+      personaId: nextChoice === "recommended" ? null : nextChoice,
     });
     await queryClient.invalidateQueries({
       queryKey: ["/api/skills/persona-config"],
     });
   };
 
+  const commitField = async (patch: Record<string, unknown>) => {
+    if (!skill) return;
+    try {
+      await apiRequest("PATCH", `/api/skills/${skill.id}`, patch);
+      await queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
+    } catch (err) {
+      toast({
+        title: "Couldn't update skill",
+        description: err instanceof Error ? err.message : "Update failed",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const persistChecklist = (next: ChecklistItem[]) => {
+    setChecklist(next);
+    if (skill) {
+      void commitField({ checklist: next.filter((item) => item.check.trim().length > 0) });
+    }
+  };
+
+  const fieldMenu = (field: string) => {
+    if (!lattice) return undefined;
+    const canApply = lattice.canPublish;
+    const canRevert = lattice.canRevert;
+    if (!canApply && !canRevert) return undefined;
+    return (
+      <>
+        {canApply ? <DropdownMenuItem onSelect={() => lattice.applyField(field)}>Apply to Default</DropdownMenuItem> : null}
+        {canRevert ? <DropdownMenuItem onSelect={() => lattice.revertField(field)}>Revert to Default</DropdownMenuItem> : null}
+      </>
+    );
+  };
+
   const createMutation = useMutation({
-    mutationFn: async (data: any) => {
-      const res = await apiRequest("POST", "/api/skills", data);
-      const skill = await res.json() as { id: string };
-      await savePersonaPreference(skill.id);
-      return skill;
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/skills", {
+        name,
+        description,
+        authority: "full",
+        process,
+        qualityCriteria: "",
+        checklist: checklist.filter((item) => item.check.trim().length > 0),
+        sessionType,
+        status: "draft",
+        version,
+      });
+      const created = await res.json() as { id: string };
+      if (personaTouchedRef.current) await savePersonaPreference(created.id, personaChoice);
+      return created;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
@@ -1187,44 +1247,6 @@ function SkillEditor({
       toast({ title: "Failed to create skill", description: err.message, variant: "destructive" });
     },
   });
-
-  const updateMutation = useMutation({
-    mutationFn: async (data: any) => {
-      const res = await apiRequest("PATCH", `/api/skills/${skill!.id}`, data);
-      const saved = await res.json() as { id: string };
-      await savePersonaPreference(saved.id);
-      return saved;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
-      toast({ title: "Skill updated" });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to update skill", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const handleSubmit = () => {
-    const validChecklist = checklist.filter(item => item.check.trim().length > 0);
-    const data = {
-      name,
-      description,
-      authority: skill?.authority || "full",
-      process,
-      qualityCriteria: skill?.qualityCriteria || "",
-      checklist: validChecklist,
-      sessionType,
-      status: skill?.status || "draft",
-      version,
-    };
-    if (skill) {
-      updateMutation.mutate(data);
-    } else {
-      createMutation.mutate(data);
-    }
-  };
-
-  const isPending = createMutation.isPending || updateMutation.isPending;
 
   return (
     <div className="space-y-0" data-testid={skill ? `skill-editor-${skill.id}` : "skill-editor-new"}>
@@ -1243,16 +1265,39 @@ function SkillEditor({
         value={description}
         changed={skill?.changedFields?.includes("description")}
         onChange={setDescription}
+        onCommit={skill ? (next) => {
+          setDescription(next);
+          void commitField({ description: next });
+        } : undefined}
+        onApplyField={lattice?.canPublish ? lattice.applyField : undefined}
+        onRevertField={lattice?.canRevert ? lattice.revertField : undefined}
+        applyField="description"
       />
-      <ProfileTreeRow label="Version" hasValue showEmpty mobileLayout="inline" testId="row-skill-version">
-        <Input value={version} onChange={(event) => setVersion(event.target.value)} className="h-7 text-right text-xs" data-testid="input-version" />
+      <ProfileTreeRow
+        label="Version"
+        hasValue
+        showEmpty
+        mobileLayout="inline"
+        testId="row-skill-version"
+      >
+        <Input
+          value={version}
+          onChange={(event) => setVersion(event.target.value)}
+          onBlur={() => {
+            if (skill && version !== skill.version) void commitField({ version });
+          }}
+          className="h-7 text-right text-xs"
+          data-testid="input-version"
+        />
       </ProfileTreeRow>
       <ProfileTreeRow label="Persona" hasValue showEmpty mobileLayout="inline" testId="row-skill-persona">
         <Select
           value={personaChoice === "recommended" ? "recommended" : String(personaChoice)}
           onValueChange={(value) => {
+            const next = value === "recommended" ? "recommended" : Number(value);
             personaTouchedRef.current = true;
-            setPersonaChoice(value === "recommended" ? "recommended" : Number(value));
+            setPersonaChoice(next);
+            if (skill) void savePersonaPreference(skill.id, next);
           }}
         >
           <SelectTrigger className={FIELD_SELECT_TRIGGER_CLASS} data-testid="select-persona">
@@ -1268,20 +1313,67 @@ function SkillEditor({
           </SelectContent>
         </Select>
       </ProfileTreeRow>
-      <ProfileTreeRow label="System" hasValue showEmpty mobileLayout="inline" testId="row-skill-system">
+      <ProfileTreeRow
+        label="System"
+        hasValue
+        showEmpty
+        mobileLayout="inline"
+        testId="row-skill-system"
+        menuContent={fieldMenu("sessionType")}
+        menuVisibility="hover"
+      >
         <button
           type="button"
-          onClick={() => setSessionType((current) => current === "autonomous" ? "agent" : "autonomous")}
+          onClick={() => {
+            const next = sessionType === "autonomous" ? "agent" : "autonomous";
+            setSessionType(next);
+            if (skill) void commitField({ sessionType: next });
+          }}
           className="text-sm text-right"
           data-testid="toggle-skill-system"
         >
           {sessionType === "autonomous" ? "On" : "Off"}
         </button>
       </ProfileTreeRow>
+      <ProfileTreeRow
+        label="Timer"
+        hasValue={drivingTimers.length > 0}
+        showEmpty
+        mobileLayout="inline"
+        testId="row-skill-timer"
+      >
+        {drivingTimers.length === 0 ? (
+          <span className="text-sm text-muted-foreground">None</span>
+        ) : (
+          <div className="flex flex-wrap justify-end gap-1">
+            {drivingTimers.map((timer) => (
+              <ReferenceRenderer
+                key={timer.id}
+                refValue={createReferenceRef({
+                  type: "timer",
+                  id: timer.id,
+                  metadata: {
+                    label: timer.name,
+                    href: `/timers?timer=${encodeURIComponent(timer.id)}`,
+                  },
+                })}
+                surface="simple-chip"
+              />
+            ))}
+          </div>
+        )}
+      </ProfileTreeRow>
       <SkillDescriptionEditor
         value={process}
         changed={skill?.changedFields?.includes("process")}
         onChange={setProcess}
+        onCommit={skill ? (next) => {
+          setProcess(next);
+          void commitField({ process: next });
+        } : undefined}
+        onApplyField={lattice?.canPublish ? lattice.applyField : undefined}
+        onRevertField={lattice?.canRevert ? lattice.revertField : undefined}
+        applyField="process"
         placeholder="Step-by-step workflow..."
         testId="input-process"
         minHeightClass="min-h-20"
@@ -1306,8 +1398,15 @@ function SkillEditor({
             showEmpty
             mobileLayout="inline"
             testId={`checklist-item-${index}`}
+            menuContent={fieldMenu("checklist")}
+            menuVisibility="hover"
             actionContent={(
-              <button type="button" className="text-xs text-destructive" onClick={() => setChecklist(checklist.filter((_, current) => current !== index))} data-testid={`button-remove-checklist-item-${index}`}>
+              <button
+                type="button"
+                className="text-xs text-destructive"
+                onClick={() => persistChecklist(checklist.filter((_, current) => current !== index))}
+                data-testid={`button-remove-checklist-item-${index}`}
+              >
                 Remove
               </button>
             )}
@@ -1319,6 +1418,9 @@ function SkillEditor({
                   const next = [...checklist];
                   next[index] = { ...next[index], check: event.target.value };
                   setChecklist(next);
+                }}
+                onBlur={() => {
+                  if (skill) persistChecklist(checklist);
                 }}
                 placeholder="What to verify..."
                 className="h-7 text-right text-xs"
@@ -1332,6 +1434,9 @@ function SkillEditor({
                   next[index] = { ...next[index], weight: parseFloat(event.target.value) || 1 };
                   setChecklist(next);
                 }}
+                onBlur={() => {
+                  if (skill) persistChecklist(checklist);
+                }}
                 min={0}
                 step={0.5}
                 className="h-7 w-16 text-right text-xs"
@@ -1342,22 +1447,23 @@ function SkillEditor({
           </ProfileTreeRow>
         ))}
       </ProfileDetailSection>
-      {skill ? <SkillLatticeSection skill={skill} /> : null}
       {skill ? <RunHistorySection skillName={skill.name} /> : null}
-      <div className="flex justify-end gap-2 px-2 py-1">
-        {onCancel ? (
-          <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending} data-testid="button-cancel">Cancel</Button>
-        ) : null}
-        <Button
-          size="sm"
-          onClick={handleSubmit}
-          disabled={isPending || !name || !description || !process}
-          data-testid="button-save-skill"
-        >
-          {isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-          {skill ? "Save" : "Create"}
-        </Button>
-      </div>
+      {!skill ? (
+        <div className="flex justify-end gap-2 px-2 py-1">
+          {onCancel ? (
+            <Button variant="ghost" size="sm" onClick={onCancel} disabled={createMutation.isPending} data-testid="button-cancel">Cancel</Button>
+          ) : null}
+          <Button
+            size="sm"
+            onClick={() => createMutation.mutate()}
+            disabled={createMutation.isPending || !name || !description || !process}
+            data-testid="button-save-skill"
+          >
+            {createMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+            Create
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
