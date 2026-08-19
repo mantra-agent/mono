@@ -14,6 +14,7 @@ export const DAY_ONE_DOCUMENT_TEMPLATE_IDS = [
   "daily-digest",
   "weekly-summary",
   "daily-brief",
+  "stand-up",
 ] as const;
 export type DayOneDocumentTemplateId = (typeof DAY_ONE_DOCUMENT_TEMPLATE_IDS)[number];
 
@@ -27,7 +28,7 @@ export const documentTemplates = pgTable(
   {
     /** Surrogate row key (global id and account overlays share the catalog id field). */
     rowId: varchar("row_id").primaryKey().default(sql`gen_random_uuid()`),
-    /** Stable unique key within scope. Day-one globals: spec, daily-digest, weekly-summary, daily-brief. */
+    /** Stable unique key within scope. Day-one globals: spec, daily-digest, weekly-summary, daily-brief, stand-up. */
     id: varchar("id", { length: 64 }).notNull(),
     name: text("name").notNull(),
     pageId: text("page_id").notNull(),

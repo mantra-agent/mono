@@ -285,7 +285,6 @@ const wellness: ModDefinition = {
     ],
     // Cadence Timers materialize through wellness-managed-resources under installation ownership.
     timers: [
-      timerTemplateRef("wellness.timer.weekly-reflection", "weekly-reflection"),
       timerTemplateRef("wellness.timer.monthly-reflection", "monthly-reflection"),
       timerTemplateRef("wellness.timer.reflect-daily", "reflect-daily"),
       timerTemplateRef("wellness.timer.daily-brief", "daily-brief"),

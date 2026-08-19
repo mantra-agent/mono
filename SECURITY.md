@@ -57,7 +57,7 @@
 <!-- 2026-08-17 Document Template Shapes (map of pages + /api/templates + templates tool):
 - Assets/data: A04 account catalog `document_templates` / `skill_template_bindings` (S2 map pointers); ordinary Library shape pages (already scoped). No secrets, no new principal class.
 - Flow/threat: cross-account map read/write; resolving a Library page the principal cannot see; binding another account's template id into this tenant; skill key/kind confusion (STRIDE information disclosure/tampering; DATA-01/IAM-01/AGENT-03).
-- Deterministic controls/owner: scoped storage (global + current account only); resolve loads page under visible Library scope and fails closed; kind/key compatibility (`feature-pipeline`→spec, `reflect`→daily|weekly) enforced in storage; HTTP `/api/templates` uses `requireAuth` (skills/agendas analog — no new permission); Agent `templates` tool crosses the same storage. Owner: Core Automation. Severity: medium confidentiality/integrity. SLA: same PR.
+- Deterministic controls/owner: scoped storage (global + current account only); resolve loads page under visible Library scope and fails closed; binding keys stay closed (`spec` | `daily` | `weekly`) — `feature-pipeline` binds `spec`, `reflect` binds `daily`, `brief-daily` binds `daily`, `stand-up` binds `daily`|`weekly`; HTTP `/api/templates` uses `requireAuth` (skills/agendas analog — no new permission); Agent `templates` tool crosses the same storage. Owner: Core Automation. Severity: medium confidentiality/integrity. SLA: same PR.
 - Residual/rollback: missing template stamps residual and degrades produce rather than crashing timers. Revert schema/routes/tool/seed/screen and this finding together.
 -->
 
