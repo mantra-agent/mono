@@ -156,11 +156,6 @@ const PLAN_ARTIFACT_CONFIG: Record<string, {
   artifactField: "dailyPlanPageId" | "weeklyPlanPageId" | "monthlyPlanPageId" | "quarterlyPlanPageId";
   dateKey: (tz: string) => string;
 }> = {
-  now: {
-    periodType: "daily",
-    artifactField: "dailyPlanPageId",
-    dateKey: (tz) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
-  },
   this_week: {
     periodType: "weekly",
     artifactField: "weeklyPlanPageId",
@@ -255,7 +250,11 @@ function groupItems(bundle: SimpleContextBundle, degraded = false): SimpleFeed {
     items: items
       .filter(item => item.section === section)
       .sort((a, b) => sortSectionItems(a, b, bundle.timezone)),
-  })).filter(section => section.items.length > 0 || PLAN_ARTIFACT_CONFIG[section] !== undefined);
+  })).filter(section =>
+    section.items.length > 0
+    || PLAN_ARTIFACT_CONFIG[section] !== undefined
+    || section.section === "now"
+  );
 
   return {
     id: `simple-${Date.now().toString(36)}`,

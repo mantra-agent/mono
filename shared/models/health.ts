@@ -38,6 +38,9 @@ export const wellnessActivities = pgTable("wellness_activities", {
   goodThreshold: real("good_threshold"),
   windowStart: integer("window_start"),
   windowEnd: integer("window_end"),
+  launchKind: text("launch_kind"),
+  launchTarget: text("launch_target"),
+  completionSource: text("completion_source"),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -152,6 +155,7 @@ export type ReflectionEntry = typeof reflectionEntries.$inferSelect;
 export type InsertReflectionEntry = z.infer<typeof insertReflectionEntrySchema>;
 
 export const DEFAULT_WELLNESS_ACTIVITIES = [
+  { name: "Intentions", benefit: "Direction", risk: "A day without a chosen aim", estimated_minutes: 5, estimated_cost: 0, interval_days: 1, category: "daily_practice" },
   { name: "Gratitude", benefit: "Positivity", risk: "Negativity bias", estimated_minutes: 5, estimated_cost: 0, interval_days: 1, category: "daily_practice" },
   { name: "Learning", benefit: "Reflection and growth", risk: "Autopilot without reflection", estimated_minutes: 5, estimated_cost: 0, interval_days: 1, category: "daily_practice" },
   { name: "Journaling", benefit: "Processing", risk: "Stagnation without reflection", estimated_minutes: 10, estimated_cost: 0, interval_days: 1, category: "daily_practice" },

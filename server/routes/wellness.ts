@@ -3,6 +3,14 @@ import { db } from "../db";
 import { pool } from "../db";
 import { healthMetrics, wellnessActivities, wellnessLogs, gratitudeEntries, learningEntries, reflectionEntries, DEFAULT_WELLNESS_ACTIVITIES } from "@shared/models/health";
 import type { HealthMetric, InsertHealthMetric, WellnessActivity, WellnessLog, ActivityTrends, GratitudeEntry, LearningEntry, ReflectionEntry } from "@shared/models/health";
+import {
+  WELLNESS_LAUNCH_BACKFILL,
+  wellnessCompletionSource,
+  wellnessLaunchKind,
+  wellnessRefusesAnyLog,
+  wellnessRefusesManualLog,
+} from "@shared/wellness-activity-launch";
+import { goalsService } from "../goals-service";
 import { desc, eq, gte, lte, isNull, and, sql, asc, type SQL } from "drizzle-orm";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
@@ -311,6 +319,16 @@ export async function queryWellnessActivities(): Promise<WellnessActivity[]> {
     .orderBy(wellnessActivities.category, wellnessActivities.intervalDays, wellnessActivities.name);
 }
 
+function goalTimestampInBounds(
+  value: string | null | undefined,
+  startMs: number,
+  endMs: number,
+): boolean {
+  if (!value) return false;
+  const t = new Date(value).getTime();
+  return Number.isFinite(t) && t >= startMs && t <= endMs;
+}
+
 export async function queryActivityStatus() {
   const activities = await queryWellnessActivities();
 
@@ -333,32 +351,63 @@ export async function queryActivityStatus() {
   const todayStartMs = todayStart.getTime();
   const todayEndMs = todayEnd.getTime();
 
+  const needsTodayGoalMutation = activities.some(
+    (a) => wellnessCompletionSource(a.completionSource) === "today_goal_mutated",
+  );
+  const todayGoals = needsTodayGoalMutation
+    ? await goalsService.listAll({ horizon: "today", includeDormant: true })
+    : [];
+  const todayGoalMutationDays = todayGoals
+    .flatMap((goal) => [goal.createdAt, goal.updatedAt])
+    .filter((value): value is string => Boolean(value))
+    .map((value) => new Date(value))
+    .filter((date) => Number.isFinite(date.getTime()));
+  const todayGoalMutatedToday = todayGoals.some(
+    (goal) =>
+      goalTimestampInBounds(goal.createdAt, todayStartMs, todayEndMs)
+      || goalTimestampInBounds(goal.updatedAt, todayStartMs, todayEndMs),
+  );
+
   return activities.map((a) => {
+    const completion = wellnessCompletionSource(a.completionSource);
     const logs = logsByActivity.get(a.id) ?? [];
+    const mutationDates = completion === "today_goal_mutated" ? todayGoalMutationDays : logs.map((l) => l.date);
+    const lastCompleted = mutationDates
+      .slice()
+      .sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
     const lastLog = logs[0] ?? null;
-    const lastCompleted = lastLog?.date ?? null;
     const status = computeActivityStatus(lastCompleted, a.intervalDays);
     const pulse = computeActivityPulse(
-      logs.map((l) => ({ completedAt: l.date })),
+      mutationDates.map((date) => ({ completedAt: date })),
       a.intervalDays,
       a.category,
     );
 
-    const doneToday = logs.some((l) => {
-      const t = l.date.getTime();
-      return t >= todayStartMs && t <= todayEndMs;
-    });
+    const doneToday = completion === "today_goal_mutated"
+      ? todayGoalMutatedToday
+      : logs.some((l) => {
+          const t = l.date.getTime();
+          return t >= todayStartMs && t <= todayEndMs;
+        });
 
     const { start: periodStart, end: periodEnd } = userPeriodBounds(a.category, now);
     const periodStartMs = periodStart.getTime();
     const periodEndMs = periodEnd.getTime();
-    const doneForCurrentPeriod = logs.some((l) => {
-      const t = l.date.getTime();
-      return t >= periodStartMs && t <= periodEndMs;
-    });
+    const doneForCurrentPeriod = completion === "today_goal_mutated"
+      ? todayGoalMutationDays.some((date) => {
+          const t = date.getTime();
+          return t >= periodStartMs && t <= periodEndMs;
+        })
+      : logs.some((l) => {
+          const t = l.date.getTime();
+          return t >= periodStartMs && t <= periodEndMs;
+        });
 
     return {
       ...a,
+      launchKind: wellnessLaunchKind(a.launchKind),
+      launchTarget: a.launchTarget ?? null,
+      completionSource: completion,
       lastCompletedAt: lastCompleted?.toISOString() ?? null,
       tier: lastLog?.tier ?? null,
       metricValue: lastLog?.metricValue ?? null,
@@ -476,19 +525,19 @@ export async function archiveWellnessActivity(id: number): Promise<WellnessActiv
   return activity ?? null;
 }
 
-/** Activities whose checkmarks come only from dedicated entry screens (not Habits toggle). */
-const JOURNAL_OWNED_ACTIVITY_NAMES = new Set([
-  "gratitude",
-  "reflection",
-  "reflections",
-]);
-
 // Personal "Journaling" habit is off-app writing — log/unlog from Habits like any practice.
 const REFLECTION_ACTIVITY_NAMES = new Set(["reflection", "reflections"]);
 const GRATITUDE_ACTIVITY_NAMES = new Set(["gratitude"]);
 
-function isJournalOwnedActivityName(name: string | null | undefined): boolean {
-  return JOURNAL_OWNED_ACTIVITY_NAMES.has((name ?? "").trim().toLowerCase());
+function wellnessLogRefusalMessage(activity: {
+  name: string;
+  launchKind?: string | null;
+  completionSource?: string | null;
+}): string {
+  if (wellnessRefusesAnyLog(activity)) {
+    return `${activity.name} is done when a today-horizon goal is created or updated today`;
+  }
+  return `${activity.name} can only be completed from its dedicated screen after you write that day's entry`;
 }
 
 async function logJournalOwnedActivity(
@@ -510,17 +559,20 @@ export async function logWellnessActivity(
   const notes = opts?.notes ?? null;
   const completedAt = opts?.completedAt;
 
-  if (!opts?.allowJournalOwned) {
-    const [activity] = await db
-      .select({ name: wellnessActivities.name })
-      .from(wellnessActivities)
-      .where(and(eq(wellnessActivities.id, activityId), visibleActivity()))
-      .limit(1);
-    if (activity && isJournalOwnedActivityName(activity.name)) {
-      throw new Error(
-        `${activity.name} can only be completed from its dedicated screen after you write that day's entry`,
-      );
-    }
+  const [activity] = await db
+    .select({
+      name: wellnessActivities.name,
+      launchKind: wellnessActivities.launchKind,
+      completionSource: wellnessActivities.completionSource,
+    })
+    .from(wellnessActivities)
+    .where(and(eq(wellnessActivities.id, activityId), visibleActivity()))
+    .limit(1);
+  if (activity && wellnessRefusesAnyLog(activity)) {
+    throw new Error(wellnessLogRefusalMessage(activity));
+  }
+  if (!opts?.allowJournalOwned && activity && wellnessRefusesManualLog(activity)) {
+    throw new Error(wellnessLogRefusalMessage(activity));
   }
 
   if (completedAt) {
@@ -756,6 +808,33 @@ export async function upsertHealthMetricsAndProcessCompletions(
   return { inserted, bridge, affectedPairs };
 }
 
+async function seedDefaultWellnessActivities(): Promise<number> {
+  let inserted = 0;
+  for (const a of DEFAULT_WELLNESS_ACTIVITIES) {
+    const result = await pool.query(
+      `INSERT INTO wellness_activities (name, benefit, risk, estimated_minutes, estimated_cost, interval_days, category, is_default)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+       ON CONFLICT (name) DO NOTHING`,
+      [a.name, a.benefit, a.risk, a.estimated_minutes, a.estimated_cost, a.interval_days, a.category],
+    );
+    if (result.rowCount && result.rowCount > 0) inserted++;
+  }
+
+  for (const stamp of WELLNESS_LAUNCH_BACKFILL) {
+    await pool.query(
+      `UPDATE wellness_activities
+       SET launch_kind = COALESCE(launch_kind, $1),
+           launch_target = COALESCE(launch_target, $2),
+           completion_source = COALESCE(completion_source, $3),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE name = ANY($4::text[])
+         AND (launch_kind IS NULL OR launch_target IS NULL OR completion_source IS NULL)`,
+      [stamp.launchKind, stamp.launchTarget, stamp.completionSource, stamp.names],
+    );
+  }
+  return inserted;
+}
+
 export async function seedMetricLinks(): Promise<void> {
   const metricLinks: Array<{ name: string; linkedMetricType: string; greatThreshold: number; goodThreshold: number }> = [
     { name: "Meditation", linkedMetricType: "mindful_minutes", greatThreshold: 10, goodThreshold: 5 },
@@ -789,16 +868,22 @@ async function assertNotManualJournalLogMutation(
   activityId: number,
   opts?: { allowJournalOwned?: boolean },
 ): Promise<void> {
-  if (opts?.allowJournalOwned) return;
   const [activity] = await db
-    .select({ name: wellnessActivities.name })
+    .select({
+      name: wellnessActivities.name,
+      launchKind: wellnessActivities.launchKind,
+      completionSource: wellnessActivities.completionSource,
+    })
     .from(wellnessActivities)
     .where(and(eq(wellnessActivities.id, activityId), visibleActivity()))
     .limit(1);
-  if (activity && isJournalOwnedActivityName(activity.name)) {
-    throw new Error(
-      `${activity.name} can only be completed from its dedicated screen after you write that day's entry`,
-    );
+  if (!activity) return;
+  if (wellnessRefusesAnyLog(activity)) {
+    throw new Error(wellnessLogRefusalMessage(activity));
+  }
+  if (opts?.allowJournalOwned) return;
+  if (wellnessRefusesManualLog(activity)) {
+    throw new Error(wellnessLogRefusalMessage(activity));
   }
 }
 
@@ -1160,14 +1245,7 @@ export async function registerWellnessRoutes(app: Express) {
 
   // Auto-seed any missing default wellness activities on boot
   try {
-    for (const a of DEFAULT_WELLNESS_ACTIVITIES) {
-      await pool.query(
-        `INSERT INTO wellness_activities (name, benefit, risk, estimated_minutes, estimated_cost, interval_days, category, is_default)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, true)
-         ON CONFLICT (name) DO NOTHING`,
-        [a.name, a.benefit, a.risk, a.estimated_minutes, a.estimated_cost, a.interval_days, a.category]
-      );
-    }
+    await seedDefaultWellnessActivities();
   } catch (err: any) {
     log.error(`[HealthBridge] Failed to seed default activities on startup: ${err.message}`);
   }
@@ -1442,15 +1520,8 @@ export async function registerWellnessRoutes(app: Express) {
   app.post("/api/wellness/load-defaults", requireAuth, async (_req, res) => {
     try {
       let inserted = 0;
-      for (const a of DEFAULT_WELLNESS_ACTIVITIES) {
-        const result = await pool.query(
-          `INSERT INTO wellness_activities (name, benefit, risk, estimated_minutes, estimated_cost, interval_days, category, is_default)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, true)
-           ON CONFLICT (name) DO NOTHING`,
-          [a.name, a.benefit, a.risk, a.estimated_minutes, a.estimated_cost, a.interval_days, a.category]
-        );
-        if (result.rowCount && result.rowCount > 0) inserted++;
-      }
+      const seeded = await seedDefaultWellnessActivities();
+      inserted = seeded;
       await seedMetricLinks();
       res.json({ ok: true, inserted });
     } catch (error: any) {
@@ -1486,7 +1557,7 @@ export async function registerWellnessRoutes(app: Express) {
       }
       res.json(result);
     } catch (error: any) {
-      if (typeof error?.message === "string" && error.message.includes("dedicated screen")) {
+      if (typeof error?.message === "string" && (error.message.includes("dedicated screen") || error.message.includes("today-horizon"))) {
         return res.status(400).json({ error: error.message });
       }
       log.error("log activity error:", error.message);
@@ -1502,7 +1573,7 @@ export async function registerWellnessRoutes(app: Express) {
       if (!deleted) return res.status(404).json({ error: "No log found for that date" });
       res.json({ ok: true });
     } catch (error: any) {
-      if (typeof error?.message === "string" && error.message.includes("dedicated screen")) {
+      if (typeof error?.message === "string" && (error.message.includes("dedicated screen") || error.message.includes("today-horizon"))) {
         return res.status(400).json({ error: error.message });
       }
       log.error("delete log by date error:", error.message);
@@ -1518,7 +1589,7 @@ export async function registerWellnessRoutes(app: Express) {
       if (!deleted) return res.status(404).json({ error: "Log not found" });
       res.json({ ok: true });
     } catch (error: any) {
-      if (typeof error?.message === "string" && error.message.includes("dedicated screen")) {
+      if (typeof error?.message === "string" && (error.message.includes("dedicated screen") || error.message.includes("today-horizon"))) {
         return res.status(400).json({ error: error.message });
       }
       log.error("delete log error:", error.message);

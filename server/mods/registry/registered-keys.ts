@@ -216,6 +216,7 @@ export const REGISTERED_SKILL_KEYS = [
   "affirmations",
   "coach",
   "brief-daily",
+  "set-daily-goals",
 ] as const;
 export type RegisteredSkillKey = (typeof REGISTERED_SKILL_KEYS)[number];
 
