@@ -3,6 +3,7 @@ import { SIMPLE_SECTIONS } from "@shared/models/simple";
 import { createLogger } from "../log";
 import { chatCompletion } from "../model-client";
 import { ACTIVITY_FRAMING } from "../job-profiles";
+import { eventBus, type BusEvent } from "../event-bus";
 import { collectSimpleContext, type SimpleContextBundle } from "./collectors";
 import { lintSimpleTitle, validateSimpleFeed } from "./schema";
 import { requireCurrentUserPrincipal } from "../principal-context";
@@ -11,6 +12,38 @@ const log = createLogger("SimpleFeed");
 const feedCache = new Map<string, SimpleFeed>();
 const feedGeneration = new Map<string, number>();
 const inFlightFeeds = new Map<string, Promise<SimpleFeed>>();
+
+/** Events that mean the principal's Home feed projection may be stale. */
+const FEED_INVALIDATION_EVENTS = new Set([
+  "data:home_changed",
+  "data:goals_changed",
+  "data:tasks_changed",
+  "data:projects_changed",
+  "data:product_composition_changed",
+  "data:people_changed",
+  "data:calendar_changed",
+  "data:library_changed",
+  "data:sessions_changed",
+  "chat.session.status_changed",
+]);
+
+let feedInvalidationListenerInstalled = false;
+
+/** Drop process-local feed cache when Home-affecting events fire (same account when known). */
+export function installSimpleFeedCacheInvalidation(): void {
+  if (feedInvalidationListenerInstalled) return;
+  feedInvalidationListenerInstalled = true;
+  eventBus.on("event", (busEvent: BusEvent) => {
+    if (!FEED_INVALIDATION_EVENTS.has(busEvent.event)) return;
+    const accountId =
+      typeof busEvent.payload?.accountId === "string"
+        ? busEvent.payload.accountId
+        : busEvent.audience.scope === "user"
+          ? busEvent.audience.accountId
+          : undefined;
+    invalidateSimpleFeedCache(accountId);
+  });
+}
 
 function feedLocalDate(feed: SimpleFeed): string {
   return new Intl.DateTimeFormat("en-CA", {

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type TouchEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useHomeFeed } from "@/hooks/use-home-feed";
@@ -9,10 +10,13 @@ import {
   recordHomeTelemetry,
   setHomeFeedReady,
 } from "@/lib/browser-telemetry";
+import { apiRequest } from "@/lib/queryClient";
+import type { SimpleFeed } from "@shared/models/simple";
 import { SimpleFeedView } from "./home-feed";
 
 const PULL_THRESHOLD = 64;
 const MAX_PULL_DISTANCE = 96;
+const HOME_FEED_QUERY_KEY = ["/api/home/feed"] as const;
 
 function performanceNow(): number {
   return typeof performance !== "undefined" && typeof performance.now === "function"
@@ -43,16 +47,20 @@ function nearestScrollContainer(element: HTMLElement | null): HTMLElement | null
 }
 
 export function SimpleFeedContent() {
+  // Entry paint uses the non-refresh path; pull-to-refresh forces rebuild.
   const query = useHomeFeed();
+  const queryClient = useQueryClient();
   const { startActivity, endActivity } = usePageActivity();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const touchStartYRef = useRef<number | null>(null);
   const entryStartedRef = useRef(false);
   const mountAtRef = useRef(performanceNow());
-  const feedReadyAtRef = useRef<number | null>(null);
+  /** First moment query.data is truthy during render (start of data→view work). */
+  const feedDataPresentAtRef = useRef<number | null>(null);
   const feedReadyEmittedRef = useRef(false);
   const feedRenderEmittedRef = useRef(false);
   const [pullDistance, setPullDistance] = useState(0);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
 
   // Advance entry id before children layout so section_commit caps align with this mount.
   if (!entryStartedRef.current) {
@@ -61,8 +69,26 @@ export function SimpleFeedContent() {
     mountAtRef.current = performanceNow();
   }
 
+  // Stamp data-present during render so feed_render includes SimpleFeedView commit cost.
+  if (query.data && feedDataPresentAtRef.current == null) {
+    feedDataPresentAtRef.current = performanceNow();
+  }
+
   const refresh = () => {
-    if (!query.isFetching) void query.refetch();
+    if (query.isFetching || manualRefreshing) return;
+    setManualRefreshing(true);
+    void (async () => {
+      try {
+        // Explicit rebuild: server refresh=true, then write into the stable query key.
+        const res = await apiRequest("GET", "/api/home/feed?refresh=true");
+        const feed = (await res.json()) as SimpleFeed;
+        queryClient.setQueryData(HOME_FEED_QUERY_KEY, feed);
+      } catch {
+        void query.refetch();
+      } finally {
+        setManualRefreshing(false);
+      }
+    })();
   };
 
   useEffect(() => {
@@ -71,26 +97,31 @@ export function SimpleFeedContent() {
     };
   }, []);
 
-  // Observe-only: split feed query wait from post-data first commit. Fetch options untouched.
-  useEffect(() => {
-    if (query.isLoading || !query.data || feedReadyEmittedRef.current) return;
-    const readyAt = performanceNow();
-    feedReadyAtRef.current = readyAt;
-    feedReadyEmittedRef.current = true;
-    setHomeFeedReady(true);
-    recordHomeTelemetry("feed_ready", Math.max(0, readyAt - mountAtRef.current), {
-      entry: homeEntryKind(),
-      resumeGeneration: getBrowserTelemetryResumeGeneration(),
-    });
-  }, [query.data, query.isLoading]);
-
+  // feed_ready: mount → first data present. feed_render: data present → first SimpleFeedView layout.
+  // Both in layout so feed_render is not deferred until a later refetch (prior useEffect/useLayoutEffect split).
   useLayoutEffect(() => {
-    if (!query.data || feedRenderEmittedRef.current || feedReadyAtRef.current == null) return;
-    feedRenderEmittedRef.current = true;
-    recordHomeTelemetry("feed_render", Math.max(0, performanceNow() - feedReadyAtRef.current), {
-      entry: homeEntryKind(),
-    });
-  }, [query.data]);
+    if (!query.data || query.isLoading) return;
+
+    if (!feedReadyEmittedRef.current) {
+      feedReadyEmittedRef.current = true;
+      setHomeFeedReady(true);
+      const readyAt = feedDataPresentAtRef.current ?? performanceNow();
+      const staleFlag = query.data.stale === true ? 1 : 0;
+      recordHomeTelemetry("feed_ready", Math.max(0, readyAt - mountAtRef.current), {
+        entry: homeEntryKind(),
+        resumeGeneration: getBrowserTelemetryResumeGeneration(),
+        refresh: 0,
+        cacheHit: staleFlag,
+      });
+    }
+
+    if (!feedRenderEmittedRef.current && feedDataPresentAtRef.current != null) {
+      feedRenderEmittedRef.current = true;
+      recordHomeTelemetry("feed_render", Math.max(0, performanceNow() - feedDataPresentAtRef.current), {
+        entry: homeEntryKind(),
+      });
+    }
+  }, [query.data, query.isLoading]);
 
   const atScrollTop = () => {
     const scrollContainer = nearestScrollContainer(rootRef.current);
@@ -121,11 +152,13 @@ export function SimpleFeedContent() {
     setPullDistance(0);
   };
 
+  const isBusy = query.isFetching || manualRefreshing;
+
   useEffect(() => {
-    if (query.isFetching) startActivity("home-feed");
+    if (isBusy) startActivity("home-feed");
     else endActivity("home-feed");
     return () => endActivity("home-feed");
-  }, [endActivity, query.isFetching, startActivity]);
+  }, [endActivity, isBusy, startActivity]);
 
   return (
     <div
