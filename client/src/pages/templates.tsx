@@ -396,12 +396,21 @@ export default function TemplatesPage() {
   usePageHeader({ title: "Templates" });
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
   const endpoint = search.trim()
     ? `/api/templates?query=${encodeURIComponent(search.trim())}`
     : "/api/templates";
   const { data, isLoading, error, refetch } = useQuery<TemplatesResponse>({ queryKey: [endpoint] });
   const templates = useMemo(() => data?.templates ?? [], [data?.templates]);
+  const toggleOpen = (templateId: string) => {
+    setCreating(false);
+    setOpenIds((current) => {
+      const next = new Set(current);
+      if (next.has(templateId)) next.delete(templateId);
+      else next.add(templateId);
+      return next;
+    });
+  };
 
   return (
     <div className="h-full w-full overflow-y-auto bg-background" data-testid="templates-page">
@@ -418,10 +427,7 @@ export default function TemplatesPage() {
         ) : (
           <button
             type="button"
-            onClick={() => {
-              setOpenId(null);
-              setCreating(true);
-            }}
+            onClick={() => setCreating(true)}
             className={HIERARCHY_PRIMARY_ACTION_CLASS}
             data-testid="button-new-template"
           >
@@ -446,11 +452,8 @@ export default function TemplatesPage() {
             <TemplateRow
               key={`${template.scope}:${template.id}`}
               template={template}
-              open={openId === template.id}
-              onToggle={() => {
-                setCreating(false);
-                setOpenId(openId === template.id ? null : template.id);
-              }}
+              open={openIds.has(template.id)}
+              onToggle={() => toggleOpen(template.id)}
             />
           ))
         )}
