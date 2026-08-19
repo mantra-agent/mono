@@ -1014,6 +1014,7 @@ History-rollup validation and source-set fence rejections are caller-correctable
 - Missing AsyncLocalStorage principal context is fail-closed. User-data code must use an explicit user principal; legitimate cross-account jobs must enter with a named system principal.
 - Browser authentication regenerates session IDs. Password, permission, and account lifecycle changes revoke persisted sessions at the auth boundary.
 - Registration is invite-only by default. Public registration requires explicit `PUBLIC_REGISTRATION_ENABLED=true` configuration.
+- Password reset is Core identity. `POST /api/auth/reset-request` is authenticated self-service for the current User: it emails only the address on file through `sendNotification` / SendGrid with a one-hour single-use HMAC digest in `users.reset_token`. The raw token is never returned to the client. `GET /api/auth/reset/:token` is existence-only (`{ ok: true }`) and never returns email. `POST /api/auth/reset` consumes the token, writes the new password hash, and deletes that User's sessions. Account `…` → Reset Password is a temporary test trigger.
 - Export remains disabled until every exported domain and artifact is owner/account scoped end to end.
 
 ## Agent authority boundary
