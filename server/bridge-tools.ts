@@ -2992,6 +2992,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
 
   async work(args) {
+    // Caller-correctable contract rejects must carry failureKind=input.
+    // Bare error:true left failureKind null → Executor TOOL_FAILED_WORK red ERRORS.
+    const workInput = (result: string, detail?: string) =>
+      contractReject(result, "work_input_invalid", detail);
+
     const { fileProjectStorage } = await import("./file-storage/projects");
     const { fileTaskStorage } = await import("./file-storage/tasks");
     const { goalsService: goalsServiceWork } = await import("./goals-service");
@@ -3003,20 +3008,20 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       ? await chatFileStorage.getSession(sourceSessionId).catch(() => undefined)
       : undefined;
     if (sourceSession?.type === "meeting" && !sourceSession.vaultId) {
-      return { result: `Meeting session ${sourceSessionId} has no pinned vault`, error: true };
+      return workInput(`Meeting session ${sourceSessionId} has no pinned vault`, "meeting_vault_missing");
     }
     const sourceMeetingVaultId = sourceSession?.type === "meeting" ? sourceSession.vaultId : undefined;
 
     try {
       switch (action) {
         case "create_project": {
-          if (!args.title) return { result: "Missing required field: title", error: true };
+          if (!args.title) return workInput("Missing required field: title", "missing_title");
           const { insertProjectSchema: projectInsertSchema } = await import("../shared/models/work");
           if (args.owner !== undefined) {
-            return {
-              result: `Unknown parameter "owner". Use ownerPersonId with a Person id or @person:{id}. me/agent are not accepted.`,
-              error: true,
-            };
+            return workInput(
+              `Unknown parameter "owner". Use ownerPersonId with a Person id or @person:{id}. me/agent are not accepted.`,
+              "owner_enum_rejected",
+            );
           }
           const input = projectInsertSchema.parse({
             title: args.title,
@@ -3079,9 +3084,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
         case "get_project": {
           const projectId = args.id;
-          if (!projectId) return { result: "Missing project id", error: true };
+          if (!projectId) return workInput("Missing project id", "missing_project_id");
           const project = await fileProjectStorage.getProject(Number(projectId));
-          if (!project) return { result: `Project ${projectId} not found`, error: true };
+          if (!project) return workInput(`Project ${projectId} not found`, "project_not_found");
           const [statusCounts, taskPage] = await Promise.all([
             fileTaskStorage.getTaskStatusCounts(project.id),
             fileTaskStorage.getTaskPage({
@@ -3142,9 +3147,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
         case "add_file": {
           const projectId = args.id;
-          if (!projectId) return { result: "Missing project id", error: true };
+          if (!projectId) return workInput("Missing project id", "missing_project_id");
           const project = await fileProjectStorage.getProject(Number(projectId));
-          if (!project) return { result: `Project ${projectId} not found`, error: true };
+          if (!project) return workInput(`Project ${projectId} not found`, "project_not_found");
           const { requireCurrentUserPrincipal } = await import("./principal-context");
           const principal = requireCurrentUserPrincipal();
           const workspacePath = args.workspacePath;
@@ -3159,12 +3164,12 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             const { WORKSPACE_DIR } = await import("./paths");
             const absPath = resolve(WORKSPACE_DIR, workspacePath);
             if (!absPath.startsWith(WORKSPACE_DIR + "/")) {
-              return { result: "workspacePath must be within the workspace directory", error: true };
+              return workInput("workspacePath must be within the workspace directory", "workspace_path_outside");
             }
             try {
               await fs.access(absPath);
             } catch {
-              return { result: `File not found at workspace path: ${workspacePath}`, error: true };
+              return workInput(`File not found at workspace path: ${workspacePath}`, "workspace_file_missing");
             }
             const stat = await fs.stat(absPath);
             fileSize = stat.size;
@@ -3191,7 +3196,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             objectKey = uploaded.objectPath;
           }
 
-          if (!fileName || !objectKey) return { result: "Missing fileName or fileObjectKey (or workspacePath)", error: true };
+          if (!fileName || !objectKey) return workInput("Missing fileName or fileObjectKey (or workspacePath)", "missing_file_identity");
           if (!mimeType) mimeType = "application/octet-stream";
           if (!workspacePath) {
             const normalizedObjectPath = objectKey.startsWith("/objects/") ? objectKey : `/objects/${objectKey}`;
@@ -3202,7 +3207,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
               requestedPermission: ObjectPermission.READ,
             });
             if (!canReadObject) {
-              return { result: "Cannot attach an object that is not visible to the current user", error: true };
+              return workInput("Cannot attach an object that is not visible to the current user", "object_not_visible");
             }
             objectKey = normalizedObjectPath;
           }
@@ -3215,22 +3220,27 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             uploadedAt: new Date().toISOString(),
           };
           const fileProject = await fileProjectStorage.addFile(Number(projectId), fileEntry);
-          if (!fileProject) return { result: `Project ${projectId} not found`, error: true };
+          if (!fileProject) return workInput(`Project ${projectId} not found`, "project_not_found");
           return { result: `File "${fileName}" attached to project ${projectId} (file id: ${fileEntry.id}, stored in object storage)` };
         }
         case "read_file": {
           const projectId = args.id;
           const fileId = args.fileId;
-          if (!projectId || !fileId) return { result: "Missing project id or file id", error: true };
+          if (!projectId || !fileId) return workInput("Missing project id or file id", "missing_project_or_file_id");
           const proj = await fileProjectStorage.getProject(Number(projectId));
-          if (!proj) return { result: `Project ${projectId} not found`, error: true };
+          if (!proj) return workInput(`Project ${projectId} not found`, "project_not_found");
           const fileEntry = proj.files.find((f: any) => f.id === fileId);
-          if (!fileEntry) return { result: `File ${fileId} not found in project ${projectId}`, error: true };
+          if (!fileEntry) return workInput(`File ${fileId} not found in project ${projectId}`, "file_not_found");
           const textTypes = ["text/", "application/json", "application/xml", "application/javascript", "application/typescript", "application/x-yaml", "application/yaml", "application/toml"];
           const textExts = [".md", ".txt", ".json", ".yaml", ".yml", ".xml", ".csv", ".js", ".ts", ".py", ".sh", ".toml", ".ini", ".cfg", ".html", ".css", ".svg", ".log"];
           const isText = textTypes.some(t => fileEntry.mimeType.startsWith(t)) ||
             fileEntry.mimeType === "application/octet-stream" && textExts.some(ext => fileEntry.name.toLowerCase().endsWith(ext));
-          if (!isText) return { result: `File "${fileEntry.name}" is a binary file (${fileEntry.mimeType}) and cannot be read as text. It can be viewed in the web UI.`, error: true };
+          if (!isText) {
+            return workInput(
+              `File "${fileEntry.name}" is a binary file (${fileEntry.mimeType}) and cannot be read as text. It can be viewed in the web UI.`,
+              "binary_file",
+            );
+          }
           try {
             const objectPath = fileEntry.objectKey.startsWith("/objects/") ? fileEntry.objectKey : `/objects/${fileEntry.objectKey}`;
             const objectFile = await objectStorageService.getObjectEntityFile(objectPath);
@@ -3253,22 +3263,29 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             }
             return { result: `File "${fileEntry.name}" (${content.length} chars):\n\n${content}` };
           } catch (err: any) {
-            return { result: `Failed to read file "${fileEntry.name}": ${err.message}`, error: true };
+            return {
+              result: `Failed to read file "${fileEntry.name}": ${err.message}`,
+              error: true,
+              failure: internalFailure(
+                "work_internal_error",
+                String(err?.message ?? err).slice(0, 160),
+              ),
+            };
           }
         }
         case "remove_file": {
           const projectId = args.id;
           const fileId = args.fileId;
-          if (!projectId || !fileId) return { result: "Missing project id or file id", error: true };
+          if (!projectId || !fileId) return workInput("Missing project id or file id", "missing_project_or_file_id");
           const removedFile = await fileProjectStorage.removeFile(Number(projectId), fileId);
-          if (!removedFile) return { result: `Project ${projectId} or file ${fileId} not found`, error: true };
+          if (!removedFile) return workInput(`Project ${projectId} or file ${fileId} not found`, "project_or_file_not_found");
           return { result: `File "${removedFile.name}" removed from project ${projectId}` };
         }
         case "add_milestone": {
           const projectId = args.id;
-          if (!projectId) return { result: "Missing project id", error: true };
+          if (!projectId) return workInput("Missing project id", "missing_project_id");
           const name = args.name;
-          if (!name) return { result: "Missing milestone name", error: true };
+          if (!name) return workInput("Missing milestone name", "missing_milestone_name");
           const milestoneProject = await fileProjectStorage.addMilestone(
             Number(projectId),
             {
@@ -3282,21 +3299,27 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
               ? { originType: "meeting", originId: sourceSessionId }
               : undefined,
           );
-          if (!milestoneProject) return { result: `Project ${projectId} not found`, error: true };
+          if (!milestoneProject) return workInput(`Project ${projectId} not found`, "project_not_found");
           const addedMilestone = milestoneProject.milestones.reduce((latest, milestone) =>
             !latest || milestone.id > latest.id ? milestone : latest,
           null as (typeof milestoneProject.milestones)[number] | null);
-          if (!addedMilestone) return { result: `Milestone "${name}" was added but could not be reloaded`, error: true };
+          if (!addedMilestone) {
+            return {
+              result: `Milestone "${name}" was added but could not be reloaded`,
+              error: true,
+              failure: internalFailure("work_internal_error", "milestone_reload_failed"),
+            };
+          }
           return { result: `Milestone "${name}" added to project ${projectId} (milestone id: ${addedMilestone.id})` };
         }
         case "update_milestone": {
           const projectId = args.id;
           const milestoneId = args.milestoneId;
-          if (!projectId || !milestoneId) return { result: "Missing project id or milestone id", error: true };
+          if (!projectId || !milestoneId) return workInput("Missing project id or milestone id", "missing_project_or_milestone_id");
           const preUpdateProject = await fileProjectStorage.getProject(Number(projectId));
-          if (!preUpdateProject) return { result: `Project ${projectId} not found`, error: true };
+          if (!preUpdateProject) return workInput(`Project ${projectId} not found`, "project_not_found");
           if (!preUpdateProject.milestones.some(m => m.id === Number(milestoneId))) {
-            return { result: `Milestone ${milestoneId} not found in project ${projectId}`, error: true };
+            return workInput(`Milestone ${milestoneId} not found in project ${projectId}`, "milestone_not_found");
           }
           const updates: Record<string, string | number | null> = {};
           if (args.name) updates.name = args.name;
@@ -3312,25 +3335,25 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         case "remove_milestone": {
           const projectId = args.id;
           const milestoneId = args.milestoneId;
-          if (!projectId || !milestoneId) return { result: "Missing project id or milestone id", error: true };
+          if (!projectId || !milestoneId) return workInput("Missing project id or milestone id", "missing_project_or_milestone_id");
           const preRemoveProject = await fileProjectStorage.getProject(Number(projectId));
-          if (!preRemoveProject) return { result: `Project ${projectId} not found`, error: true };
+          if (!preRemoveProject) return workInput(`Project ${projectId} not found`, "project_not_found");
           if (!preRemoveProject.milestones.some(m => m.id === Number(milestoneId))) {
-            return { result: `Milestone ${milestoneId} not found in project ${projectId}`, error: true };
+            return workInput(`Milestone ${milestoneId} not found in project ${projectId}`, "milestone_not_found");
           }
           await fileProjectStorage.removeMilestone(Number(projectId), Number(milestoneId));
           return { result: `Milestone ${milestoneId} removed from project ${projectId}` };
         }
         case "set_goal": {
           const projectId = args.id;
-          if (!projectId) return { result: "Missing project id", error: true };
+          if (!projectId) return workInput("Missing project id", "missing_project_id");
           const goalId = args.goalId || null;
           if (goalId) {
             const goal = await goalsServiceWork.get(goalId);
-            if (!goal) return { result: `Goal ${goalId} not found`, error: true };
+            if (!goal) return workInput(`Goal ${goalId} not found`, "goal_not_found");
           }
           const updated = await fileProjectStorage.updateProject(Number(projectId), { goalId });
-          if (!updated) return { result: `Project ${projectId} not found`, error: true };
+          if (!updated) return workInput(`Project ${projectId} not found`, "project_not_found");
           if (goalId) {
             const goal = await goalsServiceWork.get(goalId);
             return { result: `Project ${projectId} linked to goal "${goal?.shortName || goalId}"` };
@@ -3339,7 +3362,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
         case "update_project": {
           const projectId = args.id;
-          if (!projectId) return { result: "Missing project id", error: true };
+          if (!projectId) return workInput("Missing project id", "missing_project_id");
 
           const { sanitizePatch, PatchGuardError, logPatchClearAudit } = await import("./lib/patch-guard");
 
@@ -3349,16 +3372,20 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           if (args.status !== undefined) raw.status = args.status;
           if (args.priority !== undefined) raw.priority = args.priority;
           if (args.owner !== undefined) {
-            return {
-              result: `Unknown parameter "owner". Use ownerPersonId with a Person id or @person:{id}. me/agent are not accepted.`,
-              error: true,
-            };
+            return workInput(
+              `Unknown parameter "owner". Use ownerPersonId with a Person id or @person:{id}. me/agent are not accepted.`,
+              "owner_enum_rejected",
+            );
           }
           if (args.ownerPersonId !== undefined) raw.ownerPersonId = args.ownerPersonId;
           if (args.dueDate !== undefined) raw.dueDate = args.dueDate;
           if (args.tags !== undefined) raw.tags = args.tags;
           if (args.people !== undefined) raw.people = args.people;
           if (args.goalId !== undefined) raw.goalId = args.goalId;
+          // blockedBy is graph convenience, not a project column — keep outside sanitizePatch
+          // so blockedBy-only updates are not dropped as empty sanitization.
+          const blockedByPatch =
+            args.blockedBy !== undefined ? { blockedBy: args.blockedBy as string[] } : undefined;
           if (args.clearFields !== undefined) raw.clearFields = args.clearFields;
           if (args.confirmDestructiveUpdate !== undefined) raw.confirmDestructiveUpdate = args.confirmDestructiveUpdate;
           if (args.destructiveUpdateReason !== undefined) raw.destructiveUpdateReason = args.destructiveUpdateReason;
@@ -3382,34 +3409,55 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
               destructiveUpdateReason,
             });
 
-            if (Object.keys(updates).length === 0) return { result: "No fields to update after sanitization. Empty strings on protected fields are dropped — use clearFields to explicitly clear a field.", error: true };
+            if (Object.keys(updates).length === 0 && !blockedByPatch) {
+              return workInput(
+                "No fields to update after sanitization. Empty strings on protected fields are dropped — use clearFields to explicitly clear a field.",
+                "empty_update_project",
+              );
+            }
 
-            const updatedProject = await fileProjectStorage.updateProject(Number(projectId), updates);
-            if (!updatedProject) return { result: `Project ${projectId} not found`, error: true };
-            return { result: `Project ${projectId} updated: ${Object.keys(updates).join(", ")}` };
+            const updatedProject = await fileProjectStorage.updateProject(Number(projectId), {
+              ...updates,
+              ...(blockedByPatch ?? {}),
+            });
+            if (!updatedProject) return workInput(`Project ${projectId} not found`, "project_not_found");
+            const changed = [...Object.keys(updates), ...(blockedByPatch ? ["blockedBy"] : [])];
+            return { result: `Project ${projectId} updated: ${changed.join(", ")}` };
           } catch (err: any) {
             if (err instanceof PatchGuardError) {
-              return { result: `Patch guard rejected update: ${err.message}${err.required ? ` Required: ${JSON.stringify(err.required)}` : ''}`, error: true };
+              return workInput(
+                `Patch guard rejected update: ${err.message}${err.required ? ` Required: ${JSON.stringify(err.required)}` : ''}`,
+                "patch_guard",
+              );
             }
-            return { result: `Failed to update project: ${err instanceof Error ? err.message : String(err)}`, error: true };
+            return {
+              result: `Failed to update project: ${err instanceof Error ? err.message : String(err)}`,
+              error: true,
+              failure: internalFailure(
+                "work_internal_error",
+                String(err instanceof Error ? err.message : err).slice(0, 160),
+              ),
+            };
           }
         }
         case "set_status": {
           const projectId = args.id;
-          if (!projectId) return { result: "Missing project id", error: true };
+          if (!projectId) return workInput("Missing project id", "missing_project_id");
           const newStatus = args.status;
-          if (!newStatus) return { result: "Missing status. Options: idea, planning, active, on_hold, completed", error: true };
+          if (!newStatus) return workInput("Missing status. Options: idea, planning, active, on_hold, completed", "missing_status");
           const validStatuses = ["idea", "planning", "active", "on_hold", "completed"];
-          if (!validStatuses.includes(newStatus)) return { result: `Invalid status "${newStatus}". Options: ${validStatuses.join(", ")}`, error: true };
+          if (!validStatuses.includes(newStatus)) {
+            return workInput(`Invalid status "${newStatus}". Options: ${validStatuses.join(", ")}`, "invalid_status");
+          }
           const statusProject = await fileProjectStorage.updateProject(Number(projectId), { status: newStatus });
-          if (!statusProject) return { result: `Project ${projectId} not found`, error: true };
+          if (!statusProject) return workInput(`Project ${projectId} not found`, "project_not_found");
           return { result: `Project ${projectId} status set to "${newStatus}"` };
         }
         case "delete_project": {
           const projectId = args.id;
-          if (!projectId) return { result: "Missing project id", error: true };
+          if (!projectId) return workInput("Missing project id", "missing_project_id");
           const deleted = await fileProjectStorage.deleteProject(Number(projectId));
-          if (!deleted) return { result: `Project ${projectId} not found`, error: true };
+          if (!deleted) return workInput(`Project ${projectId} not found`, "project_not_found");
           return { result: `Project ${projectId} deleted` };
         }
         default:
@@ -3420,7 +3468,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           );
       }
     } catch (err: any) {
-      return { result: `Work tool error: ${err.message}`, error: true };
+      return {
+        result: `Work tool error: ${err.message}`,
+        error: true,
+        failure: internalFailure(
+          "work_internal_error",
+          String(err?.message ?? err).slice(0, 160),
+        ),
+      };
     }
   },
   async git(args) {

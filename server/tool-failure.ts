@@ -40,6 +40,8 @@ export type ToolFailureCode =
   | "session_input_invalid"
   // Work tool contract rejects (caller-correctable input)
   | "work_input_invalid"
+  // Work tool unexpected producer defects
+  | "work_internal_error"
   | "shell_policy_denied"
   | "python_execution_rejected"
   | "python_execution_timeout"
