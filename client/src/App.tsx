@@ -26,6 +26,7 @@ import { ClientPresenceProvider } from "@/hooks/use-client-presence";
 import { ExecutorStatusProvider } from "@/hooks/use-executor-status";
 import { FocusSessionProvider, useFocusSession } from "@/hooks/use-focus-session";
 import { SessionActivityProvider } from "@/hooks/use-session-activity";
+import { FeatureFastForwardHost } from "@/components/feature-fast-forward-host";
 import { NativeMeetingTranscriptionProvider } from "@/hooks/use-native-meeting-transcription";
 import { FocusContextProvider } from "@/hooks/use-focus-context";
 import { TaskModalProvider } from "@/contexts/task-modal-context";
@@ -593,6 +594,8 @@ function AppShell() {
           <ExecutorStatusProvider>
             <FocusSessionProvider>
               <SessionActivityProvider>
+                {/* Fast Forward sequencer outlives /features FeatureRow mounts. */}
+                <FeatureFastForwardHost />
                 <NativeMeetingTranscriptionProvider>
                   <FocusContextProvider>
                     <TaskModalProvider>
