@@ -54,9 +54,15 @@ import { visibleBusinessPredicate, writableBusinessPredicate } from "./business-
 import {
   canReadPlatformMetrics,
   canReadSystemMetrics,
+  isPlatformMetric,
+  isSystemMetric,
   metricIsVisibleTo,
   PRODUCT_METRIC_SLUGS,
 } from "./metrics/metric-adapters";
+import {
+  compileMetricExpression,
+  identityStockCanAnswerRange,
+} from "./metrics/expression-plan";
 
 const metricScope: ScopeColumns = {
   scope: metrics.scope,
@@ -148,6 +154,60 @@ const IDENTITY_STOCK_SLUGS = new Set<string>(["accounts", "registered-users"]);
 
 function isProductCurrentSlug(slug: string): boolean {
   return PRODUCT_METRIC_SLUGS.has(slug);
+}
+
+function equationFromConfig(config: Record<string, unknown> | undefined): string {
+  const raw = config?.equation;
+  return typeof raw === "string" ? raw : "";
+}
+
+function composedOwnerKind(operands: Metric[]): "platform" | "performance" | undefined {
+  if (operands.some((operand) => isPlatformMetric(operand))) return "platform";
+  if (operands.some((operand) => isSystemMetric(operand))) return "performance";
+  return undefined;
+}
+
+async function loadVisibleOperand(id: string): Promise<Metric | null> {
+  try {
+    return await metricsStorage.get(id);
+  } catch (error) {
+    if ((error as { status?: number })?.status === 404) return null;
+    throw error;
+  }
+}
+
+async function compilePersistedExpression(input: {
+  adapterKind?: Metric["adapterKind"];
+  adapterConfig?: Record<string, unknown>;
+  existing?: Metric;
+  selfId?: string;
+}): Promise<{
+  adapterKind: Metric["adapterKind"];
+  adapterConfig: Record<string, unknown>;
+  ownerKind?: "platform" | "performance";
+  didCompile: boolean;
+}> {
+  const adapterKind = input.adapterKind ?? input.existing?.adapterKind ?? "manual";
+  const adapterConfig = input.adapterConfig ?? input.existing?.adapterConfig ?? {};
+  if (adapterKind !== "expression") {
+    return { adapterKind, adapterConfig, didCompile: false };
+  }
+  const compiled = await compileMetricExpression({
+    equation: equationFromConfig(adapterConfig),
+    selfId: input.selfId,
+    loadVisibleMetric: loadVisibleOperand,
+  });
+  return {
+    adapterKind: "expression",
+    adapterConfig: {
+      adapterKey: "expression",
+      equation: compiled.equation,
+      plan: compiled.plan,
+      operandIds: compiled.operandIds,
+    },
+    ownerKind: composedOwnerKind(compiled.operands),
+    didCompile: true,
+  };
 }
 
 function virtualCurrentMetric(
@@ -343,12 +403,18 @@ async function latestSampleFor(
   return row ? mapSample(row) : null;
 }
 
-async function overlayIdentityStockSample(metric: Metric): Promise<Metric> {
+async function overlayIdentityStockSample(
+  metric: Metric,
+  range?: { start: Date; end: Date },
+): Promise<Metric> {
   if (!IDENTITY_STOCK_SLUGS.has(metric.slug) || !metric.businessId) return metric;
   const principal = getCurrentPrincipal();
   if (!principal?.accountId) return metric;
   // Identity stocks are platform product metrics — never overlay without users:read.
   if (!canReadPlatformMetrics(principal)) return metric;
+  if (range && !identityStockCanAnswerRange(range)) {
+    return { ...metric, latestSample: null };
+  }
   const [business] = await db.select({
     id: businesses.id,
     isPlatformInstrument: businesses.isPlatformInstrument,
@@ -539,7 +605,7 @@ export const metricsStorage = {
       // Engine gate: never advertise Product without users:read or System without system:read.
       allowPlatform
         ? undefined
-        : sql`(${metrics.ownerKind} IS DISTINCT FROM 'platform' AND ${metrics.slug} NOT IN ('hours-used','active-users','current-users','new-users','accounts','registered-users','shipped-prs','user-memory','achieved-goals'))`,
+        : sql`(${metrics.ownerKind} IS DISTINCT FROM 'platform' AND ${metrics.slug} NOT IN ('hours-used','active-users','current-users','new-users','accounts','registered-users','shipped-prs','user-memory','achieved-goals','hours-used-per-user'))`,
       allowSystem
         ? undefined
         : sql`(${metrics.ownerKind} IS DISTINCT FROM 'performance' AND COALESCE(${metrics.adapterConfig}->>'adapterKey', '') IS DISTINCT FROM 'performance')`,
@@ -554,7 +620,7 @@ export const metricsStorage = {
     for (const { metric } of rows) {
       const mapped = mapMetric(metric, await latestSampleFor(metric.id, range));
       if (!metricIsVisibleTo(principal, mapped)) continue;
-      out.push(await overlayIdentityStockSample(mapped));
+      out.push(await overlayIdentityStockSample(mapped, range));
     }
     if (!range) return out;
     const { overlayCatalogSeries } = await import("./metrics/core-engine");
@@ -582,14 +648,24 @@ export const metricsStorage = {
     const slug = parsed.slug?.trim() || slugifyMetricName(parsed.name);
     const id = newId("metric");
     const ownership = ownedInsertValues(principal, metricScope);
+    const compiled = await compilePersistedExpression({
+      adapterKind: parsed.adapterKind,
+      adapterConfig: parsed.adapterConfig,
+    });
     const [row] = await db
       .insert(metrics)
       .values({
         id,
         ...ownership,
         businessId: parsed.businessId,
-        ownerKind: parsed.ownerKind ?? "account",
-        ownerId: parsed.ownerId ?? principal.accountId,
+        ownerKind: compiled.didCompile
+          ? compiled.ownerKind ?? "account"
+          : parsed.ownerKind ?? "account",
+        ownerId: compiled.didCompile
+          ? (compiled.ownerKind === "platform" || compiled.ownerKind === "performance"
+            ? null
+            : parsed.ownerId ?? principal.accountId)
+          : parsed.ownerId ?? principal.accountId,
         createdByUserId: principal.userId,
         name: parsed.name,
         slug,
@@ -597,8 +673,8 @@ export const metricsStorage = {
         unit: parsed.unit ?? "",
         direction: parsed.direction ?? "higher_is_better",
         samplePeriod: parsed.samplePeriod ?? "point",
-        adapterKind: parsed.adapterKind ?? "manual",
-        adapterConfig: parsed.adapterConfig ?? {},
+        adapterKind: compiled.adapterKind,
+        adapterConfig: compiled.adapterConfig,
         status: parsed.status ?? "active",
       })
       .returning();
@@ -611,7 +687,21 @@ export const metricsStorage = {
     assertWritable(principal, existing, "Metric");
     const parsed = metricUpdateSchema.parse(input);
     const { clearFields, ...rest } = parsed;
+    const compiled = await compilePersistedExpression({
+      adapterKind: rest.adapterKind,
+      adapterConfig: rest.adapterConfig,
+      existing,
+      selfId: id,
+    });
     const patch: Record<string, unknown> = { ...rest, updatedAt: new Date() };
+    if (compiled.didCompile) {
+      patch.adapterKind = compiled.adapterKind;
+      patch.adapterConfig = compiled.adapterConfig;
+      if (compiled.ownerKind) {
+        patch.ownerKind = compiled.ownerKind;
+        patch.ownerId = compiled.ownerKind === "account" ? existing.ownerId : null;
+      }
+    }
     if (clearFields?.includes("description")) patch.description = "";
     if (patch.description === "" && !clearFields?.includes("description") && rest.description === undefined) {
       delete patch.description;
