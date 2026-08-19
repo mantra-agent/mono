@@ -60,9 +60,14 @@ import {
   PRODUCT_METRIC_SLUGS,
 } from "./metrics/metric-adapters";
 import {
-  compileMetricExpression,
+  compileMetricEquation,
   identityStockCanAnswerRange,
 } from "./metrics/expression-plan";
+import {
+  buildProducerAdapterConfig,
+  getProducerDefinition,
+  isClosedProducerKey,
+} from "./metrics/producer-catalog";
 
 const metricScope: ScopeColumns = {
   scope: metrics.scope,
@@ -181,22 +186,62 @@ async function compilePersistedExpression(input: {
   adapterConfig?: Record<string, unknown>;
   existing?: Metric;
   selfId?: string;
+  /** Create always requires an equation. Update compiles when equation is present or kind/config change. */
+  requireEquation?: boolean;
 }): Promise<{
   adapterKind: Metric["adapterKind"];
   adapterConfig: Record<string, unknown>;
   ownerKind?: "platform" | "performance";
   didCompile: boolean;
 }> {
-  const adapterKind = input.adapterKind ?? input.existing?.adapterKind ?? "manual";
-  const adapterConfig = input.adapterConfig ?? input.existing?.adapterConfig ?? {};
-  if (adapterKind !== "expression") {
-    return { adapterKind, adapterConfig, didCompile: false };
+  const existingConfig = input.existing?.adapterConfig ?? {};
+  const incomingConfig = input.adapterConfig;
+  const mergedConfig: Record<string, unknown> = {
+    ...existingConfig,
+    ...(incomingConfig ?? {}),
+  };
+  const equation = equationFromConfig(mergedConfig);
+  const equationTouched =
+    incomingConfig != null
+    && Object.prototype.hasOwnProperty.call(incomingConfig, "equation");
+
+  // Ignore authored adapterKind. Derive from the equation when compiling.
+  if (!equation) {
+    if (input.requireEquation || equationTouched) {
+      throw Object.assign(new Error("Equation is required."), { status: 400 });
+    }
+    // Partial update without equation — leave binding alone.
+    return {
+      adapterKind: input.existing?.adapterKind ?? input.adapterKind ?? "manual",
+      adapterConfig: incomingConfig ? mergedConfig : existingConfig,
+      didCompile: false,
+    };
   }
-  const compiled = await compileMetricExpression({
-    equation: equationFromConfig(adapterConfig),
+
+  const compiled = await compileMetricEquation({
+    equation,
     selfId: input.selfId,
+    isClosedProducer: isClosedProducerKey,
     loadVisibleMetric: loadVisibleOperand,
   });
+
+  if (compiled.kind === "producer") {
+    const definition = getProducerDefinition(compiled.producerKey);
+    if (!definition) {
+      throw Object.assign(new Error(`Unknown producer "${compiled.producerKey}".`), { status: 400 });
+    }
+    return {
+      adapterKind: definition.adapterKind,
+      adapterConfig: buildProducerAdapterConfig(definition, compiled.equation),
+      ownerKind: definition.family === "product"
+        ? "platform"
+        : definition.family === "system"
+          ? "performance"
+          : undefined,
+      didCompile: true,
+    };
+  }
+
   return {
     adapterKind: "expression",
     adapterConfig: {
@@ -489,9 +534,12 @@ export async function ensurePlatformBusinessMetrics(
   for (const definition of definitions) {
     const id = `metric_${definition.key.replace(/-/g, "_")}_${owner.business_id}`;
     const product = PRODUCT_METRIC_SLUGS.has(definition.key);
-    const adapterConfig = product
-      ? { key: definition.key, adapterKey: "product" }
-      : { key: definition.key };
+    const producer = getProducerDefinition(definition.key);
+    const adapterConfig = producer
+      ? buildProducerAdapterConfig(producer, producer.key)
+      : product
+        ? { key: definition.key, adapterKey: "product", equation: definition.key, plan: { type: "producer", key: definition.key }, producerKey: definition.key }
+        : { key: definition.key };
     await db.execute(sql`
       INSERT INTO metrics (
         id, business_id, name, slug, description, unit, direction, sample_period, adapter_kind,
@@ -506,17 +554,44 @@ export async function ensurePlatformBusinessMetrics(
       )
       ON CONFLICT DO NOTHING
     `);
-    if (product) {
-      await db.execute(sql`
-        UPDATE metrics
-        SET owner_kind = 'platform',
-            owner_id = NULL,
-            adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify({ adapterKey: "product" })}::jsonb,
-            updated_at = NOW()
-        WHERE id = ${id}
-          AND (owner_kind IS DISTINCT FROM 'platform'
-            OR COALESCE(adapter_config->>'adapterKey', '') IS DISTINCT FROM 'product')
-      `);
+    if (product || producer) {
+      const stampConfig = producer
+        ? buildProducerAdapterConfig(producer, producer.key)
+        : {
+            key: definition.key,
+            adapterKey: "product",
+            equation: definition.key,
+            plan: { type: "producer", key: definition.key },
+            producerKey: definition.key,
+          };
+      if (product) {
+        await db.execute(sql`
+          UPDATE metrics
+          SET owner_kind = 'platform',
+              owner_id = NULL,
+              adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify(stampConfig)}::jsonb,
+              updated_at = NOW()
+          WHERE id = ${id}
+            AND (
+              owner_kind IS DISTINCT FROM 'platform'
+              OR COALESCE(adapter_config->>'equation', '') IS DISTINCT FROM ${definition.key}
+              OR COALESCE(adapter_config->>'adapterKey', '') IS DISTINCT FROM ${producer?.adapterKey ?? "product"}
+              OR adapter_config->'plan' IS NULL
+            )
+        `);
+      } else {
+        await db.execute(sql`
+          UPDATE metrics
+          SET adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify(stampConfig)}::jsonb,
+              updated_at = NOW()
+          WHERE id = ${id}
+            AND (
+              COALESCE(adapter_config->>'equation', '') IS DISTINCT FROM ${definition.key}
+              OR COALESCE(adapter_config->>'adapterKey', '') IS DISTINCT FROM ${producer?.adapterKey ?? "product"}
+              OR adapter_config->'plan' IS NULL
+            )
+        `);
+      }
     }
   }
 
@@ -655,6 +730,7 @@ export const metricsStorage = {
     const compiled = await compilePersistedExpression({
       adapterKind: parsed.adapterKind,
       adapterConfig: parsed.adapterConfig,
+      requireEquation: true,
     });
     const [row] = await db
       .insert(metrics)
@@ -691,8 +767,9 @@ export const metricsStorage = {
     assertWritable(principal, existing, "Metric");
     const parsed = metricUpdateSchema.parse(input);
     const { clearFields, ...rest } = parsed;
+    // Never accept client-authored adapterKind; server derives on equation compile.
+    delete (rest as { adapterKind?: unknown }).adapterKind;
     const compiled = await compilePersistedExpression({
-      adapterKind: rest.adapterKind,
       adapterConfig: rest.adapterConfig,
       existing,
       selfId: id,

@@ -2,22 +2,21 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ChevronRight, Database, FunctionSquare, Loader2, Plus, PenLine, SlidersHorizontal, Trash2 } from "lucide-react";
 import {
-  METRIC_ADAPTER_KINDS,
   METRIC_CATALOG_FAMILIES,
   METRIC_CATALOG_FAMILY_LABEL,
-  METRIC_DIRECTIONS,
-  METRIC_SAMPLE_PERIODS,
   metricCatalogFamilyOf,
   type Metric,
-  type MetricAdapterKind,
   type MetricCatalogFamily,
-  type MetricDirection,
   type MetricSeries,
 } from "@shared/models/metrics";
+import {
+  METRIC_PRODUCER_FAMILY_LABEL,
+  METRIC_PRODUCER_PICKER_ITEMS,
+  type MetricProducerFamily,
+} from "@shared/metric-producers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -118,17 +117,98 @@ function SamplingMenu({ value, onChange }: { value: SampleSpan; onChange: (value
   );
 }
 
-const DIRECTION_LABEL: Record<MetricDirection, string> = {
-  higher_is_better: "Higher is better",
-  lower_is_better: "Lower is better",
-  target_band: "Target band",
-};
-
-const ADAPTER_ICON: Record<MetricAdapterKind, typeof Database> = {
+const ADAPTER_ICON: Record<"manual" | "internal" | "expression", typeof Database> = {
   manual: PenLine,
   internal: Database,
   expression: FunctionSquare,
 };
+
+function equationOf(metric: Metric): string {
+  const raw = metric.adapterConfig?.equation;
+  return typeof raw === "string" ? raw : "";
+}
+
+function MetricEquationEditor({
+  equation,
+  onEquationChange,
+  operands,
+  onOperandsChange,
+  excludeMetricId,
+}: {
+  equation: string;
+  onEquationChange: (next: string) => void;
+  operands: ReferencePickerValue[];
+  onOperandsChange: (next: ReferencePickerValue[]) => void;
+  excludeMetricId?: string;
+}) {
+  const producersByFamily = useMemo(() => {
+    const map = new Map<MetricProducerFamily, typeof METRIC_PRODUCER_PICKER_ITEMS[number][]>();
+    for (const item of METRIC_PRODUCER_PICKER_ITEMS) {
+      const list = map.get(item.family) ?? [];
+      list.push(item);
+      map.set(item.family, list);
+    }
+    return map;
+  }, []);
+
+  return (
+    <div className="space-y-2">
+      <Input
+        placeholder="Equation"
+        value={equation}
+        onChange={(e) => onEquationChange(e.target.value)}
+        data-testid="metric-equation"
+        className="font-mono text-sm"
+      />
+      <div className="space-y-1.5">
+        <div className="text-xs text-muted-foreground">Producers</div>
+        {([...producersByFamily.entries()] as Array<[MetricProducerFamily, typeof METRIC_PRODUCER_PICKER_ITEMS[number][]]>).map(
+          ([family, items]) => (
+            <div key={family} className="space-y-1">
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
+                {METRIC_PRODUCER_FAMILY_LABEL[family]}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {items.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className="rounded-md border border-border px-1.5 py-0.5 font-mono text-[11px] text-foreground hover:bg-accent"
+                    data-testid={`metric-producer-${item.key}`}
+                    onClick={() => {
+                      onEquationChange(equation.trim() ? `${equation.trim()} ${item.key}` : item.key);
+                    }}
+                  >
+                    {item.key}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ),
+        )}
+      </div>
+      <div className="space-y-1">
+        <div className="text-xs text-muted-foreground">Metrics</div>
+        <ReferencePicker
+          value={operands}
+          onChange={(next) => {
+            const added = next.find((item) => !operands.some((existing) => existing.id === item.id));
+            onOperandsChange(next);
+            if (!added) return;
+            if (excludeMetricId && added.id === excludeMetricId) return;
+            const token = serializeReference({ type: "metric", id: added.id });
+            onEquationChange(equation.trim() ? `${equation.trim()} ${token}` : token);
+          }}
+          types={["metric"]}
+          mode="multi"
+          variant="inline"
+          placeholder="Add metric"
+          testId="metric-equation-operand"
+        />
+      </div>
+    </div>
+  );
+}
 
 const METRIC_SECTIONS_COLLAPSED_KEY = "metrics-catalog-sections-collapsed";
 
@@ -196,20 +276,9 @@ function RecordSampleForm({ metric }: { metric: Metric }) {
   });
 
   const valid = value.trim() !== "" && Number.isFinite(Number(value));
-  const AdapterIcon = ADAPTER_ICON[metric.adapterKind] ?? Database;
 
   return (
     <div className="max-w-xl space-y-3 py-1">
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        <div className="flex items-center gap-1.5">
-          <AdapterIcon className="h-3 w-3" />
-          <span className="capitalize text-foreground">{metric.adapterKind}</span>
-        </div>
-        <div>{DIRECTION_LABEL[metric.direction]}</div>
-        <div>Period · <span className="text-foreground">{metric.samplePeriod}</span></div>
-        <div>Unit · <span className="text-foreground">{metric.unit || "—"}</span></div>
-      </dl>
-
       {metric.latestSample?.evidence ? (
         <p className="rounded-md bg-muted/40 p-2 text-xs leading-relaxed text-muted-foreground">
           {metric.latestSample.evidence}
@@ -245,6 +314,70 @@ function RecordSampleForm({ metric }: { metric: Metric }) {
   );
 }
 
+function MetricDefinitionEditor({ metric }: { metric: Metric }) {
+  const { toast } = useToast();
+  const [description, setDescription] = useState(metric.description ?? "");
+  const [equation, setEquation] = useState(equationOf(metric));
+  const [operands, setOperands] = useState<ReferencePickerValue[]>([]);
+  const isManual = metric.adapterKind === "manual" || equationOf(metric) === "manual";
+
+  useEffect(() => {
+    setDescription(metric.description ?? "");
+    setEquation(equationOf(metric));
+  }, [metric.id, metric.description, metric.adapterConfig]);
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/metrics/${metric.id}`, {
+        description,
+        adapterConfig: { equation: equation.trim() },
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/metrics") });
+      toast({ title: "Metric saved", description: metric.name });
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Failed to save metric",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const canSave = equation.trim().length > 0 && !mutation.isPending;
+
+  return (
+    <div className="max-w-xl space-y-3 py-1">
+      <Textarea
+        placeholder="Description"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        data-testid={`metric-description-${metric.slug}`}
+      />
+      <MetricEquationEditor
+        equation={equation}
+        onEquationChange={setEquation}
+        operands={operands}
+        onOperandsChange={setOperands}
+        excludeMetricId={metric.id}
+      />
+      <Button
+        size="sm"
+        onClick={() => mutation.mutate()}
+        disabled={!canSave}
+        data-testid={`metric-save-${metric.slug}`}
+      >
+        {mutation.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+        Save definition
+      </Button>
+      {isManual ? <RecordSampleForm metric={metric} /> : null}
+    </div>
+  );
+}
+
 function MetricTreeRow({
   series,
   onRequestDelete,
@@ -269,15 +402,7 @@ function MetricTreeRow({
       valueLayout="compact"
       menuVisibility="hover"
       testId={`metric-row-${metric.slug}`}
-      expandedContent={isManual ? <RecordSampleForm metric={metric} /> : (
-        <div className="space-y-1 py-1 text-xs text-muted-foreground">
-          {metric.adapterKind === "expression" && typeof metric.adapterConfig?.equation === "string" ? (
-            <div className="font-mono text-foreground">{metric.adapterConfig.equation}</div>
-          ) : null}
-          <div>{sample?.sourceRef ?? "Source unavailable"}</div>
-          {sample?.evidence ? <div>{sample.evidence}</div> : null}
-        </div>
-      )}
+      expandedContent={<MetricDefinitionEditor metric={metric} />}
       menuContent={
         isManual ? (
           <DropdownMenuItem
@@ -292,8 +417,6 @@ function MetricTreeRow({
             Delete
           </DropdownMenuItem>
         ) : (
-          // Internal/expression rows keep the SessionMenu ellipsis with a blank
-          // submenu until actions are defined.
           <span data-testid={`metric-menu-empty-${metric.slug}`} />
         )
       }
@@ -309,10 +432,7 @@ function CreateMetricDialog() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [unit, setUnit] = useState("");
-  const [direction, setDirection] = useState<MetricDirection>("higher_is_better");
-  const [adapterKind, setAdapterKind] = useState<MetricAdapterKind>("manual");
-  const [samplePeriod, setSamplePeriod] = useState<string>("point");
+  const [description, setDescription] = useState("");
   const [equation, setEquation] = useState("");
   const [operands, setOperands] = useState<ReferencePickerValue[]>([]);
 
@@ -320,12 +440,9 @@ function CreateMetricDialog() {
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/metrics", {
         name: name.trim(),
-        unit: unit.trim(),
-        direction,
-        adapterKind,
-        samplePeriod,
+        description: description.trim(),
         status: "active",
-        adapterConfig: adapterKind === "expression" ? { equation: equation.trim() } : undefined,
+        adapterConfig: { equation: equation.trim() },
       });
       return res.json();
     },
@@ -334,7 +451,7 @@ function CreateMetricDialog() {
       toast({ title: "Metric created", description: name });
       setOpen(false);
       setName("");
-      setUnit("");
+      setDescription("");
       setEquation("");
       setOperands([]);
     },
@@ -354,67 +471,27 @@ function CreateMetricDialog() {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New metric</DialogTitle>
-          <DialogDescription>Define a measurement. Adapters decide where its data comes from.</DialogDescription>
+          <DialogDescription>Name, description, and equation. The equation is the definition.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <Input placeholder="Metric name" value={name} onChange={(e) => setName(e.target.value)} data-testid="metric-name" />
-          <Input placeholder="Unit (e.g. %, count, USD)" value={unit} onChange={(e) => setUnit(e.target.value)} data-testid="metric-unit" />
-          <div className="grid grid-cols-2 gap-2">
-            <Select value={direction} onValueChange={(v) => setDirection(v as MetricDirection)}>
-              <SelectTrigger data-testid="metric-direction"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {METRIC_DIRECTIONS.map((d) => (
-                  <SelectItem key={d} value={d}>{DIRECTION_LABEL[d]}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={adapterKind} onValueChange={(v) => setAdapterKind(v as MetricAdapterKind)}>
-              <SelectTrigger data-testid="metric-adapter"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {METRIC_ADAPTER_KINDS.map((a) => (
-                  <SelectItem key={a} value={a}>{a}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Select value={samplePeriod} onValueChange={setSamplePeriod}>
-            <SelectTrigger data-testid="metric-period"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {METRIC_SAMPLE_PERIODS.map((p) => (
-                <SelectItem key={p} value={p}>{p}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {adapterKind === "expression" ? (
-            <div className="space-y-2">
-              <Input
-                placeholder="Equation"
-                value={equation}
-                onChange={(e) => setEquation(e.target.value)}
-                data-testid="metric-equation"
-              />
-              <ReferencePicker
-                value={operands}
-                onChange={(next) => {
-                  const added = next.find((item) => !operands.some((existing) => existing.id === item.id));
-                  setOperands(next);
-                  if (!added) return;
-                  const token = serializeReference({ type: "metric", id: added.id });
-                  setEquation((current) => current.trim() ? `${current.trim()} ${token}` : token);
-                }}
-                types={["metric"]}
-                mode="multi"
-                variant="inline"
-                placeholder="Add metric"
-                testId="metric-equation-operand"
-              />
-            </div>
-          ) : null}
+          <Textarea
+            placeholder="Description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            data-testid="metric-description"
+          />
+          <MetricEquationEditor
+            equation={equation}
+            onEquationChange={setEquation}
+            operands={operands}
+            onOperandsChange={setOperands}
+          />
         </div>
         <DialogFooter>
           <Button
             onClick={() => mutation.mutate()}
-            disabled={name.trim() === "" || (adapterKind === "expression" && equation.trim() === "") || mutation.isPending}
+            disabled={name.trim() === "" || equation.trim() === "" || mutation.isPending}
             data-testid="metric-submit"
           >
             {mutation.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}

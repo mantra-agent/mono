@@ -60,7 +60,14 @@ async function ensureDefinition(principal: Principal, definition: (typeof DEFINI
     direction: definition.direction,
     samplePeriod: "custom",
     adapterKind: "internal",
-    adapterConfig: { adapterKey: "performance", sourceKind: definition.sourceKind, sourceName: definition.sourceName },
+    adapterConfig: {
+      adapterKey: "performance",
+      sourceKind: definition.sourceKind,
+      sourceName: definition.sourceName,
+      equation: "performance",
+      plan: { type: "producer", key: "performance" },
+      producerKey: "performance",
+    },
     status: "active",
   }).onConflictDoNothing({ target: metrics.id });
   return id;
