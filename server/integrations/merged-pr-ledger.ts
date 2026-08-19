@@ -15,10 +15,18 @@ const SEARCH_PAGE_SIZE = 100;
 const REST_PAGE_SIZE = 100;
 /** Recent REST seed pages — enough for the visible heatmap at ~70 merges/day. */
 const RECENT_REST_MAX_PAGES = 15;
+/**
+ * Catch-up is incremental: page closed main PRs only until past the local
+ * watermark. A few pages is enough for a 5-minute gap; never re-scrape 14 days.
+ */
+const CATCHUP_REST_MAX_PAGES = 3;
+/** Overlap behind newest local merged_at so a missed live write can heal. */
+const CATCHUP_OVERLAP_MS = 2 * 60 * 60_000;
 /** Days of history the Dashboard heatmap asks for (+ a little slack). */
 const DASHBOARD_HISTORY_DAYS = 370;
 /** Search windows stay under the 1000-result hard cap. */
 const SEARCH_WINDOW_DAYS = 3;
+/** Cold-start / empty-ledger horizon only — not the steady-state catch-up window. */
 const CATCHUP_DAYS = 14;
 const GH_API = "https://api.github.com";
 const GH_HEADERS_BASE = {
@@ -227,11 +235,16 @@ export async function recordMergedPullRequest(input: MergedPrRecordInput): Promi
     });
 }
 
+/**
+ * Batch upsert. Returns how many rows were **new** inserts (not conflict updates).
+ * Callers previously treated every upsert as "inserted", which made catch-up look
+ * like it rewrote ~1.3k rows every 5 minutes when almost nothing was new.
+ */
 async function recordMergedPullRequestsBatch(
   inputs: MergedPrRecordInput[],
 ): Promise<number> {
   if (inputs.length === 0) return 0;
-  let written = 0;
+  let inserted = 0;
   // Keep batches small enough for one statement without blowing parameter limits.
   const chunkSize = 50;
   for (let offset = 0; offset < inputs.length; offset += chunkSize) {
@@ -252,7 +265,8 @@ async function recordMergedPullRequestsBatch(
         source: input.source,
       };
     });
-    await db
+    // xmax = 0 on a freshly inserted row in PostgreSQL; conflict updates are non-zero.
+    const returned = await db
       .insert(mergedPullRequests)
       .values(values)
       .onConflictDoUpdate({
@@ -268,10 +282,31 @@ async function recordMergedPullRequestsBatch(
           mergedAt: sql`excluded.merged_at`,
           mergeCommitSha: sql`excluded.merge_commit_sha`,
         },
+      })
+      .returning({
+        isInsert: sql<boolean>`(xmax = 0)`,
       });
-    written += values.length;
+    inserted += returned.filter((row) => row.isInsert).length;
   }
-  return written;
+  return inserted;
+}
+
+function isGitHubRateLimitError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /rate limit|secondary rate|abuse.?detection|too many requests/i.test(message);
+}
+
+/** Newest merged_at already in the local CODE ledger for this repo, or null if empty. */
+async function newestLedgerMergedAt(ref: RepoRef): Promise<Date | null> {
+  const [row] = await db
+    .select({
+      value: sql<Date | string | null>`max(${mergedPullRequests.mergedAt})`,
+    })
+    .from(mergedPullRequests)
+    .where(codeHeatmapRepoPredicate(ref));
+  if (row?.value == null) return null;
+  const date = row.value instanceof Date ? row.value : new Date(row.value);
+  return Number.isFinite(date.getTime()) ? date : null;
 }
 
 /** After a successful GitHub merge API call, fetch PR detail and ledger it. Fail-soft. */
@@ -505,22 +540,36 @@ async function ingestSearchWindow(
   return inserted;
 }
 
+export interface RecentRestSeedResult {
+  /** Brand-new ledger rows (not conflict updates). */
+  inserted: number;
+  /** Merged PRs on or after `since` seen in this walk. */
+  candidates: number;
+  pages: number;
+}
+
 /**
  * Fast path: page closed main PRs by updated desc until past the recent horizon.
  * Fills the visible heatmap without waiting on historical Search backfill.
+ * `maxPages` keeps catch-up from re-scraping the full recent window every tick.
  */
 async function seedRecentViaRest(
   ref: RepoRef,
   since: Date,
   source: MergedPrSource,
-): Promise<number> {
+  maxPages: number = RECENT_REST_MAX_PAGES,
+): Promise<RecentRestSeedResult> {
   let inserted = 0;
+  let candidates = 0;
+  let pages = 0;
   let reachedPastSince = false;
-  for (let page = 1; page <= RECENT_REST_MAX_PAGES; page += 1) {
+  const pageCap = Math.max(1, Math.min(maxPages, RECENT_REST_MAX_PAGES));
+  for (let page = 1; page <= pageCap; page += 1) {
     const raw = await gh<GhPullDetail[]>(
       "GET",
       `/repos/${ref.owner}/${ref.repo}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=${REST_PAGE_SIZE}&page=${page}`,
     );
+    pages += 1;
     if (raw.length === 0) break;
     const batch: MergedPrRecordInput[] = [];
     for (const pr of raw) {
@@ -530,6 +579,7 @@ async function seedRecentViaRest(
         reachedPastSince = true;
         continue;
       }
+      candidates += 1;
       batch.push({
         owner: ref.owner,
         repo: ref.repo,
@@ -544,6 +594,8 @@ async function seedRecentViaRest(
     }
     inserted += await recordMergedPullRequestsBatch(batch);
     if (raw.length < REST_PAGE_SIZE) break;
+    // No in-window merges on this page and we already saw older merges → done.
+    if (batch.length === 0 && reachedPastSince) break;
     // If every merged PR on this page is older than since, stop.
     const newestMergedOnPage = raw
       .filter((pr) => pr.merged_at)
@@ -553,7 +605,7 @@ async function seedRecentViaRest(
       break;
     }
   }
-  return inserted;
+  return { inserted, candidates, pages };
 }
 
 async function runRecentSeed(): Promise<number> {
@@ -566,12 +618,14 @@ async function runRecentSeed(): Promise<number> {
   let inserted = 0;
   for (const ref of repos) {
     try {
-      const count = await seedRecentViaRest(ref, since, "seed");
-      inserted += count;
+      const result = await seedRecentViaRest(ref, since, "seed", RECENT_REST_MAX_PAGES);
+      inserted += result.inserted;
       log.info("Merge ledger recent REST seed complete", {
         owner: ref.owner,
         repo: ref.repo,
-        inserted: count,
+        inserted: result.inserted,
+        candidates: result.candidates,
+        pages: result.pages,
         sinceDays: CATCHUP_DAYS,
       });
     } catch (error) {
@@ -580,7 +634,15 @@ async function runRecentSeed(): Promise<number> {
         repo: ref.repo,
         error: error instanceof Error ? error.message : String(error),
       });
-      // Fall back to search for this repo's recent window.
+      // Cold seed only: Search once if REST failed for a non-rate-limit reason.
+      // Primary exhaustion must not thrash the Search secondary budget.
+      if (isGitHubRateLimitError(error)) {
+        log.warn("Merge ledger recent seed skipped search fallback (primary rate limit)", {
+          owner: ref.owner,
+          repo: ref.repo,
+        });
+        continue;
+      }
       try {
         const token = await resolveRepoToken(ref);
         const fromDate = daysAgoUtc(CATCHUP_DAYS);
@@ -606,51 +668,44 @@ async function runRecentSeed(): Promise<number> {
   return inserted;
 }
 
+/**
+ * Steady-state catch-up: heal gaps since the newest local ledger row.
+ * Live merges already write through `recordMergedPullRequestFromGithub`.
+ * This path must not re-list 14 days of closed PRs every 5 minutes.
+ */
 async function runCatchupOnce(): Promise<number> {
   const repos = await listCodeHeatmapRepos();
   if (repos.length === 0) return 0;
-  const fromDate = daysAgoUtc(CATCHUP_DAYS);
-  const toDate = utcDateString(new Date());
+  const coldSince = new Date(`${daysAgoUtc(CATCHUP_DAYS)}T00:00:00.000Z`);
   let inserted = 0;
   for (const ref of repos) {
     try {
-      // Prefer REST for catch-up — no search secondary rate limit.
-      const since = new Date(`${fromDate}T00:00:00.000Z`);
-      const restCount = await seedRecentViaRest(ref, since, "catchup");
-      inserted += restCount;
+      const newest = await newestLedgerMergedAt(ref);
+      const since = newest
+        ? new Date(Math.max(coldSince.getTime(), newest.getTime() - CATCHUP_OVERLAP_MS))
+        : coldSince;
+      const maxPages = newest ? CATCHUP_REST_MAX_PAGES : RECENT_REST_MAX_PAGES;
+      const result = await seedRecentViaRest(ref, since, "catchup", maxPages);
+      inserted += result.inserted;
       log.info("Merge ledger catch-up complete", {
         owner: ref.owner,
         repo: ref.repo,
-        fromDate,
-        toDate,
-        inserted: restCount,
+        since: since.toISOString(),
+        newestLocal: newest?.toISOString() ?? null,
+        inserted: result.inserted,
+        candidates: result.candidates,
+        pages: result.pages,
         path: "rest",
       });
     } catch (error) {
-      log.warn("Merge ledger catch-up REST failed; trying search", {
+      // Never Search-fallback on catch-up: under primary 403 it spent more quota
+      // and still returned ~1000 "inserted" conflict updates. Live + next tick heal.
+      log.warn("Merge ledger catch-up failed for repo", {
         owner: ref.owner,
         repo: ref.repo,
+        rateLimited: isGitHubRateLimitError(error),
         error: error instanceof Error ? error.message : String(error),
       });
-      try {
-        const token = await resolveRepoToken(ref);
-        const count = await ingestSearchWindow(ref, token, fromDate, toDate, "catchup");
-        inserted += count;
-        log.info("Merge ledger catch-up complete", {
-          owner: ref.owner,
-          repo: ref.repo,
-          fromDate,
-          toDate,
-          inserted: count,
-          path: "search",
-        });
-      } catch (searchError) {
-        log.warn("Merge ledger catch-up failed for repo", {
-          owner: ref.owner,
-          repo: ref.repo,
-          error: searchError instanceof Error ? searchError.message : String(searchError),
-        });
-      }
     }
   }
   return inserted;
