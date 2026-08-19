@@ -13,6 +13,8 @@
 
 **Clarity Above All.** Remove everything that isn't essential. Every element on screen earns its place through utility, orientation, or delight. Maximize Tufte's data-ink ratio. If removing an element changes nothing about comprehension, it shouldn't be there.
 
+**Section placement is the badge.** Do not add a badge that restates a grouping the user can already see from the section the object sits in. An Open row inside OPEN does not need an Open badge. A badge earns its place only when it carries information the section cannot.
+
 **Occam's Design.** Always do things the simplest way, but no simpler. Use standard patterns when they solve the problem. Every custom component is complexity debt: learned, maintained, documented, defended. Simple systems feel inevitable. Complex systems feel fragile.
 
 **Human-Scale.** Generous touch targets (44px minimum). Readable typography (14px body minimum, 1.5 line height for prose). Comfortable spacing. Warm and approachable, not clinical and cold. The body has opinions about what feels right. Respect them.
@@ -437,7 +439,7 @@ hierarchy-tree:
 
 TreeView is one interaction language with two compositions. Cards are not a third.
 
-**Object index** — Session Menu, Features, Scenarios, Issues, Audiences, Timers, Internal Prompts. Search first. Blue `+ New Thing` next when the catalog can grow from the page. Collapsible section labels. Compact nested rows. Hover or keyboard `…` menu. Inline expand. No split-view.
+**Object index** — Session Menu, Features, Scenarios, Issues, Audiences, Timers, Internal Prompts, Decisions. Search first. Blue `+ New Thing` next when the catalog can grow from the page. Collapsible section labels. Compact nested rows. Hover or keyboard `…` menu. Inline expand. No split-view. Do not badge a row with the section it already lives in.
 
 **Field / detail** — Person profile, Secrets, Environment SOURCE, Slack, Claude CLI, OpenAI Subscription, OpenAI API, Anthropic API, Model tab, ElevenLabs, Twitter, Expo. `ProfileDetailSection` or `IntegrationTreeSection` as the group. One `ProfileTreeRow` per field: label and optional icon on the left, value or inline input on the right. Fields and dates edit in place; rotate, clear, and destructive actions live in `menuContent`. Children nest with `HierarchyTreeRow`. Person profile is the archetype: it is the origin of `ProfileDetailSection`/`ProfileTreeRow` and the reference implementation for in-place editable rows.
 
@@ -630,6 +632,7 @@ Scrollbars are structural. They should indicate containment and scrollability wi
 | Use motion for continuity | Use motion as ornament |
 | Use references as typed links | Render durable objects as plain text |
 | Compose shared primitives | Invent local one-off widgets |
+| Let section placement carry grouping | Badge a row with the name of the section it already sits in |
 | Use glass `TooltipContent` for hover labels | Use native `title=` or a restyled popover as a tooltip |
 
 ## Anti-patterns

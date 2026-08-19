@@ -8,6 +8,7 @@ import {
   decisionUpdates,
   decisionLinks,
   decisionLinkTargetTypes,
+  vaults,
   type Decision,
   type InsertDecision,
   type DecisionUpdate,
@@ -30,7 +31,21 @@ const decisionScopeColumns = {
   scope: decisions.scope,
   ownerUserId: decisions.ownerUserId,
   accountId: decisions.accountId,
+  vaultId: decisions.vaultId,
 };
+
+async function assertAssignableDecisionVault(vaultId: string | null | undefined, principal: Principal): Promise<void> {
+  if (vaultId === undefined || vaultId === null) return;
+  if (!principal.accountId) throw Object.assign(new Error("User account required"), { status: 401 });
+  const [vault] = await db.select({ id: vaults.id }).from(vaults).where(and(
+    eq(vaults.id, vaultId),
+    eq(vaults.accountId, principal.accountId),
+    eq(vaults.isArchived, false),
+  )).limit(1);
+  if (!vault) {
+    throw Object.assign(new Error("Decision Vault must be live and belong to the active account"), { status: 400 });
+  }
+}
 
 let schemaMigrated = false;
 
@@ -106,6 +121,7 @@ export interface RecordJudgmentResult {
 export interface LockDecisionInput {
   trafficLight?: DecisionTrafficLight;
   description?: string;
+  answer?: string;
   reasoning?: string;
   answerPayload?: Record<string, unknown>;
   ownerPersonRole?: "self" | "partner";
@@ -162,6 +178,21 @@ function decisionAddressLink(decisionId: string, link: AddressLink): DecisionAdd
 async function indexDecision(principal: Principal, decision: Decision): Promise<void> {
   const { indexDecisionReferences } = await import("./decision-reference-index");
   await indexDecisionReferences(principal, decision);
+}
+
+function answerFromPayload(payload: Record<string, unknown> | undefined): string {
+  if (!payload) return "";
+  if (typeof payload.selectedLabels === "string" && payload.selectedLabels.trim()) return payload.selectedLabels.trim();
+  if (Array.isArray(payload.selectedLabels)) {
+    const labels = payload.selectedLabels.filter((label): label is string => typeof label === "string" && label.trim().length > 0);
+    if (labels.length) return labels.join(", ");
+  }
+  if (Array.isArray(payload.selectedOptionIds)) {
+    const ids = payload.selectedOptionIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+    if (ids.length) return ids.join(", ");
+  }
+  if (typeof payload.otherText === "string" && payload.otherText.trim()) return payload.otherText.trim();
+  return "";
 }
 
 function appendSectionPlainText(current: string | null | undefined, fragment: string): string {
@@ -289,10 +320,16 @@ export class DecisionsStorage {
   async createDecision(data: InsertDecision): Promise<Decision> {
     return autoHeal(async () => {
       const principal = requireCurrentUserPrincipal();
+      await assertAssignableDecisionVault(data.vaultId, principal);
       return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
-        const [row] = await tx.insert(decisions).values({ ...data, ...ownedInsertValues(principal, decisionScopeColumns) }).returning();
+        const ownership = ownedInsertValues(principal, decisionScopeColumns);
+        const [row] = await tx.insert(decisions).values({
+          ...data,
+          ...ownership,
+          ...(data.vaultId ? { vaultId: data.vaultId } : {}),
+        }).returning();
         await indexDecision(principal, row);
-        log.debug(`createDecision id=${row.id} title="${row.title}"`);
+        log.debug(`createDecision id=${row.id} title="${row.title}" vault=${row.vaultId ?? "none"}`);
         return row;
       }));
     });
@@ -320,6 +357,7 @@ export class DecisionsStorage {
         const [decision] = await tx.insert(decisions).values({
           title: input.title.trim(),
           description: input.description?.trim() ?? "",
+          answer: answerFromPayload(input.answerPayload),
           status,
           closedAt: status === "closed" ? resolvedAt : null,
           resolvedAt,
@@ -355,6 +393,7 @@ export class DecisionsStorage {
   async updateDecision(id: string, updates: DecisionUpdatePatch): Promise<Decision | undefined> {
     return autoHeal(async () => {
       const principal = requireCurrentUserPrincipal();
+      await assertAssignableDecisionVault(updates.vaultId, principal);
       return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
         const patch: Record<string, unknown> = { ...updates, updatedAt: new Date() };
         const [row] = await tx.update(decisions).set(patch).where(combineWithWritableScope(principal, decisionScopeColumns, eq(decisions.id, id))).returning();
@@ -429,11 +468,18 @@ export class DecisionsStorage {
         if (typeof input?.description === "string" && input.description.trim()) {
           patch.description = input.description.trim();
         }
+        if (typeof input?.answer === "string" && input.answer.trim()) {
+          patch.answer = input.answer.trim();
+        }
         if (typeof input?.reasoning === "string" && input.reasoning.trim()) {
           patch.reasoning = input.reasoning.trim();
         }
         if (input?.answerPayload && typeof input.answerPayload === "object" && !Array.isArray(input.answerPayload)) {
           patch.answerPayload = input.answerPayload;
+          if (!patch.answer) {
+            const projected = answerFromPayload(input.answerPayload);
+            if (projected) patch.answer = projected;
+          }
         }
         if (ownerPersonId) patch.ownerPersonId = ownerPersonId;
         if (sourceSessionId) patch.sourceSessionId = sourceSessionId;
@@ -524,7 +570,7 @@ export class DecisionsStorage {
     });
   }
 
-  /** Principal-visible ILIKE over title, description, section plain text, and reasoning. */
+  /** Principal-visible ILIKE over title, description, answer, section plain text, and reasoning. */
   async searchDecisions(input: SearchDecisionsInput): Promise<Decision[]> {
     return autoHeal(async () => {
       const query = input.query?.trim() ?? "";
@@ -537,6 +583,7 @@ export class DecisionsStorage {
       const textMatch = or(
         ilike(decisions.title, pattern),
         ilike(decisions.description, pattern),
+        ilike(decisions.answer, pattern),
         ilike(decisions.dataPlainText, pattern),
         ilike(decisions.scenariosPlainText, pattern),
         ilike(decisions.planPlainText, pattern),
@@ -887,6 +934,8 @@ export async function migrateDecisionsSchema(): Promise<void> {
     // Heal earlier dev schema: add description + traffic_light if missing, drop legacy health if present
     `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS description text NOT NULL DEFAULT ''`,
     `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS traffic_light text`,
+    `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS answer text NOT NULL DEFAULT ''`,
+    `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS vault_id text`,
     `ALTER TABLE decisions DROP COLUMN IF EXISTS health`,
     `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'user'`,
     `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS owner_user_id text`,
@@ -902,6 +951,7 @@ export async function migrateDecisionsSchema(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_decisions_status ON decisions(status)`,
     `CREATE INDEX IF NOT EXISTS idx_decisions_scope_owner ON decisions(scope, owner_user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_decisions_account ON decisions(account_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_decisions_vault ON decisions(vault_id)`,
     `CREATE INDEX IF NOT EXISTS idx_decisions_owner_person ON decisions(owner_person_id)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uniq_decisions_question_replay
        ON decisions(account_id, source_session_id, source_tool_call_id)

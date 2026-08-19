@@ -13,30 +13,38 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
-} from "@/components/ui/command";
 import {
   Plus, Loader2, Trash2, Lock, Link2, X,
-  ChevronRight, ChevronsUpDown, Check, Scale,
+  ChevronRight, Check, Scale, MoreHorizontal, FolderInput,
 } from "lucide-react";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
-import { ProfileTreeRow } from "@/components/profile-tree-row";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_SESSION_ROW_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { RichTextEditor } from "@/components/rich-text-editor";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
+import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
+import { SIMPLE_TEXT_FRAME_CLASS } from "@/components/home/simple-text-frame";
+import { vaultTitleColor } from "@/lib/vault-title-color";
+import { useVaults } from "@/hooks/use-vaults";
 import { cn } from "@/lib/utils";
 
 type DecisionStatus = "open" | "closed";
@@ -46,6 +54,8 @@ interface Decision {
   id: string;
   title: string;
   description: string;
+  answer?: string | null;
+  vaultId?: string | null;
   status: DecisionStatus;
   trafficLight: DecisionTrafficLight | null;
   dataContent: JSONContent | null;
@@ -89,7 +99,7 @@ interface DecisionFull extends Decision {
 }
 
 type DecisionPatch = Partial<Pick<Decision,
-  | "title" | "description"
+  | "title" | "description" | "answer" | "vaultId"
   | "trafficLight"
   | "dataContent" | "dataPlainText"
   | "scenariosContent" | "scenariosPlainText"
@@ -115,7 +125,8 @@ function matchesDecisionSearch(decision: Decision, search: string) {
   const q = search.trim().toLowerCase();
   return (
     decision.title.toLowerCase().includes(q) ||
-    (decision.description ?? "").toLowerCase().includes(q)
+    (decision.description ?? "").toLowerCase().includes(q) ||
+    (decision.answer ?? "").toLowerCase().includes(q)
   );
 }
 
@@ -126,47 +137,185 @@ function DecisionRow({
   decision: Decision;
   onDelete: () => void;
 }) {
+  const { vaults, activeVaultId, visibleVaultIds } = useVaults();
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(decision.title);
+  const vaultById = useMemo(() => new Map(vaults.map((vault) => [vault.id, vault])), [vaults]);
+  const titleColor = vaultTitleColor(
+    decision.vaultId ? [decision.vaultId] : undefined,
+    vaultById,
+    activeVaultId,
+    1,
+  );
+  const writableVaults = useMemo(
+    () => vaults.filter((vault) => !vault.isArchived && visibleVaultIds.includes(vault.id)),
+    [vaults, visibleVaultIds],
+  );
+
+  const rename = useMutation({
+    mutationFn: async (title: string) => {
+      const res = await apiRequest("PATCH", `/api/decisions/${decision.id}`, { title });
+      return res.json() as Promise<Decision>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/decisions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/decisions", decision.id] });
+    },
+    onError: (err: Error) => toast({ title: "Could not rename Decision", description: err.message, variant: "destructive" }),
+  });
+
+  const commitTitle = () => {
+    const next = titleDraft.trim();
+    if (!next || next === decision.title.trim()) {
+      setTitleDraft(decision.title);
+      setEditingTitle(false);
+      return;
+    }
+    rename.mutate(next, { onSettled: () => setEditingTitle(false) });
+  };
+
+  const setVault = useMutation({
+    mutationFn: async (vaultId: string) => {
+      const res = await apiRequest("PATCH", `/api/decisions/${decision.id}`, { vaultId });
+      return res.json() as Promise<Decision>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/decisions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/decisions", decision.id] });
+    },
+    onError: (err: Error) => toast({ title: "Could not move Decision", description: err.message, variant: "destructive" }),
+  });
+
   const statusMeta =
     decision.status === "closed" && decision.trafficLight
       ? TRAFFIC_LABEL[decision.trafficLight]
       : decision.status === "closed"
         ? "Closed"
-        : "Open";
+        : null;
 
   return (
-    <ProfileTreeRow
-      label={<span data-testid={`text-decision-title-${decision.id}`}>{decision.title}</span>}
-      icon={<Scale className="h-3.5 w-3.5" />}
-      hasValue
-      showEmpty
-      mobileLayout="inline"
-      valueLayout="compact"
-      testId={`decision-row-${decision.id}`}
-      expandedContentClassName="px-2 pb-2 pl-2"
-      expandedContent={(
-        <DecisionInlineEditor
-          decisionId={decision.id}
-          onDelete={() => onDelete()}
-        />
-      )}
-      menuContent={(
-        <DropdownMenuItem
-          className="text-destructive focus:text-destructive"
-          onSelect={onDelete}
-          data-testid={`button-delete-decision-${decision.id}`}
+    <div className="min-w-0">
+      <div
+        className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")}
+        data-testid={`decision-row-${decision.id}`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Scale className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        {editingTitle ? (
+          <Input
+            autoFocus
+            value={titleDraft}
+            onChange={(event) => setTitleDraft(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitTitle();
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setTitleDraft(decision.title);
+                setEditingTitle(false);
+              }
+            }}
+            onBlur={commitTitle}
+            className="h-6 max-w-[min(100%,28rem)] border-0 bg-muted/40 px-1.5 text-sm shadow-none focus-visible:ring-1"
+            data-testid={`input-decision-title-${decision.id}`}
+          />
+        ) : (
+          <button
+            type="button"
+            className={cn("min-w-0 flex-1 truncate text-left text-sm", !titleColor && "text-foreground")}
+            style={titleColor ? { color: titleColor } : undefined}
+            onClick={(event) => {
+              event.stopPropagation();
+              setTitleDraft(decision.title);
+              setEditingTitle(true);
+            }}
+            data-testid={`text-decision-title-${decision.id}`}
+          >
+            {decision.title}
+          </button>
+        )}
+        {statusMeta ? (
+          <span className="flex shrink-0 items-center gap-1.5 pr-14 text-xs text-muted-foreground">
+            {decision.trafficLight ? (
+              <span className={cn("h-2 w-2 shrink-0 rounded-full", TRAFFIC_DOT[decision.trafficLight])} />
+            ) : null}
+            <span className="truncate">{statusMeta}</span>
+          </span>
+        ) : (
+          <span className="pr-14" />
+        )}
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            setOpen((value) => !value);
+          }}
+          className="absolute right-8 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+          aria-label={open ? `Collapse ${decision.title}` : `Expand ${decision.title}`}
+          data-testid={`button-decision-expand-${decision.id}`}
         >
-          <Trash2 className="mr-2 h-3.5 w-3.5" />
-          Delete
-        </DropdownMenuItem>
-      )}
-    >
-      <span className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
-        {decision.status === "closed" && decision.trafficLight ? (
-          <span className={cn("h-2 w-2 shrink-0 rounded-full", TRAFFIC_DOT[decision.trafficLight])} />
-        ) : null}
-        <span className="truncate">{statusMeta}</span>
-      </span>
-    </ProfileTreeRow>
+          <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
+        </button>
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="absolute right-1 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md bg-accent/50 opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+              aria-label={`Actions for ${decision.title}`}
+              data-testid={`button-decision-menu-${decision.id}`}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger data-testid={`menu-decision-vault-${decision.id}`}>
+                <FolderInput className="mr-2 h-3.5 w-3.5" />
+                Vault
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-56">
+                {writableVaults.map((vault) => (
+                  <DropdownMenuItem
+                    key={vault.id}
+                    disabled={vault.id === decision.vaultId || setVault.isPending}
+                    onSelect={() => setVault.mutate(vault.id)}
+                    data-testid={`menu-decision-vault-${decision.id}-${vault.id}`}
+                  >
+                    <span
+                      className="mr-2 h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: vault.color || undefined }}
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1 truncate">{vault.name}</span>
+                    {vault.id === decision.vaultId && <Check className="ml-2 h-3.5 w-3.5 shrink-0" />}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onSelect={onDelete}
+              data-testid={`button-delete-decision-${decision.id}`}
+            >
+              <Trash2 className="mr-2 h-3.5 w-3.5" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      {open ? (
+        <div className="px-2 pb-2 pl-2">
+          <DecisionInlineEditor decisionId={decision.id} />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -332,18 +481,17 @@ export default function StrategyDecisionsTab() {
 // ─── Inline Editor (expanded view for a single decision) ───
 
 function DecisionInlineEditor({
-  decisionId, onDelete,
+  decisionId,
 }: {
   decisionId: string;
-  onDelete: (d: Decision) => void;
 }) {
   const { toast } = useToast();
   const { data: full, isLoading } = useQuery<DecisionFull>({
     queryKey: ["/api/decisions", decisionId],
   });
 
-  const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [answer, setAnswer] = useState("");
   const [data, setData] = useState<JSONContent | null>(null);
   const [dataText, setDataText] = useState("");
   const [scenarios, setScenarios] = useState<JSONContent | null>(null);
@@ -354,8 +502,8 @@ function DecisionInlineEditor({
 
   const prevIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const titleRef = useRef("");
   const descriptionRef = useRef("");
+  const answerRef = useRef("");
   const dataRef = useRef<{ json: JSONContent | null; text: string }>({ json: null, text: "" });
   const scenariosRef = useRef<{ json: JSONContent | null; text: string }>({ json: null, text: "" });
   const planRef = useRef<{ json: JSONContent | null; text: string }>({ json: null, text: "" });
@@ -364,16 +512,16 @@ function DecisionInlineEditor({
     if (!full) return;
     if (full.id === prevIdRef.current) return;
     prevIdRef.current = full.id;
-    setTitle(full.title);
     setDescription(full.description);
+    setAnswer(full.answer ?? "");
     setData(full.dataContent);
     setDataText(full.dataPlainText);
     setScenarios(full.scenariosContent);
     setScenariosText(full.scenariosPlainText);
     setPlan(full.planContent);
     setPlanText(full.planPlainText);
-    titleRef.current = full.title;
     descriptionRef.current = full.description;
+    answerRef.current = full.answer ?? "";
     dataRef.current = { json: full.dataContent, text: full.dataPlainText };
     scenariosRef.current = { json: full.scenariosContent, text: full.scenariosPlainText };
     planRef.current = { json: full.planContent, text: full.planPlainText };
@@ -396,8 +544,8 @@ function DecisionInlineEditor({
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       saveMutation.mutate({
-        title: titleRef.current,
         description: descriptionRef.current,
+        answer: answerRef.current,
         dataContent: dataRef.current.json,
         dataPlainText: dataRef.current.text,
         scenariosContent: scenariosRef.current.json,
@@ -426,7 +574,9 @@ function DecisionInlineEditor({
 
   const lockMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/decisions/${decisionId}/lock`, {});
+      const chosen = answerRef.current.trim();
+      if (!chosen) throw new Error("Answer is required to lock");
+      const res = await apiRequest("POST", `/api/decisions/${decisionId}/lock`, { answer: chosen });
       return res.json() as Promise<Decision>;
     },
     onSuccess: () => {
@@ -447,19 +597,12 @@ function DecisionInlineEditor({
   }
 
   const isClosed = full.status === "closed";
+  const canLock = answer.trim().length > 0;
 
   return (
     <div className="space-y-3 pt-2" data-testid={`decision-editor-${decisionId}`}>
-      {/* Title + controls bar */}
-      <div className="flex items-center gap-2">
-        <Input
-          value={title}
-          onChange={(e) => { setTitle(e.target.value); titleRef.current = e.target.value; scheduleSave(); }}
-          placeholder="Decision title"
-          className="h-8 text-sm font-medium border-0 bg-transparent focus-visible:ring-1 px-1 flex-1"
-          data-testid="input-decision-title"
-        />
-        {isClosed && (
+      {isClosed && (
+        <div className="flex items-center gap-2">
           <Select
             value={full.trafficLight ?? "green"}
             onValueChange={(v) => setTrafficLightMutation.mutate(v as DecisionTrafficLight)}
@@ -478,28 +621,15 @@ function DecisionInlineEditor({
               ))}
             </SelectContent>
           </Select>
-        )}
-        {!isClosed && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs"
-            onClick={() => setLockConfirmOpen(true)}
-            data-testid="button-lock-decision"
-          >
-            <Lock className="h-3 w-3 mr-1" /> Lock
-          </Button>
-        )}
-      </div>
-
-      {isClosed && full.closedAt && (
-        <div className="text-xs text-muted-foreground flex items-center gap-1.5" data-testid="text-decision-closed-at">
-          <Lock className="h-3 w-3" />
-          Closed {new Date(full.closedAt).toLocaleString()}
+          {full.closedAt && (
+            <div className="text-xs text-muted-foreground flex items-center gap-1.5" data-testid="text-decision-closed-at">
+              <Lock className="h-3 w-3" />
+              Closed {new Date(full.closedAt).toLocaleString()}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Description */}
       <div>
         <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Description</div>
         <Textarea
@@ -509,6 +639,31 @@ function DecisionInlineEditor({
           rows={2}
           className="text-sm resize-none"
           data-testid="input-decision-description"
+        />
+      </div>
+
+      <div>
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Answer</div>
+          {!isClosed && canLock && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              onClick={() => setLockConfirmOpen(true)}
+              data-testid="button-lock-decision"
+            >
+              <Lock className="h-3 w-3 mr-1" /> Lock
+            </Button>
+          )}
+        </div>
+        <Textarea
+          value={answer}
+          onChange={(e) => { setAnswer(e.target.value); answerRef.current = e.target.value; scheduleSave(); }}
+          placeholder="The chosen answer..."
+          rows={2}
+          className="text-sm resize-none"
+          data-testid="input-decision-answer"
         />
       </div>
 
@@ -599,6 +754,11 @@ function DecisionSection({
         onChange={onChange}
         placeholder={`Notes for ${label.toLowerCase()}...`}
         plainTextFallback={plain}
+        className="h-auto"
+        contentClassName={cn(
+          SIMPLE_TEXT_FRAME_CLASS,
+          "!p-0 [&_.ProseMirror]:!min-h-20 [&_.ProseMirror]:px-3 [&_.ProseMirror]:py-2",
+        )}
         data-testid={testId}
       />
     </div>
@@ -632,31 +792,14 @@ function DecisionProvenanceSection({
     [links],
   );
   const hasReasoning = Boolean(decision.reasoning?.trim());
-  const hasAnswer = Boolean(decision.answerPayload && Object.keys(decision.answerPayload).length > 0);
   const hasSource = Boolean(decision.sourceSessionId || decision.sourceToolCallId);
-  if (!provenanceLinks.length && !hasReasoning && !hasAnswer && !hasSource) return null;
-
-  const answerSummary = (() => {
-    const payload = decision.answerPayload;
-    if (!payload) return null;
-    if (typeof payload.selectedLabels === "string") return payload.selectedLabels;
-    if (Array.isArray(payload.selectedLabels)) return payload.selectedLabels.join(", ");
-    if (Array.isArray(payload.selectedOptionIds)) return payload.selectedOptionIds.join(", ");
-    if (typeof payload.otherText === "string" && payload.otherText.trim()) return payload.otherText.trim();
-    return null;
-  })();
+  if (!provenanceLinks.length && !hasReasoning && !hasSource) return null;
 
   return (
     <div className="space-y-2" data-testid="decision-provenance">
       <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
         <Scale className="h-3 w-3" /> Provenance
       </div>
-      {answerSummary && (
-        <div className="text-sm" data-testid="decision-provenance-answer">
-          <span className="text-muted-foreground">Answer: </span>
-          <span>{answerSummary}</span>
-        </div>
-      )}
       {hasReasoning && (
         <div className="text-sm whitespace-pre-wrap" data-testid="decision-provenance-reasoning">
           <span className="text-muted-foreground">Reasoning: </span>
@@ -691,8 +834,9 @@ function DecisionProvenanceSection({
 
 // ─── Links ───
 
-interface StrategyOption { id: string; title: string }
-interface ProjectOption { id: number; title: string }
+function linkAddress(link: DecisionLink): string {
+  return link.targetAddress || `@${link.targetType}:${link.targetId}`;
+}
 
 function DecisionLinksSection({ decisionId, links }: { decisionId: string; links: DecisionLink[] }) {
   const { toast } = useToast();
@@ -700,29 +844,20 @@ function DecisionLinksSection({ decisionId, links }: { decisionId: string; links
     () => links.filter((link) => !link.predicate || !PROVENANCE_PREDICATES.has(link.predicate)),
     [links],
   );
-
-  const { data: strategies = [] } = useQuery<StrategyOption[]>({
-    queryKey: ["/api/strategy/goals"],
-  });
-  const { data: projects = [] } = useQuery<ProjectOption[]>({
-    queryKey: ["/api/projects/projects"],
-  });
-
-  const strategyById = useMemo(() => new Map(strategies.map(s => [s.id, s])), [strategies]);
-  const projectById = useMemo(() => new Map(projects.map(p => [String(p.id), p])), [projects]);
-
-  const linkedStrategyIds = useMemo(
-    () => new Set(manualLinks.filter(l => l.targetType === "strategy").map(l => l.targetId)),
-    [manualLinks],
-  );
-  const linkedProjectIds = useMemo(
-    () => new Set(manualLinks.filter(l => l.targetType === "project").map(l => l.targetId)),
+  const pickerValue = useMemo<ReferencePickerValue[]>(
+    () => manualLinks.map((link) => ({
+      type: link.targetType,
+      id: link.targetId,
+      label: linkAddress(link),
+    })),
     [manualLinks],
   );
 
   const addMutation = useMutation({
-    mutationFn: async (input: { targetType: "strategy" | "project"; targetId: string }) => {
-      const res = await apiRequest("POST", `/api/decisions/${decisionId}/links`, input);
+    mutationFn: async (value: ReferencePickerValue) => {
+      const res = await apiRequest("POST", `/api/decisions/${decisionId}/links`, {
+        targetAddress: `@${value.type}:${value.id}`,
+      });
       return res.json();
     },
     onSuccess: () => {
@@ -738,131 +873,44 @@ function DecisionLinksSection({ decisionId, links }: { decisionId: string; links
     },
   });
 
-  const labelFor = (l: DecisionLink) => {
-    if (l.targetType === "strategy") return strategyById.get(l.targetId)?.title || `strategy:${l.targetId}`;
-    if (l.targetType === "project") return projectById.get(l.targetId)?.title || `project:${l.targetId}`;
-    return l.targetAddress || `${l.targetType}:${l.targetId}`;
-  };
-
-  const toggleLink = (
-    targetType: "strategy" | "project",
-    targetId: string,
-    currentlyLinked: boolean,
-  ) => {
-    if (currentlyLinked) {
-      const existing = manualLinks.find(l => l.targetType === targetType && l.targetId === targetId);
-      if (existing) removeMutation.mutate(existing.id);
-    } else {
-      addMutation.mutate({ targetType, targetId });
-    }
-  };
-
   return (
     <div>
-      <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
-        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-          <Link2 className="h-3 w-3" /> Links
-        </div>
-        <div className="flex items-center gap-1.5">
-          <LinkMultiSelect
-            label="Strategies"
-            placeholder="Search strategies..."
-            options={strategies.map(s => ({ value: s.id, label: s.title }))}
-            selected={linkedStrategyIds}
-            onToggle={(id, linked) => toggleLink("strategy", id, linked)}
-            testId="select-link-strategies"
-          />
-          <LinkMultiSelect
-            label="Projects"
-            placeholder="Search projects..."
-            options={projects.map(p => ({ value: String(p.id), label: p.title }))}
-            selected={linkedProjectIds}
-            onToggle={(id, linked) => toggleLink("project", id, linked)}
-            testId="select-link-projects"
-          />
-        </div>
+      <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5 mb-1">
+        <Link2 className="h-3 w-3" /> Links
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {manualLinks.map((link) => (
+          <span key={link.id} className="inline-flex items-center gap-0.5" data-testid={`link-${link.id}`}>
+            <InlineReferenceText text={linkAddress(link)} />
+            <button
+              type="button"
+              onClick={() => removeMutation.mutate(link.id)}
+              className="text-muted-foreground hover:text-destructive"
+              data-testid={`button-remove-link-${link.id}`}
+              aria-label="Remove link"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+        <ReferencePicker
+          value={pickerValue}
+          onChange={(next) => {
+            const existing = new Set(manualLinks.map((link) => `${link.targetType}:${link.targetId}`));
+            const added = next.find((item) => !existing.has(`${item.type}:${item.id}`));
+            if (added) addMutation.mutate(added);
+          }}
+          mode="multi"
+          variant="compact"
+          dense
+          placeholder="Add link"
+          testId="picker-decision-links"
+        />
       </div>
       {manualLinks.length === 0 ? (
-        <div className="text-xs text-muted-foreground" data-testid="text-no-links">No links</div>
-      ) : (
-        <div className="flex flex-wrap gap-1.5">
-          {manualLinks.map(l => (
-            <span key={l.id} className="inline-flex items-center gap-1 text-xs bg-muted rounded px-2 py-0.5" data-testid={`link-${l.id}`}>
-              {l.targetAddress ? (
-                <InlineReferenceText text={l.targetAddress} />
-              ) : (
-                <>
-                  <span className="capitalize">{l.targetType}:</span>
-                  <span>{labelFor(l)}</span>
-                </>
-              )}
-              <button
-                onClick={() => removeMutation.mutate(l.id)}
-                className="hover:text-destructive"
-                data-testid={`button-remove-link-${l.id}`}
-                aria-label="Remove link"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
+        <div className="mt-1 text-xs text-muted-foreground" data-testid="text-no-links">No links</div>
+      ) : null}
     </div>
-  );
-}
-
-// ─── Link Multi Select ───
-
-function LinkMultiSelect({
-  label, placeholder, options, selected, onToggle, testId,
-}: {
-  label: string;
-  placeholder: string;
-  options: { value: string; label: string }[];
-  selected: Set<string>;
-  onToggle: (value: string, currentlyLinked: boolean) => void;
-  testId: string;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 text-xs justify-between gap-2"
-          data-testid={testId}
-        >
-          <span>{label}{selected.size > 0 ? ` (${selected.size})` : ""}</span>
-          <ChevronsUpDown className="h-3 w-3 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-64 p-0" align="end">
-        <Command>
-          <CommandInput placeholder={placeholder} data-testid={`${testId}-input`} />
-          <CommandList>
-            <CommandEmpty>No matches.</CommandEmpty>
-            <CommandGroup>
-              {options.map(opt => {
-                const isLinked = selected.has(opt.value);
-                return (
-                  <CommandItem
-                    key={opt.value}
-                    value={`${opt.label} ${opt.value}`}
-                    onSelect={() => onToggle(opt.value, isLinked)}
-                    data-testid={`${testId}-option-${opt.value}`}
-                  >
-                    <Check className={cn("mr-2 h-3.5 w-3.5", isLinked ? "opacity-100" : "opacity-0")} />
-                    <span className="truncate">{opt.label}</span>
-                  </CommandItem>
-                );
-              })}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
   );
 }
 

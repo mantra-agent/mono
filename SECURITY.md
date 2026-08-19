@@ -1,3 +1,10 @@
+<!-- 2026-08-18 Decision single-vault membership:
+- Assets/data: A04/A07 `decisions.vault_id` plus existing principal-scoped Decision rows (S2 deliberation). No new permission or secret.
+- Flow/threat: listing Decisions without Vault scope would keep a moved Decision visible after the caller hid that Vault; assigning a foreign-account or archived Vault would cross tenant placement (STRIDE disclosure/tampering; DATA-01/IAM-01).
+- Deterministic controls/owner: `decisionScopeColumns.vaultId` participates in visible/writable scope. Create stamps the active Vault unless an explicit live same-account Vault is supplied. `assertAssignableDecisionVault` rejects foreign/archived Vaults. Null remains visible during backfill. Owner: Core Decisions. Severity: medium confidentiality. SLA: same PR.
+- Residual/rollback: legacy null-vault rows stay visible to the owner until assigned. Revert the column, scope stamp, assignment check, UI menu, and this finding together.
+-->
+
 <!-- 2026-08-18 Templates reverse skill list:
 - Assets/data: A07 `skill_template_bindings` plus visible `skills` identity (id/name). S1 catalog, no process/prompt bodies.
 - Flow/threat: GET `/api/templates/:id/bindings` could leak another account's user-scoped skill ids if the join skipped skill visibility (STRIDE disclosure; DATA-01).
