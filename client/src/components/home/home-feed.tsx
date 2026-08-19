@@ -14,8 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LibraryReminderPopover } from "@/components/library-reminder";
-import { ChevronRight, FileText, Loader2, MessageSquare, MoreHorizontal, X } from "lucide-react";
-import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
+import { ChevronRight, FileText, Loader2, MessageSquare, MoreHorizontal, Plus, X } from "lucide-react";
 import { useSessionLaunch } from "@/hooks/use-session-launch";
 import { useProductComposition } from "@/hooks/use-product-composition";
 import {
@@ -73,20 +72,21 @@ function useHomeSectionCommit(section: string, open: boolean, itemCount: number)
   }, [open, section, itemCount]);
 }
 
+/**
+ * Home NOW invite — same grammar as hierarchy "+ New …" activators
+ * (Goals `New Goal`, Session `New Session`, Emotion `New State`) and the
+ * historical empty plan row (`New Weekly Plan`): full-width body row under the
+ * section label, Plus + blue text-cta. Not a header companion primary.
+ */
 function DailyGoalsDoor() {
   const launch = useSessionLaunch();
   const composition = useProductComposition();
   const wellnessActive = composition.data?.activeMods.some((mod) => mod.key === "wellness") ?? false;
   if (!wellnessActive) return null;
-  // Header companion CTA: HIERARCHY_PRIMARY_ACTION_CLASS is w-full (stack primary).
-  // Full width here steals the NOW header row and wraps/crushes the section label.
   return (
     <button
       type="button"
-      className={cn(
-        HIERARCHY_PRIMARY_ACTION_CLASS,
-        "w-auto shrink-0 whitespace-nowrap px-2 py-1",
-      )}
+      className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80 disabled:cursor-not-allowed disabled:opacity-50"
       data-testid="button-daily-goals"
       data-launch-skill={SET_DAILY_GOALS_SKILL}
       aria-label={`Launch ${SET_DAILY_GOALS_TITLE}`}
@@ -103,7 +103,12 @@ function DailyGoalsDoor() {
         });
       }}
     >
-      {launch.isPending ? "Starting…" : "+ Daily Goals"}
+      {launch.isPending ? (
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+      ) : (
+        <Plus className="h-3.5 w-3.5 shrink-0" />
+      )}
+      <span>{launch.isPending ? "Starting…" : "Daily Goals"}</span>
     </button>
   );
 }
@@ -191,17 +196,13 @@ function SimpleSectionGroup({
   return (
     <section className="scroll-mt-6 [content-visibility:auto] [contain-intrinsic-size:auto_320px]">
       <Collapsible open={open} onOpenChange={setOpen}>
-        <div className="flex min-w-0 items-center gap-1.5 px-2 py-1">
-          <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md">
-            <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
-            <span className="min-w-0 truncate">
-              {dynamicSectionLabel(sectionKey, now, timezone)}
-            </span>
-          </CollapsibleTrigger>
-          {sectionKey === "now" && <DailyGoalsDoor />}
-        </div>
+        <CollapsibleTrigger className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate">
+          <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+          {dynamicSectionLabel(sectionKey, now, timezone)}
+        </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="mt-0">
+            {sectionKey === "now" && <DailyGoalsDoor />}
             {hasPlanRow && planArtifact && (
               <PlanArtifactRow artifact={planArtifact} />
             )}
