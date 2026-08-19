@@ -93,7 +93,7 @@ export function inferFailureKind(text: unknown): ToolFailureKind | null {
 
   // Input — caller-correctable argument/target problems.
   if (
-    /\b(?:missing|required|invalid|must be|not found|does not exist|doesn't exist|no such|unknown (?:id|action|tool)|already exists|malformed|out of range|old_string|title must)\b/.test(
+    /\b(?:missing|required|invalid|must be|not found|does not exist|doesn't exist|no such|unknown (?:id|action|tool)|already exists|malformed|out of range|old_string|title must|session-bound interactive|active browser tab)\b/.test(
       t,
     )
   ) {

@@ -100,6 +100,9 @@ export type ToolFailureCode =
   | "meeting_input_invalid"
   | "meeting_provider_transient"
   | "meeting_join_failed"
+  // UI interaction rejects (origin/working-set + contract)
+  | "ui_input_invalid"
+  | "ui_provider_transient"
   // Slack outbound tool rejects
   | "slack_input_invalid"
   | "slack_person_unaddressed"
