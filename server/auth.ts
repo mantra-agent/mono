@@ -816,6 +816,8 @@ export function setupAuth(app: Express) {
     secret: process.env.SESSION_SECRET!,
     resave: false,
     saveUninitialized: false,
+    // Idle window, not wall-clock from login. Inventory last-active is expire − TTL.
+    rolling: true,
     cookie: {
       maxAge: SESSION_TTL_MS,
       httpOnly: true,
