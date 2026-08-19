@@ -45,6 +45,7 @@ import {
   SET_DAILY_GOALS_TITLE,
   composeSetDailyGoalsLaunchMessage,
 } from "@shared/set-daily-goals";
+import { cn } from "@/lib/utils";
 
 function formatLocalDate(d: Date, timezone?: string): string {
   if (timezone) {
@@ -921,24 +922,36 @@ function ActivityRow({
         data-testid={`row-activity-${activity.id}`}
         className="group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full select-none transition-colors overflow-hidden hover:bg-accent/70"
       >
-        {/* Check circle — journal rows navigate; Learning expands; others log/unlog */}
+        {/* Check circle — journal rows navigate; skill rows launch; Learning expands; others log/unlog.
+            Hit target is 44px; visual circle stays compact. Stable data-activity-name for automation. */}
         <span className="shrink-0 flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
             data-testid={`button-log-${activity.id}`}
+            data-activity-name={activity.name}
+            data-launch-kind={launchKind}
+            data-launch-target={skillTarget ?? screenTarget ?? undefined}
             aria-label={
               screenTarget
                 ? `Open ${activity.name}`
                 : skillTarget
-                  ? `Set ${activity.name}`
+                  ? `Launch ${SET_DAILY_GOALS_TITLE}`
                   : activity.doneToday
                     ? `Unlog ${activity.name}`
                     : `Log ${activity.name}`
             }
-            className={activity.doneToday
-              ? "h-4 w-4 rounded-full border border-success bg-transparent text-success inline-flex items-center justify-center transition-colors hover:bg-success/10"
-              : "h-4 w-4 rounded-full border border-input bg-transparent inline-flex items-center justify-center transition-colors hover:border-success hover:bg-success/10"}
-            disabled={!isExpandable && !screenTarget && !skillTarget && (logCooldown || logMutation.isPending || unlogMutation.isPending || launch.isPending)}
+            className={cn(
+              "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors",
+              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+              "before:pointer-events-none before:absolute before:h-4 before:w-4 before:rounded-full before:border",
+              activity.doneToday
+                ? "before:border-success before:bg-transparent text-success hover:bg-success/10"
+                : "before:border-input before:bg-transparent hover:bg-success/10 hover:before:border-success",
+            )}
+            disabled={
+              launch.isPending
+              || (!isExpandable && !screenTarget && !skillTarget && (logCooldown || logMutation.isPending || unlogMutation.isPending))
+            }
             onClick={() => {
               if (screenTarget) {
                 setLocation(getUiInteractionTargetHref(screenTarget));
@@ -967,11 +980,13 @@ function ActivityRow({
               }
             }}
           >
-            {logMutation.isPending || unlogMutation.isPending ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : activity.doneToday ? (
-              <Check className="h-3 w-3" />
-            ) : null}
+            <span className="relative z-[1] inline-flex h-4 w-4 items-center justify-center">
+              {logMutation.isPending || unlogMutation.isPending || (skillTarget && launch.isPending) ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : activity.doneToday ? (
+                <Check className="h-3 w-3" />
+              ) : null}
+            </span>
           </button>
         </span>
 
