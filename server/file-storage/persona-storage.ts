@@ -1961,19 +1961,9 @@ class PersonaStorageClass {
         })
         .onConflictDoNothing();
     }
-    // Group IDs only. Root owns History/Memory/Current Session separately.
-    // Empty object = Root-only optional context. The seed row is the SSOT.
-    for (const seed of SEED_PERSONAS) {
-      if (!seed.contextSections) continue;
-      await db
-        .update(personas)
-        .set({ contextSections: { ...seed.contextSections }, updatedAt: new Date() })
-        .where(and(
-          eq(personas.scope, "global"),
-          eq(personas.source, "seed"),
-          sql`LOWER(${personas.name}) = ${seed.name.toLowerCase()}`,
-        ));
-    }
+    // Existing seed rows are the live catalog. Do not copy context groups
+    // from SEED_PERSONAS onto them — that hash-drifts the seed, mints a
+    // boot revision, and walks following copies back over published edits.
     // onConflictDoNothing still advances the serial sequence on failed attempts
     // in some paths and legacy restores can leave nextval behind MAX(id).
     await this.syncIdSequence();
@@ -2152,9 +2142,9 @@ class PersonaStorageClass {
   }
 
   /**
-   * Boot overlay/context rewrites used to mutate the seed row in place.
-   * Mint a platform revision when the live seed no longer matches its
-   * current revision, then push anyone already following.
+   * If something else mutated a live seed without minting a revision,
+   * snapshot that row and push following copies. Boot itself no longer
+   * writes overlay or context, so this should stay quiet.
    */
   private async advanceSeedRevisions(): Promise<number> {
     let advanced = 0;
@@ -2188,6 +2178,9 @@ class PersonaStorageClass {
         changeSummary: "Boot catalog rewrite",
         createdByUserId: null,
       };
+      log.warn(
+        `advanceSeedRevisions: seed=${seed.name} id=${seed.id} hash drifted without a boot overlay writer; minting platform revision`,
+      );
       await db.transaction(async (tx) => {
         await tx.insert(personaRevisions).values(revision);
         await tx
@@ -2364,63 +2357,32 @@ class PersonaStorageClass {
   }
 
   /**
-   * Reconcile functional seed fields from production definitions.
-   * Icons are intentionally excluded — they are a cosmetic user-facing field
-   * and must not be rewritten on every boot (that was the sudden icon flip).
+   * Identity-only seed repair. Overlay, description, tags, tier, and
+   * context stay on the live seed / Apply-to-Default path. Boot must not
+   * be a second catalog publisher.
    */
   private async updateSeedOverlays(): Promise<void> {
     let updated = 0;
     for (const seed of SEED_PERSONAS) {
       const existing = await this.getGlobalSeedByName(seed.name);
       if (!existing) continue;
-      const needsOverlayUpdate =
-        seed.promptOverlay &&
-        (!existing.promptOverlay ||
-          existing.promptOverlay !== seed.promptOverlay);
-      const expectedTier = seed.semanticTier ?? "balanced";
-      const needsTierUpdate = existing.semanticTier !== expectedTier;
       const expectedIsSystem = (seed as { isSystem?: boolean }).isSystem ?? false;
-      const needsSystemUpdate = existing.isSystem !== expectedIsSystem;
-      if (
-        needsOverlayUpdate ||
-        needsTierUpdate ||
-        needsSystemUpdate
-      ) {
-        const updates: Record<string, unknown> = { updatedAt: new Date() };
-        if (needsOverlayUpdate) {
-          updates.promptOverlay = seed.promptOverlay;
-          updates.description = seed.description;
-          // Seed expression tags are the bare-token identity; normalize on the
-          // way in so a legacy bracketed literal can never re-enter storage.
-          updates.expressionTags = normalizeExpressionTags(seed.expressionTags);
-          updates.cognitiveOverrides = seed.cognitiveOverrides;
-        }
-        if (needsTierUpdate) updates.semanticTier = expectedTier;
-        if (needsSystemUpdate) updates.isSystem = expectedIsSystem;
-        // Global seed personas are system-owned data reconciled at boot, when
-        // no user principal exists in context. Authorize the write as system:
-        // writableScopePredicate() returns TRUE for system principals, and the
-        // UPDATE is already narrowed to this specific global seed row by id.
-        await db
-          .update(personas)
-          .set(updates)
-          .where(
-            combineWithWritableScope(
-              createSystemPrincipal(),
-              personaScopeColumns,
-              eq(personas.id, existing.id),
-            ),
-          );
-        updated++;
-      }
+      if (existing.isSystem === expectedIsSystem) continue;
+      await db
+        .update(personas)
+        .set({ isSystem: expectedIsSystem, updatedAt: new Date() })
+        .where(
+          combineWithWritableScope(
+            createSystemPrincipal(),
+            personaScopeColumns,
+            eq(personas.id, existing.id),
+          ),
+        );
+      updated++;
     }
     if (updated > 0) {
       this.invalidateCache();
-      log.log(
-        "updateSeedOverlays: updated " +
-          updated +
-          " seed personas with production overlays",
-      );
+      log.log(`updateSeedOverlays: stamped isSystem on ${updated} seed personas`);
     }
   }
 }
