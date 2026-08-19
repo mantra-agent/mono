@@ -733,6 +733,7 @@ function FilesRow({
       <div
         className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}
         style={{ paddingLeft: 8 + depth * 12 }}
+        data-drive-resource-id={driveResourceId || undefined}
       >
         {resourceIcon({ resourceType })}
         <ResourceTitle
@@ -1053,14 +1054,36 @@ export function DriveResourceTree({
   emptyLabel = "No files",
   vaultColor,
   statusByResourceId,
+  focusDriveResourceId = null,
 }: {
   vaultId: string;
   resources: DriveResource[];
   emptyLabel?: string;
   vaultColor?: string | null;
   statusByResourceId: Map<string, FileIndexStatus>;
+  /** When set and present in this vault-bound set, expand the row and scroll it into view. */
+  focusDriveResourceId?: string | null;
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  // Deep link from @file chips: only act when the id is already in the loaded bound set.
+  useEffect(() => {
+    if (!focusDriveResourceId) return;
+    const target = resources.find((resource) => resource.id === focusDriveResourceId);
+    if (!target) return;
+    if (target.resourceType === "folder") {
+      setExpanded((prev) => (prev[target.id] ? prev : { ...prev, [target.id]: true }));
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const node = document.querySelector(
+        `[data-drive-resource-id="${CSS.escape(focusDriveResourceId)}"]`,
+      );
+      if (node instanceof HTMLElement) {
+        node.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusDriveResourceId, resources]);
 
   if (resources.length === 0) {
     return (

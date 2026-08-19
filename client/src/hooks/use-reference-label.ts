@@ -7,7 +7,10 @@ import { useQuery } from "@tanstack/react-query";
 export function isUnresolvedFallbackLabel(id: string, staticLabel: string): boolean {
   if (!staticLabel || staticLabel === id) return true;
   if (/^\d+$/.test(staticLabel)) return true;
-  return staticLabel.endsWith(` ${id}`);
+  if (staticLabel.endsWith(` ${id}`)) return true;
+  // Type shell with no instance identity (Spec: Business Plan fallback drops the hex).
+  if (staticLabel === "Business Plan") return true;
+  return false;
 }
 
 /**

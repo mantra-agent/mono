@@ -143,8 +143,9 @@ const registry: Record<string, RegistryEntry> = {
   },
   business_plan: {
     Icon: FileJson2,
-    fallbackLabel: ref => metadataString(ref, "label") || `Business Plan ${ref.id}`,
-    href: ref => metadataString(ref, "href") || `/business/plan?plan=${encodeURIComponent(ref.id)}`,
+    // Resolver owns "Business Plan {vaultName}"; static fallback must not paint the hex.
+    fallbackLabel: ref => metadataString(ref, "label") || "Business Plan",
+    href: ref => metadataString(ref, "href") || REFERENCE_REGISTRY.business_plan.route?.(ref.id),
   },
   kpi: {
     Icon: Gauge,
@@ -255,7 +256,8 @@ const registry: Record<string, RegistryEntry> = {
   file: {
     Icon: Paperclip,
     fallbackLabel: ref => metadataString(ref, "label") || ref.id.split("/").pop() || ref.id,
-    href: ref => metadataString(ref, "href") || (ref.id.startsWith("/objects/") ? ref.id : undefined),
+    // Shared REFERENCE_REGISTRY owns the route; never drop Drive ids.
+    href: ref => metadataString(ref, "href") || REFERENCE_REGISTRY.file.route?.(ref.id),
   },
 
   email_thread: {

@@ -15,6 +15,7 @@ import {
   accounts,
   agentInstances,
   businessPlans,
+  vaults,
   companies,
   emailDrafts,
   meetingDrafts,
@@ -274,21 +275,29 @@ const adapters: AddressResolverAdapter[] = [
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.title, summary: byId.get(ref.id)!.description, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
   }),
   simpleAdapter("business_plan", async (principal, refs) => {
+    // Chip subject is the plan's live Vault name, not plan.name or Business publicName.
     const rows = await db.select({
       id: businessPlans.id,
-      name: businessPlans.name,
       vaultId: businessPlans.vaultId,
+      vaultName: vaults.name,
       updatedAt: businessPlans.updatedAt,
-    }).from(businessPlans).where(and(
-      inArray(businessPlans.id, refs.map(ref => ref.id)),
-      combineWithVisibleScope(principal, { vaultId: businessPlans.vaultId }),
-    ));
+    }).from(businessPlans)
+      .innerJoin(vaults, eq(vaults.id, businessPlans.vaultId))
+      .where(and(
+        inArray(businessPlans.id, refs.map(ref => ref.id)),
+        eq(vaults.isArchived, false),
+        combineWithVisibleScope(principal, { vaultId: businessPlans.vaultId }),
+      ));
     const byId = new Map(rows.map(row => [row.id, row]));
-    return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, {
-      label: byId.get(ref.id)!.name,
-      href: `/business/plan?plan=${encodeURIComponent(ref.id)}`,
-      updatedAt: byId.get(ref.id)!.updatedAt,
-    })]] : []));
+    return new Map(refs.flatMap(ref => {
+      const row = byId.get(ref.id);
+      if (!row) return [];
+      return [[requestedAddress(ref), resolved(ref, {
+        label: `Business Plan ${row.vaultName}`,
+        href: `/business/plan?plan=${encodeURIComponent(ref.id)}`,
+        updatedAt: row.updatedAt,
+      })]];
+    }));
   }),
   simpleAdapter("kpi", async (_principal, refs) => {
     const entries = await Promise.all(refs.map(async ref => {
