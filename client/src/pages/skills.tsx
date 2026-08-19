@@ -1157,10 +1157,13 @@ function SkillEditor({
     queryKey: ["/api/skills/persona-config"],
   });
 
-  const { data: timers = [] } = useQuery<Timer[]>({
+  // /api/timers returns { timers, globalPaused } — same envelope as the Timers page.
+  // Treating the body as Timer[] made expand crash with `.filter is not a function`.
+  const { data: timersData } = useQuery<{ timers: Timer[]; globalPaused: boolean }>({
     queryKey: ["/api/timers"],
     enabled: Boolean(skill),
   });
+  const timers = Array.isArray(timersData?.timers) ? timersData.timers : [];
 
   const drivingTimers = useMemo(() => {
     if (!skill) return [];
