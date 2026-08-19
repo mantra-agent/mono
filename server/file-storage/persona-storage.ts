@@ -865,6 +865,31 @@ const RETIRED_CATALOG_OVERLAY_PREFIXES = [
 ] as const;
 type RevisionField = typeof REVISION_FIELDS[number];
 
+/**
+ * Drop a markdown `## Boundaries` section and its body until the next `## `
+ * heading or end of overlay. Idempotent; leaves Handoffs and other sections.
+ */
+function stripPersonaBoundariesSection(overlay: string): string {
+  if (!overlay.includes("## Boundaries")) return overlay;
+  const out: string[] = [];
+  let skipping = false;
+  for (const line of overlay.split("\n")) {
+    if (/^## Boundaries\s*$/.test(line)) {
+      skipping = true;
+      continue;
+    }
+    if (skipping) {
+      if (/^##\s/.test(line)) {
+        skipping = false;
+        out.push(line);
+      }
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+/, "").replace(/\n+$/, "");
+}
+
 function revisionPayload(persona: PersonaEntry): PersonaRevisionPayload {
   return Object.fromEntries(REVISION_FIELDS.map((field) => [field, persona[field]])) as unknown as PersonaRevisionPayload;
 }
@@ -1895,10 +1920,11 @@ class PersonaStorageClass {
     this.invalidateCache();
     await this.updateSeedOverlays();
     await this.initializeRevisionLineage();
+    const strippedBoundaries = await this.stripResidualBoundariesFromSeeds();
     const advancedSeeds = await this.advanceSeedRevisions();
     const healedFollowers = await this.healLeftoverFollowers();
     log.log(
-      `seedDefaults: ensured ${SEED_PERSONAS.length} seed personas; removed ${removedLegacyRows} legacy scoped seed rows; linked ${linkedOrphans} orphan user copies; advanced ${advancedSeeds} seed revisions; healed ${healedFollowers} leftover followers`,
+      `seedDefaults: ensured ${SEED_PERSONAS.length} seed personas; removed ${removedLegacyRows} legacy scoped seed rows; linked ${linkedOrphans} orphan user copies; strippedBoundaries=${strippedBoundaries}; advanced ${advancedSeeds} seed revisions; healed ${healedFollowers} leftover followers`,
     );
   }
 
@@ -2062,6 +2088,85 @@ class PersonaStorageClass {
       log.log(`linkOrphanUserCopiesToSeeds: attached ${linked} user copies`);
     }
     return linked;
+  }
+
+  /**
+   * One-shot live lattice cure for residual ## Boundaries walls.
+   * Catalog seeds no longer carry them; boot must not become a general
+   * overlay publisher, but this exact section is retired product doctrine
+   * and must leave following seats without waiting on Apply-to-Default.
+   * Customized / Keep-mine copies stay put (update_available only).
+   */
+  private async stripResidualBoundariesFromSeeds(): Promise<number> {
+    let stripped = 0;
+    const seeds = await db
+      .select()
+      .from(personas)
+      .where(
+        and(
+          eq(personas.source, "seed"),
+          eq(personas.scope, "global"),
+          eq(personas.isSystem, false),
+        ),
+      );
+    for (const seed of seeds) {
+      const overlay = seed.promptOverlay ?? "";
+      if (!/(^|\n)## Boundaries(\n|$)/.test(overlay)) continue;
+      const nextOverlay = stripPersonaBoundariesSection(overlay);
+      if (nextOverlay === overlay) continue;
+      const entry = rowToEntry({ ...seed, promptOverlay: nextOverlay });
+      const payload = revisionPayload(entry);
+      const revision = {
+        id: randomUUID(),
+        personaIdentityId: seed.id,
+        scope: "platform" as const,
+        ownerUserId: null,
+        accountId: null,
+        instanceId: null,
+        parentRevisionId: seed.currentRevisionId,
+        platformBaseRevisionId: null,
+        payload,
+        contentHash: payloadHash(payload),
+        changeSummary: "Strip retired ## Boundaries walls from selectable seats",
+        createdByUserId: null,
+      };
+      await db.transaction(async (tx) => {
+        await tx.insert(personaRevisions).values(revision);
+        await tx
+          .update(personas)
+          .set({
+            ...payload,
+            currentRevisionId: revision.id,
+            baseRevisionId: revision.id,
+            updateState: "following",
+            updatedAt: new Date(),
+          })
+          .where(eq(personas.id, seed.id));
+        await tx
+          .update(personas)
+          .set({
+            ...payload,
+            baseRevisionId: revision.id,
+            currentRevisionId: revision.id,
+            updateState: "following",
+            updatedAt: new Date(),
+          })
+          .where(and(eq(personas.templatePersonaId, seed.id), eq(personas.updateState, "following")));
+        await tx
+          .update(personas)
+          .set({ updateState: "update_available" })
+          .where(and(eq(personas.templatePersonaId, seed.id), sql`${personas.updateState} <> 'following'`));
+        await this.adoptMatchingPersonaCopies(tx, seed.id, payload, revision.id);
+      });
+      stripped++;
+      log.info("stripResidualBoundariesFromSeeds: published cleaned overlay", {
+        personaId: seed.id,
+        name: seed.name,
+        revisionId: revision.id,
+      });
+    }
+    if (stripped > 0) this.invalidateCache();
+    return stripped;
   }
 
   /**
