@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Gauge, Loader2, Plus, Target } from "lucide-react";
+import { Line, LineChart, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   HierarchySectionHeader,
@@ -8,6 +9,10 @@ import {
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { ActivityHeatmap, heatmapFillColor } from "@/components/activity-heatmap";
+import { ReferencePicker } from "@/components/references/reference-picker";
+import { ReferenceText } from "@/components/references/reference-text";
+import { serializeReference } from "@shared/references";
 import {
   METRIC_CATALOG_FAMILIES,
   METRIC_CATALOG_FAMILY_LABEL,
@@ -18,10 +23,17 @@ import {
   type Metric,
   type MetricCatalogFamily,
   type MetricDirection,
+  type MetricSample,
 } from "@shared/models/metrics";
+import {
+  KPI_PERIOD_LABEL,
+  KPI_PERIODS,
+  KPI_SAMPLE_PRESETS,
+  type KpiPeriod,
+  type KpiStyle,
+} from "@shared/kpi-sample";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
@@ -35,6 +47,7 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface KpisResponse {
   kpis: Kpi[];
@@ -44,10 +57,10 @@ interface MetricsResponse {
 }
 
 const BAND_LABEL: Record<KpiScoreBand, string> = {
-  bull: "Bull",
-  on_track: "On track",
-  bear: "Bear",
-  critical: "Critical",
+  bull: "Over",
+  on_track: "Perform",
+  bear: "Under",
+  critical: "Under",
   stale: "Stale",
   unavailable: "Unavailable",
   unmeasured: "Unmeasured",
@@ -65,20 +78,115 @@ function formatValue(value: number | null, unit: string): string {
   return unit ? `${formatted} ${unit}` : formatted;
 }
 
+function sampleLabel(sample: MetricSample): string {
+  const stamp = sample.periodStart ?? sample.observedAt;
+  const date = new Date(stamp);
+  if (!Number.isFinite(date.getTime())) return stamp;
+  return date.toLocaleString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric" });
+}
+
+function KpiSeriesChart({ kpi }: { kpi: Kpi }) {
+  const series = kpi.series ?? [];
+  if (series.length === 0) {
+    return <div className="text-sm text-muted-foreground">No samples in this range.</div>;
+  }
+
+  if (kpi.style === "heat" && kpi.period === "daily") {
+    return (
+      <ActivityHeatmap
+        days={series.map((sample) => ({
+          date: (sample.periodStart ?? sample.observedAt).slice(0, 10),
+          value: sample.value,
+        }))}
+        valueLabel={kpi.metric?.unit || "value"}
+        marker={
+          kpi.bullThreshold != null
+            ? { icon: Target, criterion: "above-value", threshold: kpi.bullThreshold }
+            : undefined
+        }
+      />
+    );
+  }
+
+  if (kpi.style === "heat") {
+    const under = kpi.bearThreshold;
+    const over = kpi.bullThreshold;
+    const values = series.map((sample) => sample.value);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = max - min || 1;
+    return (
+      <div className="flex flex-wrap gap-1" data-testid={`kpi-heat-${kpi.slug}`}>
+        {series.map((sample) => {
+          const value = sample.value;
+          let fill = heatmapFillColor(((value - min) / span) * 100);
+          if (under != null && value < under) fill = "hsl(var(--error) / 0.55)";
+          if (over != null && value >= over) fill = "hsl(var(--success) / 0.85)";
+          return (
+            <Tooltip key={sample.id}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`${sampleLabel(sample)} ${formatValue(value, sample.unit)}`}
+                  className="h-6 w-6 rounded-sm"
+                  style={{ backgroundColor: fill }}
+                />
+              </TooltipTrigger>
+              <TooltipContent>
+                {sampleLabel(sample)} · {formatValue(value, sample.unit)}
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const data = series.map((sample) => ({
+    label: sampleLabel(sample),
+    value: sample.value,
+  }));
+  return (
+    <div className="h-36 w-full" data-testid={`kpi-line-${kpi.slug}`}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
+          <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" width={36} />
+          {kpi.bearThreshold != null ? (
+            <ReferenceLine y={kpi.bearThreshold} stroke="hsl(var(--error))" strokeDasharray="3 3" />
+          ) : null}
+          {kpi.bullThreshold != null ? (
+            <ReferenceLine y={kpi.bullThreshold} stroke="hsl(var(--success))" strokeDasharray="3 3" />
+          ) : null}
+          <Line type="monotone" dataKey="value" stroke="hsl(var(--foreground))" dot={false} strokeWidth={1.5} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [metricId, setMetricId] = useState("");
   const [name, setName] = useState("");
   const [targetLabel, setTargetLabel] = useState("");
-  const [cadence, setCadence] = useState("Weekly");
+  const [period, setPeriod] = useState<KpiPeriod>("weekly");
+  const [samples, setSamples] = useState("1");
+  const [style, setStyle] = useState<KpiStyle>("line");
   const [ownerLabel, setOwnerLabel] = useState("");
   const [direction, setDirection] = useState<MetricDirection>("higher_is_better");
-  const [bull, setBull] = useState("");
-  const [onTrack, setOnTrack] = useState("");
-  const [bear, setBear] = useState("");
+  const [over, setOver] = useState("");
+  const [under, setUnder] = useState("");
 
   const num = (v: string) => (v.trim() === "" ? undefined : Number(v));
+
+  const applyPreset = (presetId: string) => {
+    const preset = KPI_SAMPLE_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+    setPeriod(preset.period);
+    setSamples(String(preset.samples));
+  };
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -86,12 +194,13 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
         metricId,
         name: name.trim(),
         targetLabel: targetLabel.trim() || undefined,
-        cadence: cadence.trim() || undefined,
+        period,
+        samples: period === "live" ? 1 : Number(samples) || 1,
+        style,
         ownerLabel: ownerLabel.trim() || undefined,
         direction,
-        bullThreshold: num(bull),
-        onTrackThreshold: num(onTrack),
-        bearThreshold: num(bear),
+        bullThreshold: num(over),
+        bearThreshold: num(under),
         status: "active",
       });
       return res.json();
@@ -102,9 +211,8 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
       setOpen(false);
       setName("");
       setTargetLabel("");
-      setBull("");
-      setOnTrack("");
-      setBear("");
+      setOver("");
+      setUnder("");
     },
     onError: (error: unknown) => {
       toast({ title: "Failed to create KPI", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
@@ -112,6 +220,7 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
   });
 
   const valid = metricId !== "" && name.trim() !== "";
+  const selectedMetric = metrics.find((metric) => metric.id === metricId);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -129,21 +238,55 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New KPI</DialogTitle>
-          <DialogDescription>Bind a target and band thresholds to a metric to track where you stand.</DialogDescription>
+          <DialogDescription>Ask a completed calendar sample of a Metric and judge it against Under and Over.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <Select value={metricId} onValueChange={setMetricId}>
-            <SelectTrigger data-testid="kpi-metric"><SelectValue placeholder="Source metric" /></SelectTrigger>
+          <ReferencePicker
+            types={["metric"]}
+            mode="single"
+            testId="kpi-metric"
+            placeholder="Source metric"
+            value={selectedMetric ? [{ type: "metric", id: selectedMetric.id, label: selectedMetric.name }] : []}
+            onChange={(next) => setMetricId(next[0]?.id ?? "")}
+          />
+          <Input placeholder="KPI name" value={name} onChange={(e) => setName(e.target.value)} data-testid="kpi-name" />
+          <Input placeholder="Target (e.g. ≥ 99.9% uptime)" value={targetLabel} onChange={(e) => setTargetLabel(e.target.value)} data-testid="kpi-target" />
+          <Select onValueChange={applyPreset}>
+            <SelectTrigger data-testid="kpi-preset"><SelectValue placeholder="Preset" /></SelectTrigger>
             <SelectContent>
-              {metrics.map((m) => (
-                <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+              {KPI_SAMPLE_PRESETS.map((preset) => (
+                <SelectItem key={preset.id} value={preset.id}>{preset.label}</SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <Input placeholder="KPI name" value={name} onChange={(e) => setName(e.target.value)} data-testid="kpi-name" />
-          <Input placeholder="Target (e.g. ≥ 99.9% uptime)" value={targetLabel} onChange={(e) => setTargetLabel(e.target.value)} data-testid="kpi-target" />
           <div className="grid grid-cols-2 gap-2">
-            <Input placeholder="Cadence" value={cadence} onChange={(e) => setCadence(e.target.value)} data-testid="kpi-cadence" />
+            <Select value={period} onValueChange={(value) => setPeriod(value as KpiPeriod)}>
+              <SelectTrigger data-testid="kpi-period"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {KPI_PERIODS.map((item) => (
+                  <SelectItem key={item} value={item}>{KPI_PERIOD_LABEL[item]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              type="number"
+              min={1}
+              max={366}
+              disabled={period === "live"}
+              placeholder="Samples"
+              value={period === "live" ? "1" : samples}
+              onChange={(e) => setSamples(e.target.value)}
+              data-testid="kpi-samples"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Select value={style} onValueChange={(value) => setStyle(value as KpiStyle)}>
+              <SelectTrigger data-testid="kpi-style"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="line">Line</SelectItem>
+                <SelectItem value="heat">Heat</SelectItem>
+              </SelectContent>
+            </Select>
             <Input placeholder="Owner" value={ownerLabel} onChange={(e) => setOwnerLabel(e.target.value)} data-testid="kpi-owner" />
           </div>
           <Select value={direction} onValueChange={(v) => setDirection(v as MetricDirection)}>
@@ -154,10 +297,9 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
               ))}
             </SelectContent>
           </Select>
-          <div className="grid grid-cols-3 gap-2">
-            <Input type="number" placeholder="Bull ≥" value={bull} onChange={(e) => setBull(e.target.value)} data-testid="kpi-bull" />
-            <Input type="number" placeholder="On track ≥" value={onTrack} onChange={(e) => setOnTrack(e.target.value)} data-testid="kpi-ontrack" />
-            <Input type="number" placeholder="Bear ≥" value={bear} onChange={(e) => setBear(e.target.value)} data-testid="kpi-bear" />
+          <div className="grid grid-cols-2 gap-2">
+            <Input type="number" placeholder="Under" value={under} onChange={(e) => setUnder(e.target.value)} data-testid="kpi-under" />
+            <Input type="number" placeholder="Over" value={over} onChange={(e) => setOver(e.target.value)} data-testid="kpi-over" />
           </div>
         </div>
         <DialogFooter>
@@ -168,6 +310,114 @@ function CreateKpiDialog({ metrics }: { metrics: Metric[] }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function KpiExpand({ kpi }: { kpi: Kpi }) {
+  const { toast } = useToast();
+  const [period, setPeriod] = useState<KpiPeriod>(kpi.period);
+  const [samples, setSamples] = useState(String(kpi.samples));
+  const [style, setStyle] = useState<KpiStyle>(kpi.style);
+  const [under, setUnder] = useState(kpi.bearThreshold != null ? String(kpi.bearThreshold) : "");
+  const [over, setOver] = useState(kpi.bullThreshold != null ? String(kpi.bullThreshold) : "");
+
+  const mutation = useMutation({
+    mutationFn: async (patch: Record<string, unknown>) => {
+      const res = await apiRequest("PATCH", `/api/kpis/${kpi.id}`, patch);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/kpis") });
+    },
+    onError: (error: unknown) => {
+      toast({ title: "Failed to update KPI", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
+    },
+  });
+
+  const saveQuestion = (nextPeriod = period, nextSamples = samples, nextStyle = style) => {
+    mutation.mutate({
+      period: nextPeriod,
+      samples: nextPeriod === "live" ? 1 : Number(nextSamples) || 1,
+      style: nextStyle,
+    });
+  };
+
+  return (
+    <div className="space-y-3">
+      <ReferenceText content={serializeReference({ type: "metric", id: kpi.metricId })} />
+      <div className="grid grid-cols-2 gap-2">
+        <Select
+          value={period}
+          onValueChange={(value) => {
+            const next = value as KpiPeriod;
+            setPeriod(next);
+            saveQuestion(next, samples, style);
+          }}
+        >
+          <SelectTrigger data-testid={`kpi-period-${kpi.slug}`}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {KPI_PERIODS.map((item) => (
+              <SelectItem key={item} value={item}>{KPI_PERIOD_LABEL[item]}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Input
+          type="number"
+          min={1}
+          max={366}
+          disabled={period === "live"}
+          value={period === "live" ? "1" : samples}
+          onChange={(e) => setSamples(e.target.value)}
+          onBlur={() => saveQuestion(period, samples, style)}
+          data-testid={`kpi-samples-${kpi.slug}`}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <Input
+          type="number"
+          placeholder="Under"
+          value={under}
+          onChange={(e) => setUnder(e.target.value)}
+          onBlur={() => mutation.mutate({ bearThreshold: under.trim() === "" ? null : Number(under) })}
+          data-testid={`kpi-under-${kpi.slug}`}
+        />
+        <Input
+          type="number"
+          placeholder="Over"
+          value={over}
+          onChange={(e) => setOver(e.target.value)}
+          onBlur={() => mutation.mutate({ bullThreshold: over.trim() === "" ? null : Number(over) })}
+          data-testid={`kpi-over-${kpi.slug}`}
+        />
+      </div>
+      <Select
+        value={style}
+        onValueChange={(value) => {
+          const next = value as KpiStyle;
+          setStyle(next);
+          saveQuestion(period, samples, next);
+        }}
+      >
+        <SelectTrigger data-testid={`kpi-style-${kpi.slug}`}><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="line">Line</SelectItem>
+          <SelectItem value="heat">Heat</SelectItem>
+        </SelectContent>
+      </Select>
+      <KpiSeriesChart kpi={{ ...kpi, style }} />
+      {kpi.coverage && kpi.coverage.status !== "finalized" ? (
+        <div className="text-sm text-muted-foreground">
+          {kpi.coverage.status}
+          {"reason" in kpi.coverage && kpi.coverage.reason ? ` · ${kpi.coverage.reason}` : ""}
+        </div>
+      ) : null}
+      {kpi.targetLabel ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Target className="h-3.5 w-3.5" />
+          {kpi.targetLabel}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -267,12 +517,6 @@ export default function BusinessKpisPage() {
             </HierarchySectionHeader>
             {section.items.map((kpi) => {
               const band = kpi.score?.band ?? "unmeasured";
-              const details = [kpi.metric?.name, kpi.targetLabel, kpi.cadence, kpi.ownerLabel].filter(Boolean) as string[];
-              const thresholds = [
-                kpi.bullThreshold != null ? `Bull ≥ ${kpi.bullThreshold}` : null,
-                kpi.onTrackThreshold != null ? `On track ≥ ${kpi.onTrackThreshold}` : null,
-                kpi.bearThreshold != null ? `Bear ≥ ${kpi.bearThreshold}` : null,
-              ].filter(Boolean) as string[];
               return (
                 <ProfileTreeRow
                   key={kpi.id}
@@ -283,19 +527,7 @@ export default function BusinessKpisPage() {
                   mobileLayout="inline"
                   valueLayout="compact"
                   testId={`kpi-row-${kpi.slug}`}
-                  expandedContent={
-                    details.length > 0 || thresholds.length > 0 ? (
-                      <div className="space-y-1 text-muted-foreground">
-                        {details.length > 0 ? (
-                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                            {kpi.targetLabel ? <Target className="h-3.5 w-3.5" /> : null}
-                            {details.map((detail) => <span key={detail}>{detail}</span>)}
-                          </div>
-                        ) : null}
-                        {thresholds.length > 0 ? <div>{thresholds.join(" · ")}</div> : null}
-                      </div>
-                    ) : undefined
-                  }
+                  expandedContent={<KpiExpand kpi={kpi} />}
                 >
                   <span className="whitespace-nowrap font-mono">
                     {formatValue(kpi.score?.value ?? null, kpi.score?.unit ?? "")}
