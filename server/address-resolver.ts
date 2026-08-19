@@ -11,6 +11,7 @@ import {
   type KnownReferenceType,
   type ReferenceRef,
 } from "@shared/references";
+import { isScreenId, screenLabel, screenPath } from "@shared/screen-registry";
 import {
   accounts,
   agentInstances,
@@ -866,6 +867,17 @@ const adapters: AddressResolverAdapter[] = [
           updatedAt: row.updatedAt,
         })]]
         : [];
+    }));
+  }),
+  // Closed code catalog — no DB, no ACL smuggle. Destination routes keep their own gates.
+  simpleAdapter("screen", async (_principal, refs) => {
+    return new Map(refs.flatMap(ref => {
+      if (!isScreenId(ref.id)) return [];
+      return [[requestedAddress(ref), resolved(ref, {
+        label: screenLabel(ref.id),
+        route: screenPath(ref.id),
+        canonicalId: ref.id,
+      })]];
     }));
   }),
 ];
