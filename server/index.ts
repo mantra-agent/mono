@@ -560,9 +560,8 @@ app.use((req, res, next) => {
 
   bootTracker.startPhase("server");
   const tStatic0 = Date.now();
-  const isLiveRuntime = /(?:^|[._-])(?:live|prod)(?:$|[._-])/i.test(
-    `${process.env.RAILWAY_ENVIRONMENT_NAME || ""} ${process.env.RAILWAY_ENVIRONMENT || ""}`,
-  );
+  const { isLiveRuntimeName } = await import("./runtime-identity");
+  const isLiveRuntime = isLiveRuntimeName();
   const isWarmStageRuntime = process.env.STAGE_WARM_ENABLED === "true" && !isLiveRuntime;
   if (process.env.NODE_ENV === "production" && !isWarmStageRuntime) {
     serveStatic(app);

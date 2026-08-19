@@ -40,6 +40,16 @@ function normalizeUrl(value: string | null | undefined): string | null {
   return /^https?:\/\//i.test(trimmed) ? trimmed : null;
 }
 
+/** Live/prod Railway names. Stage exchange and other Live-denied harnesses use this. */
+export function isLiveRuntimeName(
+  environmentName = process.env.RAILWAY_ENVIRONMENT_NAME,
+  railwayEnvironment = process.env.RAILWAY_ENVIRONMENT,
+): boolean {
+  return /(?:^|[._-])(?:live|prod)(?:$|[._-])/i.test(
+    `${environmentName || ""} ${railwayEnvironment || ""}`,
+  );
+}
+
 function readBaseIdentity(): RuntimeIdentity {
   const environmentName = process.env.RAILWAY_ENVIRONMENT_NAME?.trim() || "local";
   const serviceName = process.env.RAILWAY_SERVICE_NAME?.trim() || null;
