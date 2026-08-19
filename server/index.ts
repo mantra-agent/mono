@@ -476,9 +476,10 @@ app.use((req, res, next) => {
   bootTracker.startPhase("routes_auth");
   const tProfiles0 = Date.now();
   await initProfiles();
+  // Default router must exist before model connector seeds (router_id CHECK).
+  await ensureDefaultRouter();
   await migrateLegacyModelProfiles();
   await ensureGrokSubscriptionConnector();
-  await ensureDefaultRouter();
   const profilesMs = Date.now() - tProfiles0;
   bootPhases.push({ name: "Model Profiles", durationMs: profilesMs });
   log(`[startup] model profiles loaded: ${profilesMs}ms`, "boot");
