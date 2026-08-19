@@ -98,7 +98,7 @@ App-shell consumers of live Session state must read `SessionActivityProvider` th
 - Linked `/api/features/:id/sessions` is enabled only when the row launched a session, owns a title-matched session, Fast Forward is on, or is expanded — never N fan-out because some other Feature is humming.
 - History (`/api/features/:id/history`) is expand-only (collapsed Feature rows use `HIERARCHY_SESSION_ROW_CLASS`; click-to-expand still owns `rowExpanded`). Collapsed setback chrome reads projected `attention` from the list payload — never N `/history` fetches.
 - `FeatureRow` is `memo`ized. Browser telemetry kind `features` records `list_fetch`, `first_paint`, `session_match`, `expand`, `row_count`, `active_sessions` through `recordBrowserTelemetry`.
-- Fast Forward is session-local operator mode (`sessionStorage` key `feature-fast-forward:<featureId>`). The row sequences only `runPipelineLaunch` / `runStopSession`. Do not add a Feature column or a per-row `useSessionSubscription`.
+- Fast Forward is session-local operator mode (`sessionStorage` key `feature-fast-forward:<featureId>`). Sequencer is shell-mounted (`FeatureFastForwardHost` under `SessionActivityProvider`) so mode keeps walking after leaving `/features`; settle/launch memory is process-local maps, not a Feature column. Row chrome toggles mode and Pause→`runStopSession` only. Do not add a Feature column or a per-row `useSessionSubscription`. Fast Forward control uses the same Sparkles corner badge as AI Review.
 
 ## Browser navigation telemetry
 

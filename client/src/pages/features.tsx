@@ -85,6 +85,16 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { emitSessionChanged } from "@/hooks/use-data-sync";
 import {
+  clearFeatureFastForwardRuntime,
+  fastForwardLastLaunchByFeature,
+  fastForwardLaunchInFlight,
+  fastForwardLaunchedSessionByFeature,
+  playIsGated,
+  readFeatureFastForward,
+  writeFeatureFastForward,
+} from "@/lib/feature-fast-forward-mode";
+import { notifyFeatureFastForwardChanged } from "@/components/feature-fast-forward-host";
+import {
   FEATURE_PIPELINE,
   FEATURE_STAGES,
   FEATURE_STATUSES,
@@ -203,60 +213,6 @@ function isActivePipelineSession(session: ChatSession | undefined | null): boole
   if (!session) return false;
   return isDurablyActiveSession(session) || session.status === "streaming";
 }
-
-const FEATURE_FAST_FORWARD_KEY_PREFIX = "feature-fast-forward:";
-
-function featureFastForwardStorageKey(featureId: string): string {
-  return `${FEATURE_FAST_FORWARD_KEY_PREFIX}${featureId}`;
-}
-
-function readFeatureFastForward(featureId: string): boolean {
-  if (typeof sessionStorage === "undefined") return false;
-  try {
-    return sessionStorage.getItem(featureFastForwardStorageKey(featureId)) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeFeatureFastForward(featureId: string, on: boolean): void {
-  if (typeof sessionStorage === "undefined") return;
-  try {
-    const key = featureFastForwardStorageKey(featureId);
-    if (on) sessionStorage.setItem(key, "1");
-    else sessionStorage.removeItem(key);
-  } catch {
-    // Private mode or quota — mode stays in-memory for this mount.
-  }
-}
-
-function playIsGated(availability?: Feature["availability"]): boolean {
-  return availability?.state === "waiting" || availability?.state === "unknown";
-}
-
-function sessionHasQuestion(session: ChatSession | null | undefined): boolean {
-  if (!session) return false;
-  return Boolean(
-    session.awaitingQuestionResponse ||
-      session.awaitingReview ||
-      session.reviewKinds?.includes("question"),
-  );
-}
-
-function sessionHasError(session: ChatSession | null | undefined): boolean {
-  if (!session) return false;
-  return session.errorSeverity === "error" || Boolean(session.reviewKinds?.includes("error"));
-}
-
-function parseClock(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (value instanceof Date) return value.getTime();
-  if (typeof value === "string") return Date.parse(value);
-  return Number.NaN;
-}
-
-/** Survives Strict remount so the sequencer cannot double-launch one Feature. */
-const fastForwardLaunchInFlight = new Set<string>();
 
 /** One-line live preview from stream segments — no SegmentStream mount. */
 function latestStreamPreviewLine(stream: SessionStreamState | null | undefined, fallback?: string | null): string {
@@ -622,26 +578,44 @@ const FeatureRow = memo(function FeatureRow({
   /** Expand open — history fetches only when true (lazy). */
   const [rowExpanded, setRowExpanded] = useState(deepLinkOpen);
   /** Optimistic link after a row launch, before discovery/artifact indexing catches up. */
-  const [launchedSessionId, setLaunchedSessionId] = useState<string | null>(null);
+  const [launchedSessionId, setLaunchedSessionId] = useState<string | null>(
+    () => fastForwardLaunchedSessionByFeature.get(feature.id) ?? null,
+  );
+  /** UI mirror of sessionStorage mode; shell host owns the sequencer loop. */
   const [fastForwardOn, setFastForwardOn] = useState(() => readFeatureFastForward(feature.id));
-  const [fastForwardSettleTick, setFastForwardSettleTick] = useState(0);
-  const lastLaunchedJobRef = useRef<{
-    job: "produce" | "review";
-    stage: FeatureStage;
-    launchedAt: number;
-  } | null>(null);
-  const settleRefetchKeyRef = useRef<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
 
   const setFastForwardMode = useCallback((on: boolean) => {
-    writeFeatureFastForward(feature.id, on);
-    setFastForwardOn(on);
-    if (!on) {
-      lastLaunchedJobRef.current = null;
-      settleRefetchKeyRef.current = null;
-      fastForwardLaunchInFlight.delete(feature.id);
+    if (on) {
+      writeFeatureFastForward(feature.id, true);
+      setFastForwardOn(true);
+    } else {
+      clearFeatureFastForwardRuntime(feature.id);
+      setFastForwardOn(false);
     }
+    notifyFeatureFastForwardChanged();
+  }, [feature.id]);
+
+  // Keep row chrome aligned if shell host clears mode while this row is mounted.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sync = () => {
+      const on = readFeatureFastForward(feature.id);
+      setFastForwardOn(on);
+      if (!on) {
+        // Keep launchedSessionId until the session settles; only drop mode chrome.
+      } else {
+        const launched = fastForwardLaunchedSessionByFeature.get(feature.id);
+        if (launched) setLaunchedSessionId(launched);
+      }
+    };
+    window.addEventListener("feature-fast-forward-changed", sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener("feature-fast-forward-changed", sync);
+      window.removeEventListener("storage", sync);
+    };
   }, [feature.id]);
 
   useEffect(() => {
@@ -866,6 +840,7 @@ const FeatureRow = memo(function FeatureRow({
 
   const onLaunchSuccess = (session: { id: string }) => {
     setLaunchedSessionId(session.id);
+    fastForwardLaunchedSessionByFeature.set(feature.id, session.id);
     void queryClient.invalidateQueries({
       queryKey: ["/api/features", feature.id, "sessions"],
     });
@@ -875,11 +850,15 @@ const FeatureRow = memo(function FeatureRow({
     if (launch.isPending) return;
     const contract = getFeatureJobContract(feature.stage, job);
     const pendingKey = `feature-${feature.id}-${feature.stage}-${job}`;
-    lastLaunchedJobRef.current = {
+    // Shell host + row share settle memory so walk continues after leave /features.
+    fastForwardLastLaunchByFeature.set(feature.id, {
       job,
       stage: feature.stage,
       launchedAt: Date.now(),
-    };
+    });
+    if (fastForwardOn || readFeatureFastForward(feature.id)) {
+      fastForwardLaunchInFlight.add(feature.id);
+    }
     launch.mutate(
       {
         pendingKey,
@@ -897,8 +876,6 @@ const FeatureRow = memo(function FeatureRow({
       },
     );
   };
-  const runPipelineLaunchRef = useRef(runPipelineLaunch);
-  runPipelineLaunchRef.current = runPipelineLaunch;
 
   const discussPendingKey = `feature-${feature.id}-discuss`;
   const discussPending =
@@ -969,12 +946,18 @@ const FeatureRow = memo(function FeatureRow({
     if (!featureAllowsFastForward(feature.stage)) return;
     const job = resolveFeaturePipelineJob(feature.status);
     if (job === "produce" && playIsGated(feature.availability)) return;
+    // Mode on first — shell host owns the walk. Seed one launch so the first
+    // step starts without waiting for the host interval when already on Features.
     setFastForwardMode(true);
+    if (!isSessionInProgress && !launch.isPending) {
+      runPipelineLaunch(job);
+    }
   };
 
   const showFastForward = featureAllowsFastForward(feature.stage);
   const nextJobGated =
     resolveFeaturePipelineJob(feature.status) === "produce" && playIsGated(feature.availability);
+  // Same Sparkles badge grammar as AI Review — mode control, not a second CTA fill.
   const fastForwardControl = showFastForward ? (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -982,7 +965,7 @@ const FeatureRow = memo(function FeatureRow({
           type="button"
           variant="ghost"
           size="icon"
-          className="h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:size-3"
+          className="relative h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground hover:bg-accent hover:text-foreground"
           disabled={launch.isPending || nextJobGated}
           aria-label={`Fast Forward ${feature.summary}`}
           onClick={(event) => {
@@ -991,83 +974,20 @@ const FeatureRow = memo(function FeatureRow({
           }}
           data-testid={`button-feature-fast-forward-${feature.id}`}
         >
-          <FastForward className="h-3 w-3 fill-current" />
+          <span className="relative inline-flex h-3 w-3 items-center justify-center">
+            <FastForward className="h-3 w-3 fill-current" />
+            <Sparkles
+              className="pointer-events-none absolute -right-px -top-px !h-1.5 !w-1.5 text-cta"
+              strokeWidth={2.5}
+            />
+          </span>
         </Button>
       </TooltipTrigger>
       <TooltipContent side="top">Fast Forward</TooltipContent>
     </Tooltip>
   ) : null;
 
-  useEffect(() => {
-    if (!fastForwardOn) return;
-    if (!featureAllowsFastForward(feature.stage) || feature.stage === "maintain") {
-      setFastForwardMode(false);
-      return;
-    }
-    if (sessionHasQuestion(ownedSession) || sessionHasError(ownedSession)) {
-      setFastForwardMode(false);
-      return;
-    }
-    if (isSessionInProgress) {
-      fastForwardLaunchInFlight.delete(feature.id);
-      return;
-    }
-    if (launch.isPending) return;
-    const last = lastLaunchedJobRef.current;
-    if (last && !ownedSession && launchedSessionId) return;
-    if (last) {
-      const sessionSettledAt = ownedSession
-        ? parseClock(ownedSession.updatedAt || ownedSession.createdAt)
-        : last.launchedAt;
-      const featureUpdatedAt = parseClock(feature.updated_at);
-      const writeLanded =
-        Number.isFinite(featureUpdatedAt) &&
-        Number.isFinite(sessionSettledAt) &&
-        featureUpdatedAt + 2_000 >= sessionSettledAt;
-      const waitedTooLong =
-        Number.isFinite(sessionSettledAt) && Date.now() - sessionSettledAt > 15_000;
-      if (!writeLanded && !waitedTooLong) {
-        const refetchKey = `${last.job}:${last.stage}:${last.launchedAt}`;
-        if (settleRefetchKeyRef.current !== refetchKey) {
-          settleRefetchKeyRef.current = refetchKey;
-          void queryClient.invalidateQueries({ queryKey: ["/api/features"] });
-        }
-        const timeoutId = window.setTimeout(() => {
-          setFastForwardSettleTick((tick) => tick + 1);
-        }, 1_000);
-        return () => window.clearTimeout(timeoutId);
-      }
-      if (last.job === "review" && feature.stage === last.stage) {
-        setFastForwardMode(false);
-        return;
-      }
-      if (last.job === "produce" && feature.status !== "needs_review") {
-        setFastForwardMode(false);
-        return;
-      }
-    }
-    const job = resolveFeaturePipelineJob(feature.status);
-    if (job === "produce" && playIsGated(feature.availability)) {
-      setFastForwardMode(false);
-      return;
-    }
-    if (fastForwardLaunchInFlight.has(feature.id)) return;
-    fastForwardLaunchInFlight.add(feature.id);
-    runPipelineLaunchRef.current(job);
-  }, [
-    fastForwardOn,
-    feature.availability,
-    feature.stage,
-    feature.status,
-    feature.updated_at,
-    feature.id,
-    fastForwardSettleTick,
-    isSessionInProgress,
-    launchedSessionId,
-    launch.isPending,
-    ownedSession,
-    setFastForwardMode,
-  ]);
+  // Sequencer lives in FeatureFastForwardHost (shell). Row only toggles mode chrome.
 
   const commitTitle = () => {
     const next = titleDraft.trim();
