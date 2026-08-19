@@ -78,10 +78,15 @@ function DailyGoalsDoor() {
   const composition = useProductComposition();
   const wellnessActive = composition.data?.activeMods.some((mod) => mod.key === "wellness") ?? false;
   if (!wellnessActive) return null;
+  // Header companion CTA: HIERARCHY_PRIMARY_ACTION_CLASS is w-full (stack primary).
+  // Full width here steals the NOW header row and wraps/crushes the section label.
   return (
     <button
       type="button"
-      className={HIERARCHY_PRIMARY_ACTION_CLASS}
+      className={cn(
+        HIERARCHY_PRIMARY_ACTION_CLASS,
+        "w-auto shrink-0 whitespace-nowrap px-2 py-1",
+      )}
       data-testid="button-daily-goals"
       data-launch-skill={SET_DAILY_GOALS_SKILL}
       aria-label={`Launch ${SET_DAILY_GOALS_TITLE}`}
@@ -186,10 +191,12 @@ function SimpleSectionGroup({
   return (
     <section className="scroll-mt-6 [content-visibility:auto] [contain-intrinsic-size:auto_320px]">
       <Collapsible open={open} onOpenChange={setOpen}>
-        <div className="flex items-center gap-1.5 px-2 py-1">
+        <div className="flex min-w-0 items-center gap-1.5 px-2 py-1">
           <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md">
             <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
-            {dynamicSectionLabel(sectionKey, now, timezone)}
+            <span className="min-w-0 truncate">
+              {dynamicSectionLabel(sectionKey, now, timezone)}
+            </span>
           </CollapsibleTrigger>
           {sectionKey === "now" && <DailyGoalsDoor />}
         </div>
