@@ -5,6 +5,7 @@
  * Dispatch authority lives here: adapterKey → handler. Unknown keys fall
  * through to warehouse metric_samples in queryMetric.
  */
+import { AsyncLocalStorage } from "async_hooks";
 import { createHash } from "crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { metrics } from "@shared/schema";
@@ -32,8 +33,15 @@ import {
   queryWellnessSeries,
 } from "./engagement-series";
 import { createLogger } from "../log";
+import {
+  IDENTITY_STOCK_UNAVAILABLE_REASON,
+  identityStockCanAnswerRange,
+  isExpressionPlan,
+  type ExpressionPlan,
+} from "./expression-plan";
 
 const log = createLogger("MetricAdapters");
+const expressionVisit = new AsyncLocalStorage<Set<string>>();
 
 export const PRODUCT_METRIC_SLUGS = new Set([
   "hours-used",
@@ -494,6 +502,17 @@ async function handleProduct(
   ]);
 
   if (metric.slug === "accounts" || metric.slug === "registered-users") {
+    if (!identityStockCanAnswerRange(range)) {
+      return {
+        metric: { ...metric, latestSample: null },
+        samples: [],
+        valueStatus: "actual",
+        coverage: {
+          status: "unavailable",
+          reason: IDENTITY_STOCK_UNAVAILABLE_REASON,
+        },
+      };
+    }
     const stock = await sampleIdentityStock();
     const value = metric.slug === "accounts" ? stock.accounts : stock.registeredUsers;
     const sample = singleRangeSample(
@@ -579,6 +598,102 @@ async function handleMeetings(
   };
 }
 
+function unavailableSeries(metric: Metric, reason: string): MetricSeries {
+  return {
+    metric: { ...metric, latestSample: null },
+    samples: [],
+    valueStatus: "actual",
+    coverage: { status: "unavailable", reason },
+  };
+}
+
+function mergeExpressionCoverage(left: MetricCoverage, right: MetricCoverage): MetricCoverage {
+  const rank: Record<MetricCoverage["status"], number> = {
+    finalized: 1,
+    partial: 2,
+    provisional: 3,
+    unbound: 4,
+    unavailable: 5,
+  };
+  return rank[left.status] >= rank[right.status] ? left : right;
+}
+
+type ExpressionWalk =
+  | { ok: true; value: number; coverage: MetricCoverage }
+  | { ok: false; series: MetricSeries };
+
+async function walkExpressionPlan(
+  host: Metric,
+  plan: ExpressionPlan,
+  range: { start: Date; end: Date },
+): Promise<ExpressionWalk> {
+  if (plan.type === "literal") {
+    return { ok: true, value: plan.value, coverage: { status: "finalized" } };
+  }
+  if (plan.type === "metric") {
+    const { queryMetric } = await import("./core-engine");
+    const series = await queryMetric(plan.metricId, range);
+    if (series.coverage.status === "unavailable" || series.coverage.status === "unbound") {
+      return { ok: false, series: { ...series, metric: { ...host, latestSample: null }, samples: [] } };
+    }
+    if (series.samples.length !== 1 || !Number.isFinite(series.samples[0]?.value)) {
+      return {
+        ok: false,
+        series: unavailableSeries(host, "Operand did not answer the asked sample as a single value"),
+      };
+    }
+    return { ok: true, value: series.samples[0].value, coverage: series.coverage };
+  }
+  const left = await walkExpressionPlan(host, plan.left, range);
+  if (!left.ok) return left;
+  const right = await walkExpressionPlan(host, plan.right, range);
+  if (!right.ok) return right;
+  if (plan.op === "/" && right.value === 0) {
+    return { ok: false, series: unavailableSeries(host, "Divide by zero") };
+  }
+  const value =
+    plan.op === "+" ? left.value + right.value
+      : plan.op === "-" ? left.value - right.value
+        : plan.op === "*" ? left.value * right.value
+          : left.value / right.value;
+  if (!Number.isFinite(value)) {
+    return { ok: false, series: unavailableSeries(host, "Divide by zero") };
+  }
+  return { ok: true, value, coverage: mergeExpressionCoverage(left.coverage, right.coverage) };
+}
+
+async function handleExpression(
+  metric: Metric,
+  range: { start: Date; end: Date },
+  _principal: Principal,
+): Promise<MetricSeries> {
+  const plan = metric.adapterConfig?.plan;
+  if (!isExpressionPlan(plan)) {
+    return unavailableSeries(metric, "Compiled plan missing");
+  }
+  const inherited = expressionVisit.getStore();
+  if (inherited?.has(metric.id)) {
+    return unavailableSeries(metric, "Equation contains a cycle.");
+  }
+  const visited = inherited ?? new Set<string>();
+  visited.add(metric.id);
+  const walked = await expressionVisit.run(visited, () => walkExpressionPlan(metric, plan, range));
+  if (!walked.ok) return walked.series;
+  const sample = singleRangeSample(
+    metric,
+    walked.value,
+    range,
+    "internal/expression-query-v1",
+    "Resolved from the compiled plan over operand queryMetric samples.",
+  );
+  return {
+    metric: { ...metric, latestSample: sample },
+    samples: [sample],
+    valueStatus: "actual",
+    coverage: walked.coverage,
+  };
+}
+
 export const METRIC_ADAPTER_HANDLERS: Record<string, MetricAdapterHandler> = {
   tasks: handleTasks,
   interactions: handleInteractions,
@@ -586,6 +701,7 @@ export const METRIC_ADAPTER_HANDLERS: Record<string, MetricAdapterHandler> = {
   goals: handleGoals,
   product: handleProduct,
   meetings: handleMeetings,
+  expression: handleExpression,
 };
 
 export function adapterKeyOf(metric: Metric): string | null {
@@ -605,6 +721,79 @@ const PLATFORM_ACHIEVED_GOALS_DEFINITION = {
   samplePeriod: "daily" as const,
 };
 
+const HOURS_USED_PER_USER_SLUG = "hours-used-per-user";
+
+async function ensureHoursUsedPerUserMetric(): Promise<void> {
+  const { ensurePlatformBusinessMetrics } = await import("../metrics-storage");
+  const refs = await ensurePlatformBusinessMetrics([
+    {
+      key: "hours-used",
+      name: "Hours Used",
+      unit: "hours",
+      description: "Connected time unioned per authenticated user across tabs and devices.",
+    },
+    {
+      key: "registered-users",
+      name: "Users",
+      unit: "users",
+      description: "Distinct users with a membership on an active account.",
+    },
+  ]);
+  const hours = refs.get("hours-used");
+  const users = refs.get("registered-users");
+  if (!hours || !users) return;
+
+  const equation = `@metric:${hours.id} / @metric:${users.id}`;
+  const plan = {
+    type: "op" as const,
+    op: "/" as const,
+    left: { type: "metric" as const, metricId: hours.id },
+    right: { type: "metric" as const, metricId: users.id },
+  };
+  const adapterConfig = {
+    adapterKey: "expression",
+    equation,
+    plan,
+    operandIds: [hours.id, users.id],
+  };
+  const id = `metric_hours_used_per_user_${hours.businessId}`;
+  await db.execute(sql`
+    INSERT INTO metrics (
+      id, business_id, name, slug, description, unit, direction, sample_period, adapter_kind,
+      adapter_config, status, scope, owner_user_id, account_id, vault_id, created_by_user_id,
+      owner_kind, owner_id
+    ) VALUES (
+      ${id}, ${hours.businessId}, ${"Hours Used Per User"}, ${HOURS_USED_PER_USER_SLUG},
+      ${"Hours Used divided by current Users. Honest only for a current window."},
+      ${"hours"}, ${"higher_is_better"}, ${"custom"}, ${"expression"},
+      ${JSON.stringify(adapterConfig)}::jsonb, ${"active"}, ${"user"}, ${hours.ownerUserId},
+      ${hours.accountId}, ${hours.vaultId ?? null}, ${hours.ownerUserId},
+      ${"platform"}, NULL
+    )
+    ON CONFLICT DO NOTHING
+  `);
+  await db.execute(sql`
+    UPDATE metrics
+    SET adapter_kind = 'expression',
+        owner_kind = 'platform',
+        owner_id = NULL,
+        adapter_config = ${JSON.stringify(adapterConfig)}::jsonb,
+        updated_at = NOW()
+    WHERE slug = ${HOURS_USED_PER_USER_SLUG}
+      AND account_id = ${hours.accountId}
+      AND (
+        adapter_kind IS DISTINCT FROM 'expression'
+        OR COALESCE(adapter_config->>'adapterKey', '') IS DISTINCT FROM 'expression'
+        OR adapter_config->'plan' IS NULL
+      )
+      AND (
+        adapter_kind = 'expression'
+        OR COALESCE(adapter_config, '{}'::jsonb) = '{}'::jsonb
+        OR COALESCE(adapter_config->>'adapterKey', '') = 'expression'
+      )
+  `);
+}
+
 /** Stamp User Memory + platform Achieved Goals as product rows. */
 export async function ensureProductCatalogDefinitions(): Promise<void> {
   const { ensurePlatformBusinessMetrics } = await import("../metrics-storage");
@@ -613,6 +802,7 @@ export async function ensureProductCatalogDefinitions(): Promise<void> {
     USER_MEMORY_PLATFORM_DEFINITION,
     PLATFORM_ACHIEVED_GOALS_DEFINITION,
   ]);
+  await ensureHoursUsedPerUserMetric();
 }
 
 export async function stampPlatformOwnerOnProductMetrics(): Promise<number> {
