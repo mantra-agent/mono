@@ -22,6 +22,7 @@ import {
   ChevronDown,
   SlidersHorizontal,
   MoreHorizontal,
+  Loader2,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import {
@@ -726,7 +727,7 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
       refetchInterval: 30000,
     });
 
-  const { data: hierarchyData } =
+  const { data: hierarchyData, isLoading: hierarchyLoading } =
     useQuery<HierarchyResponse>({
       queryKey: ["/api/inference/summary/hierarchy", period, timezone, routerId],
       queryFn: async () => {
@@ -800,8 +801,15 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
   const chartTitle = `${chartMetric === "cost" ? "Cost" : "Tokens"} by ${useHourly ? "Hour" : "Day"}`;
   const breakdownTitle = groupBy === "hierarchy" ? "Usage Hierarchy" : `By ${GROUP_LABELS[groupBy]}`;
 
+  const sectionLoading = (
+    <div className="flex items-center justify-center py-8" data-testid="cost-section-loading">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+    </div>
+  );
+
   const breakdownBody = (() => {
     if (groupBy === "hierarchy") {
+      if (hierarchyLoading) return sectionLoading;
       return (
         <HierarchyBreakdown
           data={hierarchyData}
@@ -810,6 +818,8 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
         />
       );
     }
+
+    if (summaryLoading) return sectionLoading;
 
     if (groupBy === "prompt") {
       const profiles = byProfile.filter((p) =>
@@ -1086,7 +1096,9 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
 
           <section data-testid="card-cost-chart" className="space-y-2 pt-2">
             <div className={HIERARCHY_SECTION_HEADER_CLASS}>{chartTitle}</div>
-            {chartData.length === 0 ? (
+            {summaryLoading ? (
+              sectionLoading
+            ) : chartData.length === 0 ? (
               <div className="px-2 py-1.5 text-sm text-muted-foreground">
                 No data yet
               </div>
