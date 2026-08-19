@@ -323,7 +323,7 @@ declare module "express-session" {
 const PgStore = connectPgSimple(session);
 const SESSION_TABLE_NAME = "session";
 const SESSION_COOKIE_NAME = "connect.sid";
-const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 export interface UserSessionInventoryRow {
   sid: string;
