@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createReferenceRef } from "@shared/references";
 import type { DocumentTemplate } from "@shared/models/document-templates";
-import { FileStack, Loader2, Plus, X } from "lucide-react";
+import { ChevronRight, FileStack, Loader2, MoreHorizontal, Plus, X } from "lucide-react";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
@@ -10,8 +10,14 @@ import {
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { Button } from "@/components/ui/button";
-import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { InlineLibraryPageEditor } from "@/components/library/inline-library-page";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { ReferencePicker } from "@/components/references/reference-picker";
@@ -191,6 +197,13 @@ function TemplatePageSlot({ template }: { template: DocumentTemplate }) {
       mobileLayout="inline"
       menuVisibility="hover"
       testId="row-template-page"
+      expandedContent={
+        editing ? undefined : (
+          <InlineLibraryPageEditor
+            page={{ id: template.pageId, title: template.pageId, slug: template.pageId }}
+          />
+        )
+      }
       menuContent={
         <DropdownMenuItem
           disabled={assign.isPending}
@@ -255,6 +268,7 @@ function TemplateRow({
   onToggle: () => void;
 }) {
   const { toast } = useToast();
+  const [menuOpen, setMenuOpen] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(template.name);
   const rename = useMutation({
@@ -278,8 +292,17 @@ function TemplateRow({
 
   return (
     <div className="group" data-testid={`template-row-${template.id}`}>
-      <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-pointer")} onClick={onToggle}>
-        <FileStack className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <div
+        className={cn(
+          HIERARCHY_SESSION_ROW_CLASS,
+          "pr-16",
+          open ? "bg-accent text-foreground" : "hover:bg-accent/70 hover:text-foreground",
+        )}
+        onClick={onToggle}
+      >
+        <span className="flex shrink-0 items-center justify-center">
+          <FileStack className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        </span>
         {editingName ? (
           <Input
             autoFocus
@@ -305,7 +328,7 @@ function TemplateRow({
         ) : (
           <button
             type="button"
-            className="min-w-0 truncate text-left text-sm text-foreground"
+            className="min-w-0 flex-1 truncate text-left text-sm text-foreground"
             onClick={(event) => {
               event.stopPropagation();
               setNameDraft(template.name);
@@ -316,22 +339,53 @@ function TemplateRow({
             {template.name}
           </button>
         )}
-        <span className="shrink-0 font-mono text-xs text-muted-foreground">{template.id}</span>
-        <span
-          className="min-w-0 flex-1 truncate text-right text-sm"
-          onClick={(event) => event.stopPropagation()}
+        <button
+          type="button"
+          className="absolute right-8 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle();
+          }}
+          aria-label={open ? "Collapse details" : "Expand details"}
+          data-testid={`button-template-twisty-${template.id}`}
         >
-          <InlineReferenceText text={`@page:${template.pageId}`} />
-        </span>
-        {template.scope === "user" && <span className="shrink-0 text-xs text-muted-foreground">account</span>}
+          <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
+        </button>
+        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "absolute right-1 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md bg-accent/50 opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100",
+                open && "bg-accent opacity-100",
+              )}
+              onClick={(event) => {
+                event.stopPropagation();
+                setMenuOpen(true);
+              }}
+              aria-label={`Actions for ${template.name}`}
+              data-testid={`button-template-menu-${template.id}`}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+            <DropdownMenuItem
+              onSelect={() => {
+                setMenuOpen(false);
+                onToggle();
+              }}
+              data-testid={`menu-template-expand-${template.id}`}
+            >
+              {open ? "Collapse" : "Expand"}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {open && (
-        <div
-          className="ml-6 space-y-1 border-l border-border/40 pb-3 pl-3 pr-2 pt-2"
-          data-testid={`template-editor-${template.id}`}
-        >
-          <TemplatePageSlot template={template} />
+        <div className="ml-6 border-l border-border/40 py-1 pl-3 pr-2" data-testid={`template-editor-${template.id}`}>
           <TemplateSkillBindings templateId={template.id} open={open} />
+          <TemplatePageSlot template={template} />
         </div>
       )}
     </div>
