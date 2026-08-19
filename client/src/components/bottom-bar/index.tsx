@@ -148,7 +148,7 @@ function AttachedFileThumbnail({ file, index, onRemove }: { file: File; index: n
 /** "..." menu left of the text input — contains Attach, Visibility, and session actions for the focused session. */
 function BottomBarMenu({
   onAttach,
-  disabled,
+  attachDisabled,
   focusedSessionId,
   onClearFocus,
   onSelectSession,
@@ -158,7 +158,7 @@ function BottomBarMenu({
   queueModelTierUpdate,
 }: {
   onAttach: () => void;
-  disabled: boolean;
+  attachDisabled: boolean;
   focusedSessionId: string | null;
   onClearFocus: () => void;
   onSelectSession: (id: string) => void;
@@ -347,15 +347,14 @@ function BottomBarMenu({
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            disabled={disabled}
-            className="shrink-0 flex items-center justify-center h-9 w-9 rounded-full bg-muted/50 border-[1.5px] border-foreground/25 text-muted-foreground hover:bg-muted/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="shrink-0 flex items-center justify-center h-9 w-9 rounded-full bg-muted/50 border-[1.5px] border-foreground/25 text-muted-foreground hover:bg-muted/70 transition-colors"
             aria-label="More options"
           >
             <MoreHorizontal className="h-4 w-4" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" side="top" sideOffset={4}>
-          <DropdownMenuItem onClick={onAttach}>
+          <DropdownMenuItem disabled={attachDisabled} onClick={onAttach}>
             <Paperclip className="h-3.5 w-3.5 mr-2" />
             Attach file
           </DropdownMenuItem>
@@ -932,7 +931,7 @@ export function BottomBar({
             {/* More menu: Attach + Visibility + Session actions */}
             <BottomBarMenu
               onAttach={() => fileInputRef.current?.click()}
-              disabled={voiceActive}
+              attachDisabled={voiceActive}
               focusedSessionId={focusedSessionId ?? null}
               onClearFocus={() => {
                 setFocusedSessionId(null);
