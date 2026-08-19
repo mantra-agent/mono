@@ -1154,7 +1154,7 @@ Surface any errors returned by the cycle explicitly in the Memory section and in
     name: "reflect",
     recommendedPersona: "Coach",
     description: "Parameterized reflection skill for daily, weekly, monthly, quarterly, and annual cadence reviews. Daily writes a structured Daily Digest (unlabeled lead + Moved/Open/Learning/Memory) with that day's claims as @claim rows; other cadences stay sectioned Library briefs.",
-    version: "2.2",
+    version: "2.3",
     addToMemory: true,
     pinnedToContext: false,
     callType: "internal",
@@ -1166,11 +1166,11 @@ Surface any errors returned by the cycle explicitly in the Memory section and in
     checklist: [
       { check: "PreContext cadence and period bounds are explicitly read and used to choose data sources, Library title, tags, and parent collection", weight: 3 },
       { check: "Relevant period data is loaded before writing: Library artifacts for adjacent cadences, goals/projects/tasks, calendar, people, memory, and observations as appropriate", weight: 3 },
-      { check: "Daily and weekly runs resolve the bound document template (templates.resolve) before write; monthly+ may omit", weight: 3 },
+      { check: "Daily runs resolve the bound document template (templates.resolve skill reflect key daily) before write; weekly is unbound (Stand Up owns week-close); monthly+ may omit", weight: 3 },
       { check: "Brief is concise and evidence-backed, naming actual outcomes, open loops, patterns, and one practical next action without live-interview questions", weight: 3 },
       { check: "Daily Digest uses unlabeled lead + closed Moved/Open/Learning/Memory sections with discrete lines, never one undifferentiated paragraph", weight: 3 },
       { check: "Daily Memory section lists that local day's claims as @claim rows (or None) via search_claims with includeReviewedRetired and createdAt bounds; Digest never writes review judgments", weight: 3 },
-      { check: "Useful cadence-specific logic is preserved: daily is structured closeout against the Digest template vessel, weekly against Weekly Summary template, monthly synthesizes weekly artifacts, quarterly/annual synthesize lower-cadence artifacts", weight: 3 },
+      { check: "Useful cadence-specific logic is preserved: daily is structured closeout against the Digest template vessel, monthly synthesizes weekly artifacts, quarterly/annual synthesize lower-cadence artifacts; weekly cadence is no longer this skill", weight: 3 },
       { check: "Library artifact is created or edited in the correct collection with cadence-specific title and tags, and linked through goals check-in artifact metadata when a supported link action exists", weight: 2 },
       { check: "Artifact is surfaced to Home/Simple Inbox only when it contains a decision, risk, carry-forward, or review-worthy synthesis", weight: 2 },
       { check: "Final output includes the brief content or a compact faithful summary plus page reference, not merely a delivery confirmation", weight: 2 },
@@ -1195,13 +1195,13 @@ If cadence is missing, infer the smallest honest cadence from the period bounds.
 
 Shape is data, not folklore. Before writing daily or weekly artifacts:
 
-1. Call \`templates(action: "resolve", skill: "reflect", key: "daily")\` for daily — bound to \`daily-digest\`, **not** Brief.
-2. Call \`templates(action: "resolve", skill: "reflect", key: "weekly")\` for weekly — bound to \`weekly-summary\`.
+1. Call \`templates(action: "resolve", skill: "reflect", key: "daily")\` for daily — bound to \`daily-digest\`, **not** Brief and **not** Stand Up.
+2. Do **not** resolve \`reflect\` / \`weekly\`. That key is unbound. Week-close is Stand Up on the same closed \`weekly\` key.
 3. Read the resolved Library shape page. Its headings are the vessel; the closed Digest taxonomy and claim-list rules below still apply (Structured Daily Digest owns claim-review UX, not this skill).
-4. After write, if a required heading is missing or empty (except omit-if-empty), append \`### Residual\` (daily day entry) or \`## Residual\` (weekly) listing the missing headings, and name them in the skill-run / session note.
-5. If resolve fails, stamp residual \`template_unavailable\`, warn, and still write what you can — do not crash the parent timer. Never treat Brief as the Digest vessel.
+4. After write, if a required heading is missing or empty (except omit-if-empty), append \`### Residual\` (daily day entry) listing the missing headings, and name them in the skill-run / session note.
+5. If daily resolve fails, stamp residual \`template_unavailable\`, warn, and still write what you can — do not crash the parent timer. Never treat Brief or Stand Up as the Digest vessel.
 
-Monthly+ stay folklore until a later Feature adds keys. \`brief-daily\` binds \`daily\` to \`daily-brief\` on its own skill; this skill's \`daily\` is Digest, not Brief.
+Monthly+ stay folklore until a later Feature adds keys. \`brief-daily\` binds \`daily\` to \`daily-brief\` on its own skill; this skill's \`daily\` is Digest, not Brief. \`stand-up\` binds \`daily\` and \`weekly\` on its own skill.
 
 ## Cadence Semantics
 
@@ -1268,29 +1268,7 @@ Save to Library — one running Daily Digest page (mirror Morning Brief geometry
 Do NOT create a new page per day. Do NOT put Digest under Specs/Skills canonical folders.
 
 ### Weekly
-Purpose: concise review of the completed week, replacing standalone interview-heavy weekly reflection when planning is not being run. Vessel comes from the resolved weekly-summary template.
-
-Read:
-- The most recent weekly plan for the period, in full via \`get_library_page\`.
-- Daily Digest / journal entries from the week, in full when available.
-- Goals for this_week/this_month and active projects/tasks.
-- Calendar for the week and people agenda/interactions when relationships materially changed.
-- Resolved \`weekly-summary\` template page headings (SSOT for sections).
-
-Write sections against the template vessel (typical global headings):
-- \`## Summary\` — week in 2-3 factual sentences.
-- \`## Plan vs Reality\` — what the plan committed to vs what happened.
-- \`## Wins\` — work, family, personal, or Agent capability wins.
-- \`## Drift and Friction\` — what slipped, overloaded, or stayed unresolved.
-- \`## Patterns\` — what repeated across days.
-- \`## Carry Forward\` — 1-5 concrete items for the next planning cycle.
-- \`## Residual\` only when required headings are missing.
-
-Save to Library:
-- parent: \`weekly-reflections\`
-- title: \`Weekly Reflection — YYYY-WXX\` unless the existing convention requires \`Weekly Planning — YYYY-WXX\`
-- tags: [\`weekly-reflection\`, \`reflection\`, \`planning\`]
-- after create, call \`goals(action: "set_weekly_reflection", week: <period date>, libraryPageId: <id>)\` when available.
+Do not produce week-close. \`reflect\` / \`weekly\` is unbound. Stand Up owns Sunday work-ledger close on the same closed \`weekly\` key. If this skill is invoked with \`cadence=weekly\`, stop after naming that the cadence moved; do not write a life-review Weekly Reflection and do not call \`goals.set_weekly_reflection\`. Historical Weekly Reflection pages stay as history.
 
 ### Monthly
 Purpose: month-scale synthesis without the five-step monthly planning interview.
@@ -1653,6 +1631,129 @@ Healthy or safely adjusted: update log and end silently.
 Unresolved tradeoff: retain the authoritative conversation or create exactly one only when none exists; update log; end.
 
 Success means Friday planning starts from a truthful system and Ray hears from you only when judgment is genuinely necessary.`,
+  },
+  {
+    name: "stand-up",
+    recommendedPersona: "Producer",
+    description: "Core work-ledger cadence. Weekday morning report on daily and Sunday week close on weekly. Reads live projects, milestones, tasks, and blocked_by; writes one Template-shaped Library page; delivers a Slack compact to the Timer owner's self Person.",
+    version: "1.0",
+    addToMemory: false,
+    pinnedToContext: false,
+    sessionType: "autonomous",
+    callType: "full",
+    includeSections: ["world_model.active_work.dependencies"],
+    timeoutMs: 12 * 60 * 1000,
+    admissionTier: "background",
+    temperature: 0.3,
+    scoreThreshold: 0.8,
+    whenToUse: "Runs weekday mornings at 09:00 and Sunday 20:00 from Core timers. Do not use for Brief, Digest, Streamline, or monthly+ reflect.",
+    outputSpec: "Daily: one running Stand Up page (canonicalFolder skills), newest YYYY-MM-DD first, surfaced 24h. Weekly: one dated Week Close — YYYY-WXX page in the same folder, surfaced 48h. Slack compact of Does Not Add Up, Unlocks, and the page reference. Slack failure stamps one degrade line; the Library write still stands.",
+    checklist: [
+      { check: "Resolved the bound document template for the firing key (templates.resolve skill stand-up, daily or weekly) before write", weight: 4, kind: "tool_invoked", tool: "templates", action: "resolve" },
+      { check: "Read the live board through work.list_projects / get_project / list_tasks and used resolveWorkDependencyContext (context purpose work, depth 2) plus blocking_graph reads; did not write blocked_by", weight: 4 },
+      { check: "Wrote the Library artifact against the resolved vessel: daily running Stand Up or weekly dated Week Close — YYYY-WXX, canonicalFolder skills", weight: 4, kind: "tool_invoked", tool: "library" },
+      { check: "Called slack.send to=person for the Timer owner's cabinet self Person, or stamped one visible Slack-degrade line on the page and finished degraded", weight: 4 },
+      { check: "Did not peel Digest, rewrite Brief, run Streamline, open a fourth template key, or treat Slack as a second store", weight: 3 },
+    ],
+    process: `You are Stand Up. You own the work-ledger cadence: weekday open on daily, Sunday close on weekly. You are not Brief, Digest, Streamline, Autonomy, or Goal Manager. You do not write blocked_by. You do not score. You do not invent a seventh inconsistency class.
+
+## Input
+
+Read preContext / Timer prompt first.
+
+- \`cadence\`: \`daily\` or \`weekly\`. Infer from prompt \`cadence=daily|weekly\` if needed.
+- Timer timezone is the period clock. Daily period = the local calendar day that is starting. Weekly period = the ISO week ending that Sunday (Mon–Sun).
+- \`periodLabel\`: daily \`YYYY-MM-DD\`; weekly \`YYYY-WXX\`. Same-day / same-week rerun replaces the artifact in place.
+
+If cadence is missing, stop and name the miss. Do not guess Brief or Digest.
+
+## 1. Resolve the vessel
+
+Call \`templates(action: "resolve", skill: "stand-up", key: <cadence>)\`.
+
+- daily → \`@template:stand-up\`
+- weekly → recut \`@template:weekly-summary\`
+
+Read the resolved Library shape page. Its headings are the vessel. Do not treat an inlined heading list as SSOT once the page exists. If resolve fails, stamp \`template_unavailable\` on the artifact, warn, and still write what you can. Do not crash the parent timer.
+
+## 2. Inspect the board
+
+1. \`work.list_projects\` — record the full active-project count and IDs.
+2. For every accessible active project: \`work.get_project\` and \`work.list_tasks\` (ready / active / blocked / on_hold). Completed work belongs in weekly Moved, not the daily Board.
+3. Name inaccessible project IDs. Do not claim complete coverage if the registry and the inspection disagree — that is \`count_mismatch\`.
+4. Read Work Dependencies (\`blocked_by\`) from context (\`resolveWorkDependencyContext\`, purpose work, depth 2, existing bounds) and \`blocking_graph\` (\`list_blockers\` / \`list_blocked_items\`) on the inspected addresses. Status is not an edge. Do not add a Stand Up resolver. Do not write the graph.
+
+## 3. Does Not Add Up
+
+List only inspected contradictions. Closed set — omit a class when none fire. Never invent a seventh class. \`unavailable\` (invalid address, unauthorized, bound exceeded) is a coverage gap, not a ledger lie.
+
+- \`status_vs_blockers\` — domain status is executable (ready / active / project active) while resolveWorkDependencyContext is blocked (any unresolved edge)
+- \`satisfied_edge\` — state stale with reason satisfied_edge — target already done / completed / achieved / Feature maintain, edge still active
+- \`inaccessible_target\` — state stale, reason inaccessible_target
+- \`invalid_target\` — state stale, reason invalid_target
+- \`count_mismatch\` — project's milestone or task counts do not match the inspected rows
+- \`impossible_pair\` — states that cannot be true together on one object: done/completed still carrying active edges; task done under a milestone that still lists it live; start after due
+
+Body is \`None\` when the board and graph agree.
+
+## 4. Unlocks
+
+Rank targets, not the row's own priority.
+
+1. Candidate = incomplete work (task not done, milestone/project not completed) that is the \`targetAddress\` of at least one active edge whose source classifies \`blocked\`.
+2. Rank by fan-in: count of those blocked sources. Depth-2 is only for naming what sits behind the source, not for adding to the count.
+3. Tie-break, in order: a waiting project or milestone outranks a waiting task; then the waiting source's own priority (high > mid > low); then address order.
+4. List at most 7. One line each: address, fan-in count, one clause of what it unblocks.
+
+Do not write a ranking service. Do not use the unlocker's priority field as the sort. Body is \`None\` when no unresolved edges.
+
+## 5. Rest of the vessel
+
+Lead with Does Not Add Up, then Unlocks, then the rest. Empty optional weekly sections are omitted. The two leads always exist (\`None\` is a body).
+
+Daily headings (stand-up template):
+
+- Does Not Add Up
+- Unlocks
+- Board — active projects, milestone rollup, live tasks
+
+Weekly headings (recut weekly-summary):
+
+- Does Not Add Up — contradictions across the week's board
+- Unlocks — what still unlocks next week
+- Moved — what actually completed or advanced this week (omit if empty)
+- Still Blocked — what stayed blocked (omit if empty)
+- Board — week-close board
+
+## 6. Write the Library page
+
+Library is the store. \`canonicalFolder: "skills"\`. Not Brief. Not Digest. Not a journal. Do not call \`goals.set_weekly_reflection\`. Do not parent under \`weekly-reflections\`. Historical Weekly Reflection pages stay.
+
+Daily — running file:
+
+1. Search title \`Stand Up\` in the Skills folder. If missing, create once: title \`Stand Up\`, \`canonicalFolder: "skills"\`.
+2. Newest dated \`YYYY-MM-DD\` first. Same-day rerun replaces that section via \`edit_library_page\`.
+3. Surface the same page: \`surface: true\`, 24h.
+
+Weekly — dated object:
+
+1. Create (or replace same-week) title \`Week Close — YYYY-WXX\`, same Skills folder.
+2. Surface 48h.
+
+## 7. Slack delivery
+
+After the Library write, call \`slack.send\`:
+
+- \`to\`: \`person\`
+- \`personId\`: Timer owner's cabinet self Person (\`cabinetLevel: user\`). Resolve via \`people\`. Not a Slack id. Not a channel.
+- \`text\`: 1–4000 characters. Compact of Does Not Add Up, Unlocks, and the Library page reference (\`@page:…\`). If the compact would exceed the limit, send the two leads and the page reference only.
+- \`idempotencyKey\`: \`stand-up:{accountId}:{cadence}:{periodLabel}\`. Same key + same body replays the receipt. Same key + different body fails closed at Slack; do not mint a second key to force a second post.
+
+Unmapped Person, inactive Mod, disabled install, or any send error: stamp one degrade line under the lead on the Library page and finish the run degraded. Never drop the page to save Slack.
+
+## 8. Output
+
+End with the page reference and whether Slack sent or degraded. Do not start a conversation.`,
   },
   {
     name: "coach",

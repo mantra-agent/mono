@@ -423,6 +423,54 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
   {
     legacyMatch: (t) =>
       t.type === "skill" &&
+      (t.skillId === "stand-up" || t.name === "Stand Up") &&
+      (t.prompt ?? "").includes("cadence=daily"),
+
+    systemKey: "stand-up-daily",
+    name: "Stand Up",
+    description:
+      "Weekday 09:00 work-ledger open. Reads live projects, milestones, tasks, and blocked_by; writes the running Stand Up page; delivers a Slack compact.",
+    type: "skill",
+    skillId: "stand-up",
+    prompt: "cadence=daily",
+    schedules: [
+      {
+        id: "sys-skill-stand-up-daily-1",
+        frequency: "weekly",
+        daysOfWeek: ["mon", "tue", "wed", "thu", "fri"],
+        timeOfDay: "09:00",
+      },
+    ],
+    enabled: true,
+    timezone: "__USER_TZ__",
+  },
+  {
+    legacyMatch: (t) =>
+      t.type === "skill" &&
+      (t.skillId === "stand-up" || t.name === "Week Close") &&
+      (t.prompt ?? "").includes("cadence=weekly"),
+
+    systemKey: "stand-up-weekly",
+    name: "Week Close",
+    description:
+      "Sunday 20:00 work-ledger close. Same Stand Up skill on the weekly key; writes a dated Week Close page and delivers a Slack compact. Replaces Wellness weekly-reflection.",
+    type: "skill",
+    skillId: "stand-up",
+    prompt: "cadence=weekly",
+    schedules: [
+      {
+        id: "sys-skill-stand-up-weekly-1",
+        frequency: "weekly",
+        daysOfWeek: ["sun"],
+        timeOfDay: "20:00",
+      },
+    ],
+    enabled: true,
+    timezone: "__USER_TZ__",
+  },
+  {
+    legacyMatch: (t) =>
+      t.type === "skill" &&
       (t.skillId === "coach" ||
         t.skillId === "coaching-model-1-0" ||
         t.name === "Coaching Session" ||
