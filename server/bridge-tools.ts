@@ -6146,9 +6146,19 @@ ${lines.join("\n")}` };
   },
 
   async meeting_bot(args: Record<string, any>): Promise<ToolHandlerResult> {
+    const meetingInput = (message: string): ToolHandlerResult => ({
+      result: message,
+      error: true,
+      failure: inputFailure("meeting_input_invalid", message.slice(0, 160)),
+    });
+    const meetingTransient = (message: string): ToolHandlerResult => ({
+      result: message,
+      error: true,
+      failure: transientFailure("meeting_provider_transient", message.slice(0, 160)),
+    });
     const action = typeof args.action === "string" ? args.action : "";
     if (!["join", "status", "diagnostics", "leave", "recap"].includes(action)) {
-      return { result: `Unknown meeting_bot action: ${action}. Allowed: join, status, diagnostics, leave, recap`, error: true };
+      return meetingInput(`Unknown meeting_bot action: ${action}. Allowed: join, status, diagnostics, leave, recap`);
     }
 
     if (action === "diagnostics") {
@@ -6161,10 +6171,10 @@ ${lines.join("\n")}` };
 
     if (action === "status" || action === "leave" || action === "recap") {
       const sessionId = typeof args.sessionId === "string" ? args.sessionId.trim() : "";
-      if (!sessionId) return { result: "Missing sessionId", error: true };
+      if (!sessionId) return meetingInput("Missing sessionId");
       const session = await chatStorage.getSession(sessionId);
       if (!session || session.type !== "meeting" || !session.meeting) {
-        return { result: `No meeting session found for id ${sessionId}`, error: true };
+        return meetingInput(`No meeting session found for id ${sessionId}`);
       }
       if (action === "status") {
         return {
@@ -6189,7 +6199,7 @@ ${lines.join("\n")}` };
         }
         const meeting = session.meeting;
         if (meeting.ownerUserId !== principal.userId || meeting.principalAccountId !== principal.accountId) {
-          return { result: `No meeting session found for id ${sessionId}`, error: true };
+          return meetingInput(`No meeting session found for id ${sessionId}`);
         }
 
         let recap = meeting.recap;
@@ -6200,13 +6210,13 @@ ${lines.join("\n")}` };
             return { result: `Meeting recap is not ready: ${finalization.recap.error ?? "recap generation failed"}`, error: true };
           }
           if (finalization.outcome === "already_generating") {
-            return { result: "Meeting recap is still generating. Try again after it is ready.", error: true };
+            return meetingTransient("Meeting recap is still generating. Try again after it is ready.");
           }
           recap = finalization.recap;
         }
 
         if (!recap || recap.status !== "ready") {
-          return { result: "Meeting recap is not ready yet.", error: true };
+          return meetingTransient("Meeting recap is not ready yet.");
         }
 
         const { distributeRecap } = await import("./meeting/distribution");
@@ -6271,10 +6281,10 @@ ${refs}` : ""),
       const { requestMeetingBotLeave } = await import("./meeting/leave");
       const leave = await requestMeetingBotLeave(sessionId, principal);
       if (leave.outcome === "not_found") {
-        return { result: `No meeting session found for id ${sessionId}`, error: true };
+        return meetingInput(`No meeting session found for id ${sessionId}`);
       }
       if (leave.outcome === "not_leaveable") {
-        return { result: `The meeting bot is no longer active (${leave.session.meeting?.botStatus ?? "unknown"}).`, error: true };
+        return meetingInput(`The meeting bot is no longer active (${leave.session.meeting?.botStatus ?? "unknown"}).`);
       }
       if (leave.outcome === "failed") {
         return { result: `Failed to remove bot from call: ${leave.error}`, error: true };
@@ -6298,7 +6308,7 @@ ${refs}` : ""),
     let explicitEvent: import("./meeting/identity").ExplicitMeetingEventIdentity | undefined;
 
     if (meetingUrl && !MEETING_URL_RE.test(meetingUrl)) {
-      return { result: `That doesn't look like a Zoom or Google Meet link: ${meetingUrl}`, error: true };
+      return meetingInput(`That doesn't look like a Zoom or Google Meet link: ${meetingUrl}`);
     }
 
     if (!meetingUrl) {
@@ -6341,10 +6351,10 @@ ${refs}` : ""),
           }
         }
       } catch (err) {
-        return { result: `Calendar lookup failed while resolving the meeting link: ${err instanceof Error ? err.message : String(err)}`, error: true };
+        return meetingTransient(`Calendar lookup failed while resolving the meeting link: ${err instanceof Error ? err.message : String(err)}`);
       }
       if (!meetingUrl) {
-        return { result: "No meeting URL provided and no upcoming calendar event with a Zoom/Meet link was found. Paste the meeting link.", error: true };
+        return meetingInput("No meeting URL provided and no upcoming calendar event with a Zoom/Meet link was found. Paste the meeting link.");
       }
     }
 
