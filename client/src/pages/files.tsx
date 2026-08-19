@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearch } from "wouter";
 import { Loader2 } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { apiRequest } from "@/lib/queryClient";
@@ -33,6 +34,12 @@ export default function FilesPage() {
 
   const queryClient = useQueryClient();
   const { visibleVaults, isLoading: vaultsLoading } = useVisibleVaults();
+  const search = useSearch();
+  // Registry emits /files?driveResource=…; honor that deep link on the destination.
+  const focusDriveResourceId = useMemo(() => {
+    const raw = new URLSearchParams(search).get("driveResource")?.trim();
+    return raw || null;
+  }, [search]);
   const [searchQuery, setSearchQuery] = useState("");
   const uploadReconciliation = useQuery({
     queryKey: ["/api/files/uploads/reconcile"],
@@ -229,12 +236,13 @@ export default function FilesPage() {
                     resources={visibleResources}
                     vaultColor={vault.color ?? null}
                     statusByResourceId={statusByResourceId}
+                    focusDriveResourceId={focusDriveResourceId}
                   />
                   {visibleUploads.length > 0 ? (
                     <DriveResourceGroup
                       key={`${vault.id}:${isSearching ? "search" : "browse"}`}
                       label="Uploads"
-                      defaultOpen={isSearching}
+                      defaultOpen={isSearching || (!!focusDriveResourceId && visibleUploads.some((u) => u.id === focusDriveResourceId))}
                       vaultColor={vault.color ?? null}
                     >
                       <DriveResourceTree
@@ -242,6 +250,7 @@ export default function FilesPage() {
                         resources={visibleUploads}
                         vaultColor={vault.color ?? null}
                         statusByResourceId={statusByResourceId}
+                        focusDriveResourceId={focusDriveResourceId}
                       />
                     </DriveResourceGroup>
                   ) : null}
