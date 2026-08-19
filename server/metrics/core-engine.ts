@@ -10,16 +10,15 @@
  * queryMetric(id, range) is the sole single-metric read: principal-visible
  * definition → platform gate (users:read) → adapterKey dispatch → series + residual.
  */
-export {
+import type { Metric, MetricCollection, MetricCoverage, MetricSample, MetricSeries } from "@shared/models/metrics";
+import { createLogger } from "../log";
+import {
   ensureMetricsDefinitionsSchema,
   ensurePlatformBusinessMetrics,
   kpiStorage,
   metricsStorage,
   upsertInternalPeriodSample,
 } from "../metrics-storage";
-
-import type { Metric, MetricCollection, MetricCoverage, MetricSample, MetricSeries } from "@shared/models/metrics";
-import { createLogger } from "../log";
 import { getCurrentPrincipal } from "../principal-context";
 import {
   adapterKeyOf,
@@ -29,6 +28,14 @@ import {
   METRIC_ADAPTER_HANDLERS,
   stampPlatformOwnerOnProductMetrics,
 } from "./metric-adapters";
+
+export {
+  ensureMetricsDefinitionsSchema,
+  ensurePlatformBusinessMetrics,
+  kpiStorage,
+  metricsStorage,
+  upsertInternalPeriodSample,
+};
 
 const log = createLogger("MetricsCoreEngine");
 
