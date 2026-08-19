@@ -867,7 +867,7 @@ export async function deprecateRetiredBuiltinSkills(): Promise<void> {
 // customized autonomy seat instead of a fingerprinted in-place patch.
 
 const SENTRY_CHANGESET_GATE_VERSION = "1.10";
-const SENTRY_REQUIRED_SENSORS_VERSION = "1.12";
+const SENTRY_REQUIRED_SENSORS_VERSION = "1.14";
 const SENTRY_RUN_EVIDENCE_MARKER = "8. Inspect recent `sentry` skill runs and open system issues/tasks/sessions when useful. Deduplicate by normalized signature + environment + likely subsystem. Update or reference an existing incident instead of creating another.";
 const SENTRY_REPORT_MARKER = "## Canonical report page";
 const SENTRY_REQUIRED_SENSORS_MARKER = "## Required sensors (hard — first actions)";
@@ -896,8 +896,8 @@ const SENTRY_PLATFORMS_STATUS_CHECKLIST_ITEM = {
 } as const;
 const SENTRY_REQUIRED_SENSORS_SECTION = `## Required sensors (hard — first actions)
 Before any classification, report rewrite, or end-state summary, successfully invoke all of:
-1. \`platforms.get_environment_status\` for environment \`11\`
-2. \`platforms.get_environment_status\` for environment \`12\`
+1. \`platforms.get_environment_status\` with \`id: 11\`
+2. \`platforms.get_environment_status\` with \`id: 12\`
 3. \`railway.status\` with \`platformEnvironmentId: 11\`
 4. \`railway.status\` with \`platformEnvironmentId: 12\`
 
@@ -1042,8 +1042,9 @@ export async function migrateSentryRequiredSensorsGate(): Promise<void> {
 
     const versionOrder = compareSkillVersions(existing.version, SENTRY_REQUIRED_SENSORS_VERSION);
     if (versionOrder === null) return;
-    // Already at/above 1.12 and carrying the required-sensor marker — done.
-    if (versionOrder >= 0 && existing.process.includes(SENTRY_REQUIRED_SENSORS_MARKER)) return;
+    const hasNamedPlatformsId = existing.process.includes("`platforms.get_environment_status` with `id: 11`");
+    // Already at/above 1.14 and carrying the named platforms id contract — done.
+    if (versionOrder >= 0 && existing.process.includes(SENTRY_REQUIRED_SENSORS_MARKER) && hasNamedPlatformsId) return;
     // Below 1.12 without the live report contract cannot be patched safely.
     if (
       !existing.process.includes(SENTRY_RUN_EVIDENCE_MARKER)
@@ -1064,6 +1065,23 @@ export async function migrateSentryRequiredSensorsGate(): Promise<void> {
         log.warn(`Skipped sentry required-sensors migration from ${existing.version}: could not insert required-sensors section`);
         return;
       }
+    }
+    process = process
+      .replaceAll(
+        "`platforms.get_environment_status` for environment `11`",
+        "`platforms.get_environment_status` with `id: 11`",
+      )
+      .replaceAll(
+        "`platforms.get_environment_status` for environment `12`",
+        "`platforms.get_environment_status` with `id: 12`",
+      )
+      .replace(
+        "calling `platforms.get_environment_status` for environment `11` and environment `12`",
+        "calling `platforms.get_environment_status` with `id: 11` and `id: 12`",
+      );
+    if (!process.includes("`platforms.get_environment_status` with `id: 11`")) {
+      log.warn(`Skipped sentry required-sensors migration from ${existing.version}: could not name platforms id`);
+      return;
     }
 
     const mappedChecklist = Array.isArray(existing.checklist) ? [...(existing.checklist as any[])] : [];
