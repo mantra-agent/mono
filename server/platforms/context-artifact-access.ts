@@ -22,23 +22,36 @@ const libraryScopeColumns = {
   vaultId: libraryPages.vaultId,
 };
 
+export type ListVisibleProductContextPagesScope = {
+  environmentId?: number;
+  productId?: number;
+};
+
 /**
  * Product-owned context pages visible to the current principal.
- * When environmentId is set, returns only artifacts for that Environment's parent Product.
+ * Scope by Environment (parent Product) or by Feature productId.
  * Environment Context is retired; this is the sole coding/workflow context reader.
  */
-export async function listVisibleProductContextPages(kinds: string[], environmentId?: number) {
+export async function listVisibleProductContextPages(
+  kinds: string[],
+  environmentIdOrScope?: number | ListVisibleProductContextPagesScope,
+) {
   if (kinds.length === 0) return [];
   const principal = requireCurrentPrincipal();
-  const environmentFilter = environmentId === undefined
-    ? undefined
-    : inArray(
-      productContextArtifacts.productId,
-      db
-        .select({ productId: platformProductEnvironments.productId })
-        .from(platformProductEnvironments)
-        .where(eq(platformProductEnvironments.id, environmentId)),
-    );
+  const scope = typeof environmentIdOrScope === "number"
+    ? { environmentId: environmentIdOrScope }
+    : environmentIdOrScope ?? {};
+  const productFilter = scope.productId !== undefined
+    ? eq(productContextArtifacts.productId, scope.productId)
+    : scope.environmentId === undefined
+      ? undefined
+      : inArray(
+        productContextArtifacts.productId,
+        db
+          .select({ productId: platformProductEnvironments.productId })
+          .from(platformProductEnvironments)
+          .where(eq(platformProductEnvironments.id, scope.environmentId)),
+      );
 
   return db
     .select({
@@ -54,7 +67,7 @@ export async function listVisibleProductContextPages(kinds: string[], environmen
     .innerJoin(libraryPages, eq(productContextArtifacts.libraryPageId, libraryPages.id))
     .where(and(
       inArray(productContextArtifacts.kind, kinds),
-      environmentFilter,
+      productFilter,
       combineWithVisibleScope(principal, productScopeColumns),
       combineWithVisibleScope(principal, libraryScopeColumns),
     ))

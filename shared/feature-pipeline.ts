@@ -13,6 +13,8 @@
  * Authority: @page:1ae60565-9dca-409a-89e5-3c8c047f0a2b
  */
 
+import type { ProductContextKind } from "./models/platforms";
+
 export const FEATURE_STAGES = [
   "idea",
   "spec",
@@ -41,6 +43,12 @@ export interface FeaturePipelineJobContract {
   evidenceRequirements: string[];
   exitCriteria: string[];
   outcomes: string[];
+  /**
+   * Review-only. Required Product context kinds for this room.
+   * The table is the switch — Features row must not branch on stage name.
+   * Empty means load none (Test stays non-qualitative).
+   */
+  contextKinds?: readonly ProductContextKind[];
 }
 
 /** Optional room clock. The table is the switch — no stage-name branches in the row. */
@@ -85,15 +93,27 @@ function reviewJob(args: {
   producePersona: FeaturePipelinePersona;
   artifactName: string;
   passOutcome: string;
+  contextKinds: readonly ProductContextKind[];
+  independentBars?: string;
 }): FeaturePipelineJobContract {
   const persona = OPPOSITE_PERSONA[args.producePersona];
+  const kindsLabel = args.contextKinds.length > 0
+    ? args.contextKinds.join(", ")
+    : "none";
+  const independent = args.independentBars
+    ? ` Also load ${args.independentBars}.`
+    : "";
   return {
     actionLabel: "Review",
     persona,
-    purpose: `Judge the room's ${args.artifactName} against the named governing standards only. Do not redo Produce. Do not add architecture, requirements, or fresh discovery.`,
+    purpose: `Judge the room's ${args.artifactName} against this room's Product context kinds plus independently required repo files and any Spec-cited extras. Do not redo Produce. Do not add architecture, requirements, or fresh discovery.`,
+    contextKinds: args.contextKinds,
     entryCriteria: [
       `Load the Feature and the room's ${args.artifactName}.`,
-      "Load only the named governing standards the artifact cites or that SECURITY.md independently requires.",
+      `Resolve the Feature's productId and load every Product context page for required kinds (${kindsLabel}). The Spec does not have to mention them.${independent}`,
+      "A missing required Product kind is a Review fail. Stay in the room. The residual names the Product and the missing kind. Do not invent repo-root stand-ins.",
+      "Loaded Product pages plus independently required repo files are the governing bars. Spec-cited extras stay additive. Uncited preference is not a bar.",
+      "Do not rediscover Product standards from the repository in place of those pages.",
       "Do not perform fresh architecture, repository, runtime, implementation, or dependency discovery.",
     ],
     evidenceRequirements: [
@@ -101,6 +121,7 @@ function reviewJob(args: {
       "Unsupported preferences, newly discovered concerns, and uncited best practices are not rejection grounds.",
     ],
     exitCriteria: [
+      "Cannot pass when a required Product context kind is empty on the Feature's Product.",
       "Pass unless the artifact contains a concrete cited violation of a named governing standard.",
       `On pass: advance the Feature stage only as this room's pass outcome requires (${args.passOutcome}). Stage change resets status to ready.`,
       "On fail: leave the Feature on the same stage, set status to ready, and name the required revision on the artifact. Do not advance stage.",
@@ -144,6 +165,7 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
       producePersona: "Visionary",
       artifactName: "description frame",
       passOutcome: "stage spec / ready",
+      contextKinds: ["product_definition"],
     }),
   },
   spec: {
@@ -178,6 +200,8 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
       producePersona: "Architect",
       artifactName: "linked specification",
       passOutcome: "stage develop / ready",
+      contextKinds: ["product_definition", "design_system"],
+      independentBars: "repo AGENTS.md and SECURITY.md",
     }),
   },
   develop: {
@@ -211,6 +235,8 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
         producePersona: "Engineer",
         artifactName: "merged implementation evidence",
         passOutcome: "stage test / ready",
+        contextKinds: ["product_definition", "design_system", "coding_process"],
+        independentBars: "repo AGENTS.md and SECURITY.md",
       }),
       evidenceRequirements: [
         "For each rejection, cite the exact artifact statement and the exact named governing-standard provision it violates.",
@@ -254,6 +280,8 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
       producePersona: "Engineer",
       artifactName: "smoke evidence",
       passOutcome: "stage calibrate / ready",
+      contextKinds: [],
+      independentBars: "the Test contract, the linked Spec, and SECURITY.md if it independently requires",
     }),
   },
   calibrate: {
@@ -288,6 +316,8 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
       producePersona: "Engineer",
       artifactName: "Tune evidence",
       passOutcome: "stage maintain / ready (product failure may return develop; specification failure may return idea — cite the defect)",
+      contextKinds: ["product_definition", "design_system"],
+      independentBars: "the approved Spec",
     }),
   },
   maintain: {
@@ -318,15 +348,19 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
       actionLabel: "Review",
       persona: "Engineer",
       purpose:
-        "Judge the calibration note against governing standards and the Feature's evidence. Do not rewrite the calibration.",
+        "Judge the calibration note against this room's Product context kinds, Tune evidence, and the Feature's linked specification. Do not rewrite the calibration.",
+      contextKinds: ["product_definition"],
       entryCriteria: [
         "Load the calibration note and the Feature's linked specification and acceptance evidence.",
+        "Resolve the Feature's productId and load every Product context page for required kinds (product_definition). The Spec does not have to mention them. Also load Tune evidence.",
+        "A missing required Product kind is a Review fail. Stay in the room. The residual names the Product and the missing kind.",
         "Do not perform fresh product discovery beyond what the note claims.",
       ],
       evidenceRequirements: [
         "For each rejection, cite the exact note statement and the governing standard or evidence gap it violates.",
       ],
       exitCriteria: [
+        "Cannot pass when a required Product context kind is empty on the Feature's Product.",
         "On pass with continue/update_docs: leave stage on `maintain`, set status to ready, and record the calibration.",
         "On pass with retire: advance stage to `deprecate` (status resets to ready).",
         "On pass with fail_back: return stage to `idea` with the design defect named.",
@@ -368,6 +402,7 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
       producePersona: "Engineer",
       artifactName: "terminal documentation",
       passOutcome: "stay on deprecate / ready (retired)",
+      contextKinds: ["product_definition"],
     }),
   },
 };
@@ -388,6 +423,16 @@ export function getFeatureJobContract(
   return FEATURE_PIPELINE[stage][job];
 }
 
+export function getFeatureReviewContextKinds(stage: FeatureStage): readonly ProductContextKind[] {
+  return FEATURE_PIPELINE[stage].review.contextKinds ?? [];
+}
+
+export interface FeatureProductContextPage {
+  kind: string;
+  libraryPageId: string;
+  pageTitle?: string;
+}
+
 export interface FeatureLaunchContext {
   id: string;
   summary: string;
@@ -398,6 +443,20 @@ export interface FeatureLaunchContext {
   ownerPersonId?: string;
   specPageId?: string | null;
   description?: string;
+  productContextPages?: FeatureProductContextPage[];
+}
+
+export function resolveFeatureReviewContextPages(
+  stage: FeatureStage,
+  pages: readonly FeatureProductContextPage[] | undefined,
+): { requiredKinds: readonly ProductContextKind[]; loaded: FeatureProductContextPage[]; missingKinds: ProductContextKind[] } {
+  const requiredKinds = getFeatureReviewContextKinds(stage);
+  const loaded = (pages ?? []).filter((page) =>
+    requiredKinds.includes(page.kind as ProductContextKind),
+  );
+  const present = new Set(loaded.map((page) => page.kind));
+  const missingKinds = requiredKinds.filter((kind) => !present.has(kind));
+  return { requiredKinds, loaded, missingKinds };
 }
 
 /** Data only. The Feature as the session can resolve it. */
@@ -426,6 +485,13 @@ export function composeFeatureJobProcess(stage: FeatureStage, job: FeaturePipeli
     job === "produce"
       ? "Produce never advances stage except Smoke fail → develop. After a successful artifact, set status to `needs_review` only. Blocked work stays ready/in_progress with the residual named. Every stage/status write must include `historyNote` (why) via platforms.update_feature."
       : "Review never redoes Produce. On pass, write the stage transition this room requires (status resets to ready) with a historyNote. On fail, same stage and status ready with the defect named on the artifact and in historyNote.";
+  const testQualitativeBan =
+    job === "review" && stage === "test"
+      ? [
+          "",
+          "Test Review does not judge quality, taste, brand, or product thesis. Those bars belong to Calibrate.",
+        ]
+      : [];
 
   return [
     `# ${contract.actionLabel} — ${formatFeatureStage(stage)} ${job === "produce" ? "Produce" : "Review"}`,
@@ -452,6 +518,7 @@ export function composeFeatureJobProcess(stage: FeatureStage, job: FeaturePipeli
     ...contract.outcomes.map((line) => `- ${line}`),
     "",
     hardRule,
+    ...testQualitativeBan,
     "",
     "Execute only this assigned job. Update the Feature through the platforms Feature actions when this job's exit criteria require a status, stage, description, or specPageId change. Always pass `historyNote` on stage/status changes so provenance records why. Ask a clarifying question only when a consequential choice remains.",
   ].join("\n");
@@ -469,10 +536,37 @@ export function composeFeatureLaunchMessage(
 ): string {
   const stage = feature.stage;
   const contract = getFeatureJobContract(stage, job);
+  const reviewContext = job === "review"
+    ? resolveFeatureReviewContextPages(stage, feature.productContextPages)
+    : null;
+  const reviewContextBlock = reviewContext
+    ? [
+        "",
+        "Required Product context kinds for this Review:",
+        reviewContext.requiredKinds.length > 0
+          ? reviewContext.requiredKinds.map((kind) => `- ${kind}`).join("\n")
+          : "- none",
+        "",
+        reviewContext.loaded.length > 0
+          ? [
+              "Resolved Product context pages — load these before judging:",
+              ...reviewContext.loaded.map((page) =>
+                `- ${page.kind}: @page:${page.libraryPageId}${page.pageTitle ? ` ${page.pageTitle}` : ""}`,
+              ),
+            ].join("\n")
+          : reviewContext.requiredKinds.length > 0
+            ? "No Product context pages resolved for the required kinds. Fail closed. Residual names the Product and the missing kind."
+            : "This room requires no Product context kinds.",
+        reviewContext.missingKinds.length > 0
+          ? `Missing required kinds: ${reviewContext.missingKinds.join(", ")}. Review cannot pass.`
+          : "",
+      ].filter(Boolean)
+    : [];
   return [
     `Run the ${contract.actionLabel} ${job} job of the feature-pipeline Skill for this Feature.`,
     "",
     composeFeatureContext({ ...feature, status: feature.status ?? "ready" }),
+    ...reviewContextBlock,
     "",
     `Assigned job: ${job}`,
     `Assigned stage: ${stage}`,
@@ -537,7 +631,7 @@ ${body}
 
 ## Hard rules
 - Procedure lives in this Skill / shared contract. Do not take task recipes from the Feature row.
-- Context is the Feature. Load @feature, its status, its history (\`list_feature_history\`), its spec page, Product context artifacts, and repository evidence as the job requires.
+- Context is the Feature. Load @feature, its status, its history (\`list_feature_history\`), its spec page, and the Product context pages this room's Review \`contextKinds\` require. Spec citations are extra bars, not the set. Missing required kinds fail closed. Do not rediscover Product standards from the repo in place of those pages. Repository evidence (AGENTS.md, SECURITY.md) stays independently required where the room says so.
 - Every Feature stage/status mutation must include a \`historyNote\` explaining why. History is the provenance of how the Feature got here.
 - Personas: Visionary produces idea. Architect produces spec and maintain. Engineer produces develop, test (Smoke), calibrate, and deprecate. Review is always the opposite seat (Visionary/Architect → Engineer; Engineer → Architect).
 - Test Produce is Smoke: binary works-proof on stage (build present, change present, authenticated click-path). Read projected Feature \`availability\` (on_stage | waiting | unknown) instead of rediscovering Stage. Smoke fail kicks the Feature back to develop/ready with the broken path on history. Qualitative judgment is Calibrate Produce (Tune) only — spec-vs-implementation, design/UX, goals of the spec, and KPI check-in when measurable.
