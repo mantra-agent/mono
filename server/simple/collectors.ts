@@ -1098,10 +1098,9 @@ function taskDateConflict(task: Task, milestoneMap: Map<string, Milestone>): boo
 
 function taskSection(task: Task, today: string, tomorrow: string, weekEnd: string, monthEnd: string, quarterEnd: string, yearEnd: string, milestoneMap: Map<string, Milestone>): SimpleSection {
   const deadline = resolveTaskDeadline(task, milestoneMap);
-  if (!deadline) return task.status === "active" ? "now" : "today";
+  if (!deadline) return "today";
 
-  if (deadline < today) return "now"; // overdue
-  if (deadline === today) return "today";
+  if (deadline <= today) return "today";
   if (deadline === tomorrow) return "tomorrow";
   if (deadline <= weekEnd) return "this_week";
   const nextWeekEnd = addDays(weekEnd, 7);
@@ -1386,8 +1385,7 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
 function milestoneSection(milestone: Milestone, today: string, weekEnd: string, monthEnd: string, quarterEnd: string, yearEnd: string, nextYearEnd: string): SimpleSection {
   const dueDate = dateOnlyString(milestone.dueDate);
   if (!dueDate) return "today"; // dateless milestones surface in today with needsDate flag
-  if (dueDate < today) return "now"; // overdue
-  if (dueDate === today) return "today";
+  if (dueDate <= today) return "today";
   if (dueDate <= weekEnd) return "this_week";
   const nextWeekEnd = addDays(weekEnd, 7);
   if (dueDate <= nextWeekEnd) return "next_week";
@@ -1444,7 +1442,7 @@ function projectSection(project: Project, today: string, monthEnd: string, quart
     // No deadline: active projects flagged, default to this_month
     return "this_month";
   }
-  if (project.dueDate < today) return "now"; // overdue
+  if (project.dueDate <= today) return "today";
   if (project.dueDate <= monthEnd) return "this_month";
   if (project.dueDate <= quarterEnd) return "this_quarter";
   if (project.dueDate <= yearEnd) return "this_year";
