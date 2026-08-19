@@ -34,7 +34,6 @@ import {
 } from "./engagement-series";
 import { createLogger } from "../log";
 import {
-  IDENTITY_STOCK_UNAVAILABLE_REASON,
   identityStockCanAnswerRange,
   isExpressionPlan,
   type ExpressionPlan,
@@ -496,40 +495,39 @@ async function handleProduct(
     };
   }
 
-  const [{ sampleUsageRange }, { sampleIdentityRange, sampleIdentityStock }] = await Promise.all([
+  const [{ sampleUsageRange }, { sampleIdentityRange, sampleIdentityStock, sampleIdentityStockAsOf, IDENTITY_STOCK_PARTIAL_REASON }] = await Promise.all([
     import("../hours-used"),
     import("../identity-metrics"),
   ]);
 
   if (metric.slug === "accounts" || metric.slug === "registered-users") {
-    if (!identityStockCanAnswerRange(range)) {
-      return {
-        metric: { ...metric, latestSample: null },
-        samples: [],
-        valueStatus: "actual",
-        coverage: {
-          status: "unavailable",
-          reason: IDENTITY_STOCK_UNAVAILABLE_REASON,
-        },
-      };
-    }
-    const stock = await sampleIdentityStock();
+    const current = identityStockCanAnswerRange(range);
+    const stock = current
+      ? await sampleIdentityStock()
+      : await sampleIdentityStockAsOf(range.end);
     const value = metric.slug === "accounts" ? stock.accounts : stock.registeredUsers;
+    const evidence = current
+      ? (metric.slug === "accounts"
+        ? "Count of identity accounts with status=active."
+        : "Distinct users with a membership on an active (status=active) account.")
+      : (metric.slug === "accounts"
+        ? "Accounts reconstructed as of range.end from created and updated timestamps."
+        : "Users reconstructed as of range.end from membership and account timestamps.");
     const sample = singleRangeSample(
       metric,
       value,
       range,
       `internal/${metric.slug}-query-v1`,
-      metric.slug === "accounts"
-        ? "Count of identity accounts with status=active."
-        : "Distinct users with a membership on an active (status=active) account.",
-      true,
+      evidence,
+      current,
     );
     return {
       metric: { ...metric, latestSample: sample },
       samples: [sample],
       valueStatus: "actual",
-      coverage: { status: "finalized" },
+      coverage: current
+        ? { status: "finalized" }
+        : { status: "partial", availableFrom: null, reason: IDENTITY_STOCK_PARTIAL_REASON },
     };
   }
 
@@ -764,7 +762,7 @@ async function ensureHoursUsedPerUserMetric(): Promise<void> {
       owner_kind, owner_id
     ) VALUES (
       ${id}, ${hours.businessId}, ${"Hours Used Per User"}, ${HOURS_USED_PER_USER_SLUG},
-      ${"Hours Used divided by current Users. Honest only for a current window."},
+      ${"Hours Used divided by Users as of the asked sample."},
       ${"hours"}, ${"higher_is_better"}, ${"custom"}, ${"expression"},
       ${JSON.stringify(adapterConfig)}::jsonb, ${"active"}, ${"user"}, ${hours.ownerUserId},
       ${hours.accountId}, ${hours.vaultId ?? null}, ${hours.ownerUserId},

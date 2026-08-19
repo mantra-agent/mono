@@ -412,9 +412,6 @@ async function overlayIdentityStockSample(
   if (!principal?.accountId) return metric;
   // Identity stocks are platform product metrics — never overlay without users:read.
   if (!canReadPlatformMetrics(principal)) return metric;
-  if (range && !identityStockCanAnswerRange(range)) {
-    return { ...metric, latestSample: null };
-  }
   const [business] = await db.select({
     id: businesses.id,
     isPlatformInstrument: businesses.isPlatformInstrument,
@@ -423,9 +420,12 @@ async function overlayIdentityStockSample(
     .where(visibleBusinessPredicate(principal, eq(businesses.id, metric.businessId)))
     .limit(1);
   if (!business?.isPlatformInstrument) return metric;
-  const { sampleIdentityStock } = await import("./identity-metrics");
-  const stock = await sampleIdentityStock();
-  const observedAt = new Date().toISOString();
+  const { sampleIdentityStock, sampleIdentityStockAsOf } = await import("./identity-metrics");
+  const current = !range || identityStockCanAnswerRange(range);
+  const stock = current
+    ? await sampleIdentityStock()
+    : await sampleIdentityStockAsOf(range.end);
+  const observedAt = current ? new Date().toISOString() : range.end.toISOString();
   const value = metric.slug === "accounts" ? stock.accounts : stock.registeredUsers;
   const sample: MetricSample = {
     id: `query_${metric.businessId}_${metric.slug}_${observedAt}`,
@@ -436,11 +436,15 @@ async function overlayIdentityStockSample(
     unit: metric.unit || (metric.slug === "accounts" ? "accounts" : "users"),
     observedAt,
     sourceRef: `internal/${metric.slug}-query-v1`,
-    evidence: metric.slug === "accounts"
-      ? "Count of identity accounts with status=active."
-      : "Distinct users with a membership on an active (status=active) account.",
-    periodStart: null,
-    periodEnd: null,
+    evidence: current
+      ? (metric.slug === "accounts"
+        ? "Count of identity accounts with status=active."
+        : "Distinct users with a membership on an active (status=active) account.")
+      : (metric.slug === "accounts"
+        ? "Accounts reconstructed as of range.end from created and updated timestamps."
+        : "Users reconstructed as of range.end from membership and account timestamps."),
+    periodStart: current ? null : range.start.toISOString(),
+    periodEnd: current ? null : range.end.toISOString(),
     createdAt: observedAt,
   };
   return { ...metric, latestSample: sample };
