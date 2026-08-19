@@ -66,7 +66,7 @@ function useHomeSectionCommit(section: string, open: boolean, itemCount: number)
 
 export function SimpleFeedView({ feed }: { feed: SimpleFeed }) {
   const now = useMemo(() => new Date(feed.generatedAt), [feed.generatedAt]);
-  const peopleInboxItems: SimpleFeedItem[] = [];
+  const peopleInboxItems = useMemo(() => feed.sections.find(s => s.section === "inbox")?.items.filter(item => item.widgetType === "person") ?? [], [feed.sections]);
   const newsInboxItems = useMemo(() => feed.sections.find(s => s.section === "inbox")?.items.filter(item => item.payload?.kind === "news_signal") ?? [], [feed.sections]);
   const newsSnoozedItems = useMemo(() => feed.sections.find(s => s.section === "snoozed")?.items.filter(item => item.payload?.kind === "news_signal") ?? [], [feed.sections]);
   const emailInboxItems = useMemo(() => feed.sections.find(s => s.section === "inbox")?.items.filter(item => item.payload?.kind === "email_review") ?? [], [feed.sections]);
