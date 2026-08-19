@@ -81,6 +81,11 @@ import {
 } from "@/components/hierarchy-section-header";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { recordBrowserTelemetry } from "@/lib/browser-telemetry";
+import {
+  FEATURE_FAST_FORWARD_MODE_EVENT,
+  readFeatureFastForward,
+  writeFeatureFastForward,
+} from "@/lib/feature-fast-forward";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { emitSessionChanged } from "@/hooks/use-data-sync";
@@ -204,59 +209,9 @@ function isActivePipelineSession(session: ChatSession | undefined | null): boole
   return isDurablyActiveSession(session) || session.status === "streaming";
 }
 
-const FEATURE_FAST_FORWARD_KEY_PREFIX = "feature-fast-forward:";
-
-function featureFastForwardStorageKey(featureId: string): string {
-  return `${FEATURE_FAST_FORWARD_KEY_PREFIX}${featureId}`;
-}
-
-function readFeatureFastForward(featureId: string): boolean {
-  if (typeof sessionStorage === "undefined") return false;
-  try {
-    return sessionStorage.getItem(featureFastForwardStorageKey(featureId)) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeFeatureFastForward(featureId: string, on: boolean): void {
-  if (typeof sessionStorage === "undefined") return;
-  try {
-    const key = featureFastForwardStorageKey(featureId);
-    if (on) sessionStorage.setItem(key, "1");
-    else sessionStorage.removeItem(key);
-  } catch {
-    // Private mode or quota — mode stays in-memory for this mount.
-  }
-}
-
 function playIsGated(availability?: Feature["availability"]): boolean {
   return availability?.state === "waiting" || availability?.state === "unknown";
 }
-
-function sessionHasQuestion(session: ChatSession | null | undefined): boolean {
-  if (!session) return false;
-  return Boolean(
-    session.awaitingQuestionResponse ||
-      session.awaitingReview ||
-      session.reviewKinds?.includes("question"),
-  );
-}
-
-function sessionHasError(session: ChatSession | null | undefined): boolean {
-  if (!session) return false;
-  return session.errorSeverity === "error" || Boolean(session.reviewKinds?.includes("error"));
-}
-
-function parseClock(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (value instanceof Date) return value.getTime();
-  if (typeof value === "string") return Date.parse(value);
-  return Number.NaN;
-}
-
-/** Survives Strict remount so the sequencer cannot double-launch one Feature. */
-const fastForwardLaunchInFlight = new Set<string>();
 
 /** One-line live preview from stream segments — no SegmentStream mount. */
 function latestStreamPreviewLine(stream: SessionStreamState | null | undefined, fallback?: string | null): string {
@@ -624,24 +579,26 @@ const FeatureRow = memo(function FeatureRow({
   /** Optimistic link after a row launch, before discovery/artifact indexing catches up. */
   const [launchedSessionId, setLaunchedSessionId] = useState<string | null>(null);
   const [fastForwardOn, setFastForwardOn] = useState(() => readFeatureFastForward(feature.id));
-  const [fastForwardSettleTick, setFastForwardSettleTick] = useState(0);
-  const lastLaunchedJobRef = useRef<{
-    job: "produce" | "review";
-    stage: FeatureStage;
-    launchedAt: number;
-  } | null>(null);
-  const settleRefetchKeyRef = useRef<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
 
   const setFastForwardMode = useCallback((on: boolean) => {
     writeFeatureFastForward(feature.id, on);
     setFastForwardOn(on);
-    if (!on) {
-      lastLaunchedJobRef.current = null;
-      settleRefetchKeyRef.current = null;
-      fastForwardLaunchInFlight.delete(feature.id);
-    }
+  }, [feature.id]);
+
+  // Shell sequencer owns the walk; row only mirrors sessionStorage mode for chrome.
+  useEffect(() => {
+    const sync = () => setFastForwardOn(readFeatureFastForward(feature.id));
+    const onMode = (event: Event) => {
+      const detail = (event as CustomEvent<{ featureId?: string }>).detail;
+      if (detail?.featureId && detail.featureId !== feature.id) return;
+      sync();
+    };
+    window.addEventListener(FEATURE_FAST_FORWARD_MODE_EVENT, onMode as EventListener);
+    return () => {
+      window.removeEventListener(FEATURE_FAST_FORWARD_MODE_EVENT, onMode as EventListener);
+    };
   }, [feature.id]);
 
   useEffect(() => {
@@ -805,16 +762,6 @@ const FeatureRow = memo(function FeatureRow({
     }
   }, [fastForwardOn, launchedSessionId, sessionsById]);
 
-  const ownedSession = useMemo(() => {
-    if (activeSession) return activeSession;
-    if (!launchedSessionId) return null;
-    const session = sessionsById.get(launchedSessionId);
-    if (!session) return null;
-    const owner = titleSessionOwners.get(session.id);
-    if (owner && owner !== feature.id) return null;
-    return session;
-  }, [activeSession, feature.id, launchedSessionId, sessionsById, titleSessionOwners]);
-
   const handleRowOpenChange = useCallback((open: boolean) => {
     setRowExpanded(open);
   }, []);
@@ -875,11 +822,6 @@ const FeatureRow = memo(function FeatureRow({
     if (launch.isPending) return;
     const contract = getFeatureJobContract(feature.stage, job);
     const pendingKey = `feature-${feature.id}-${feature.stage}-${job}`;
-    lastLaunchedJobRef.current = {
-      job,
-      stage: feature.stage,
-      launchedAt: Date.now(),
-    };
     launch.mutate(
       {
         pendingKey,
@@ -893,12 +835,9 @@ const FeatureRow = memo(function FeatureRow({
       },
       {
         onSuccess: onLaunchSuccess,
-        onError: () => setFastForwardMode(false),
       },
     );
   };
-  const runPipelineLaunchRef = useRef(runPipelineLaunch);
-  runPipelineLaunchRef.current = runPipelineLaunch;
 
   const discussPendingKey = `feature-${feature.id}-discuss`;
   const discussPending =
@@ -982,7 +921,7 @@ const FeatureRow = memo(function FeatureRow({
           type="button"
           variant="ghost"
           size="icon"
-          className="h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:size-3"
+          className="relative h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground hover:bg-accent hover:text-foreground"
           disabled={launch.isPending || nextJobGated}
           aria-label={`Fast Forward ${feature.summary}`}
           onClick={(event) => {
@@ -991,83 +930,16 @@ const FeatureRow = memo(function FeatureRow({
           }}
           data-testid={`button-feature-fast-forward-${feature.id}`}
         >
-          <FastForward className="h-3 w-3 fill-current" />
+          <span className="relative inline-flex h-3 w-3 items-center justify-center">
+            <FastForward className="h-3 w-3 fill-current" />
+            {/* Same Sparkles badge grammar as AI Review. */}
+            <Sparkles className="pointer-events-none absolute -right-px -top-px !h-1.5 !w-1.5 text-cta" strokeWidth={2.5} />
+          </span>
         </Button>
       </TooltipTrigger>
       <TooltipContent side="top">Fast Forward</TooltipContent>
     </Tooltip>
   ) : null;
-
-  useEffect(() => {
-    if (!fastForwardOn) return;
-    if (!featureAllowsFastForward(feature.stage) || feature.stage === "maintain") {
-      setFastForwardMode(false);
-      return;
-    }
-    if (sessionHasQuestion(ownedSession) || sessionHasError(ownedSession)) {
-      setFastForwardMode(false);
-      return;
-    }
-    if (isSessionInProgress) {
-      fastForwardLaunchInFlight.delete(feature.id);
-      return;
-    }
-    if (launch.isPending) return;
-    const last = lastLaunchedJobRef.current;
-    if (last && !ownedSession && launchedSessionId) return;
-    if (last) {
-      const sessionSettledAt = ownedSession
-        ? parseClock(ownedSession.updatedAt || ownedSession.createdAt)
-        : last.launchedAt;
-      const featureUpdatedAt = parseClock(feature.updated_at);
-      const writeLanded =
-        Number.isFinite(featureUpdatedAt) &&
-        Number.isFinite(sessionSettledAt) &&
-        featureUpdatedAt + 2_000 >= sessionSettledAt;
-      const waitedTooLong =
-        Number.isFinite(sessionSettledAt) && Date.now() - sessionSettledAt > 15_000;
-      if (!writeLanded && !waitedTooLong) {
-        const refetchKey = `${last.job}:${last.stage}:${last.launchedAt}`;
-        if (settleRefetchKeyRef.current !== refetchKey) {
-          settleRefetchKeyRef.current = refetchKey;
-          void queryClient.invalidateQueries({ queryKey: ["/api/features"] });
-        }
-        const timeoutId = window.setTimeout(() => {
-          setFastForwardSettleTick((tick) => tick + 1);
-        }, 1_000);
-        return () => window.clearTimeout(timeoutId);
-      }
-      if (last.job === "review" && feature.stage === last.stage) {
-        setFastForwardMode(false);
-        return;
-      }
-      if (last.job === "produce" && feature.status !== "needs_review") {
-        setFastForwardMode(false);
-        return;
-      }
-    }
-    const job = resolveFeaturePipelineJob(feature.status);
-    if (job === "produce" && playIsGated(feature.availability)) {
-      setFastForwardMode(false);
-      return;
-    }
-    if (fastForwardLaunchInFlight.has(feature.id)) return;
-    fastForwardLaunchInFlight.add(feature.id);
-    runPipelineLaunchRef.current(job);
-  }, [
-    fastForwardOn,
-    feature.availability,
-    feature.stage,
-    feature.status,
-    feature.updated_at,
-    feature.id,
-    fastForwardSettleTick,
-    isSessionInProgress,
-    launchedSessionId,
-    launch.isPending,
-    ownedSession,
-    setFastForwardMode,
-  ]);
 
   const commitTitle = () => {
     const next = titleDraft.trim();
@@ -1470,7 +1342,10 @@ const FeatureRow = memo(function FeatureRow({
                 }}
                 data-testid={`button-feature-menu-fast-forward-${feature.id}`}
               >
-                <FastForward className="mr-2 h-3.5 w-3.5 fill-current" />
+                <span className="relative mr-2 inline-flex h-3.5 w-3.5 items-center justify-center">
+                  <FastForward className="h-3.5 w-3.5 fill-current" />
+                  <Sparkles className="pointer-events-none absolute -right-px -top-px h-1.5 w-1.5 text-cta" strokeWidth={2.5} />
+                </span>
                 Fast Forward
               </DropdownMenuItem>
             )}

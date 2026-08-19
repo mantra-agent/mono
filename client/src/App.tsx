@@ -42,6 +42,7 @@ import { getProvisionalOnboardingToken } from "@/lib/immersive-entrance";
 import { markNavigationDestinationCommit } from "@/lib/navigation-trace";
 import { UiInteractionProvider } from "@/hooks/use-ui-interaction";
 import { ClaimVisualHandoff } from "@/components/claim-visual-handoff";
+import { FeatureFastForwardSequencer } from "@/components/feature-fast-forward-sequencer";
 import { PageFallback, RouteFailure, RouteLoadBoundary } from "@/components/route-load-boundary";
 import { useProductComposition } from "@/hooks/use-product-composition";
 
@@ -598,6 +599,8 @@ function AppShell() {
                     <TaskModalProvider>
                       <SidebarProvider style={style as React.CSSProperties} forceMobile={mobileSurfaceActive} defaultOpen={false}>
                         <UiInteractionProvider>
+                          {/* Fast Forward walks after leaving /features — shell owns the sequencer. */}
+                          <FeatureFastForwardSequencer />
                           <AppLayout mobileSurfaceActive={mobileSurfaceActive} previewRouteOwnsCanvas={previewRouteOwnsCanvas} />
                         </UiInteractionProvider>
                       </SidebarProvider>
