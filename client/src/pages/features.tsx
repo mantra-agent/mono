@@ -112,7 +112,11 @@ type Feature = {
   /** Server-projected Play gate. Omitted when the room did not declare a clock. */
   availability?: { state: FeatureAvailabilityState };
 };
-type Product = { id: number; name: string };
+type Product = {
+  id: number;
+  name: string;
+  context?: Array<{ kind: string; libraryPageId: string; pageTitle?: string }>;
+};
 type Person = { id: string; name: string; cabinetLevel?: string };
 type FeatureSessionLink = {
   sessionId: string;
@@ -759,6 +763,7 @@ const FeatureRow = memo(function FeatureRow({
     ownerPersonId: feature.owner_person_id,
     specPageId: feature.spec_page_id,
     description: feature.description,
+    productContextPages: products.find((product) => product.id === feature.product_id)?.context,
   };
 
   const onLaunchSuccess = (session: { id: string }) => {
