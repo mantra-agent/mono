@@ -114,6 +114,12 @@ function optionalStr(args: Record<string, unknown>, field: string): string | und
   return value.length > 0 ? value : undefined;
 }
 
+function optionalRecord(args: Record<string, unknown>, field: string): Record<string, unknown> | undefined {
+  const raw = args[field];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  return raw as Record<string, unknown>;
+}
+
 function stringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const out = value.map((v) => String(v)).filter((v) => v.length > 0);
@@ -499,6 +505,7 @@ async function handleMetricAction(action: string, args: Record<string, unknown>)
       direction: optionalStr(args, "direction") as any,
       samplePeriod: optionalStr(args, "samplePeriod") as any,
       adapterKind: optionalStr(args, "adapterKind") as any,
+      adapterConfig: optionalRecord(args, "adapterConfig"),
       status: optionalStr(args, "status") as any,
     });
     return { result: safeStringify(metricResult(metric), { label: "bridge.business.metrics.create" }) };
@@ -514,6 +521,7 @@ async function handleMetricAction(action: string, args: Record<string, unknown>)
       direction: optionalStr(args, "direction") as any,
       samplePeriod: optionalStr(args, "samplePeriod") as any,
       adapterKind: optionalStr(args, "adapterKind") as any,
+      adapterConfig: optionalRecord(args, "adapterConfig"),
       status: optionalStr(args, "status") as any,
       clearFields: stringArray(args.clearFields) as any,
     });

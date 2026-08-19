@@ -49,6 +49,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
+import { serializeReference } from "@shared/references";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
@@ -269,6 +271,9 @@ function MetricTreeRow({
       testId={`metric-row-${metric.slug}`}
       expandedContent={isManual ? <RecordSampleForm metric={metric} /> : (
         <div className="space-y-1 py-1 text-xs text-muted-foreground">
+          {metric.adapterKind === "expression" && typeof metric.adapterConfig?.equation === "string" ? (
+            <div className="font-mono text-foreground">{metric.adapterConfig.equation}</div>
+          ) : null}
           <div>{sample?.sourceRef ?? "Source unavailable"}</div>
           {sample?.evidence ? <div>{sample.evidence}</div> : null}
         </div>
@@ -308,6 +313,8 @@ function CreateMetricDialog() {
   const [direction, setDirection] = useState<MetricDirection>("higher_is_better");
   const [adapterKind, setAdapterKind] = useState<MetricAdapterKind>("manual");
   const [samplePeriod, setSamplePeriod] = useState<string>("point");
+  const [equation, setEquation] = useState("");
+  const [operands, setOperands] = useState<ReferencePickerValue[]>([]);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -318,6 +325,7 @@ function CreateMetricDialog() {
         adapterKind,
         samplePeriod,
         status: "active",
+        adapterConfig: adapterKind === "expression" ? { equation: equation.trim() } : undefined,
       });
       return res.json();
     },
@@ -327,6 +335,8 @@ function CreateMetricDialog() {
       setOpen(false);
       setName("");
       setUnit("");
+      setEquation("");
+      setOperands([]);
     },
     onError: (error: unknown) => {
       toast({ title: "Failed to create metric", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
@@ -375,9 +385,38 @@ function CreateMetricDialog() {
               ))}
             </SelectContent>
           </Select>
+          {adapterKind === "expression" ? (
+            <div className="space-y-2">
+              <Input
+                placeholder="Equation"
+                value={equation}
+                onChange={(e) => setEquation(e.target.value)}
+                data-testid="metric-equation"
+              />
+              <ReferencePicker
+                value={operands}
+                onChange={(next) => {
+                  const added = next.find((item) => !operands.some((existing) => existing.id === item.id));
+                  setOperands(next);
+                  if (!added) return;
+                  const token = serializeReference({ type: "metric", id: added.id });
+                  setEquation((current) => current.trim() ? `${current.trim()} ${token}` : token);
+                }}
+                types={["metric"]}
+                mode="multi"
+                variant="inline"
+                placeholder="Add metric"
+                testId="metric-equation-operand"
+              />
+            </div>
+          ) : null}
         </div>
         <DialogFooter>
-          <Button onClick={() => mutation.mutate()} disabled={name.trim() === "" || mutation.isPending} data-testid="metric-submit">
+          <Button
+            onClick={() => mutation.mutate()}
+            disabled={name.trim() === "" || (adapterKind === "expression" && equation.trim() === "") || mutation.isPending}
+            data-testid="metric-submit"
+          >
             {mutation.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
             Create
           </Button>
