@@ -630,6 +630,10 @@ function DecisionInlineEditor({
         </div>
       )}
 
+      {isClosed && (
+        <DecisionUpdatesSection decisionId={decisionId} updates={full.updates} />
+      )}
+
       <div>
         <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Description</div>
         <Textarea
@@ -637,7 +641,7 @@ function DecisionInlineEditor({
           onChange={(e) => { setDescription(e.target.value); descriptionRef.current = e.target.value; scheduleSave(); }}
           placeholder="A short summary of what this decision is about..."
           rows={2}
-          className="text-sm resize-none"
+          className={cn(SIMPLE_TEXT_FRAME_CLASS, "min-h-[4.5rem] resize-none shadow-none")}
           data-testid="input-decision-description"
         />
       </div>
@@ -662,7 +666,7 @@ function DecisionInlineEditor({
           onChange={(e) => { setAnswer(e.target.value); answerRef.current = e.target.value; scheduleSave(); }}
           placeholder="The chosen answer..."
           rows={2}
-          className="text-sm resize-none"
+          className={cn(SIMPLE_TEXT_FRAME_CLASS, "min-h-[4.5rem] resize-none shadow-none")}
           data-testid="input-decision-answer"
         />
       </div>
@@ -704,10 +708,6 @@ function DecisionInlineEditor({
 
       <DecisionProvenanceSection decision={full} links={full.links} />
       <DecisionLinksSection decisionId={decisionId} links={full.links} />
-
-      {isClosed && (
-        <DecisionUpdatesSection decisionId={decisionId} updates={full.updates} />
-      )}
 
       {/* Lock confirmation */}
       <AlertDialog open={lockConfirmOpen} onOpenChange={setLockConfirmOpen}>
@@ -771,9 +771,7 @@ const PROVENANCE_PREDICATES = new Set(["decided_by", "governed_by", "triggered_b
 
 const PREDICATE_LABELS: Record<string, string> = {
   decided_by: "Decided by",
-  governed_by: "Guided by",
   triggered_by: "Source",
-  guided_by: "Guided by",
   relates_to: "Related",
   governs: "Governs",
   evidence_for: "Evidence",
@@ -808,18 +806,21 @@ function DecisionProvenanceSection({
       )}
       {provenanceLinks.length > 0 && (
         <div className="flex flex-col gap-1.5">
-          {provenanceLinks.map((link) => (
-            <div key={link.id} className="flex items-center gap-2 text-xs" data-testid={`provenance-link-${link.id}`}>
-              <span className="text-muted-foreground min-w-[72px]">
-                {PREDICATE_LABELS[link.predicate ?? ""] ?? link.predicate}
-              </span>
-              {link.targetAddress ? (
-                <InlineReferenceText text={link.targetAddress} />
-              ) : (
-                <span className="capitalize">{link.targetType}:{link.targetId}</span>
-              )}
-            </div>
-          ))}
+          {provenanceLinks.map((link) => {
+            const label = PREDICATE_LABELS[link.predicate ?? ""];
+            return (
+              <div key={link.id} className="flex items-center gap-2 text-xs" data-testid={`provenance-link-${link.id}`}>
+                {label ? (
+                  <span className="text-muted-foreground min-w-[72px]">{label}</span>
+                ) : null}
+                {link.targetAddress ? (
+                  <InlineReferenceText text={link.targetAddress} />
+                ) : (
+                  <span className="capitalize">{link.targetType}:{link.targetId}</span>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
       {hasSource && !provenanceLinks.some((l) => l.predicate === "triggered_by") && decision.sourceSessionId && (
@@ -843,14 +844,6 @@ function DecisionLinksSection({ decisionId, links }: { decisionId: string; links
   const manualLinks = useMemo(
     () => links.filter((link) => !link.predicate || !PROVENANCE_PREDICATES.has(link.predicate)),
     [links],
-  );
-  const pickerValue = useMemo<ReferencePickerValue[]>(
-    () => manualLinks.map((link) => ({
-      type: link.targetType,
-      id: link.targetId,
-      label: linkAddress(link),
-    })),
-    [manualLinks],
   );
 
   const addMutation = useMutation({
@@ -880,7 +873,7 @@ function DecisionLinksSection({ decisionId, links }: { decisionId: string; links
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
         {manualLinks.map((link) => (
-          <span key={link.id} className="inline-flex items-center gap-0.5" data-testid={`link-${link.id}`}>
+          <span key={link.id} className="inline-flex items-center gap-0.5 text-xs" data-testid={`link-${link.id}`}>
             <InlineReferenceText text={linkAddress(link)} />
             <button
               type="button"
@@ -894,7 +887,7 @@ function DecisionLinksSection({ decisionId, links }: { decisionId: string; links
           </span>
         ))}
         <ReferencePicker
-          value={pickerValue}
+          value={[]}
           onChange={(next) => {
             const existing = new Set(manualLinks.map((link) => `${link.targetType}:${link.targetId}`));
             const added = next.find((item) => !existing.has(`${item.type}:${item.id}`));
