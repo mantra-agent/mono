@@ -45,7 +45,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
       search: { description: "Search the web using Brave Search API.", requiredParams: ["query"], optionalParams: ["count"] },
       fetch: { description: "Fetch and extract text content from a URL. Large pages are automatically summarized.", requiredParams: ["url"], optionalParams: ["timeout"] },
       test: {
-        description: "One authenticated Chromium session. Entry via route (localhost) or url. Optional closed steps (max 8): navigate, click, tap, scroll, press, type, screenshot. Origin re-checked after every step. Closing screenshot always taken when a page exists. auth.integration must carry browser-session (day-one: automation-auth). Omitted auth on local app uses calling principal cookie; external without auth is photograph-only.",
+        description: "One authenticated Chromium session. Entry via route (localhost) or url. Optional closed steps (max 8): navigate, click, tap, scroll, press, type, screenshot. Origin re-checked after every step. Closing screenshot always taken when a page exists. auth.integration must carry browser-session (day-one: automation-auth). External automation-auth exchanges the bearer for a Stage user cookie and drops Authorization; local hops may still send the bearer. Omitted auth on local app uses calling principal cookie; external without auth is photograph-only.",
         optionalParams: ["route", "url", "viewport", "fullPage", "delay", "auth", "steps"],
       },
       screenshot: { description: "Deprecated alias for test.", optionalParams: ["route", "url", "viewport", "fullPage", "delay", "auth", "steps"] },

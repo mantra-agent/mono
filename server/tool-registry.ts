@@ -307,7 +307,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         delay: { type: "number", description: "Extra wait ms after networkidle before the closing frame, default 2000 (test/screenshot)" },
         auth: {
           type: "object",
-          description: "Optional browser-session auth. Omitted + local app → calling principal cookie. Omitted + external → photograph-only stranger. Named integration must carry browser-session capability (day-one: automation-auth).",
+          description: "Optional browser-session auth. Omitted + local app → calling principal cookie. Omitted + external → photograph-only stranger. Named integration must carry browser-session capability (day-one: automation-auth). External automation-auth exchanges the bearer for a Stage user cookie.",
           properties: {
             integration: { type: "string", description: "Connector key with browser-session capability, e.g. automation-auth" },
           },

@@ -64,7 +64,9 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { storage } from "./storage";
 import { getSetting, setSetting } from "./system-settings";
-import { getAutomationAuthToken } from "./automation-auth-token";
+import { getAutomationAuthBoundUserId, getAutomationAuthToken } from "./automation-auth-token";
+import { isLiveRuntimeName } from "./runtime-identity";
+import { createScreenshotSession } from "./screenshot-session";
 import {
   accounts,
   agentInstanceMemberships,
@@ -924,9 +926,68 @@ export function setupAuth(app: Express) {
     });
   });
 
-  /** @deprecated Headless browser auth now uses direct DB session injection via createScreenshotSession in browser-manager.ts. */
+  /** @deprecated Headless browser auth now uses direct DB session injection via createScreenshotSession. */
   app.get("/api/auth/automation-login", (_req: Request, res: Response) => {
     res.status(410).json({ deprecated: true, message: "Use createScreenshotSession for headless auth" });
+  });
+
+  /**
+   * Stage-only: exchange the automation bearer for a 120s user `connect.sid`.
+   * Live is 404. Bound user is admin-configured; the caller cannot name one.
+   * Bearer stays a service principal on every other route.
+   */
+  app.post("/api/auth/automation-session", enforceAuthBudget("automation-session", 20), async (req: Request, res: Response) => {
+    if (isLiveRuntimeName()) {
+      return res.status(404).json({ error: "Not found" });
+    }
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Automation bearer required" });
+    }
+    const bearerToken = authHeader.slice(7);
+    try {
+      const storedToken = await getAutomationAuthToken();
+      if (!storedToken || bearerToken.length !== storedToken.length) {
+        return res.status(401).json({ error: "Invalid automation bearer" });
+      }
+      const a = Buffer.from(bearerToken);
+      const b = Buffer.from(storedToken);
+      if (!crypto.timingSafeEqual(a, b)) {
+        return res.status(401).json({ error: "Invalid automation bearer" });
+      }
+      const boundUserId = await getAutomationAuthBoundUserId();
+      if (!boundUserId) {
+        return res.status(503).json({ error: "Automation user is not bound" });
+      }
+      const user = await storage.getUser(boundUserId);
+      if (!user) {
+        return res.status(503).json({ error: "Automation bound user is missing" });
+      }
+      await resolveUserIdentityFoundation(user.id);
+      const minted = await createScreenshotSession(user.id);
+      await recordPrivilegedAccess({
+        principal: createServicePrincipal(["service:automation"], ["system:read"]),
+        action: "automation_session_exchange",
+        reason: "stage smoke user cookie",
+        metadata: { path: req.path, method: req.method, boundUserId: user.id },
+      });
+      res.cookie(SESSION_COOKIE_NAME, minted.signedCookie, {
+        httpOnly: true,
+        secure: req.secure || req.get("x-forwarded-proto") === "https",
+        sameSite: "lax",
+        maxAge: 120_000,
+        path: "/",
+      });
+      return res.json({ ok: true });
+    } catch (error) {
+      if (error instanceof AccountLifecycleError) {
+        return res.status(403).json({ error: error.message, code: error.code });
+      }
+      log.warn("Automation session exchange failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return res.status(500).json({ error: "Automation session exchange failed" });
+    }
   });
 
   app.get("/api/auth/me", requireAuth, async (req: Request, res: Response) => {

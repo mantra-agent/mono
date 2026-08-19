@@ -8,6 +8,7 @@
 // completely decoupled from the headless-browser dep chain.
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { createLogger } from "./log";
+import { createScreenshotSession, type ScreenshotSession } from "./screenshot-session";
 import { exec } from "child_process";
 import { promisify } from "util";
 import * as fs from "fs";
@@ -193,74 +194,67 @@ export async function fetchWithBrowser(url: string, timeoutMs: number = PAGE_TIM
 // with an injected authenticated session cookie for capturing app UI.
 // ---------------------------------------------------------------------------
 
+async function exchangeAutomationAuthOnTarget(
+  entryUrl: string,
+  token: string,
+): Promise<{ ok: true; session: ScreenshotSession } | { ok: false; error: string }> {
+  let origin: string;
+  try {
+    origin = new URL(entryUrl).origin;
+  } catch {
+    return { ok: false, error: "automation-auth exchange requires a valid entry URL" };
+  }
+  const exchangeUrl = `${origin}/api/auth/automation-session`;
+  let response: Response;
+  try {
+    response = await fetch(exchangeUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `automation-auth exchange request failed: ${msg}` };
+  }
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const body = (await response.json()) as { error?: string };
+      if (typeof body.error === "string" && body.error.trim()) detail = body.error.trim();
+    } catch {
+      // keep status
+    }
+    return { ok: false, error: `automation-auth exchange refused: ${detail}` };
+  }
+  const setCookie = response.headers.getSetCookie?.() ?? [];
+  const cookieHeader = setCookie.find((value) => value.startsWith("connect.sid="))
+    ?? response.headers.get("set-cookie");
+  if (!cookieHeader || !cookieHeader.includes("connect.sid=")) {
+    return { ok: false, error: "automation-auth exchange returned no connect.sid" };
+  }
+  const match = /(?:^|,\s*)connect\.sid=([^;]+)/.exec(cookieHeader);
+  const raw = match?.[1];
+  if (!raw) {
+    return { ok: false, error: "automation-auth exchange cookie could not be parsed" };
+  }
+  const signedCookie = decodeURIComponent(raw);
+  return {
+    ok: true,
+    session: {
+      sid: "exchanged",
+      signedCookie,
+      cleanup: async () => {},
+    },
+  };
+}
+
 const VIEWPORT_PRESETS: Record<string, { width: number; height: number }> = {
   desktop: { width: 1440, height: 900 },
   tablet:  { width: 768,  height: 1024 },
   mobile:  { width: 375,  height: 812 },
 };
-
-interface ScreenshotSession {
-  sid: string;
-  signedCookie: string;
-  cleanup: () => Promise<void>;
-}
-
-async function createScreenshotSession(userId: string, sessionSecret?: string): Promise<ScreenshotSession> {
-  // Dynamic imports for CJS deps (transitive from express-session)
-  const uidSafe = await import("uid-safe") as unknown as { default?: { sync: (len: number) => string }; sync?: (len: number) => string };
-  const uidSync = (uidSafe.default?.sync ?? uidSafe.sync) as (len: number) => string;
-
-  const cookieSig = await import("cookie-signature") as unknown as { default?: { sign: (val: string, secret: string) => string }; sign?: (val: string, secret: string) => string };
-  const cookieSign = (cookieSig.default?.sign ?? cookieSig.sign) as (val: string, secret: string) => string;
-
-  const sid = uidSync(24);
-  const secret = sessionSecret || process.env.SESSION_SECRET;
-  if (!secret) {
-    throw new Error("Platform-binding auth invariant failed: SESSION_SECRET is unavailable to sign the acceptance session cookie");
-  }
-  if (!userId.trim()) {
-    throw new Error("Platform-binding auth invariant failed: workflow owner user ID is missing");
-  }
-
-  const { pool } = await import("./db");
-  const usersResult = await pool.query(
-    'SELECT id FROM "users" WHERE id = $1 LIMIT 1',
-    [userId],
-  );
-  const sessionUserId: string | undefined = usersResult.rows[0]?.id;
-  if (!sessionUserId) {
-    throw new Error(`Platform-binding auth invariant failed: workflow owner ${userId} does not exist in the shared user store`);
-  }
-
-  // Insert a short-lived session row (120s TTL).
-  // connect-pg-simple reads sessions with `expire >= to_timestamp(epoch_seconds)`
-  // so we must store expire via to_timestamp() too — a JS Date lands as
-  // `timestamp without time zone` which silently drops timezone context and
-  // causes comparison mismatches when the server TZ differs from UTC.
-  const expireEpochSeconds = Math.ceil((Date.now() + 120_000) / 1000);
-  const sess = JSON.stringify({
-    cookie: { maxAge: 120000 },
-    userId: sessionUserId,
-    createdAt: new Date().toISOString(),
-    userAgent: "mantra-screenshot-session",
-  });
-  await pool.query(
-    'INSERT INTO "session" (sid, sess, expire) VALUES ($1, $2, to_timestamp($3))',
-    [sid, sess, expireEpochSeconds]
-  );
-
-  const signedCookie = "s:" + cookieSign(sid, secret);
-
-  const cleanup = async () => {
-    try {
-      await pool.query('DELETE FROM "session" WHERE sid = $1', [sid]);
-    } catch {
-      // best-effort cleanup
-    }
-  };
-
-  return { sid, signedCookie, cleanup };
-}
 
 /** Closed keyboard keys for web.test press steps. */
 export const WEB_TEST_KEYS = [
@@ -742,8 +736,17 @@ export async function screenshotPage(
           if (!token) {
             return emptyResult("auth_failed", "automation-auth token is unset");
           }
-          extraHTTPHeaders["Authorization"] = `Bearer ${token}`;
-          authUsed = "automation-auth";
+          if (localApp) {
+            extraHTTPHeaders["Authorization"] = `Bearer ${token}`;
+            authUsed = "automation-auth";
+          } else {
+            const exchanged = await exchangeAutomationAuthOnTarget(url, token);
+            if (!exchanged.ok) {
+              return emptyResult("auth_failed", exchanged.error);
+            }
+            session = exchanged.session;
+            authUsed = "automation-auth";
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           return emptyResult("auth_failed", `automation-auth injector failed: ${msg}`);

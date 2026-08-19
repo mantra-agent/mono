@@ -287,11 +287,11 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
       entryCriteria: [
         "Read the Feature's projected `availability` from get/list (on_stage | waiting | unknown). Do not rediscover Stage or invent commit identity on the client or in ad hoc Railway calls.",
         "Identify the target stage environment and the change under test from the Feature and its develop evidence.",
-        "Use automated authenticated session tooling against stage. Do not substitute a passing build or lifecycle progress for a click-path.",
+        "Use automated authenticated session tooling against stage (`web.test` + `auth.integration: automation-auth` for external Stage hops). That hop must mint a Stage user `connect.sid` and drop the bearer. Do not substitute a passing build or lifecycle progress for a click-path.",
       ],
       evidenceRequirements: [
         "Stage build/deploy evidence that the change is present (prefer projected availability on_stage plus click-path).",
-        "Authenticated login + click-path evidence that the Feature path completes.",
+        "Authenticated login + click-path evidence that the Feature path completes. If the Spec requires principal-scoped writes (ingest, `/api/auth/me` user, mutations), those writes must succeed under the exchanged user session.",
         "Record pass/fail only. Do not write qualitative product judgment here.",
       ],
       exitCriteria: [
@@ -302,7 +302,7 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
       outcomes: [
         "done → needs_review on test: smoke evidence waiting for Review",
         "failed → develop / ready: broken path named on feature history",
-        "blocked: environment residual named without a conclusive fail; stage unchanged only when smoke could not run",
+        "blocked: environment residual named without a conclusive fail; stage unchanged only when smoke could not run (missing Stage bound user, exchange 404/503, or `/api/auth/me` still 401 after the hop)",
       ],
     },
     review: reviewJob({
@@ -672,7 +672,7 @@ ${body}
 - Context is the Feature. Load @feature, its status, its history (\`list_feature_history\`), its spec page, and the Product context pages this room's Review \`contextKinds\` require. Spec citations are extra bars, not the set. Missing required kinds fail closed. Do not rediscover Product standards from the repo in place of those pages. Repository evidence (AGENTS.md, SECURITY.md) stays independently required where the room says so.
 - Every Feature stage/status mutation must include a \`historyNote\` explaining why. History is the provenance of how the Feature got here.
 - Personas: Visionary produces idea. Architect produces spec and maintain. Engineer produces develop, test (Smoke), calibrate, and deprecate. Review is always the opposite seat (Visionary/Architect → Engineer; Engineer → Architect).
-- Test Produce is Smoke: binary works-proof on stage (build present, change present, authenticated click-path). Read projected Feature \`availability\` (on_stage | waiting | unknown) instead of rediscovering Stage. Smoke fail kicks the Feature back to develop/ready with the broken path on history. Qualitative judgment is Calibrate Produce (Tune) only — spec-vs-implementation, design/UX including works-broken chrome, goals of the spec, and KPI check-in when measurable. Tune must walk the Spec Picture path and photograph each new surface.
+- Test Produce is Smoke: binary works-proof on stage (build present, change present, authenticated click-path). External Stage hops use \`web.test\` + automation-auth, which must exchange the bearer for a Stage user cookie before the path. Read projected Feature \`availability\` (on_stage | waiting | unknown) instead of rediscovering Stage. Smoke fail kicks the Feature back to develop/ready with the broken path on history. Missing bound user or a still-401 \`/api/auth/me\` after the hop is a harness residual (blocked), not a Feature fail. Qualitative judgment is Calibrate Produce (Tune) only — spec-vs-implementation, design/UX including works-broken chrome, goals of the spec, and KPI check-in when measurable. Tune must walk the Spec Picture path and photograph each new surface.
 - Develop Review pass into Test must stamp \`changeSha\` (merge commit, not PR head) on the stage write so Test can join Stage's activeCommitSha.
 - Never merge to live or publish production. Promotion remains independently authorized.
 `;

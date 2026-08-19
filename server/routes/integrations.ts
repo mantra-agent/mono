@@ -1,4 +1,11 @@
-import { getAutomationAuthToken, setAutomationAuthToken } from "../automation-auth-token";
+import {
+  getAutomationAuthBoundUserId,
+  getAutomationAuthToken,
+  setAutomationAuthBoundUserId,
+  setAutomationAuthToken,
+} from "../automation-auth-token";
+import { resolveUserIdentityFoundation } from "../principal";
+import { normalizeEmailAddress } from "../email-normalization";
 // Use createLogger for logging ONLY
 import type { Express } from "express";
 import { storage } from "../storage";
@@ -1833,9 +1840,13 @@ export async function registerIntegrationsRoutes(app: Express) {
           token = oldToken;
         }
       }
+      const boundUserId = await getAutomationAuthBoundUserId();
+      const boundUser = boundUserId ? await storage.getUser(boundUserId) : undefined;
       res.json({
         configured: !!token,
         lastChars: token ? token.slice(-8) : null,
+        boundUserId: boundUser?.id ?? boundUserId,
+        boundUserEmail: boundUser?.email ?? null,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1844,19 +1855,40 @@ export async function registerIntegrationsRoutes(app: Express) {
 
   app.put("/api/integrations/automation-auth", requireAuth, requireAdmin, async (req, res) => {
     try {
-      const { token, generate } = req.body;
-      if (!token && !generate) {
-        return res.status(400).json({ error: "Provide 'token' or set 'generate' to true" });
+      const { token, generate, boundUserId, boundUserEmail, clearBoundUser } = req.body ?? {};
+      const wantsToken = Boolean(token || generate);
+      const wantsBind = boundUserId !== undefined || boundUserEmail !== undefined || clearBoundUser === true;
+      if (!wantsToken && !wantsBind) {
+        return res.status(400).json({ error: "Provide 'token', set 'generate', or bind a user" });
       }
-      const finalToken = generate ? crypto.randomBytes(32).toString("hex") : token;
-      if (typeof finalToken !== "string" || finalToken.length < 32) {
-        return res.status(400).json({ error: "Token must be at least 32 characters" });
+      if (wantsToken) {
+        const finalToken = generate ? crypto.randomBytes(32).toString("hex") : token;
+        if (typeof finalToken !== "string" || finalToken.length < 32) {
+          return res.status(400).json({ error: "Token must be at least 32 characters" });
+        }
+        await setAutomationAuthToken(finalToken);
       }
-      await setAutomationAuthToken(finalToken);
+      if (clearBoundUser === true) {
+        await setAutomationAuthBoundUserId(null);
+      } else if (typeof boundUserId === "string" || typeof boundUserEmail === "string") {
+        const user = typeof boundUserId === "string" && boundUserId.trim()
+          ? await storage.getUser(boundUserId.trim())
+          : await storage.getUserByEmail(normalizeEmailAddress(String(boundUserEmail)));
+        if (!user) {
+          return res.status(400).json({ error: "Bound user was not found" });
+        }
+        await resolveUserIdentityFoundation(user.id);
+        await setAutomationAuthBoundUserId(user.id);
+      }
+      const storedToken = await getAutomationAuthToken();
+      const nextBoundId = await getAutomationAuthBoundUserId();
+      const nextBound = nextBoundId ? await storage.getUser(nextBoundId) : undefined;
       res.json({
-        configured: true,
-        lastChars: finalToken.slice(-8),
-        ...(generate ? { token: finalToken } : {}),
+        configured: !!storedToken,
+        lastChars: storedToken ? storedToken.slice(-8) : null,
+        boundUserId: nextBound?.id ?? nextBoundId,
+        boundUserEmail: nextBound?.email ?? null,
+        ...(generate ? { token: storedToken } : {}),
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

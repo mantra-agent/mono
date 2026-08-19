@@ -82,6 +82,13 @@
 - Residual/rollback: A successful click/tap can mutate the caller's own product — that is the point of click-path Smoke. No human gate per tap. Revert screenshotPage steps/auth, web tool schema/details, automation-auth browser-session capability, and this finding together.
 -->
 
+<!-- 2026-08-19 Stage automation-auth user-session exchange:
+- Assets/data: A06 automation bearer (S2) plus one admin-bound Stage user id; A05 120s `connect.sid` on Stage `session`. No Live cookie, no caller-named user.
+- Flow/threat: stolen bearer impersonates the bound Stage user for 120s; Live leak of the exchange would mint a production session; widening telemetry/`/api/auth/me` to service principals would write unowned rows (STRIDE spoofing/elevation; IAM-01/DATA-01).
+- Deterministic controls/owner: `POST /api/auth/automation-session` is Live 404; timing-safe bearer compare; bound user is settings-owned UUID with active identity foundation; mint is `createScreenshotSession` only; Chromium then drops Authorization. `/api/auth/me` and `assertBrowserTelemetryPrincipal` stay user-only. Owner: Identity / Browser Manager. Severity: medium integrity. SLA: same PR.
+- Residual/rollback: token leak equals that one Stage user for 120s. Revert exchange route, bound-user setting, injector change, and this finding together.
+-->
+
 <!-- 2026-08-15 Oura webhook GET challenge handshake:
 - Assets/data: A03 Oura client secret and verification token (S3), A07 inbound `/api/oura/webhook` callback (S1 operational). No new principal or health-row authority.
 - Flow/threat: Oura subscription create sends GET `?verification_token=` and JSON-parses the 200 body. HMAC-gating that GET 401s in 1ms; a text/plain echo then 400s "Invalid json in verification response"; a JSON body keyed `verification_token` then 400s "Missing challenge in response". Oura's parser requires JSON `{ challenge }`, so anything else refuses the subscription (STRIDE denial of service / spoofing analogue; INT-01). A GET that echoes any query without the configured token would let anyone complete the handshake.

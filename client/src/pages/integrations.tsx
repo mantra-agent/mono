@@ -4381,15 +4381,32 @@ function AutomationAuthSection() {
   const [showToken, setShowToken] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [draft, setDraft] = useState("");
+  const [boundDraft, setBoundDraft] = useState("");
 
-  const { data, isLoading } = useQuery<{ configured: boolean; lastChars: string | null }>({
+  const { data, isLoading } = useQuery<{
+    configured: boolean;
+    lastChars: string | null;
+    boundUserId?: string | null;
+    boundUserEmail?: string | null;
+  }>({
     queryKey: ["/api/integrations/automation-auth"],
   });
 
   const saveMutation = useMutation({
-    mutationFn: async (body: { token?: string; generate?: boolean }) => {
+    mutationFn: async (body: {
+      token?: string;
+      generate?: boolean;
+      boundUserEmail?: string;
+      clearBoundUser?: boolean;
+    }) => {
       const res = await apiRequest("PUT", "/api/integrations/automation-auth", body);
-      return res.json() as Promise<{ configured: boolean; lastChars: string | null; token?: string }>;
+      return res.json() as Promise<{
+        configured: boolean;
+        lastChars: string | null;
+        token?: string;
+        boundUserId?: string | null;
+        boundUserEmail?: string | null;
+      }>;
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/integrations/automation-auth"] });
@@ -4507,6 +4524,50 @@ function AutomationAuthSection() {
             />
           </ProfileTreeRow>
         ) : null}
+        <ProfileTreeRow
+          label="Stage user"
+          icon={<Shield className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          testId="row-automation-auth-bound-user"
+          actionContent={(
+            <div className="flex items-center gap-1">
+              <Button
+                size="sm"
+                onClick={() => saveMutation.mutate({ boundUserEmail: boundDraft.trim() })}
+                disabled={!boundDraft.trim() || saveMutation.isPending}
+                data-testid="button-save-bound-user"
+              >
+                Bind
+              </Button>
+              {data?.boundUserId ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => saveMutation.mutate({ clearBoundUser: true })}
+                  disabled={saveMutation.isPending}
+                  data-testid="button-clear-bound-user"
+                >
+                  Clear
+                </Button>
+              ) : null}
+            </div>
+          )}
+        >
+          <div className="min-w-0 space-y-1">
+            <div className="text-xs text-muted-foreground">
+              {data?.boundUserEmail || data?.boundUserId || "Not bound — Stage Smoke ingest stays blocked"}
+            </div>
+            <Input
+              placeholder="Stage user email"
+              value={boundDraft}
+              onChange={(e) => setBoundDraft(e.target.value)}
+              className="h-7 text-xs"
+              data-testid="input-bound-user-email"
+            />
+          </div>
+        </ProfileTreeRow>
       </IntegrationTreeSection>
     </div>
   );
