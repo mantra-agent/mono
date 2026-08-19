@@ -68,7 +68,7 @@ interface PendingAgendaApplication {
   sessionId: string;
 }
 
-const HIDDEN_ROUTES = new Set(["/login", "/register", "/voice", "/glasses"]);
+const HIDDEN_ROUTES = new Set(["/login", "/register", "/forgot-password", "/voice", "/glasses"]);
 const MODEL_TIER_OPTIONS: Array<{ value: "auto" | SessionModelTierOverride; label: string }> = [
   { value: "auto", label: "Auto" },
   { value: "fast", label: "Fast" },

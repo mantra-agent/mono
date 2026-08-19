@@ -69,6 +69,7 @@ const TeamsPage = lazyWithRetry(() => import("@/pages/teams"));
 const LoginPage = lazyWithRetry(() => import("@/pages/login"));
 const RegisterPage = lazyWithRetry(() => import("@/pages/register"));
 const ResetPasswordPage = lazyWithRetry(() => import("@/pages/reset-password"));
+const ForgotPasswordPage = lazyWithRetry(() => import("@/pages/forgot-password"));
 const RecipientRecapPage = lazyWithRetry(() => import("@/pages/recipient-recap"));
 const WaitlistPage = lazyWithRetry(() => import("@/pages/waitlist"));
 const BuildPage = lazyWithRetry(() => import("@/pages/build"));
@@ -465,6 +466,14 @@ function AuthGate({ children }: { children: ReactNode }) {
           <Route path="/register" component={RegisterPage} />
           <Route path="/register/:token" component={RegisterPage} />
         </Switch>
+      </RouteLoadBoundary>
+    );
+  }
+
+  if (location === "/forgot-password") {
+    return (
+      <RouteLoadBoundary routeKey="/forgot-password">
+        <ForgotPasswordPage />
       </RouteLoadBoundary>
     );
   }
