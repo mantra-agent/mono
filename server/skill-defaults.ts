@@ -442,7 +442,7 @@ No preamble. No source list. No explanation of your process. No extra headings.
     name: "brief-daily",
     recommendedPersona: "Companion",
     description: "Assembles a morning briefing calibrated to the day's actual cognitive load. Monday/Wednesday/Friday carry more weight; Tuesday/Thursday are minimal. Prepends each day onto one rolling Morning Brief Library page and re-surfaces that same page.",
-    version: "7.9",
+    version: "8.0",
     addToMemory: true,
     scoreThreshold: 0.8,
     pinnedToContext: false,
@@ -455,6 +455,7 @@ No preamble. No source list. No explanation of your process. No extra headings.
     checklist: [
       { check: "Successfully invokes a fresh affirm child Skill run from this Daily Brief run", weight: 3, kind: "child_skill_invoked", skill: "affirm" },
       { check: "Successfully invokes a fresh learning child Skill run from this Daily Brief run", weight: 3, kind: "child_skill_invoked", skill: "learning" },
+      { check: "Resolves the bound Daily Brief template (templates.resolve skill brief-daily key daily) before writing the day's section", weight: 3, kind: "tool_invoked", tool: "templates", action: "resolve" },
       { check: "Opens with the affirmation itself as a bolded standalone first line, with no section label or prefix", weight: 3 },
       { check: "Second line is the thesis sentence itself, with no section label or prefix", weight: 2 },
       { check: "Output contains the full brief text with substantive content, not just a delivery confirmation or page link", weight: 3 },
@@ -575,6 +576,16 @@ Urgent items (calendar conflicts, blocked tasks, time-sensitive decisions) surfa
 - No people "last interaction" data dumps
 - No wellness overdue clocks or status categories
 - No news unless it changes a conversation this week
+
+## Document template
+
+Shape is data, not folklore. Before writing today's section:
+
+1. Call \`templates(action: "resolve", skill: "brief-daily", key: "daily")\` — bound to \`daily-brief\`, **not** Digest and **not** Stand Up.
+2. Read the resolved Library shape page. Write the day's section against that form. Do not recut headings. Do not invent a Residual stamp.
+3. If resolve fails, stamp \`template_unavailable\` on the skill-run / session note, warn, and still write — do not crash the Morning Brief timer.
+
+The running-file law is unchanged: one rolling page, newest first. Do not mint a dated page.
 
 ## Delivery
 
@@ -1190,7 +1201,7 @@ Shape is data, not folklore. Before writing daily or weekly artifacts:
 4. After write, if a required heading is missing or empty (except omit-if-empty), append \`### Residual\` (daily day entry) or \`## Residual\` (weekly) listing the missing headings, and name them in the skill-run / session note.
 5. If resolve fails, stamp residual \`template_unavailable\`, warn, and still write what you can — do not crash the parent timer. Never treat Brief as the Digest vessel.
 
-Monthly+ stay folklore until a later Feature adds keys. \`brief-daily\` is not bound here.
+Monthly+ stay folklore until a later Feature adds keys. \`brief-daily\` binds \`daily\` to \`daily-brief\` on its own skill; this skill's \`daily\` is Digest, not Brief.
 
 ## Cadence Semantics
 
