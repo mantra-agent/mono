@@ -139,6 +139,27 @@ export type {
 
 
 /**
+ * Classify Expo tool failures at the producer. Config/input/GraphQL contract
+ * misses are caller-correctable; transport is transient; leftover TypeErrors
+ * stay internal so true defects remain ERRORS.
+ */
+function classifyExpoToolError(err: unknown): ToolFailure {
+  const message = err instanceof Error ? err.message : String(err);
+  const lower = message.toLowerCase();
+  if (
+    /transport failed|timed?\s*out|econnreset|enotfound|eai_again|socket hang up|und_err|econnrefused|etimedout|enetunreach|ehostunreach|502|503|504|429/.test(
+      lower,
+    )
+  ) {
+    return transientFailure("expo_provider_transient", message.slice(0, 160));
+  }
+  if (/is not a function|cannot read propert|typeerror|referenceerror|undefined is not|null is not an object/.test(lower)) {
+    return internalFailure("expo_internal", message.slice(0, 160));
+  }
+  return inputFailure("expo_input_invalid", message.slice(0, 160));
+}
+
+/**
  * Classify system-tool caught errors. Schema gaps and runtime defects are
  * internal; only leave truly untyped surprises unclassified.
  */
@@ -6441,16 +6462,32 @@ ${refs}` : ""),
 
   async expo(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = typeof args.action === "string" ? args.action : "";
-    if (!action) return { result: "Missing 'action' parameter", error: true };
+    if (!action) {
+      return {
+        result: "Missing 'action' parameter",
+        error: true,
+        failure: inputFailure("expo_input_invalid", "missing_action"),
+      };
+    }
     const allowed = new Set(["status", "projects", "builds", "build", "build_logs", "start_build", "cancel"]);
     if (!allowed.has(action)) {
-      return { result: `Unknown expo action: ${action}. Allowed: status, projects, builds, build, build_logs, start_build, cancel`, error: true };
+      return {
+        result: `Unknown expo action: ${action}. Allowed: status, projects, builds, build, build_logs, start_build, cancel`,
+        error: true,
+        failure: inputFailure("expo_input_invalid", "unknown_action"),
+      };
     }
 
     try {
       const expo = await import("./integrations/expo");
       const token = await expo.getExpoToken();
-      if (!token) return { result: "Expo is not configured. Missing EXPO_ACCESS_TOKEN integration secret.", error: true };
+      if (!token) {
+        return {
+          result: "Expo is not configured. Missing EXPO_ACCESS_TOKEN integration secret.",
+          error: true,
+          failure: inputFailure("integration_not_configured", "expo"),
+        };
+      }
 
       switch (action) {
         case "status": {
@@ -6472,14 +6509,26 @@ ${refs}` : ""),
           const projectId = typeof args.projectId === "string" && args.projectId.trim()
             ? args.projectId.trim()
             : expo.getProjectConfig().projectId;
-          if (!projectId) return { result: "Missing projectId and mobile Expo config has no Expo projectId.", error: true };
+          if (!projectId) {
+            return {
+              result: "Missing projectId and mobile Expo config has no Expo projectId.",
+              error: true,
+              failure: inputFailure("expo_input_invalid", "missing_project_id"),
+            };
+          }
           const limit = Math.min(50, Math.max(1, Number(args.limit) || 10));
           const builds = await expo.listBuilds(projectId, limit);
           return { result: JSON.stringify({ projectId, count: builds.length, builds }) };
         }
         case "build": {
           const buildId = typeof args.buildId === "string" ? args.buildId.trim() : "";
-          if (!buildId) return { result: "Missing buildId", error: true };
+          if (!buildId) {
+            return {
+              result: "Missing buildId",
+              error: true,
+              failure: inputFailure("expo_input_invalid", "missing_build_id"),
+            };
+          }
           const build = await expo.getBuild(buildId);
           return { result: JSON.stringify({ build }) };
         }
@@ -6488,7 +6537,11 @@ ${refs}` : ""),
             ? args.expectedSourceRef.trim().toLowerCase()
             : "";
           if (!/^[a-f0-9]{40}$/.test(expectedSourceRef)) {
-            return { result: "start_build requires expectedSourceRef as a full 40-character Git commit SHA.", error: true };
+            return {
+              result: "start_build requires expectedSourceRef as a full 40-character Git commit SHA.",
+              error: true,
+              failure: inputFailure("expo_input_invalid", "expected_source_ref"),
+            };
           }
           const run = await expo.easBuild("preview", "ios", "main", {
             cancelExisting: false,
@@ -6506,6 +6559,9 @@ ${refs}` : ""),
               guidance: run.guidance,
             }),
             error: !run.ok,
+            ...(run.ok
+              ? {}
+              : { failure: classifyExpoToolError(run.error || "EAS start_build refused") }),
           };
         }
         case "cancel": {
@@ -6517,7 +6573,13 @@ ${refs}` : ""),
           const projectId = typeof args.projectId === "string" && args.projectId.trim()
             ? args.projectId.trim()
             : expo.getProjectConfig().projectId;
-          if (!projectId) return { result: "Missing buildId/projectId and mobile Expo config has no Expo projectId.", error: true };
+          if (!projectId) {
+            return {
+              result: "Missing buildId/projectId and mobile Expo config has no Expo projectId.",
+              error: true,
+              failure: inputFailure("expo_input_invalid", "missing_project_id"),
+            };
+          }
           const platform = typeof args.platform === "string" && args.platform.trim() ? args.platform.trim() : undefined;
           const profile = typeof args.profile === "string" && args.profile.trim() ? args.profile.trim() : undefined;
           const cancelled = await expo.cancelInProgressBuilds({ projectId, platform, profile });
@@ -6529,7 +6591,13 @@ ${refs}` : ""),
             const projectId = typeof args.projectId === "string" && args.projectId.trim()
               ? args.projectId.trim()
               : expo.getProjectConfig().projectId;
-            if (!projectId) return { result: "Missing buildId/projectId and mobile Expo config has no Expo projectId.", error: true };
+            if (!projectId) {
+              return {
+                result: "Missing buildId/projectId and mobile Expo config has no Expo projectId.",
+                error: true,
+                failure: inputFailure("expo_input_invalid", "missing_project_id"),
+              };
+            }
             const builds = await expo.listBuilds(projectId, 1);
             buildId = builds[0]?.id || "";
             if (!buildId) return { result: JSON.stringify({ projectId, buildId: null, excerpts: [] }) };
@@ -6547,10 +6615,14 @@ ${refs}` : ""),
           };
         }
       }
-      return { result: `Unhandled expo action: ${action}`, error: true };
+      return {
+        result: `Unhandled expo action: ${action}`,
+        error: true,
+        failure: inputFailure("expo_input_invalid", "unhandled_action"),
+      };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { result: `Expo ${action} failed: ${msg}`, error: true };
+      return { result: `Expo ${action} failed: ${msg}`, error: true, failure: classifyExpoToolError(err) };
     }
   },
 

@@ -103,6 +103,10 @@ export type ToolFailureCode =
   // UI interaction rejects (origin/working-set + contract)
   | "ui_input_invalid"
   | "ui_provider_transient"
+  // Expo tool contract / provider rejects
+  | "expo_input_invalid"
+  | "expo_provider_transient"
+  | "expo_internal"
   // Slack outbound tool rejects
   | "slack_input_invalid"
   | "slack_person_unaddressed"
