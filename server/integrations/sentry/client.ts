@@ -121,6 +121,20 @@ async function sentryFetch(
         "invalid_search_query",
       );
     }
+    // Missing issue/project/resource is caller input (stale id, wrong org scope),
+    // not an integration defect — warn + stable code so ERRORS does not page 404s.
+    if (res.status === 404) {
+      log.warn(`Sentry API missing resource: ${res.status} ${res.statusText}`, {
+        path,
+        detailPreview: detail?.slice(0, 300) || undefined,
+      });
+      throw new SentryApiError(
+        `Sentry API ${res.status}: ${res.statusText}`,
+        res.status,
+        detail,
+        "resource_not_found",
+      );
+    }
     log.error(`Sentry API error: ${res.status} ${res.statusText}`, {
       detailPreview: detail?.slice(0, 500) || undefined,
     });
