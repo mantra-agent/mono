@@ -25,6 +25,7 @@ import {
   Timer,
   User,
   Wrench,
+  AlertTriangle,
 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
@@ -111,6 +112,8 @@ type Feature = {
   spec_page_id?: string | null;
   /** Server-projected Play gate. Omitted when the room did not declare a clock. */
   availability?: { state: FeatureAvailabilityState };
+  /** Server-projected glance from the newest history row. Omitted when not a setback. */
+  attention?: { state: "setback" };
 };
 type Product = {
   id: number;
@@ -616,6 +619,7 @@ const FeatureRow = memo(function FeatureRow({
                     row.spec_page_id !== undefined ? row.spec_page_id : entry.spec_page_id,
                   product_name: row.product_name ?? entry.product_name,
                   availability: row.availability ?? entry.availability,
+                  attention: row.attention,
                 }
               : entry,
           );
@@ -643,7 +647,11 @@ const FeatureRow = memo(function FeatureRow({
           if (!Array.isArray(old)) return old;
           return old.map((entry) =>
             entry.id === row.id
-              ? { ...entry, availability: row.availability ?? entry.availability }
+              ? {
+                  ...entry,
+                  availability: row.availability ?? entry.availability,
+                  attention: row.attention,
+                }
               : entry,
           );
         });
@@ -871,10 +879,17 @@ const FeatureRow = memo(function FeatureRow({
         data-testid={`feature-row-${feature.id}`}
         onClick={() => handleRowOpenChange(!rowExpanded)}
       >
-        <span className="flex shrink-0 items-center justify-center text-muted-foreground">
+        <span className={cn(
+          "flex shrink-0 items-center justify-center",
+          !isSessionInProgress && feature.attention?.state === "setback"
+            ? "text-warning"
+            : "text-muted-foreground",
+        )}>
           {isSessionInProgress
             ? <ActiveStatusSpinner className="h-3.5 w-3.5" />
-            : STAGE_ICONS[feature.stage]}
+            : feature.attention?.state === "setback"
+              ? <AlertTriangle className="h-3.5 w-3.5" />
+              : STAGE_ICONS[feature.stage]}
         </span>
           {editingTitle ? (
             <Input
@@ -904,8 +919,9 @@ const FeatureRow = memo(function FeatureRow({
               className={cn(
                 "min-w-0 flex-1 truncate text-left text-sm",
                 isSessionInProgress && "text-active font-medium motion-safe:animate-pulse",
-                !isSessionInProgress && needsReview && "font-medium text-foreground",
-                !isSessionInProgress && !needsReview && "text-muted-foreground",
+                !isSessionInProgress && feature.attention?.state === "setback" && "font-medium text-warning",
+                !isSessionInProgress && feature.attention?.state !== "setback" && needsReview && "font-medium text-foreground",
+                !isSessionInProgress && feature.attention?.state !== "setback" && !needsReview && "text-muted-foreground",
               )}
               onClick={(event) => {
                 event.stopPropagation();

@@ -67,6 +67,35 @@ export interface FeatureAvailabilityProjection {
   state: FeatureAvailabilityState;
 }
 
+/**
+ * Derived glance on GET /api/features from the newest feature_history row.
+ * Not a fourth status and not a Feature column. Omit when the latest
+ * transition is not a setback. Never parse historyNote.
+ */
+export type FeatureAttentionState = "setback";
+
+export interface FeatureAttentionProjection {
+  state: FeatureAttentionState;
+}
+
+/** Kickback (to_stage earlier) or Review-fail (same stage, needs_review → ready). */
+export function isFeatureHistorySetback(
+  fromStage: string | null | undefined,
+  toStage: string | null | undefined,
+  fromStatus: string | null | undefined,
+  toStatus: string | null | undefined,
+): boolean {
+  const fromIdx = fromStage ? FEATURE_STAGES.indexOf(fromStage as FeatureStage) : -1;
+  const toIdx = toStage ? FEATURE_STAGES.indexOf(toStage as FeatureStage) : -1;
+  if (fromIdx >= 0 && toIdx >= 0 && toIdx < fromIdx) return true;
+  return (
+    Boolean(fromStage) &&
+    fromStage === toStage &&
+    fromStatus === "needs_review" &&
+    toStatus === "ready"
+  );
+}
+
 export interface FeaturePipelineStage {
   stage: FeatureStage;
   /** Build-v1 analog this room is modeled on. */
