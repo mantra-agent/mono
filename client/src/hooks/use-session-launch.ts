@@ -33,8 +33,9 @@ export interface SessionLaunch {
   errorTitle?: string;
   /**
    * Open the Focus session surface after create. Default true.
-   * Set false when the host already surfaces the session in place
-   * (e.g. Features under-row block) so mobile does not leave the page.
+   * Features passes `!isMobile`: desktop opens Focus; mobile keeps the
+   * under-row session strip so launch does not full-screen leave the page.
+   * Fast Forward host auto-walks keep false so the sequencer does not thrash Focus.
    */
   openFocus?: boolean;
 }

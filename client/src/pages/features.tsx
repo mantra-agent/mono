@@ -2,7 +2,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useRoute } from "wouter";
 import {
-  Activity,
   Archive,
   Check,
   ChevronRight,
@@ -29,6 +28,10 @@ import {
   Wrench,
   AlertTriangle,
 } from "lucide-react";
+import type { JSONContent } from "@tiptap/core";
+import { RichTextEditor } from "@/components/rich-text-editor";
+import { markdownToTiptap, normalizeTiptapDoc, tiptapToMarkdown } from "@shared/markdown-tiptap";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -51,7 +54,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertDialog,
@@ -97,7 +99,6 @@ import { notifyFeatureFastForwardChanged } from "@/components/feature-fast-forwa
 import {
   FEATURE_PIPELINE,
   FEATURE_STAGES,
-  FEATURE_STATUSES,
   composeFeatureDiscussMessage,
   composeFeatureLaunchMessage,
   featureAllowsFastForward,
@@ -112,7 +113,6 @@ import type { ChatSession, ChildSessionBlockMeta } from "@shared/models/chat";
 import { isDurablyActiveSession } from "@shared/models/chat";
 
 const stages = FEATURE_STAGES;
-const statuses = FEATURE_STATUSES;
 type FeatureAvailabilityState = "on_stage" | "waiting" | "unknown";
 type Feature = {
   id: string;
@@ -157,9 +157,30 @@ type FeatureHistoryRow = {
   created_at: string;
 };
 
-/** Same chrome as expanded Project summary — bordered card frame, capped height. */
-const FEATURE_DESCRIPTION_FRAME_CLASS =
-  "max-h-40 overflow-y-auto rounded-md border border-border/30 bg-card/40 p-2";
+/**
+ * Feature description frame — max 5 body lines (text-xs × leading-relaxed), then scroll.
+ * Shared by read (ReferenceText) and edit (RichTextEditor) so highlight does not change size or drop MD.
+ */
+const FEATURE_DESCRIPTION_MAX_LINES_CLASS = "max-h-[calc(1.25rem*5)]";
+const FEATURE_DESCRIPTION_FRAME_CLASS = cn(
+  FEATURE_DESCRIPTION_MAX_LINES_CLASS,
+  "overflow-y-auto rounded-md border border-border/30 bg-card/40 p-2 text-xs leading-relaxed",
+);
+const FEATURE_DESCRIPTION_PROSE_CLASS =
+  "prose prose-sm dark:prose-invert max-w-none text-xs leading-relaxed text-muted-foreground " +
+  "prose-p:my-1 prose-p:first:mt-0 prose-p:last:mb-0 prose-headings:text-xs prose-headings:font-semibold " +
+  "prose-li:my-0 prose-ul:my-1 prose-ol:my-1 prose-a:text-cta " +
+  "[&_.ProseMirror]:min-h-0 [&_.ProseMirror]:text-xs [&_.ProseMirror]:leading-relaxed " +
+  "[&_.ProseMirror]:text-muted-foreground [&_.ProseMirror_p]:my-1 [&_.ProseMirror_p:first-child]:mt-0 " +
+  "[&_.ProseMirror_p:last-child]:mb-0";
+
+function featureDescriptionDoc(markdown: string | null | undefined): JSONContent {
+  const source = markdown?.trim() ? markdown : "";
+  if (!source) {
+    return { type: "doc", content: [{ type: "paragraph" }] };
+  }
+  return (normalizeTiptapDoc(markdownToTiptap(source)) ?? markdownToTiptap(source)) as JSONContent;
+}
 
 const STATUS_LABELS: Record<FeatureStatus, string> = {
   ready: "Ready",
@@ -570,11 +591,22 @@ const FeatureRow = memo(function FeatureRow({
 }) {
   const { toast } = useToast();
   const launch = useSessionLaunch();
-  const [editingOwner, setEditingOwner] = useState(false);
+  const isMobile = useIsMobile();
+  /** Desktop opens Focus; mobile stays on Features (under-row session strip). */
+  const launchOpenFocus = !isMobile;
   const [editingSpec, setEditingSpec] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
+  const [descriptionDoc, setDescriptionDoc] = useState<JSONContent>(() =>
+    featureDescriptionDoc(feature.description),
+  );
+  const descriptionDraftRef = useRef((feature.description ?? "").trimEnd());
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(feature.summary);
+  useEffect(() => {
+    if (editingDescription) return;
+    descriptionDraftRef.current = (feature.description ?? "").trimEnd();
+    setDescriptionDoc(featureDescriptionDoc(feature.description));
+  }, [editingDescription, feature.description, feature.id]);
   /** Expand open — history fetches only when true (lazy). */
   const [rowExpanded, setRowExpanded] = useState(deepLinkOpen);
   /** Optimistic link after a row launch, before discovery/artifact indexing catches up. */
@@ -867,8 +899,8 @@ const FeatureRow = memo(function FeatureRow({
         message: composeFeatureLaunchMessage(featureLaunchContext, job),
         clientTurnSuffix: pendingKey,
         errorTitle: `Could not start ${contract.actionLabel.toLowerCase()} session`,
-        // Stay on Features; session mounts under the row (mobile Focus would leave).
-        openFocus: false,
+        // Desktop focuses the new session; mobile keeps the Features under-row strip.
+        openFocus: launchOpenFocus,
       },
       {
         onSuccess: onLaunchSuccess,
@@ -892,8 +924,8 @@ const FeatureRow = memo(function FeatureRow({
         message: composeFeatureDiscussMessage(featureLaunchContext),
         clientTurnSuffix: discussPendingKey,
         errorTitle: "Could not start discussion",
-        // Stay on Features; session mounts under the row (mobile Focus would leave).
-        openFocus: false,
+        // Desktop focuses the new session; mobile keeps the Features under-row strip.
+        openFocus: launchOpenFocus,
       },
       { onSuccess: onLaunchSuccess },
     );
@@ -957,15 +989,14 @@ const FeatureRow = memo(function FeatureRow({
   const showFastForward = featureAllowsFastForward(feature.stage);
   const nextJobGated =
     resolveFeaturePipelineJob(feature.status) === "produce" && playIsGated(feature.availability);
-  // Same Sparkles badge grammar as AI Review — mode control, not a second CTA fill.
+  // Filled CTA control — whole button is CTA blue; no Sparkles badge (AI Review keeps sparkle).
   const fastForwardControl = showFastForward ? (
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
           type="button"
-          variant="ghost"
           size="icon"
-          className="relative h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="h-5 min-h-5 w-5 min-w-5 shrink-0 rounded bg-cta text-cta-foreground hover:bg-cta/90 disabled:opacity-40 [&_svg]:size-3"
           disabled={launch.isPending || nextJobGated}
           aria-label={`Fast Forward ${feature.summary}`}
           onClick={(event) => {
@@ -974,13 +1005,7 @@ const FeatureRow = memo(function FeatureRow({
           }}
           data-testid={`button-feature-fast-forward-${feature.id}`}
         >
-          <span className="relative inline-flex h-3 w-3 items-center justify-center">
-            <FastForward className="h-3 w-3 fill-current" />
-            <Sparkles
-              className="pointer-events-none absolute -right-px -top-px !h-1.5 !w-1.5 text-cta"
-              strokeWidth={2.5}
-            />
-          </span>
+          <FastForward className="h-3 w-3 fill-current" />
         </Button>
       </TooltipTrigger>
       <TooltipContent side="top">Fast Forward</TooltipContent>
@@ -1390,7 +1415,7 @@ const FeatureRow = memo(function FeatureRow({
                 }}
                 data-testid={`button-feature-menu-fast-forward-${feature.id}`}
               >
-                <FastForward className="mr-2 h-3.5 w-3.5 fill-current" />
+                <FastForward className="mr-2 h-3.5 w-3.5 fill-current text-cta" />
                 Fast Forward
               </DropdownMenuItem>
             )}
@@ -1409,6 +1434,54 @@ const FeatureRow = memo(function FeatureRow({
               )}
               Discuss
             </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger data-testid={`menu-feature-owner-${feature.id}`}>
+                <User className="mr-2 h-3.5 w-3.5" />
+                Owner
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-56 p-2" onClick={(event) => event.stopPropagation()}>
+                <ReferencePicker
+                  types={["person"]}
+                  mode="single"
+                  variant="compact"
+                  dense
+                  placeholder="Owner"
+                  value={ownerValue}
+                  onChange={(next) => {
+                    const personId = next[0]?.id;
+                    if (!personId || personId === feature.owner_person_id) return;
+                    update.mutate({ ownerPersonId: personId });
+                  }}
+                  testId={`picker-feature-owner-${feature.id}`}
+                />
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger data-testid={`menu-feature-product-${feature.id}`}>
+                <Package className="mr-2 h-3.5 w-3.5" />
+                Product
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-44">
+                <DropdownMenuRadioGroup
+                  value={String(feature.product_id)}
+                  onValueChange={(productId) => {
+                    const nextId = Number(productId);
+                    if (!Number.isFinite(nextId) || nextId === feature.product_id) return;
+                    update.mutate({ productId: nextId });
+                  }}
+                >
+                  {products.map((product) => (
+                    <DropdownMenuRadioItem
+                      key={product.id}
+                      value={String(product.id)}
+                      data-testid={`menu-feature-product-${product.id}-${feature.id}`}
+                    >
+                      {product.name}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger data-testid={`menu-feature-stage-${feature.id}`}>
                 Stage
@@ -1469,26 +1542,51 @@ const FeatureRow = memo(function FeatureRow({
             data-testid={`feature-description-${feature.id}`}
           >
             {editingDescription ? (
-              <Textarea
-                autoFocus
-                defaultValue={feature.description ?? ""}
-                placeholder="Add a description…"
-                className="min-h-16 resize-none border-0 bg-transparent p-0 text-xs leading-relaxed shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-                onBlur={(event) => {
-                  const next = event.target.value.trim();
-                  if (next === (feature.description ?? "").trim()) {
-                    setEditingDescription(false);
-                    return;
-                  }
-                  update.mutate({ description: next }, { onSettled: () => setEditingDescription(false) });
-                }}
-                data-testid={`textarea-feature-description-${feature.id}`}
-              />
+              <div className={FEATURE_DESCRIPTION_PROSE_CLASS}>
+                <RichTextEditor
+                  value={descriptionDoc}
+                  plainTextFallback={feature.description ?? ""}
+                  placeholder="Add a description…"
+                  className="h-auto min-h-0 border-0 bg-transparent shadow-none"
+                  contentClassName={cn(
+                    FEATURE_DESCRIPTION_MAX_LINES_CLASS,
+                    FEATURE_DESCRIPTION_PROSE_CLASS,
+                    // Defeat Library editor chrome (px-10 py-4, min-h-[45vh]) without forking RichTextEditor.
+                    "!min-h-0 border-0 bg-transparent !p-0 !px-0 !py-0 shadow-none",
+                    "[&_.ProseMirror]:!min-h-0 [&_.ProseMirror]:!px-0 [&_.ProseMirror]:!py-0",
+                  )}
+                  onChange={(json) => {
+                    setDescriptionDoc(json);
+                    descriptionDraftRef.current = tiptapToMarkdown(json).trimEnd();
+                  }}
+                  onFocusChange={(focused) => {
+                    if (focused) return;
+                    const next = descriptionDraftRef.current.trim();
+                    const prev = (feature.description ?? "").trim();
+                    if (next === prev) {
+                      setEditingDescription(false);
+                      return;
+                    }
+                    update.mutate(
+                      { description: next },
+                      { onSettled: () => setEditingDescription(false) },
+                    );
+                  }}
+                  data-testid={`textarea-feature-description-${feature.id}`}
+                />
+              </div>
             ) : feature.description?.trim() ? (
               <button
                 type="button"
-                className="block w-full text-left text-xs leading-relaxed text-muted-foreground hover:text-foreground"
-                onClick={() => setEditingDescription(true)}
+                className={cn(
+                  "block w-full text-left hover:text-foreground",
+                  FEATURE_DESCRIPTION_PROSE_CLASS,
+                )}
+                onClick={() => {
+                  descriptionDraftRef.current = (feature.description ?? "").trimEnd();
+                  setDescriptionDoc(featureDescriptionDoc(feature.description));
+                  setEditingDescription(true);
+                }}
                 data-testid={`button-edit-feature-description-${feature.id}`}
               >
                 <ReferenceText content={feature.description} />
@@ -1496,8 +1594,12 @@ const FeatureRow = memo(function FeatureRow({
             ) : (
               <button
                 type="button"
-                className="text-xs text-muted-foreground/50 hover:text-muted-foreground"
-                onClick={() => setEditingDescription(true)}
+                className="text-xs leading-relaxed text-muted-foreground/50 hover:text-muted-foreground"
+                onClick={() => {
+                  descriptionDraftRef.current = "";
+                  setDescriptionDoc(featureDescriptionDoc(""));
+                  setEditingDescription(true);
+                }}
                 data-testid={`button-add-feature-description-${feature.id}`}
               >
                 Add a description…
@@ -1505,108 +1607,7 @@ const FeatureRow = memo(function FeatureRow({
             )}
           </div>
 
-          <ProfileTreeRow
-            label="Product"
-            icon={<Package className="h-3.5 w-3.5" />}
-            hasValue
-            showEmpty
-            mobileLayout="inline"
-            testId={`feature-product-${feature.id}`}
-          >
-            <Select
-              value={String(feature.product_id)}
-              onValueChange={(productId) => update.mutate({ productId: Number(productId) })}
-              disabled={update.isPending}
-            >
-              <SelectTrigger className="h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0" data-testid={`select-feature-product-${feature.id}`}>
-                <SelectValue placeholder="Product" />
-              </SelectTrigger>
-              <SelectContent>
-                {products.map((product) => (
-                  <SelectItem key={product.id} value={String(product.id)}>
-                    {product.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </ProfileTreeRow>
-
-          <ProfileTreeRow
-            label="Status"
-            icon={<Activity className="h-3.5 w-3.5" />}
-            hasValue
-            showEmpty
-            mobileLayout="inline"
-            testId={`feature-status-${feature.id}`}
-          >
-            <Select
-              value={feature.status}
-              onValueChange={(status) =>
-                update.mutate({
-                  status,
-                  historyNote: `Manual status change ${STATUS_LABELS[feature.status]} → ${STATUS_LABELS[status as FeatureStatus]}`,
-                  historySource: "manual",
-                })
-              }
-              disabled={update.isPending}
-            >
-              <SelectTrigger className="h-7 w-auto max-w-full border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0" data-testid={`select-feature-status-${feature.id}`}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {statuses.map((status) => (
-                  <SelectItem key={status} value={status}>
-                    {STATUS_LABELS[status]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </ProfileTreeRow>
-
-          <ProfileTreeRow
-            label="Owner"
-            icon={<User className="h-3.5 w-3.5" />}
-            hasValue={Boolean(feature.owner_person_id) || editingOwner}
-            showEmpty
-            mobileLayout="inline"
-            testId={`feature-owner-${feature.id}`}
-          >
-            {editingOwner || !feature.owner_person_id ? (
-              <ReferencePicker
-                types={["person"]}
-                mode="single"
-                variant="compact"
-                dense
-                placeholder="Owner"
-                value={ownerValue}
-                onChange={(next) => {
-                  const personId = next[0]?.id;
-                  if (!personId || personId === feature.owner_person_id) {
-                    setEditingOwner(false);
-                    return;
-                  }
-                  update.mutate(
-                    { ownerPersonId: personId },
-                    { onSettled: () => setEditingOwner(false) },
-                  );
-                }}
-                testId={`picker-feature-owner-${feature.id}`}
-              />
-            ) : (
-              <button
-                type="button"
-                className="max-w-full truncate text-right"
-                onClick={() => setEditingOwner(true)}
-                data-testid={`button-edit-feature-owner-${feature.id}`}
-              >
-                <span className="pointer-events-none">
-                  <InlineReferenceText text={`@person:${feature.owner_person_id}`} />
-                </span>
-              </button>
-            )}
-          </ProfileTreeRow>
-
-          {/* Spec is one field row like Product/Status/Owner; page body expands under the row. */}
+          {/* Spec stays a field row; Owner/Product live in the row … menu; Status is chrome. */}
           <ProfileTreeRow
             label="Spec"
             icon={<FileText className="h-3.5 w-3.5" />}
@@ -1661,36 +1662,51 @@ const FeatureRow = memo(function FeatureRow({
             )}
           </ProfileTreeRow>
 
-          <div className="pt-2" data-testid={`feature-history-${feature.id}`}>
-            <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-              <History className="h-3 w-3" />
-              History
-            </div>
-            {historyRows.length === 0 ? (
-              <p className="px-1 text-xs text-muted-foreground/50">No stage or status changes yet.</p>
-            ) : (
-              <ul className="max-h-48 space-y-1.5 overflow-y-auto px-1">
-                {historyRows.map((row) => (
-                  <li
-                    key={row.id}
-                    className="rounded-md border border-border/20 bg-muted/20 px-2 py-1.5"
-                    data-testid={`feature-history-row-${row.id}`}
-                  >
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-xs font-medium text-foreground">
-                        {formatHistoryTransition(row)}
-                      </span>
-                      <span className="shrink-0 text-[10px] text-muted-foreground/70">
-                        {formatHistoryWhen(row.created_at)}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                      {row.note}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
+          <div className="pt-1" data-testid={`feature-history-${feature.id}`}>
+            <ProfileTreeRow
+              label="History"
+              icon={<History className="h-3.5 w-3.5" />}
+              hasValue={historyRows.length > 0}
+              showEmpty
+              mobileLayout="stacked"
+              defaultOpen={false}
+              testId={`feature-history-header-${feature.id}`}
+              expandedContent={
+                historyRows.length === 0 ? (
+                  <p className="text-xs text-muted-foreground/50">No stage or status changes yet.</p>
+                ) : (
+                  <ul className="max-h-48 space-y-1.5 overflow-y-auto">
+                    {historyRows.map((row) => (
+                      <li
+                        key={row.id}
+                        className="rounded-md border border-border/20 bg-muted/20 px-2 py-1.5"
+                        data-testid={`feature-history-row-${row.id}`}
+                      >
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-xs font-medium text-foreground">
+                            {formatHistoryTransition(row)}
+                          </span>
+                          <span className="shrink-0 text-xs text-muted-foreground/70">
+                            {formatHistoryWhen(row.created_at)}
+                          </span>
+                        </div>
+                        {row.note?.trim() ? (
+                          <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                            <ReferenceText content={row.note} />
+                          </div>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )
+              }
+            >
+              <span className="text-xs text-muted-foreground">
+                {historyRows.length === 0
+                  ? "None yet"
+                  : `${historyRows.length} change${historyRows.length === 1 ? "" : "s"}`}
+              </span>
+            </ProfileTreeRow>
           </div>
         </div>
       ) : null}
