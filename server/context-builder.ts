@@ -2134,10 +2134,11 @@ async function resolveDecisionProtocol(): Promise<string> {
     "",
     "This governs every persona and every user. It is not a personal Rule.",
     "",
-    "- At a genuine fork — where the choice is consequential and a wrong pick is expensive or hard to reverse — use the `question` tool to ask, never prose buried in a reply. A question asked as narration is easy to miss and produces no durable, provenance-linked Decision.",
-    "- Principle-first: before asking, load the relevant Principles. If they yield one clear answer, do not ask — take the action and record a closed Decision yourself via the judgment path (ownerPersonRole: \"self\", governing principle revisions, reasoning).",
+    "- At a genuine fork — where the choice is consequential and a wrong pick is expensive or hard to reverse — use the `question` tool to ask, never prose buried in a reply. A question asked as narration is easy to miss.",
+    "- Principle-first: before asking, load the relevant Principles. If they yield one clear answer, do not ask — take the action.",
     "- Ask only when the answer cannot be inferred from available context and the fork is real. Do not use the tool for permission-seeking, reassurance, or filler.",
     "- Act without asking when the right next action is clear and reversible. Bias toward action inside the reversible envelope; reserve the `question` tool for the genuine, costly forks.",
+    "- Persist a Decision only when the USER decided something consequential that is part of a broad pattern worth saving. Question answers, reversible local forks, UI nits, and smoke checks are not Decisions. Do not call record_judgment by default.",
     "- When you do ask, give discrete bounded options in plain language, and include a preliminary recommendation with confidence when you have a take.",
   ].join("\n");
 }

@@ -413,7 +413,7 @@ export function validateQuestionResponse(
   // Other is always admitted; otherText validity is enforced by normalizeQuestionResponse.
   // Principle revisions may come from the prompt shortlist. The widget no longer
   // exposes a picker; recommended or already-persisted ids still pass through.
-  // Existence is enforced by recordJudgment when the answer is accepted.
+  // Principle ids may be persisted on the answer; they do not mint a Decision.
   // Reasoning is optional on the selected answer; do not strip a typed note
   // because the agent omitted allowResponseReasoning.
   const selectionCount = response.selectedOptionIds.length + (response.otherText ? 1 : 0);

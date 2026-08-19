@@ -53,7 +53,6 @@ import type {
 } from "@shared/models/chat";
 import type { QuestionPrompt } from "@shared/question-prompt";
 import type { ContextPressureSnapshot } from "@shared/streaming-types";
-import { decisionsStorage } from "./decisions-storage";
 import { filePrincipleStorage } from "./file-storage/principles";
 import {
   deleteConversations,
@@ -2945,38 +2944,13 @@ export const chatFileStorage: IChatFileStorage = {
             .map((principleId) => principleId ? currentRevisionByPrincipleId.get(principleId) : undefined)
             .filter((revisionId): revisionId is string => Boolean(revisionId)),
         )];
-        const normalizedQuestionResponse = {
+        message.questionResponse = {
           ...questionResponse,
           ...(currentPrincipleRevisionIds.length > 0
             ? { selectedPrincipleRevisionIds: currentPrincipleRevisionIds }
             : { selectedPrincipleRevisionIds: undefined }),
         };
-        const selectedLabels = questionResponse.selectedOptionIds
-          .map((id) => questionPrompt.options.find((option) => option.id === id)?.label)
-          .filter((label): label is string => Boolean(label));
-        const judgment = await decisionsStorage.recordJudgment({
-          title: questionPrompt.question,
-          description: [...selectedLabels, questionResponse.otherText].filter(Boolean).join("; "),
-          answerPayload: {
-            selectedOptionIds: questionResponse.selectedOptionIds,
-            selectedLabels,
-            ...(questionResponse.otherText ? { otherText: questionResponse.otherText } : {}),
-            principleRevisionIds: currentPrincipleRevisionIds,
-          },
-          reasoning: questionResponse.reasoning,
-          sourceSessionId: sessionId,
-          sourceToolCallId: questionResponse.questionToolCallId,
-          ownerPersonRole: "partner",
-          principleRevisionIds: currentPrincipleRevisionIds,
-          triggeredByAddress: `@question:${sessionId}~${questionResponse.questionToolCallId}`,
-          status: "closed",
-          resolvedAt: new Date(now),
-        });
-        decisionId = judgment.decision.id;
-        message.questionResponse = {
-          ...normalizedQuestionResponse,
-          decisionId,
-        };
+        decisionId = questionResponse.decisionId;
       }
       data.messages.push(message);
       data.updatedAt = now;
