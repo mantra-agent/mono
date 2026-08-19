@@ -101,6 +101,14 @@ function isGoalItem(item: SimpleFeedItem): boolean {
   return item.payload?.kind === "goal" || item.sourceRefs?.some(ref => ref.type === "goal") === true;
 }
 
+function isWorkItem(item: SimpleFeedItem): boolean {
+  const kind = item.payload?.kind;
+  return kind === "task" || kind === "milestone" || kind === "project"
+    || item.widgetType === "priority_task"
+    || item.widgetType === "project"
+    || item.sourceRefs?.some(ref => ref.type === "task" || ref.type === "milestone" || ref.type === "project") === true;
+}
+
 function sortSectionItems(a: SimpleFeedItem, b: SimpleFeedItem, timezone: string): number {
   if (a.section === "inbox" && b.section === "inbox") {
     return inboxAddedMs(b) - inboxAddedMs(a) || (a.priority ?? 100) - (b.priority ?? 100);
@@ -112,6 +120,12 @@ function sortSectionItems(a: SimpleFeedItem, b: SimpleFeedItem, timezone: string
   const aIsGoal = isGoalItem(a);
   const bIsGoal = isGoalItem(b);
   if (aIsGoal !== bIsGoal) return aIsGoal ? -1 : 1;
+
+  // After 18:00, Due Today merges into NOW. Keep work objects below the day's
+  // clock so overdue dates cannot re-bury meetings.
+  const aIsWork = isWorkItem(a);
+  const bIsWork = isWorkItem(b);
+  if (aIsWork !== bIsWork) return aIsWork ? 1 : -1;
 
   // Date-level sort first — items on different dates sort chronologically
   const aDate = (a.actionTime ?? a.anchorTime ?? "").slice(0, 10);
