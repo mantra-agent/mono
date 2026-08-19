@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -12,6 +12,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DollarSign,
   Zap,
@@ -20,6 +21,7 @@ import {
   TrendingUp,
   ChevronDown,
   SlidersHorizontal,
+  MoreHorizontal,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import {
@@ -34,12 +36,12 @@ import {
 import { useTimezone } from "@/hooks/use-timezone";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useAuth } from "@/hooks/use-auth";
-import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_SESSION_ROW_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { cn } from "@/lib/utils";
@@ -308,6 +310,103 @@ function isHourlyPeriod(period: string): boolean {
   return period === "1h" || period === "today";
 }
 
+const HIERARCHY_COLUMN_IDS = ["calls", "tokens", "pct", "cost"] as const;
+type HierarchyColumnId = (typeof HIERARCHY_COLUMN_IDS)[number];
+const HIERARCHY_COLUMN_LABELS: Record<HierarchyColumnId, string> = {
+  calls: "Calls",
+  tokens: "Tokens",
+  pct: "%",
+  cost: "Cost",
+};
+const HIERARCHY_COLUMN_STORAGE_KEY = "mantra.cost.hierarchy-columns.v1";
+const HIERARCHY_NEST_CLASS = "ml-3 border-l border-border/50 pl-2 space-y-0";
+const HIERARCHY_GRID_CLASS: Record<string, string> = {
+  calls_tokens_pct_cost: "grid-cols-[minmax(0,1fr)_4rem_5rem_3rem_4.5rem]",
+  calls_tokens_pct: "grid-cols-[minmax(0,1fr)_4rem_5rem_3rem]",
+  calls_tokens_cost: "grid-cols-[minmax(0,1fr)_4rem_5rem_4.5rem]",
+  calls_pct_cost: "grid-cols-[minmax(0,1fr)_4rem_3rem_4.5rem]",
+  tokens_pct_cost: "grid-cols-[minmax(0,1fr)_5rem_3rem_4.5rem]",
+  calls_tokens: "grid-cols-[minmax(0,1fr)_4rem_5rem]",
+  calls_pct: "grid-cols-[minmax(0,1fr)_4rem_3rem]",
+  calls_cost: "grid-cols-[minmax(0,1fr)_4rem_4.5rem]",
+  tokens_pct: "grid-cols-[minmax(0,1fr)_5rem_3rem]",
+  tokens_cost: "grid-cols-[minmax(0,1fr)_5rem_4.5rem]",
+  pct_cost: "grid-cols-[minmax(0,1fr)_3rem_4.5rem]",
+  calls: "grid-cols-[minmax(0,1fr)_4rem]",
+  tokens: "grid-cols-[minmax(0,1fr)_5rem]",
+  pct: "grid-cols-[minmax(0,1fr)_3rem]",
+  cost: "grid-cols-[minmax(0,1fr)_4.5rem]",
+};
+
+function readHiddenHierarchyColumns(): Set<HierarchyColumnId> {
+  try {
+    const raw = window.localStorage.getItem(HIERARCHY_COLUMN_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(
+      parsed.filter((id): id is HierarchyColumnId =>
+        HIERARCHY_COLUMN_IDS.includes(id as HierarchyColumnId),
+      ),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function persistHiddenHierarchyColumns(hidden: Set<HierarchyColumnId>): void {
+  try {
+    window.localStorage.setItem(
+      HIERARCHY_COLUMN_STORAGE_KEY,
+      JSON.stringify([...hidden]),
+    );
+  } catch {
+    // Preference only — Cost stays usable if storage is blocked.
+  }
+}
+
+function TruncatedName({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className?: string;
+  children?: ReactNode;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [truncated, setTruncated] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setTruncated(el.scrollWidth > el.clientWidth + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [label]);
+
+  const text = (
+    <span ref={ref} className={cn("min-w-0 truncate", className)}>
+      {children ?? label}
+    </span>
+  );
+
+  if (!truncated) return text;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {text}
+      </TooltipTrigger>
+      <TooltipContent side="top" align="start">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function getColorForKey(key: string, index: number, groupBy: GroupBy): string {
   if (groupBy === "tier" && TIER_COLORS[key]) {
     return TIER_COLORS[key];
@@ -315,7 +414,15 @@ function getColorForKey(key: string, index: number, groupBy: GroupBy): string {
   return CHART_COLORS[index % CHART_COLORS.length];
 }
 
-function HierarchyBreakdown({ data, searchQuery }: { data?: HierarchyResponse; searchQuery: string }) {
+function HierarchyBreakdown({
+  data,
+  searchQuery,
+  hiddenColumns,
+}: {
+  data?: HierarchyResponse;
+  searchQuery: string;
+  hiddenColumns: Set<HierarchyColumnId>;
+}) {
   const [expandedTiers, setExpandedTiers] = useState<Set<string>>(new Set());
   const [expandedActivities, setExpandedActivities] = useState<Set<string>>(new Set());
   const [expandedPrompts, setExpandedPrompts] = useState<Set<string>>(new Set());
@@ -323,6 +430,12 @@ function HierarchyBreakdown({ data, searchQuery }: { data?: HierarchyResponse; s
   const [sortBy, setSortBy] = useState<HierarchySortField>("tokens");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const filtered = useMemo(() => filterHierarchyData(data, searchQuery), [data, searchQuery]);
+  const showCalls = !hiddenColumns.has("calls");
+  const showTokens = !hiddenColumns.has("tokens");
+  const showPct = !hiddenColumns.has("pct");
+  const showCost = !hiddenColumns.has("cost");
+  const visibleColumnKey = HIERARCHY_COLUMN_IDS.filter((id) => !hiddenColumns.has(id)).join("_");
+  const gridCols = HIERARCHY_GRID_CLASS[visibleColumnKey] ?? "grid-cols-[minmax(0,1fr)]";
 
   if (!filtered || filtered.hierarchy.length === 0) {
     return (
@@ -370,29 +483,24 @@ function HierarchyBreakdown({ data, searchQuery }: { data?: HierarchyResponse; s
     });
   }
 
-  const gridCols = "grid-cols-[1fr_4rem_5rem_3rem_4.5rem]";
-
   const HeaderRow = () => (
     <div className={`grid ${gridCols} gap-x-2 text-xs text-muted-foreground font-medium border-b pb-1.5 mb-1`}>
       <span>Name</span>
-      <button onClick={() => toggleSort("calls")} className="text-right cursor-pointer hover:text-foreground">Calls {sortIndicator("calls")}</button>
-      <button onClick={() => toggleSort("tokens")} className="text-right cursor-pointer hover:text-foreground">Tokens {sortIndicator("tokens")}</button>
-      <button onClick={() => toggleSort("pct")} className="text-right cursor-pointer hover:text-foreground">% {sortIndicator("pct")}</button>
-      <button onClick={() => toggleSort("cost")} className="text-right cursor-pointer hover:text-foreground">Cost {sortIndicator("cost")}</button>
+      {showCalls && <button onClick={() => toggleSort("calls")} className="text-right cursor-pointer hover:text-foreground">Calls {sortIndicator("calls")}</button>}
+      {showTokens && <button onClick={() => toggleSort("tokens")} className="text-right cursor-pointer hover:text-foreground">Tokens {sortIndicator("tokens")}</button>}
+      {showPct && <button onClick={() => toggleSort("pct")} className="text-right cursor-pointer hover:text-foreground">% {sortIndicator("pct")}</button>}
+      {showCost && <button onClick={() => toggleSort("cost")} className="text-right cursor-pointer hover:text-foreground">Cost {sortIndicator("cost")}</button>}
     </div>
   );
 
-  const DataCells = ({ calls, tokens, pct, cost, size = "sm" }: { calls: number; tokens: number; pct: string; cost: number; size?: "sm" | "xs" }) => {
-    const textClass = size === "sm" ? "text-xs" : "text-xs";
-    return (
-      <>
-        <span className={`text-right tabular-nums ${textClass}`}>{calls}</span>
-        <span className={`text-right tabular-nums ${textClass}`}>{formatTokens(tokens)}</span>
-        <span className={`text-right tabular-nums ${textClass} text-muted-foreground`}>{pct}%</span>
-        <span className={`text-right tabular-nums ${textClass} font-medium`}>{formatCost(cost)}</span>
-      </>
-    );
-  };
+  const DataCells = ({ calls, tokens, pct, cost }: { calls: number; tokens: number; pct: string; cost: number }) => (
+    <>
+      {showCalls && <span className="text-right tabular-nums text-xs">{calls}</span>}
+      {showTokens && <span className="text-right tabular-nums text-xs">{formatTokens(tokens)}</span>}
+      {showPct && <span className="text-right tabular-nums text-xs text-muted-foreground">{pct}</span>}
+      {showCost && <span className="text-right tabular-nums text-xs font-medium">{formatCost(cost)}</span>}
+    </>
+  );
 
   return (
     <div data-testid="hierarchy-breakdown">
@@ -411,13 +519,13 @@ function HierarchyBreakdown({ data, searchQuery }: { data?: HierarchyResponse; s
                 <div className="flex items-center gap-2 min-w-0">
                   {tierExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
                   <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: TIER_COLORS[tier.tier] || TIER_COLORS.unknown }} />
-                  <span className="text-sm font-semibold truncate">{tier.tierLabel}</span>
+                  <TruncatedName label={tier.tierLabel} className="text-xs font-medium" />
                 </div>
-                <DataCells calls={tier.calls} tokens={tierTokens} pct={tierPct} cost={tier.cost} />
+                <DataCells calls={tier.calls} tokens={tierTokens} pct={`${tierPct}%`} cost={tier.cost} />
               </button>
 
               {tierExpanded && (
-                <div className="ml-5 border-l border-border/50 pl-3 space-y-0.5">
+                <div className={HIERARCHY_NEST_CLASS}>
                   {sortItems(tier.activities, tier.cost, tierTokens).map((act) => {
                     const actKey = `${tier.tier}:${act.activity}`;
                     const actExpanded = expandedActivities.has(actKey);
@@ -431,13 +539,13 @@ function HierarchyBreakdown({ data, searchQuery }: { data?: HierarchyResponse; s
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             {actExpanded ? <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" /> : <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />}
-                            <span className="text-sm font-medium truncate">{act.activity}</span>
+                            <TruncatedName label={act.activity} className="text-xs font-medium" />
                           </div>
-                          <DataCells calls={act.calls} tokens={actTokens} pct={actPct} cost={act.cost} size="xs" />
+                          <DataCells calls={act.calls} tokens={actTokens} pct={`${actPct}%`} cost={act.cost} />
                         </button>
 
                         {actExpanded && (
-                          <div className="ml-5 border-l border-border/30 pl-3 space-y-0.5">
+                          <div className={HIERARCHY_NEST_CLASS}>
                             {sortItems(act.prompts, act.cost, actTokens).map((p) => {
                               const promptKey = `${actKey}:${p.prompt}`;
                               const promptExpanded = expandedPrompts.has(promptKey);
@@ -454,15 +562,16 @@ function HierarchyBreakdown({ data, searchQuery }: { data?: HierarchyResponse; s
                                       {hasSessions ? (
                                         promptExpanded ? <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" /> : <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
                                       ) : <span className="w-3 shrink-0" />}
-                                      <Badge variant="outline" className="text-xs font-normal truncate max-w-[180px]">
-                                        {p.prompt === act.activity ? `${p.prompt} (unlabeled)` : p.prompt}
-                                      </Badge>
+                                      <TruncatedName
+                                        label={p.prompt === act.activity ? `${p.prompt} (unlabeled)` : p.prompt}
+                                        className="text-xs font-normal"
+                                      />
                                     </div>
-                                    <DataCells calls={p.calls} tokens={promptTokens} pct={promptPct} cost={p.cost} size="xs" />
+                                    <DataCells calls={p.calls} tokens={promptTokens} pct={`${promptPct}%`} cost={p.cost} />
                                   </button>
 
                                   {promptExpanded && p.sessions && (
-                                    <div className="ml-5 border-l border-border/20 pl-3 space-y-0.5">
+                                    <div className={HIERARCHY_NEST_CLASS}>
                                       {sortItems(p.sessions, p.cost, promptTokens).map((s) => {
                                         const sTokens = s.inputTokens + s.outputTokens;
                                         return (
@@ -474,27 +583,24 @@ function HierarchyBreakdown({ data, searchQuery }: { data?: HierarchyResponse; s
                                               <div className="flex items-center gap-1.5 min-w-0">
                                                 {expandedSessions.has(`${promptKey}:${s.sessionKey}`) ? <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" /> : <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />}
                                                 {s.chatSessionId ? (
-                                                  <a href={`/session?c=${encodeURIComponent(s.chatSessionId)}`} onClick={(e) => e.stopPropagation()} className="text-xs text-muted-foreground hover:text-foreground truncate transition-colors" title={s.sessionTitle || s.sessionKey}>
-                                                    {s.sessionTitle || s.sessionKey}
+                                                  <a href={`/session?c=${encodeURIComponent(s.chatSessionId)}`} onClick={(e) => e.stopPropagation()} className="min-w-0 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                                                    <TruncatedName label={s.sessionTitle || s.sessionKey} />
                                                   </a>
                                                 ) : (
-                                                  <span className="text-xs text-muted-foreground truncate" title={s.sessionTitle || s.sessionKey}>
-                                                    {s.sessionTitle || s.sessionKey}
-                                                  </span>
+                                                  <TruncatedName label={s.sessionTitle || s.sessionKey} className="text-xs text-muted-foreground" />
                                                 )}
                                               </div>
-                                              <span className="text-right tabular-nums text-xs">{s.calls}</span>
-                                              <span className="text-right tabular-nums text-xs">{formatTokens(sTokens)}</span>
-                                              <span className="text-right tabular-nums text-xs text-muted-foreground">—</span>
-                                              <span className="text-right tabular-nums text-xs">{formatCost(s.cost)}</span>
+                                              <DataCells calls={s.calls} tokens={sTokens} pct="—" cost={s.cost} />
                                             </button>
                                             {expandedSessions.has(`${promptKey}:${s.sessionKey}`) && (
-                                              <div className="ml-5 border-l border-border/10 pl-3 space-y-0.5">
+                                              <div className={HIERARCHY_NEST_CLASS}>
                                                 {s.inferenceCalls.map((call) => {
+                                                  const callLabel = `#${call.id} · ${shortenModel(call.model)}`;
+                                                  const callFull = `${call.provider}/${call.model}`;
                                                   return (
                                                     <div key={call.id} className={`grid ${gridCols} gap-x-2 items-center py-0.5 px-1`}>
-                                                      <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground" title={`${call.provider}/${call.model}`}>
-                                                        <span className="truncate">#{call.id} · {shortenModel(call.model)}</span>
+                                                      <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                                                        <TruncatedName label={callFull}>{callLabel}</TruncatedName>
                                                         {call.captureId ? (
                                                           <ReferenceRenderer
                                                             refValue={createReferenceRef({ type: "inference_context", id: call.captureId, metadata: { label: "Context" } })}
@@ -503,10 +609,10 @@ function HierarchyBreakdown({ data, searchQuery }: { data?: HierarchyResponse; s
                                                           />
                                                         ) : <span className="shrink-0 text-muted-foreground/60">Context unavailable</span>}
                                                       </span>
-                                                      <span className="text-right tabular-nums text-xs">1</span>
-                                                      <span className="text-right tabular-nums text-xs" title="Provider input → output tokens">{formatTokens(call.inputTokens)}→{formatTokens(call.outputTokens)}</span>
-                                                      <span className="text-right tabular-nums text-xs text-muted-foreground">—</span>
-                                                      <span className="text-right tabular-nums text-xs">{formatCost(call.costTotal)}</span>
+                                                      {showCalls && <span className="text-right tabular-nums text-xs">1</span>}
+                                                      {showTokens && <span className="text-right tabular-nums text-xs">{formatTokens(call.inputTokens)}→{formatTokens(call.outputTokens)}</span>}
+                                                      {showPct && <span className="text-right tabular-nums text-xs text-muted-foreground">—</span>}
+                                                      {showCost && <span className="text-right tabular-nums text-xs">{formatCost(call.costTotal)}</span>}
                                                     </div>
                                                   );
                                                 })}
@@ -532,12 +638,14 @@ function HierarchyBreakdown({ data, searchQuery }: { data?: HierarchyResponse; s
         })}
       </div>
 
-      <div className={`grid ${gridCols} gap-x-2 items-center pt-3 mt-2 border-t border-border`}>
-        <span className="text-sm font-semibold">Total</span>
-        <span className="text-right tabular-nums text-xs font-semibold">{filtered.totals.calls}</span>
-        <span className="text-right tabular-nums text-xs font-semibold">{formatTokens(totalTokens)}</span>
-        <span className="text-right tabular-nums text-xs text-muted-foreground">100%</span>
-        <span className="text-right tabular-nums text-sm font-semibold">{formatCost(filtered.totals.cost)}</span>
+      <div className={`grid ${gridCols} gap-x-2 items-center pt-2 mt-1 border-t border-border`}>
+        <span className="text-xs font-medium">Total</span>
+        <DataCells
+          calls={filtered.totals.calls}
+          tokens={totalTokens}
+          pct="100%"
+          cost={filtered.totals.cost}
+        />
       </div>
     </div>
   );
@@ -554,6 +662,22 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
   const [chartMetric, setChartMetric] = useState<ChartMetric>("tokens");
   const [searchQuery, setSearchQuery] = useState("");
   const [routerId, setRouterId] = useState<CostRouterFilter>("all");
+  const [hiddenHierarchyColumns, setHiddenHierarchyColumns] = useState<Set<HierarchyColumnId>>(
+    () => readHiddenHierarchyColumns(),
+  );
+
+  useEffect(() => {
+    persistHiddenHierarchyColumns(hiddenHierarchyColumns);
+  }, [hiddenHierarchyColumns]);
+
+  const toggleHierarchyColumn = (id: HierarchyColumnId) => {
+    setHiddenHierarchyColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < HIERARCHY_COLUMN_IDS.length - 1) next.add(id);
+      return next;
+    });
+  };
 
   const { data: inferenceDebug } = useQuery<{ enabled: boolean }>({
     queryKey: ["/api/settings/inference-debug"],
@@ -678,7 +802,13 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
 
   const breakdownBody = (() => {
     if (groupBy === "hierarchy") {
-      return <HierarchyBreakdown data={hierarchyData} searchQuery={searchQuery} />;
+      return (
+        <HierarchyBreakdown
+          data={hierarchyData}
+          searchQuery={searchQuery}
+          hiddenColumns={hiddenHierarchyColumns}
+        />
+      );
     }
 
     if (groupBy === "prompt") {
@@ -894,66 +1024,64 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
             </DropdownMenu>
           </div>
 
-          <div className="space-y-1">
-            <ProfileTreeRow
-              label="Total Cost"
-              icon={<DollarSign className="h-3.5 w-3.5" />}
-              hasValue
-              showEmpty
-              mobileLayout="inline"
-              testId="row-total-cost"
-            >
-              <span data-testid="text-total-cost">
-                {summaryLoading ? "…" : formatCost(summary?.totalCost || 0)}
-                <span className="ml-2 text-xs text-muted-foreground">
-                  {reportsAllAccounts ? "All accounts" : "This account"}
-                  {routerId !== "all" ? (
-                    <span>
-                      {" · "}
-                      {routerId === "legacy"
-                        ? "Legacy"
-                        : (routersData?.routers.find((router) => router.id === routerId)?.name ?? "Router")}
+          <div className="space-y-0">
+            {[
+              {
+                testId: "row-total-cost",
+                valueTestId: "text-total-cost",
+                icon: <DollarSign className="h-3.5 w-3.5 shrink-0" />,
+                label: "Total Cost",
+                value: (
+                  <>
+                    {summaryLoading ? "…" : formatCost(summary?.totalCost || 0)}
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {reportsAllAccounts ? "All accounts" : "This account"}
+                      {routerId !== "all" ? (
+                        <span>
+                          {" · "}
+                          {routerId === "legacy"
+                            ? "Legacy"
+                            : (routersData?.routers.find((router) => router.id === routerId)?.name ?? "Router")}
+                        </span>
+                      ) : null}
                     </span>
-                  ) : null}
+                  </>
+                ),
+              },
+              {
+                testId: "row-total-calls",
+                valueTestId: "text-total-calls",
+                icon: <Hash className="h-3.5 w-3.5 shrink-0" />,
+                label: "API Calls",
+                value: summaryLoading ? "…" : (summary?.totalCalls || 0),
+              },
+              {
+                testId: "row-input-tokens",
+                valueTestId: "text-input-tokens",
+                icon: <Zap className="h-3.5 w-3.5 shrink-0" />,
+                label: "Input Tokens",
+                value: summaryLoading ? "…" : formatTokens(summary?.totalInputTokens || 0),
+              },
+              {
+                testId: "row-output-tokens",
+                valueTestId: "text-output-tokens",
+                icon: <TrendingUp className="h-3.5 w-3.5 shrink-0" />,
+                label: "Output Tokens",
+                value: summaryLoading ? "…" : formatTokens(summary?.totalOutputTokens || 0),
+              },
+            ].map((row) => (
+              <div
+                key={row.testId}
+                className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}
+                data-testid={row.testId}
+              >
+                {row.icon}
+                <span className="min-w-0 flex-1 truncate">{row.label}</span>
+                <span className="shrink-0 tabular-nums text-sm" data-testid={row.valueTestId}>
+                  {row.value}
                 </span>
-              </span>
-            </ProfileTreeRow>
-            <ProfileTreeRow
-              label="API Calls"
-              icon={<Hash className="h-3.5 w-3.5" />}
-              hasValue
-              showEmpty
-              mobileLayout="inline"
-              testId="row-total-calls"
-            >
-              <span data-testid="text-total-calls">
-                {summaryLoading ? "…" : (summary?.totalCalls || 0)}
-              </span>
-            </ProfileTreeRow>
-            <ProfileTreeRow
-              label="Input Tokens"
-              icon={<Zap className="h-3.5 w-3.5" />}
-              hasValue
-              showEmpty
-              mobileLayout="inline"
-              testId="row-input-tokens"
-            >
-              <span data-testid="text-input-tokens">
-                {summaryLoading ? "…" : formatTokens(summary?.totalInputTokens || 0)}
-              </span>
-            </ProfileTreeRow>
-            <ProfileTreeRow
-              label="Output Tokens"
-              icon={<TrendingUp className="h-3.5 w-3.5" />}
-              hasValue
-              showEmpty
-              mobileLayout="inline"
-              testId="row-output-tokens"
-            >
-              <span data-testid="text-output-tokens">
-                {summaryLoading ? "…" : formatTokens(summary?.totalOutputTokens || 0)}
-              </span>
-            </ProfileTreeRow>
+              </div>
+            ))}
           </div>
 
           <section data-testid="card-cost-chart" className="space-y-2 pt-2">
@@ -1014,7 +1142,37 @@ export default function CostPage({ embedded }: { embedded?: boolean }) {
           </section>
 
           <section data-testid="card-breakdown" className="space-y-2 pt-2">
-            <div className={HIERARCHY_SECTION_HEADER_CLASS}>{breakdownTitle}</div>
+            <div className={cn(HIERARCHY_SECTION_HEADER_CLASS, "justify-between pr-0")}>
+              <span className="min-w-0 truncate">{breakdownTitle}</span>
+              {groupBy === "hierarchy" ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+                      aria-label="Usage hierarchy columns"
+                      data-testid="button-hierarchy-columns"
+                    >
+                      <MoreHorizontal className="h-3.5 w-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    {HIERARCHY_COLUMN_IDS.map((id) => (
+                      <DropdownMenuCheckboxItem
+                        key={id}
+                        checked={!hiddenHierarchyColumns.has(id)}
+                        disabled={!hiddenHierarchyColumns.has(id) && hiddenHierarchyColumns.size === HIERARCHY_COLUMN_IDS.length - 1}
+                        onCheckedChange={() => toggleHierarchyColumn(id)}
+                        onSelect={(event) => event.preventDefault()}
+                        data-testid={`menu-hierarchy-column-${id}`}
+                      >
+                        {HIERARCHY_COLUMN_LABELS[id]}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+            </div>
             {breakdownBody}
           </section>
         </div>
