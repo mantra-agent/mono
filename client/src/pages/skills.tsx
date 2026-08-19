@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { PROFILE_DESCRIPTION_FRAME_CLASS } from "@/components/profile-description-style";
+import { MarkdownContent } from "@/components/chat-shared";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -68,7 +69,6 @@ import {
   Pin,
 
   ExternalLink,
-  History,
   MoreVertical,
   MoreHorizontal,
   Search,
@@ -122,6 +122,7 @@ function SkillDescriptionEditor({
   placeholder = "Add description",
   testId = "input-description",
   minHeightClass = "min-h-[2.75rem]",
+  markdown = false,
 }: {
   value: string;
   changed?: boolean;
@@ -129,7 +130,18 @@ function SkillDescriptionEditor({
   placeholder?: string;
   testId?: string;
   minHeightClass?: string;
+  markdown?: boolean;
 }) {
+  const [draft, setDraft] = useState(value);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+  const showMarkdownPreview = markdown && !editing;
+  const commitDraft = () => {
+    if (draft !== value) onChange(draft);
+    setEditing(false);
+  };
   return (
     <div className="group/editor grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-0 px-2 py-1.5">
       <div className={cn(PROFILE_DESCRIPTION_FRAME_CLASS, "min-w-0")}>
@@ -138,18 +150,52 @@ function SkillDescriptionEditor({
             <StatusDot kind="local" />
           </div>
         ) : null}
-        <Textarea
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={placeholder}
-          className={cn(
-            minHeightClass,
-            "w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
-            "text-[14px] leading-tight",
-            skillFieldValueClass(changed),
-          )}
-          data-testid={testId}
-        />
+        {showMarkdownPreview ? (
+          <button
+            type="button"
+            className={cn(
+              minHeightClass,
+              "w-full cursor-text rounded-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-ring",
+            )}
+            onClick={() => setEditing(true)}
+            data-testid={testId}
+          >
+            {value.trim() ? (
+              <div className={cn(
+                "prose prose-sm dark:prose-invert max-w-none break-words text-[14px] leading-tight",
+                skillFieldValueClass(changed),
+                "prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:overflow-x-auto",
+              )}>
+                <MarkdownContent content={value} compact />
+              </div>
+            ) : (
+              <span className="text-muted-foreground">{placeholder}</span>
+            )}
+          </button>
+        ) : (
+          <Textarea
+            value={markdown ? draft : value}
+            autoFocus={markdown}
+            onChange={(event) => {
+              if (markdown) setDraft(event.target.value);
+              else onChange(event.target.value);
+            }}
+            onFocus={() => {
+              if (markdown) setEditing(true);
+            }}
+            onBlur={() => {
+              if (markdown) commitDraft();
+            }}
+            placeholder={placeholder}
+            className={cn(
+              minHeightClass,
+              "w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
+              "text-[14px] leading-tight",
+              skillFieldValueClass(changed),
+            )}
+            data-testid={testId}
+          />
+        )}
       </div>
       <span className="h-6 w-6 shrink-0" aria-hidden="true" />
     </div>
@@ -532,13 +578,6 @@ function SkillTreeRow({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      {!expanded && skill.description.trim() ? (
-        <div className="px-2 pb-1">
-          <div className={cn("whitespace-pre-wrap text-[14px] leading-tight", skillFieldValueClass(skill.changedFields?.includes("description")))}>
-            {skill.description.trim()}
-          </div>
-        </div>
-      ) : null}
       {expanded && (
         <SkillEditor skill={skill} />
       )}
@@ -816,6 +855,7 @@ function RunStatusIcon({ status, passRate }: { status: string; passRate?: number
 }
 
 function RunHistorySection({ skillName }: { skillName: string }) {
+  const [open, setOpen] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
   const { data: runs, isLoading: runsLoading } = useQuery<SkillRun[]>({
@@ -825,7 +865,7 @@ function RunHistorySection({ skillName }: { skillName: string }) {
       if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       return res.json();
     },
-    enabled: !!skillName,
+    enabled: open && !!skillName,
   });
 
   const { data: scores, isLoading: scoresLoading } = useQuery<SkillScore[]>({
@@ -835,7 +875,7 @@ function RunHistorySection({ skillName }: { skillName: string }) {
       if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       return res.json();
     },
-    enabled: !!skillName && (!runs || runs.length === 0),
+    enabled: open && !!skillName && (!runs || runs.length === 0),
   });
 
   const isLoading = runsLoading || ((!runs || runs.length === 0) && scoresLoading);
@@ -870,12 +910,14 @@ function RunHistorySection({ skillName }: { skillName: string }) {
   const isEmpty = items.length === 0;
 
   return (
-    <div className="border-t border-border pt-3" data-testid="section-run-history">
-      <div className="flex items-center gap-1.5 mb-2 px-1">
-        <History className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-xs font-medium text-muted-foreground">Run History</span>
-      </div>
-
+    <ProfileDetailSection
+      title="Run History"
+      count={open ? items.length : undefined}
+      defaultOpen={false}
+      open={open}
+      onOpenChange={setOpen}
+      testId="section-run-history"
+    >
       {isLoading ? (
         <div className="space-y-2 px-1">
           {[1, 2, 3].map(i => <Skeleton key={i} className="h-8 w-full rounded" />)}
@@ -1064,7 +1106,7 @@ function RunHistorySection({ skillName }: { skillName: string }) {
           })}
         </div>
       )}
-    </div>
+    </ProfileDetailSection>
   );
 }
 
@@ -1243,6 +1285,7 @@ function SkillEditor({
         placeholder="Step-by-step workflow..."
         testId="input-process"
         minHeightClass="min-h-20"
+        markdown
       />
       <ProfileDetailSection
         title="Checklist"
