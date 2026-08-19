@@ -281,12 +281,26 @@ export function toolFailureFromError(err: unknown): ToolFailure | null {
 }
 
 /**
- * Classify a failed GitHub REST API response by HTTP status. PR create/merge/
- * delete calls fail on auth (401/403), rate or availability limits (408/429/5xx),
- * and validation or state conflicts (404/422 and other 4xx). Detail strings carry
- * only the status code, never response bodies, to avoid leaking tokens.
+ * Classify a failed GitHub REST API response by HTTP status (+ optional body).
+ * PR create/merge/delete fail on auth (401/403), rate or availability limits
+ * (408/429/5xx, and GitHub's rate-limit **403** bodies), and validation or state
+ * conflicts (404/422 and other 4xx). Detail strings carry only a status code or
+ * a stable rate-limit label — never response bodies — to avoid leaking tokens.
+ *
+ * GitHub primary and secondary rate limits often return HTTP 403 with a
+ * "rate limit exceeded" / "secondary rate limit" message rather than 429. Those
+ * are provider capacity (transient), not credential walls. Classifying them as
+ * permission first-hit quarantines the Agent run (`tool_failure_recovered`) and
+ * surfaces a false "Processing stopped" permission notice.
  */
-export function classifyGitHubApiStatus(status: number): ToolFailure | null {
+export function classifyGitHubApiStatus(status: number, bodyText?: string): ToolFailure | null {
+  const body = typeof bodyText === "string" ? bodyText : "";
+  if (
+    status === 403
+    && /rate limit|secondary rate|abuse detection|api rate limit/i.test(body)
+  ) {
+    return transientFailure("git_network", "github_api_403_rate_limit");
+  }
   if (status === 401 || status === 403) return permissionFailure("git_auth_denied", `github_api_${status}`);
   if (status === 408 || status === 429 || status >= 500) return transientFailure("git_network", `github_api_${status}`);
   if (status >= 400) return inputFailure("git_state_conflict", `github_api_${status}`);
