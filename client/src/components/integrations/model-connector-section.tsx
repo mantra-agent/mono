@@ -357,53 +357,28 @@ function ConnectorTierTree({
 }
 
 /**
- * Packageable per-provider model-mapping widget. Resolves a single connector
- * either by explicit `connectorId` (e.g. a specific connector inside a Router)
- * or by `provider` (the Integrations detail screen, one connector per provider),
- * then renders its semantic-tier → model mapping tree.
+ * Packageable per-connector model-mapping widget. Callers must pass the
+ * Router connector instance; leftover Integrations singleton lookup is gone.
  */
 export function ModelConnectorSection({
   provider,
-  connectorId,
-  connector: connectorProp,
+  connector,
   title = "Models",
   nested = false,
   flattenHeaders = false,
   invalidateQueryKeys,
 }: {
   provider?: ModelConnectorProvider;
-  connectorId?: number;
-  /** Prefer when the parent already loaded the connector (Routers pools are not on the legacy list). */
-  connector?: ModelConnectorDetail;
+  connector: ModelConnectorDetail;
   title?: string;
   nested?: boolean;
   flattenHeaders?: boolean;
   /** Extra React Query keys to invalidate after a successful tier mapping write. */
   invalidateQueryKeys?: ReadonlyArray<readonly unknown[]>;
 }) {
-  // Legacy global chain only — Integrations/Models. Router-scoped connectors must pass `connector`.
-  const { data } = useQuery<{ connectors: ModelConnectorDetail[] }>({
-    queryKey: ["/api/models/connectors"],
-    enabled: connectorProp == null,
-  });
   const { data: modelsData } = useQuery<{ providers: ModelProviderDetail[] }>({ queryKey: ["/api/models/available"] });
-  const connector = connectorProp
-    ?? (connectorId != null
-      ? data?.connectors?.find((item) => item.id === connectorId)
-      : data?.connectors?.find((item) => item.provider === provider));
-  const resolvedProvider = connector?.provider ?? provider;
+  const resolvedProvider = connector.provider ?? provider;
   const models = modelsData?.providers?.find((item) => item.id === resolvedProvider)?.models ?? [];
-  if (!connector) {
-    return (
-      <div className="min-w-0">
-        <IntegrationTreeSection label={title} initialOpen icon={<Bot className="h-3.5 w-3.5" />} variant={nested ? "item" : "section"}>
-          <ProfileTreeRow label="Status" icon={<XCircle className="h-3.5 w-3.5 text-muted-foreground" />} hasValue showEmpty>
-            <span className="text-muted-foreground">Not configured</span>
-          </ProfileTreeRow>
-        </IntegrationTreeSection>
-      </div>
-    );
-  }
   if (
     isOpenAIProvider(connector.provider)
     || connector.provider === "claude-cli"

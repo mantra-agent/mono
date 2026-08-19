@@ -106,7 +106,6 @@ import {
 } from "@/components/hierarchy-section-header";
 import { vaultTitleColor } from "@/lib/vault-title-color";
 import { IntegrationTreeSection } from "@/components/integrations/integration-tree-section";
-import { ProviderConnectorPackage } from "@/components/integrations/provider-connector-package";
 import { usePlaidLink } from "react-plaid-link";
 import { useLocation } from "wouter";
 import { useProductComposition } from "@/hooks/use-product-composition";
@@ -4689,15 +4688,6 @@ const INTEGRATION_DETAIL_SURFACES: Record<string, () => React.ReactNode> = {
       <PronunciationSection />
     </div>
   ),
-  anthropic: () => <ProviderConnectorPackage provider="anthropic" />,
-  openai: () => (
-    <div className="space-y-4">
-      <ProviderConnectorPackage provider="openai-subscription" />
-      <ProviderConnectorPackage provider="openai" />
-    </div>
-  ),
-  "claude-cli": () => <ProviderConnectorPackage provider="claude-cli" />,
-  grok: () => <ProviderConnectorPackage provider="grok-subscription" />,
   twitter: () => (
     <div className="space-y-4">
       <TwitterAccountsSection />

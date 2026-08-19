@@ -259,8 +259,6 @@ export const coreDefinition: CoreDefinition = {
       integration("core.integration.anthropic", "anthropic", "available", ["model"], {
         label: "Anthropic",
         iconKey: "Bot",
-        route: "anthropic",
-        detailSurface: "anthropic",
         statusFields: ["anthropic"],
         requiredPermissions: ["system:read"],
         readinessKind: "secret",
@@ -269,8 +267,6 @@ export const coreDefinition: CoreDefinition = {
       integration("core.integration.openai", "openai", "available", ["model", "embeddings"], {
         label: "OpenAI",
         iconKey: "Bot",
-        route: "openai",
-        detailSurface: "openai",
         statusFields: ["openai", "openaiSubscription"],
         requiredPermissions: ["system:read"],
         readinessKind: "secret",
@@ -279,8 +275,6 @@ export const coreDefinition: CoreDefinition = {
       integration("core.integration.claude-cli", "claude-cli", "available", ["model"], {
         label: "Claude Code CLI",
         iconKey: "Settings",
-        route: "claude-cli",
-        detailSurface: "claude-cli",
         statusFields: ["claudeCli"],
         requiredPermissions: ["system:read"],
         readinessKind: "secret",
@@ -289,8 +283,6 @@ export const coreDefinition: CoreDefinition = {
       integration("core.integration.grok", "grok", "available", ["model"], {
         label: "Grok",
         iconKey: "Bot",
-        route: "grok",
-        detailSurface: "grok",
         statusFields: ["grokSubscription"],
         requiredPermissions: ["system:read"],
       }),
