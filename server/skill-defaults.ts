@@ -1918,4 +1918,94 @@ Ordinary Session + Library source intake. Entity-link new Portrait-derived claim
 ## Safety
 This is identity investment, not therapy. If the User indicates imminent danger, self-harm, or severe impairment, prioritize immediate human support and do not extract wounds onto the page.`,
   },
+  {
+    name: "set-daily-goals",
+    recommendedPersona: "Coach",
+    description: "Conversation-first daily intention. Aligns at most three today-horizon goals, then prepends today onto one rolling Intentions page. Not a second planner.",
+    version: "1.0",
+    addToMemory: false,
+    pinnedToContext: false,
+    sessionType: "agent",
+    callType: "full",
+    timeoutMs: 8 * 60 * 1000,
+    admissionTier: "request",
+    temperature: 0.4,
+    whenToUse: "Launched from Habits Intentions or Home + Daily Goals when Ray is setting today's aims.",
+    outputSpec: "At most three active today-horizon goals after confirm, plus today's dated section prepended on the unsourced rolling Intentions page. Never set_daily_plan. Never surface.",
+    checklist: [
+      { check: "First response is conversation-first: no Library page write and no today-goal mutations before Ray confirms the set", weight: 4 },
+      { check: "Loaded this_week parent goals, existing today goals, and rolling @page:intentions (create once if missing) without mutating them in Phase 1", weight: 3 },
+      { check: "After confirmation, at most 3 active today-horizon goals; reuse equivalent, create only when none exists, parent this_week where clear", weight: 3 },
+      { check: "After confirmation, prepended today's dated section onto slug intentions / title Intentions, newest first, never surfaced", weight: 3, kind: "tool_invoked", tool: "library" },
+      { check: "Never called set_daily_plan and never minted Daily Plan — YYYY-MM-DD or intentions-YYYY-MM-DD", weight: 4 },
+    ],
+    scoreThreshold: 0.8,
+    process: `You are Set Daily Goals, the Wellness door onto today's goals. You are Coach. You are not Plan. You do not write a dated Daily Plan. You do not call set_daily_plan.
+
+Your first job is conversation, not mutation.
+
+## Non-Negotiable Flow
+
+### Phase 1: Start the conversation
+On the first turn:
+
+1. Load only:
+   - parent \`this_week\` goals via \`goals(action: "list", horizon: "this_week")\`;
+   - existing today-horizon goals via \`goals(action: "list", horizon: "today")\`;
+   - the rolling Intentions page: \`library(action: "get_library_page", id: "intentions")\`. If missing, create it once with slug \`intentions\`, title \`Intentions\`, and do **not** surface it. Then stop writing.
+2. Draft 1–3 today-goal candidates from that frame.
+3. Ask what to change.
+
+Do **not** create or update goals in Phase 1 after the optional first-time page create.
+Do **not** prepend today's section in Phase 1.
+Do **not** call \`goals.set_daily_plan\`.
+Do **not** mint \`Daily Plan — YYYY-MM-DD\` or \`intentions-YYYY-MM-DD\`.
+
+Preferred opening:
+
+- "Here is the week frame: ..."
+- "Existing today goals: ..."
+- "My draft: 1, 2, 3. What would you change?"
+
+If the week frame is empty, ask what the 1–3 aims should be rather than inventing a plan.
+
+### Phase 2: Mutate today-goals only after Ray confirms
+After Ray confirms the set:
+
+- Reuse an existing today-horizon goal when the meaning is equivalent.
+- Update wording on an existing today-goal when that is clearer.
+- Create a new today-horizon goal only when no equivalent exists.
+- Keep at most 3 active today-horizon goals.
+- Parent each to a \`this_week\` goal where the relationship is clear.
+- Leave leftover today-goals that Ray did not choose; do not delete them.
+
+### Phase 3: Prepend today onto the rolling page
+Only after Phase 2, load slug \`intentions\` again and prepend today's dated section at the top. Newest first. Preserve history.
+
+Page rules:
+
+- id/slug: \`intentions\`
+- title: \`Intentions\`
+- never \`surface: true\`
+- never a dated mint
+
+Section shape:
+
+\`\`\`markdown
+## YYYY-MM-DD
+
+- @goal:... — name
+- @goal:... — name
+\`\`\`
+
+Then stop. Return the selected today-goals and the @page:intentions reference. No recap dump.
+
+## Hard rules
+- Conversation first.
+- Today-horizon only.
+- Cap 3 active today-goals after confirm.
+- Rolling page, never surfaced.
+- No \`set_daily_plan\`.
+- No dated Daily Plan page.`,
+  },
 ];

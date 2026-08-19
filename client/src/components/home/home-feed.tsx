@@ -15,6 +15,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LibraryReminderPopover } from "@/components/library-reminder";
 import { ChevronRight, FileText, Loader2, MessageSquare, MoreHorizontal, X } from "lucide-react";
+import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
+import { useSessionLaunch } from "@/hooks/use-session-launch";
+import { useProductComposition } from "@/hooks/use-product-composition";
+import {
+  SET_DAILY_GOALS_PERSONA,
+  SET_DAILY_GOALS_TITLE,
+  composeSetDailyGoalsLaunchMessage,
+} from "@shared/set-daily-goals";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
@@ -64,6 +72,34 @@ function useHomeSectionCommit(section: string, open: boolean, itemCount: number)
   }, [open, section, itemCount]);
 }
 
+function DailyGoalsDoor() {
+  const launch = useSessionLaunch();
+  const composition = useProductComposition();
+  const wellnessActive = composition.data?.activeMods.some((mod) => mod.key === "wellness") ?? false;
+  if (!wellnessActive) return null;
+  return (
+    <button
+      type="button"
+      className={HIERARCHY_PRIMARY_ACTION_CLASS}
+      data-testid="button-daily-goals"
+      disabled={launch.isPending}
+      onClick={() => {
+        if (launch.isPending) return;
+        launch.mutate({
+          pendingKey: "home-daily-goals",
+          title: SET_DAILY_GOALS_TITLE,
+          personaName: SET_DAILY_GOALS_PERSONA,
+          message: composeSetDailyGoalsLaunchMessage(),
+          clientTurnSuffix: "home-daily-goals",
+          errorTitle: `Could not start ${SET_DAILY_GOALS_TITLE}`,
+        });
+      }}
+    >
+      + Daily Goals
+    </button>
+  );
+}
+
 export function SimpleFeedView({ feed }: { feed: SimpleFeed }) {
   const now = useMemo(() => new Date(feed.generatedAt), [feed.generatedAt]);
   const peopleInboxItems = useMemo(() => feed.sections.find(s => s.section === "inbox")?.items.filter(item => item.widgetType === "person") ?? [], [feed.sections]);
@@ -75,7 +111,11 @@ export function SimpleFeedView({ feed }: { feed: SimpleFeed }) {
   const feedSections = useMemo(() => feed.sections
     .filter(s => s.section !== "done" && s.section !== "inbox" && s.section !== "snoozed")
     .map(section => ({ ...section, items: section.items.filter(item => item.widgetType !== "person" && item.payload?.kind !== "news_signal" && item.payload?.kind !== "email_review") }))
-    .filter(section => section.items.length > 0 || section.planArtifact !== undefined), [feed.sections]);
+    .filter(section =>
+      section.items.length > 0
+      || section.planArtifact !== undefined
+      || section.section === "now"
+    ), [feed.sections]);
   const degradedMessage = useMemo(() => {
     if (!feed.degraded) return null;
     const errors = feed.errors?.filter(error => error.message.trim().length > 0) ?? [];
@@ -143,10 +183,13 @@ function SimpleSectionGroup({
   return (
     <section className="scroll-mt-6 [content-visibility:auto] [contain-intrinsic-size:auto_320px]">
       <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger className="flex items-center gap-1.5 w-full px-2 py-1 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md">
-          <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
-          {dynamicSectionLabel(sectionKey, now, timezone)}
-        </CollapsibleTrigger>
+        <div className="flex items-center gap-1.5 px-2 py-1">
+          <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md">
+            <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+            {dynamicSectionLabel(sectionKey, now, timezone)}
+          </CollapsibleTrigger>
+          {sectionKey === "now" && <DailyGoalsDoor />}
+        </div>
         <CollapsibleContent>
           <div className="mt-0">
             {hasPlanRow && planArtifact && (

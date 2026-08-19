@@ -4990,6 +4990,15 @@ export async function runSchemaBootstrap(
     await pool.query(
       `ALTER TABLE wellness_activities ADD COLUMN IF NOT EXISTS window_end INTEGER`,
     );
+    await pool.query(
+      `ALTER TABLE wellness_activities ADD COLUMN IF NOT EXISTS launch_kind TEXT`,
+    );
+    await pool.query(
+      `ALTER TABLE wellness_activities ADD COLUMN IF NOT EXISTS launch_target TEXT`,
+    );
+    await pool.query(
+      `ALTER TABLE wellness_activities ADD COLUMN IF NOT EXISTS completion_source TEXT`,
+    );
   });
 
   await heal("wellness_logs table", async () => {
@@ -5022,6 +5031,22 @@ export async function runSchemaBootstrap(
           a.interval_days,
           a.category,
         ],
+      );
+    }
+  });
+
+  await heal("wellness activity launch backfill (null-only)", async () => {
+    const { WELLNESS_LAUNCH_BACKFILL } = await import("../shared/wellness-activity-launch");
+    for (const stamp of WELLNESS_LAUNCH_BACKFILL) {
+      await pool.query(
+        `UPDATE wellness_activities
+         SET launch_kind = COALESCE(launch_kind, $1),
+             launch_target = COALESCE(launch_target, $2),
+             completion_source = COALESCE(completion_source, $3),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE name = ANY($4::text[])
+           AND (launch_kind IS NULL OR launch_target IS NULL OR completion_source IS NULL)`,
+        [stamp.launchKind, stamp.launchTarget, stamp.completionSource, stamp.names],
       );
     }
   });

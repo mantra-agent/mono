@@ -137,6 +137,8 @@ export interface GoalIndexEntry {
   periodMonth?: string | null;
   source?: string;
   completedAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 }
 
 export const createGoalSchema = z.object({

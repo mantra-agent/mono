@@ -33,6 +33,18 @@ import {
   getUiInteractionTargetHref,
   type UiInteractionTarget,
 } from "@shared/ui-interaction";
+import {
+  wellnessLaunchKind,
+  wellnessCompletionSource,
+  wellnessRefusesManualLog,
+} from "@shared/wellness-activity-launch";
+import { useSessionLaunch } from "@/hooks/use-session-launch";
+import {
+  SET_DAILY_GOALS_PERSONA,
+  SET_DAILY_GOALS_SKILL,
+  SET_DAILY_GOALS_TITLE,
+  composeSetDailyGoalsLaunchMessage,
+} from "@shared/set-daily-goals";
 
 function formatLocalDate(d: Date, timezone?: string): string {
   if (timezone) {
@@ -208,16 +220,8 @@ function GlobalCompletionCalendar({
   );
 }
 
-// Reflections and Gratitude own dedicated screens; only Learning stays embedded.
-// Journaling is a personal off-app practice — check circle logs like any other habit.
+// Learning stays embedded. Launch/completion live on the activity row.
 const EXPANDABLE_ACTIVITIES = new Set(["learning"]);
-
-/** Entry-owned activities: checkbox navigates to the dedicated screen; never toggles from Habits. */
-const JOURNAL_NAV_TARGETS: Record<string, UiInteractionTarget> = {
-  reflection: "navigation.reflections.open",
-  reflections: "navigation.reflections.open",
-  gratitude: "navigation.gratitude.open",
-};
 
 function HeatmapDayDialog({
   date,
@@ -308,7 +312,10 @@ function HeatmapDayDialog({
                     const pending =
                       (logMutation.isPending && logMutation.variables?.activityId === a.id) ||
                       (unlogMutation.isPending && unlogMutation.variables?.activityId === a.id);
-                    const journalNavTarget = JOURNAL_NAV_TARGETS[a.name.toLowerCase()];
+                    const launchKind = wellnessLaunchKind(a.launchKind);
+                    const screenTarget = launchKind === "screen" && a.launchTarget
+                      ? a.launchTarget as UiInteractionTarget
+                      : null;
                     return (
                       <label
                         key={a.id}
@@ -317,16 +324,16 @@ function HeatmapDayDialog({
                       >
                         <Checkbox
                           data-testid={`heatmap-check-${a.id}`}
-                          checked={checked}
-                          disabled={pending || !date}
+                          checked={checked || (wellnessCompletionSource(a.completionSource) === "today_goal_mutated" && a.doneToday)}
+                          disabled={pending || !date || wellnessRefusesManualLog(a)}
                           onCheckedChange={(v) => {
                             if (!date) return;
-                            if (journalNavTarget) {
-                              // Journal checks come only from a real entry on the dedicated screen.
+                            if (screenTarget) {
                               onClose();
-                              setLocation(getUiInteractionTargetHref(journalNavTarget));
+                              setLocation(getUiInteractionTargetHref(screenTarget));
                               return;
                             }
+                            if (wellnessRefusesManualLog(a)) return;
                             if (v) logMutation.mutate({ activityId: a.id, d: date });
                             else unlogMutation.mutate({ activityId: a.id, d: date });
                           }}
@@ -362,6 +369,9 @@ interface ActivityWithStatus {
   linkedMetricType: string | null;
   greatThreshold: number | null;
   goodThreshold: number | null;
+  launchKind?: string | null;
+  launchTarget?: string | null;
+  completionSource?: string | null;
   lastCompletedAt: string | null;
   tier: string | null;
   metricValue: number | null;
@@ -809,10 +819,15 @@ function ActivityRow({
   const { toast } = useToast();
   const tz = useCalendarTimezone();
   const [, setLocation] = useLocation();
+  const launch = useSessionLaunch();
   const activityKey = activity.name.toLowerCase();
   const isExpandable = EXPANDABLE_ACTIVITIES.has(activityKey);
-  const journalNavTarget = JOURNAL_NAV_TARGETS[activityKey];
-  const isJournalNav = Boolean(journalNavTarget);
+  const launchKind = wellnessLaunchKind(activity.launchKind);
+  const screenTarget = launchKind === "screen" && activity.launchTarget
+    ? activity.launchTarget as UiInteractionTarget
+    : null;
+  const skillTarget = launchKind === "skill" ? (activity.launchTarget || SET_DAILY_GOALS_SKILL) : null;
+  const refusesManualLog = wellnessRefusesManualLog(activity);
 
   const logMutation = useMutation({
     mutationFn: async (date?: string) => {
@@ -912,24 +927,39 @@ function ActivityRow({
             type="button"
             data-testid={`button-log-${activity.id}`}
             aria-label={
-              isJournalNav
+              screenTarget
                 ? `Open ${activity.name}`
-                : activity.doneToday
-                  ? `Unlog ${activity.name}`
-                  : `Log ${activity.name}`
+                : skillTarget
+                  ? `Set ${activity.name}`
+                  : activity.doneToday
+                    ? `Unlog ${activity.name}`
+                    : `Log ${activity.name}`
             }
             className={activity.doneToday
               ? "h-4 w-4 rounded-full border border-success bg-transparent text-success inline-flex items-center justify-center transition-colors hover:bg-success/10"
               : "h-4 w-4 rounded-full border border-input bg-transparent inline-flex items-center justify-center transition-colors hover:border-success hover:bg-success/10"}
-            disabled={!isExpandable && !isJournalNav && (logCooldown || logMutation.isPending || unlogMutation.isPending)}
+            disabled={!isExpandable && !screenTarget && !skillTarget && (logCooldown || logMutation.isPending || unlogMutation.isPending || launch.isPending)}
             onClick={() => {
-              if (isJournalNav && journalNavTarget) {
-                // Checked state comes only from a real same-day entry on the dedicated screen.
-                setLocation(getUiInteractionTargetHref(journalNavTarget));
+              if (screenTarget) {
+                setLocation(getUiInteractionTargetHref(screenTarget));
+                return;
+              }
+              if (skillTarget) {
+                const pendingKey = `wellness-skill-${activity.id}`;
+                launch.mutate({
+                  pendingKey,
+                  title: SET_DAILY_GOALS_TITLE,
+                  personaName: SET_DAILY_GOALS_PERSONA,
+                  message: composeSetDailyGoalsLaunchMessage(),
+                  clientTurnSuffix: pendingKey,
+                  errorTitle: `Could not start ${SET_DAILY_GOALS_TITLE}`,
+                });
                 return;
               }
               if (isExpandable) {
                 setExpanded((prev) => !prev);
+              } else if (refusesManualLog) {
+                return;
               } else if (activity.doneToday) {
                 unlogMutation.mutate();
               } else {

@@ -239,6 +239,7 @@ const wellness: ModDefinition = {
       skillRef("wellness.skill.affirmations", "affirmations"),
       skillRef("wellness.skill.coach", "coach"),
       skillRef("wellness.skill.brief-daily", "brief-daily"),
+      skillRef("wellness.skill.set-daily-goals", "set-daily-goals"),
     ],
     clientRoutes: [
       clientRoute("wellness.route.habits", "/habits", "habits"),

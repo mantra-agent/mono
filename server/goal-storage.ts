@@ -152,6 +152,8 @@ export class GoalStorage {
       periodMonth: goal.periodMonth ?? null,
       source: goal.source,
       completedAt: goal.completedAt ?? null,
+      createdAt: goal.createdAt ?? null,
+      updatedAt: goal.updatedAt ?? null,
     };
   }
 
