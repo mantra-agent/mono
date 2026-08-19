@@ -8,8 +8,13 @@ export type DocumentTemplateBindingKey = (typeof DOCUMENT_TEMPLATE_BINDING_KEYS)
 export const DOCUMENT_TEMPLATE_STATUSES = ["active", "deprecated"] as const;
 export type DocumentTemplateStatus = (typeof DOCUMENT_TEMPLATE_STATUSES)[number];
 
-/** Day-one global template ids (map keys skills resolve). */
-export const DAY_ONE_DOCUMENT_TEMPLATE_IDS = ["spec", "daily-digest", "weekly-summary"] as const;
+/** Day-one global template ids (map keys skills resolve). Seed catalog, not a compatibility table. */
+export const DAY_ONE_DOCUMENT_TEMPLATE_IDS = [
+  "spec",
+  "daily-digest",
+  "weekly-summary",
+  "daily-brief",
+] as const;
 export type DayOneDocumentTemplateId = (typeof DAY_ONE_DOCUMENT_TEMPLATE_IDS)[number];
 
 export function isDocumentTemplateBindingKey(value: string): value is DocumentTemplateBindingKey {
@@ -22,7 +27,7 @@ export const documentTemplates = pgTable(
   {
     /** Surrogate row key (global id and account overlays share the catalog id field). */
     rowId: varchar("row_id").primaryKey().default(sql`gen_random_uuid()`),
-    /** Stable unique key within scope. Day-one globals: spec, daily-digest, weekly-summary. */
+    /** Stable unique key within scope. Day-one globals: spec, daily-digest, weekly-summary, daily-brief. */
     id: varchar("id", { length: 64 }).notNull(),
     name: text("name").notNull(),
     pageId: text("page_id").notNull(),

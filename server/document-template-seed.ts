@@ -17,6 +17,7 @@ export const SHAPE_PAGE_IDS = {
   spec: "template-shape-spec",
   "daily-digest": "template-shape-daily-digest",
   "weekly-summary": "template-shape-weekly-summary",
+  "daily-brief": "template-shape-daily-brief",
 } as const;
 
 const SPEC_SHAPE_MARKDOWN = `# Spec shape
@@ -110,6 +111,47 @@ What repeated across days.
 1-5 concrete items for the next planning cycle.
 `;
 
+const DAILY_BRIEF_SHAPE_MARKDOWN = `# Daily Brief shape
+
+Closed taxonomy from live brief-daily 7.8. Coach orientation, child skills, and day rotation stay on the skill.
+
+## Weekday, Month D, YYYY
+
+unlabeled lead — bolded affirmation, then unlabeled thesis.
+
+**Weather**
+
+Required. 2–3 practical lines.
+
+**Did You Know?**
+
+Required. Exact learning-skill output.
+
+**Today's Schedule**
+
+omit if empty
+
+**Priority Alignment**
+
+omit if empty
+
+**Wellness**
+
+omit if empty
+
+**Big Picture**
+
+omit if empty
+
+**News**
+
+omit if empty
+
+**Carry-Forward**
+
+omit if empty
+`;
+
 const SHAPE_SEEDS: Array<{
   templateId: (typeof DAY_ONE_DOCUMENT_TEMPLATE_IDS)[number];
   name: string;
@@ -142,12 +184,21 @@ const SHAPE_SEEDS: Array<{
     markdown: WEEKLY_SUMMARY_SHAPE_MARKDOWN,
     tags: ["template-shape", "weekly-summary", "system"],
   },
+  {
+    templateId: "daily-brief",
+    name: "Daily Brief",
+    pageId: SHAPE_PAGE_IDS["daily-brief"],
+    title: "Template Shape — Daily Brief",
+    markdown: DAILY_BRIEF_SHAPE_MARKDOWN,
+    tags: ["template-shape", "daily-brief", "system"],
+  },
 ];
 
 const DAY_ONE_BINDS: Array<{ skillName: string; key: "spec" | "daily" | "weekly"; templateId: string }> = [
   { skillName: "feature-pipeline", key: "spec", templateId: "spec" },
   { skillName: "reflect", key: "daily", templateId: "daily-digest" },
   { skillName: "reflect", key: "weekly", templateId: "weekly-summary" },
+  { skillName: "brief-daily", key: "daily", templateId: "daily-brief" },
 ];
 
 function normalizeShapeMarkdown(markdown: string): string {
@@ -196,7 +247,7 @@ async function ensureShapePage(seed: (typeof SHAPE_SEEDS)[number]): Promise<void
     return;
   }
 
-  // Official Spec vessel only. Daily/Weekly stay insert-only. Never touch
+  // Official Spec vessel only. Daily/Weekly/Brief stay insert-only. Never touch
   // account overlays or non-global pages.
   if (seed.templateId !== "spec" || row.scope !== "global") return;
   if (normalizeShapeMarkdown(row.plainTextContent) === nextPlain) return;
@@ -262,7 +313,7 @@ async function ensureSkillBinding(bind: (typeof DAY_ONE_BINDS)[number]): Promise
   log.info("seeded skill template binding", { skillName: bind.skillName, key: bind.key, templateId: bind.templateId });
 }
 
-/** Day-one shape pages, global map rows, and skill binds. Spec shape may converge; Daily/Weekly stay insert-only. Never overwrites account overlays. */
+/** Day-one shape pages, global map rows, and skill binds. Spec shape may converge; Daily/Weekly/Brief stay insert-only. Never overwrites account overlays. */
 export async function ensureDocumentTemplateSeeds(): Promise<void> {
   for (const seed of SHAPE_SEEDS) {
     await ensureShapePage(seed);
