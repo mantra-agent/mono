@@ -22,6 +22,9 @@ export type ToolFailureCode =
   | "decision_input_invalid"
   // Question contract rejects (caller-correctable input)
   | "question_input_invalid"
+  // Templates contract rejects (caller-correctable catalog/input miss)
+  | "template_unavailable"
+  | "templates_input_invalid"
   // Library contract rejects (caller-correctable input)
   | "library_input_invalid"
   // Gmail / email_cache contract rejects (caller-correctable input)
