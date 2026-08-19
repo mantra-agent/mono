@@ -121,6 +121,8 @@ export interface SimpleFeed {
   timezone: string;
   anchor: "now";
   sections: SimpleFeedSection[];
+  /** True when served from same-day process cache without a rebuild. */
+  stale?: boolean;
   degraded?: boolean;
   errors?: Array<{ source: string; message: string }>;
 }

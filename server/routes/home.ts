@@ -4,7 +4,7 @@ import { requireAuth } from "../auth";
 import { eventBus } from "../event-bus";
 import { fileTaskStorage } from "../file-storage/tasks";
 import { logWellnessActivity } from "./wellness";
-import { generateSimpleFeed } from "../simple/generate-feed";
+import { generateSimpleFeed, installSimpleFeedCacheInvalidation } from "../simple/generate-feed";
 import { goalsService } from "../goals-service";
 import { dismissPeopleSurface, snoozePeopleSurface } from "../simple/people-surface-state";
 import { dismissBuildDeploymentHomeItem } from "../mods/build-deployment-home";
@@ -263,6 +263,8 @@ async function completeSessionReview(
 }
 
 export function registerHomeRoutes(app: Express) {
+  installSimpleFeedCacheInvalidation();
+
   app.get("/api/home/feed", requireAuth, async (req, res) => {
     try {
       const refresh = req.query.refresh === "true";
