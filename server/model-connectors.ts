@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { createLogger } from "./log";
 import { requireCurrentPrincipal } from "./principal-context";
@@ -51,7 +51,7 @@ export interface ModelConnector {
   credentialRef: string | null;
   lastVerifiedAt: string | null;
   config: ModelConnectorConfig;
-  /** Null = legacy global chain during parallel cutover. */
+  /** Owning named Router. Required for live model connectors after sunset. */
   routerId?: string | null;
 }
 
@@ -261,15 +261,11 @@ export function parseModelConnectorConfig(provider: string, value: unknown): Mod
 export async function listModelConnectors(options?: {
   /** When set, only connectors in this exclusive Router pool. */
   routerId?: string;
-  /** When true, only legacy NULL-router connectors (global chain). */
-  legacyOnly?: boolean;
 }): Promise<ModelConnector[]> {
   const principal = requireCurrentPrincipal();
   const routerFilter = options?.routerId
     ? eq(providerConnections.routerId, options.routerId)
-    : options?.legacyOnly
-      ? isNull(providerConnections.routerId)
-      : undefined;
+    : undefined;
   const rows = await db.select().from(providerConnections).where(
     combineWithVisibleScope(
       principal,
@@ -346,35 +342,6 @@ export async function updateModelConnector(
     eq(providerConnections.id, id),
   );
   return (await listModelConnectors()).find((connector) => connector.id === id) ?? null;
-}
-
-export async function reorderModelConnectors(ids: number[]): Promise<ModelConnector[]> {
-  const principal = requireCurrentPrincipal();
-  // Models tab reorders only the legacy global chain (router_id IS NULL).
-  const connectors = await listModelConnectors({ legacyOnly: true });
-  const byId = new Map(connectors.map((connector) => [connector.id, connector]));
-  const visibleIds = new Set(connectors.map((connector) => connector.id));
-  if (ids.length !== visibleIds.size || new Set(ids).size !== ids.length || ids.some((id) => !visibleIds.has(id))) {
-    throw new Error("Connector order must include every visible model connector exactly once");
-  }
-  // Pin is a hard cohort boundary. Reorder may only permute sortOrder inside the same pin set.
-  const requestedPinned = ids.map((id) => byId.get(id)!.priorityPinned === true);
-  const currentPinned = connectors.map((connector) => connector.priorityPinned === true);
-  if (requestedPinned.some((pinned, index) => pinned !== currentPinned[index])) {
-    throw new Error("Connector reorder cannot move connectors across the pin boundary");
-  }
-  await db.transaction(async (tx) => {
-    for (const [sortOrder, id] of ids.entries()) {
-      await tx.update(providerConnections).set({ sortOrder, updatedAt: sql`CURRENT_TIMESTAMP` }).where(
-        and(
-          eq(providerConnections.id, id),
-          eq(providerConnections.connectorKind, "model"),
-          isNull(providerConnections.routerId),
-        ),
-      );
-    }
-  });
-  return listModelConnectors({ legacyOnly: true });
 }
 
 function splitModel(value: string): { provider: ModelConnectorProvider; modelId: string } | null {

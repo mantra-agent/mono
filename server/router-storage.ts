@@ -3,7 +3,7 @@
  * System-scoped infrastructure. Mutation requires system:write at the route boundary.
  * Encode exclusivity via provider_connections.router_id FK; exactly one Default via partial unique index.
  */
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { createLogger } from "./log";
 import { accounts, providerConnections, routers, type Router } from "@shared/schema";
@@ -233,23 +233,6 @@ export async function listRouterConnectors(routerId: string): Promise<ModelConne
   return rows.map(mapConnector);
 }
 
-/** Legacy global chain: model connectors with NULL router_id. */
-export async function listLegacyModelConnectors(): Promise<ModelConnector[]> {
-  const rows = await db
-    .select()
-    .from(providerConnections)
-    .where(and(
-      eq(providerConnections.connectorKind, "model"),
-      isNull(providerConnections.routerId),
-    ))
-    .orderBy(
-      desc(providerConnections.priorityPinned),
-      asc(providerConnections.sortOrder),
-      asc(providerConnections.id),
-    );
-  return rows.map(mapConnector);
-}
-
 // Model IDs must belong to the connector's provider in model-registry.
 // API providers use bare API ids; subscription/cli providers use their *-sub registry ids.
 const DEFAULT_TIER_MODELS: Record<ModelConnectorProvider, { max: string; high: string; balanced: string; fast: string }> = {
@@ -402,22 +385,23 @@ export async function removeConnectorFromRouter(
 }
 
 /**
- * Reparent an existing model connector onto a Router (or back to legacy NULL).
+ * Reparent an existing model connector onto a named Router.
  * Preserves credentials, config, and status. Destination membership is exclusive.
  * Appends unpinned at the end of the destination pool. Idempotent when already there.
  */
 export async function moveConnectorToRouter(
   connectorId: number,
-  routerId: string | null,
+  routerId: string,
 ): Promise<ModelConnector> {
   if (!Number.isFinite(connectorId) || connectorId <= 0) {
     throw new Error("Invalid connector id");
   }
-
-  if (routerId) {
-    const router = await getRouterById(routerId);
-    if (!router) throw new Error("Router not found");
+  if (typeof routerId !== "string" || !routerId.trim()) {
+    throw new Error("routerId is required");
   }
+  const destinationRouterId = routerId.trim();
+  const router = await getRouterById(destinationRouterId);
+  if (!router) throw new Error("Router not found");
 
   return db.transaction(async (tx) => {
     // Peek source membership so both pool locks can be taken in sorted order first.
@@ -436,7 +420,7 @@ export async function moveConnectorToRouter(
     }
 
     const fromRouterId = peek.routerId ?? null;
-    if (fromRouterId === routerId) {
+    if (fromRouterId === destinationRouterId) {
       const [same] = await tx
         .select()
         .from(providerConnections)
@@ -447,8 +431,8 @@ export async function moveConnectorToRouter(
     }
 
     const lockKeys = [
-      fromRouterId ? `router-members:${fromRouterId}` : "router-members:legacy",
-      routerId ? `router-members:${routerId}` : "router-members:legacy",
+      fromRouterId ? `router-members:${fromRouterId}` : "router-members:unassigned",
+      `router-members:${destinationRouterId}`,
     ].sort();
     for (const key of new Set(lockKeys)) {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${key}))`);
@@ -467,19 +451,9 @@ export async function moveConnectorToRouter(
     if (currentRouterId !== fromRouterId) {
       throw new Error("Connector membership changed during move; retry");
     }
-    if (currentRouterId === routerId) {
+    if (currentRouterId === destinationRouterId) {
       return mapConnector(existing);
     }
-
-    const destinationFilter = routerId
-      ? and(
-          eq(providerConnections.connectorKind, "model"),
-          eq(providerConnections.routerId, routerId),
-        )
-      : and(
-          eq(providerConnections.connectorKind, "model"),
-          isNull(providerConnections.routerId),
-        );
 
     const peers = await tx
       .select({
@@ -487,7 +461,10 @@ export async function moveConnectorToRouter(
         sortOrder: providerConnections.sortOrder,
       })
       .from(providerConnections)
-      .where(destinationFilter);
+      .where(and(
+        eq(providerConnections.connectorKind, "model"),
+        eq(providerConnections.routerId, destinationRouterId),
+      ));
 
     const nextSortOrder = peers.reduce(
       (max, row) => Math.max(max, row.sortOrder ?? 0),
@@ -497,7 +474,7 @@ export async function moveConnectorToRouter(
     const [updated] = await tx
       .update(providerConnections)
       .set({
-        routerId,
+        routerId: destinationRouterId,
         priorityPinned: false,
         sortOrder: nextSortOrder,
         updatedAt: sql`CURRENT_TIMESTAMP`,
@@ -512,7 +489,7 @@ export async function moveConnectorToRouter(
     log.info("moved connector to router", {
       connectorId,
       fromRouterId: currentRouterId,
-      toRouterId: routerId,
+      toRouterId: destinationRouterId,
       sortOrder: nextSortOrder,
     });
     return mapConnector(updated);
@@ -555,21 +532,25 @@ export async function reorderRouterConnectors(
 
 export async function setAccountRouter(
   accountId: string,
-  routerId: string | null,
-): Promise<{ accountId: string; routerId: string | null; router: RouterSummary | null }> {
-  if (routerId) {
-    const router = await getRouterById(routerId);
-    if (!router) throw new Error("Router not found");
+  routerId: string,
+): Promise<{ accountId: string; routerId: string; router: RouterSummary }> {
+  if (typeof routerId !== "string" || !routerId.trim()) {
+    throw new Error("routerId is required");
   }
+  const destinationRouterId = routerId.trim();
+  const router = await getRouterById(destinationRouterId);
+  if (!router) throw new Error("Router not found");
   const [updated] = await db
     .update(accounts)
-    .set({ routerId, updatedAt: sql`CURRENT_TIMESTAMP` })
+    .set({ routerId: destinationRouterId, updatedAt: sql`CURRENT_TIMESTAMP` })
     .where(eq(accounts.id, accountId))
     .returning({ id: accounts.id, routerId: accounts.routerId });
   if (!updated) throw new Error("Account not found");
-  const router = updated.routerId ? await getRouterById(updated.routerId) : null;
+  if (!updated.routerId) throw new Error("Account router assignment failed");
+  const assigned = await getRouterById(updated.routerId);
+  if (!assigned) throw new Error("Router not found");
   log.info("set account router", { accountId, routerId: updated.routerId });
-  return { accountId: updated.id, routerId: updated.routerId ?? null, router };
+  return { accountId: updated.id, routerId: updated.routerId, router: assigned };
 }
 
 export async function getAccountRouterId(accountId: string | null | undefined): Promise<string | null> {

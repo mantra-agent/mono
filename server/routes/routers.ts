@@ -8,7 +8,6 @@ import {
   createRouter,
   deleteRouter,
   getRouter,
-  listLegacyModelConnectors,
   listRouters,
   moveConnectorToRouter,
   removeConnectorFromRouter,
@@ -58,42 +57,6 @@ export async function registerRouterRoutes(app: Express): Promise<void> {
       } catch (error: any) {
         log.error("list routers failed", { error: error?.message });
         res.status(500).json({ error: error?.message || "Failed to list routers" });
-      }
-    },
-  );
-
-  // Static path before /:id so "legacy-connectors" is never parsed as a router UUID.
-  app.get(
-    "/api/routers/legacy-connectors",
-    requirePermission("system:read"),
-    async (_req: Request, res: Response) => {
-      try {
-        res.json({ connectors: await listLegacyModelConnectors() });
-      } catch (error: any) {
-        log.error("list legacy connectors failed", { error: error?.message });
-        res.status(500).json({ error: error?.message || "Failed to list legacy connectors" });
-      }
-    },
-  );
-
-  app.post(
-    "/api/routers/connectors/leave",
-    requirePermission("system:write"),
-    async (req: Request, res: Response) => {
-      try {
-        const parsed = moveConnectorSchema.safeParse(req.body);
-        if (!parsed.success) return res.status(400).json({ error: "connectorId is required" });
-        const connector = await moveConnectorToRouter(parsed.data.connectorId, null);
-        await recordPrivilegedAccess({
-          principal: getPrincipal(req)!,
-          action: "router_connector_leave_legacy",
-          reason: "admin return model connector to legacy chain",
-          metadata: { connectorId: connector.id },
-        });
-        res.json({ connector });
-      } catch (error: any) {
-        const status = error?.message === "Connector not found" ? 404 : 400;
-        res.status(status).json({ error: error?.message || "Failed to leave router" });
       }
     },
   );

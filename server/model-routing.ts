@@ -74,7 +74,7 @@ function legacyCredential(provider: string): string | null {
 }
 
 async function connectorCredential(connector: ModelConnector): Promise<string | null> {
-  // Prefer connector-owned material; legacy global secrets/accounts are fallback only.
+  // Prefer connector-owned material; global secret inheritance is retired.
   return resolveConnectorCredentialMaterial(
     connector.id,
     connector.provider as ModelConnectorProvider,
@@ -120,21 +120,22 @@ export async function resolveModelCandidates(
     : await resolveSemanticTier(options.sessionId);
   if (options.semanticTierOverride && !options.overrideReason) throw new ModelRoutingError("Semantic tier override requires overrideReason");
 
-  // One discriminant: account.router_id. Set → exclusive Router pool. Null → legacy global chain.
+  // One discriminant: account.router_id. Missing router fails closed — no unnamed global chain.
   const { getCurrentPrincipal } = await import("./principal-context");
   const { getAccountRouterId } = await import("./router-storage");
   const { assertAccountUsageDispatchAllowed } = await import("./account-usage-envelope");
   const principal = getCurrentPrincipal();
   await assertAccountUsageDispatchAllowed(principal?.accountId ?? null);
   const routerId = await getAccountRouterId(principal?.accountId ?? null);
-  const connectors = (
-    routerId
-      ? await listModelConnectors({ routerId })
-      : await listModelConnectors({ legacyOnly: true })
-  ).filter((connector) => connector.status === "active");
+  if (!routerId) {
+    throw new ModelRoutingError("Account has no Router assigned");
+  }
+  const connectors = (await listModelConnectors({ routerId })).filter(
+    (connector) => connector.status === "active",
+  );
 
   const configHash = createHash("sha256").update(JSON.stringify({
-    routerId: routerId ?? null,
+    routerId,
     connectors: connectors.map((connector) => ({
       id: connector.id, order: connector.sortOrder, provider: connector.provider,
       mappings: connector.config.tierMappings,
@@ -160,16 +161,15 @@ export async function resolveModelCandidates(
       activity, tier: intent.tier, model: parsed.model, provider: connector.provider, modelString, modelConfig: tierConfig,
       configVersion: configHash, configHash, explicitOverride: false, providerEnabled: true,
       source: intent.source, personaId: intent.personaId, connectorId: connector.id,
-      connectorLabel: connector.label, connectorOrder: connector.sortOrder, routerId: routerId ?? null, attemptIndex,
+      connectorLabel: connector.label, connectorOrder: connector.sortOrder, routerId, attemptIndex,
       attempts: attempts.map((entry) => ({ ...entry })), credential,
     });
   }
   if (decisions.length > 1) decisions[0].fallbackCandidates = decisions.slice(1);
   if (!decisions.length) {
-    const poolLabel = routerId ? `router ${routerId}` : "legacy global chain";
     throw new ModelRoutingError(
-      `No enabled model connector can serve tier ${intent.tier} on ${poolLabel}`,
-      { activity, tier: intent.tier, source: intent.source, personaId: intent.personaId, configHash, routerId: routerId ?? null, attempts },
+      `No enabled model connector can serve tier ${intent.tier} on router ${routerId}`,
+      { activity, tier: intent.tier, source: intent.source, personaId: intent.personaId, configHash, routerId, attempts },
     );
   }
   return decisions;

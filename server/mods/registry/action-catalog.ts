@@ -45,7 +45,6 @@ const ACTION_ROWS: ActionRow[] = [
   { slug: "tools", owner: "core", routeId: "core.route.system", permission: "system:read" },
   { slug: "context", owner: "core", routeId: "core.route.brain", permission: "system:read" },
   { slug: "router", owner: "core", routeId: "core.route.system", permission: "system:read" },
-  { slug: "models", owner: "core", routeId: "core.route.brain" },
   { slug: "cost", owner: "core", routeId: "core.route.system", permission: "system:read" },
   { slug: "audiences", owner: "core", routeId: "core.route.audiences", permission: "system:read" },
   { slug: "campaigns", owner: "core", routeId: "core.route.campaigns", permission: "system:read" },

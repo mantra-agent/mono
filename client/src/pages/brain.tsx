@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useLocation, useSearch } from "wouter";
-import { ClipboardList, FileText, Activity, Heart, User, SlidersHorizontal, Loader2 } from "lucide-react";
+import { ClipboardList, FileText, Activity, Heart, User, Loader2 } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { lazyWithRetry } from "@/lib/lazy-with-retry";
 import { useAuth } from "@/hooks/use-auth";
@@ -11,7 +11,6 @@ const TimersContent = lazyWithRetry(() => import("@/pages/timers").then(m => ({ 
 
 const EmotionContent = lazyWithRetry(() => import("@/pages/emotion-tab"));
 const PersonasContent = lazyWithRetry(() => import("@/pages/persona-tab"));
-const ModelsContent = lazyWithRetry(() => import("@/pages/models"));
 const PlansContent = lazyWithRetry(() => import("@/pages/plans"));
 
 function TabFallback() {
@@ -27,7 +26,6 @@ const brainTabs = [
   { value: "context", label: "Context", icon: <FileText className="h-3.5 w-3.5" />, testId: "tab-brain-context", permission: "system:read" },
   { value: "emotion", label: "Emotion", icon: <Heart className="h-3.5 w-3.5" />, testId: "tab-brain-emotion" },
   { value: "persona", label: "Personas", icon: <User className="h-3.5 w-3.5" />, testId: "tab-brain-persona" },
-  { value: "model", label: "Models", icon: <SlidersHorizontal className="h-3.5 w-3.5" />, testId: "tab-brain-model", permission: "system:read" },
   { value: "plans", label: "Plans", icon: <ClipboardList className="h-3.5 w-3.5" />, testId: "tab-brain-plans" },
 ];
 
@@ -102,11 +100,6 @@ export default function BrainPage() {
         {activeTab === "persona" && (
           <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin">
             <PersonasContent />
-          </div>
-        )}
-        {activeTab === "model" && hasPermission("system:read") && (
-          <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin">
-            <ModelsContent />
           </div>
         )}
         {activeTab === "plans" && (

@@ -136,11 +136,11 @@ export interface ConnectorAuthStatus {
 }
 
 /**
- * Named Router members are exclusive instances. Only the legacy NULL-router
- * chain may inherit global primary accounts / app_secrets during cutover.
+ * Named Router members are exclusive instances. Global primary accounts /
+ * app_secrets inheritance is retired with the unnamed chain.
  */
-function allowsLegacyCredentialFallback(routerId: string | null | undefined): boolean {
-  return routerId == null;
+function allowsLegacyCredentialFallback(_routerId: string | null | undefined): boolean {
+  return false;
 }
 
 /**
