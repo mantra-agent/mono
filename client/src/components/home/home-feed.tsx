@@ -20,6 +20,7 @@ import { useSessionLaunch } from "@/hooks/use-session-launch";
 import { useProductComposition } from "@/hooks/use-product-composition";
 import {
   SET_DAILY_GOALS_PERSONA,
+  SET_DAILY_GOALS_SKILL,
   SET_DAILY_GOALS_TITLE,
   composeSetDailyGoalsLaunchMessage,
 } from "@shared/set-daily-goals";
@@ -82,6 +83,8 @@ function DailyGoalsDoor() {
       type="button"
       className={HIERARCHY_PRIMARY_ACTION_CLASS}
       data-testid="button-daily-goals"
+      data-launch-skill={SET_DAILY_GOALS_SKILL}
+      aria-label={`Launch ${SET_DAILY_GOALS_TITLE}`}
       disabled={launch.isPending}
       onClick={() => {
         if (launch.isPending) return;
@@ -95,7 +98,7 @@ function DailyGoalsDoor() {
         });
       }}
     >
-      + Daily Goals
+      {launch.isPending ? "Starting…" : "+ Daily Goals"}
     </button>
   );
 }

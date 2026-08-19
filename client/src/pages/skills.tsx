@@ -11,9 +11,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { PROFILE_DESCRIPTION_FRAME_CLASS } from "@/components/profile-description-style";
-import { MarkdownContent } from "@/components/chat-shared";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -118,7 +119,18 @@ function skillFieldValueClass(changed?: boolean): string {
   return changed ? "text-white" : "text-muted-foreground";
 }
 
-const SKILL_PROSE_TYPE_CLASS = "text-[14px] leading-tight [&_p]:text-[14px] [&_li]:text-[14px] [&_ul]:text-[14px] [&_ol]:text-[14px] [&_h1]:text-[14px] [&_h2]:text-[14px] [&_h3]:text-[14px] [&_h1]:font-medium [&_h2]:font-medium [&_h3]:font-medium [&_code]:text-[14px] [&_pre]:text-[14px]";
+/** Skill Process/description preview: plain markdown only. Never chat MarkdownContent
+ * (reference chips + chat heading scale turn long process text into unreadable salad). */
+const SKILL_MARKDOWN_PREVIEW_CLASS = cn(
+  "prose prose-sm dark:prose-invert max-w-none break-words text-[14px] leading-snug",
+  "[&_p]:my-1.5 [&_p]:text-[14px] [&_p]:leading-snug",
+  "[&_ul]:my-1.5 [&_ol]:my-1.5 [&_li]:my-0.5 [&_li]:text-[14px]",
+  "[&_h1]:my-2 [&_h2]:my-2 [&_h3]:my-1.5",
+  "[&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-medium",
+  "[&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-primary/20 [&_pre]:bg-background/60 [&_pre]:p-2 [&_pre]:text-xs",
+  "[&_code]:break-all [&_code]:text-xs [&_code]:font-mono",
+  "[&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/30 [&_blockquote]:pl-3",
+);
 
 function SkillDescriptionEditor({
   value,
@@ -182,13 +194,11 @@ function SkillDescriptionEditor({
             data-testid={testId}
           >
             {value.trim() ? (
-              <div className={cn(
-                SKILL_PROSE_TYPE_CLASS,
-                "[&_.prose]:text-[14px] [&_.prose]:leading-tight [&_p]:!text-[14px] [&_p]:!leading-tight [&_li]:!text-[14px] [&_h1]:!text-[14px] [&_h2]:!text-[14px] [&_h3]:!text-[14px] [&_h1]:!leading-tight [&_h2]:!leading-tight [&_h3]:!leading-tight",
-                skillFieldValueClass(changed),
-                "prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-1 prose-pre:overflow-x-auto",
-              )}>
-                <MarkdownContent content={value} compact />
+              <div
+                className={cn(SKILL_MARKDOWN_PREVIEW_CLASS, skillFieldValueClass(changed))}
+                data-testid={testId === "input-process" ? "skill-process-preview" : undefined}
+              >
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
               </div>
             ) : (
               <span className="text-[14px] leading-tight text-muted-foreground">{placeholder}</span>
