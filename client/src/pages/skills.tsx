@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import type { JSONContent } from "@tiptap/core";
 import { usePageHeader } from "@/hooks/use-page-header";
 // focus context removed — inline expansion, no selection model
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -11,9 +12,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { PROFILE_DESCRIPTION_FRAME_CLASS } from "@/components/profile-description-style";
-import { MarkdownContent } from "@/components/chat-shared";
+import { RichTextEditor } from "@/components/rich-text-editor";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
+import { markdownToTiptap, normalizeTiptapDoc, tiptapToMarkdown } from "@shared/markdown-tiptap";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -120,6 +122,12 @@ function skillFieldValueClass(changed?: boolean): string {
 
 const SKILL_PROSE_TYPE_CLASS = "text-[14px] leading-tight [&_p]:text-[14px] [&_li]:text-[14px] [&_ul]:text-[14px] [&_ol]:text-[14px] [&_h1]:text-[14px] [&_h2]:text-[14px] [&_h3]:text-[14px] [&_h1]:font-medium [&_h2]:font-medium [&_h3]:font-medium [&_code]:text-[14px] [&_pre]:text-[14px]";
 
+function markdownDocFromValue(markdown: string): JSONContent | null {
+  const trimmed = markdown.trim();
+  if (!trimmed) return null;
+  return normalizeTiptapDoc(markdownToTiptap(markdown)) ?? (markdownToTiptap(markdown) as JSONContent);
+}
+
 function SkillDescriptionEditor({
   value,
   changed,
@@ -146,10 +154,15 @@ function SkillDescriptionEditor({
   markdown?: boolean;
 }) {
   const [draft, setDraft] = useState(value);
-  const [editing, setEditing] = useState(false);
+  const [doc, setDoc] = useState<JSONContent | null>(() => (markdown ? markdownDocFromValue(value) : null));
+  const draftRef = useRef(value);
+  const focusedRef = useRef(false);
   useEffect(() => {
+    if (focusedRef.current) return;
     setDraft(value);
-  }, [value]);
+    draftRef.current = value;
+    if (markdown) setDoc(markdownDocFromValue(value));
+  }, [value, markdown]);
   const persist = (next: string) => {
     if (onCommit) {
       if (next !== value) onCommit(next);
@@ -157,11 +170,16 @@ function SkillDescriptionEditor({
     }
     onChange?.(next);
   };
-  const showMarkdownPreview = markdown && !editing;
-  const commitDraft = () => {
-    persist(draft);
-    setEditing(false);
+  const commitDraft = (next = draftRef.current) => {
+    persist(next);
   };
+  const handleRichChange = useCallback((json: JSONContent) => {
+    const next = tiptapToMarkdown(json).trimEnd();
+    draftRef.current = next;
+    setDraft(next);
+    setDoc(json);
+    onChange?.(next);
+  }, [onChange]);
   const showMenu = Boolean((onApplyField || onRevertField) && applyField);
   return (
     <div className="group/editor grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-0 px-2 py-1.5">
@@ -171,43 +189,49 @@ function SkillDescriptionEditor({
             <StatusDot kind="local" />
           </div>
         ) : null}
-        {showMarkdownPreview ? (
-          <button
-            type="button"
+        {markdown ? (
+          <div
             className={cn(
               minHeightClass,
-              "w-full cursor-text rounded-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-ring",
+              SKILL_PROSE_TYPE_CLASS,
+              skillFieldValueClass(changed),
+              "w-full",
             )}
-            onClick={() => setEditing(true)}
-            data-testid={testId}
           >
-            {value.trim() ? (
-              <div className={cn(
-                SKILL_PROSE_TYPE_CLASS,
-                "[&_.prose]:text-[14px] [&_.prose]:leading-tight [&_p]:!text-[14px] [&_p]:!leading-tight [&_li]:!text-[14px] [&_h1]:!text-[14px] [&_h2]:!text-[14px] [&_h3]:!text-[14px] [&_h1]:!leading-tight [&_h2]:!leading-tight [&_h3]:!leading-tight",
-                skillFieldValueClass(changed),
-                "prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-1 prose-pre:overflow-x-auto",
-              )}>
-                <MarkdownContent content={value} compact />
-              </div>
-            ) : (
-              <span className="text-[14px] leading-tight text-muted-foreground">{placeholder}</span>
-            )}
-          </button>
+            <RichTextEditor
+              value={doc}
+              onChange={handleRichChange}
+              placeholder={placeholder}
+              plainTextFallback={value}
+              className="h-auto"
+              contentClassName={cn(
+                "!border-0 !bg-transparent !p-0 !shadow-none",
+                "[&_.ProseMirror]:!min-h-[inherit] [&_.ProseMirror]:px-0 [&_.ProseMirror]:py-0 [&_.ProseMirror]:text-[14px] [&_.ProseMirror]:leading-tight",
+                "[&_.ProseMirror_p]:!text-[14px] [&_.ProseMirror_p]:!leading-tight [&_.ProseMirror_li]:!text-[14px]",
+                "[&_.ProseMirror_h1]:!text-[14px] [&_.ProseMirror_h2]:!text-[14px] [&_.ProseMirror_h3]:!text-[14px]",
+                minHeightClass,
+              )}
+              onFocusChange={(focused) => {
+                focusedRef.current = focused;
+                if (!focused) commitDraft();
+              }}
+              data-testid={testId}
+            />
+          </div>
         ) : (
           <Textarea
-            value={onCommit || markdown ? draft : value}
-            autoFocus={markdown}
+            value={onCommit ? draft : value}
             onChange={(event) => {
               const next = event.target.value;
-              if (onCommit || markdown) setDraft(next);
-              else onChange?.(next);
-            }}
-            onFocus={() => {
-              if (markdown) setEditing(true);
+              if (onCommit) {
+                setDraft(next);
+                draftRef.current = next;
+              } else {
+                onChange?.(next);
+              }
             }}
             onBlur={() => {
-              if (onCommit || markdown) commitDraft();
+              if (onCommit) commitDraft();
             }}
             placeholder={placeholder}
             className={cn(
