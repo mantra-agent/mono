@@ -27,32 +27,17 @@ let verifiedSoftTimeoutSeconds: number = 0;
 type BackupLlmPreference = "default" | "override";
 
 interface BackupLlmConfig {
-  preference: BackupLlmPreference;
+  preference: "override";
+  order: typeof CUSTOM_LLM_BACKUP_ORDER;
   cascade_timeout_seconds: number;
-  order?: typeof CUSTOM_LLM_BACKUP_ORDER;
 }
 
-function legalBackupLlmConfig(preference: BackupLlmPreference): BackupLlmConfig {
-  if (preference === "override") {
-    return {
-      preference: "override",
-      order: CUSTOM_LLM_BACKUP_ORDER,
-      cascade_timeout_seconds: LEGAL_CASCADE_TIMEOUT_SECONDS,
-    };
-  }
+function legalBackupLlmConfig(): BackupLlmConfig {
   return {
-    preference: "default",
+    preference: "override",
+    order: CUSTOM_LLM_BACKUP_ORDER,
     cascade_timeout_seconds: LEGAL_CASCADE_TIMEOUT_SECONDS,
   };
-}
-
-function isBackupLlmDiscriminatorError(status: number, body: string): boolean {
-  if (status !== 400) return false;
-  return body.includes("backup_llm_config") && (
-    body.includes("discriminator") ||
-    body.includes("'preference'") ||
-    body.includes("\"preference\"")
-  );
 }
 
 export function getVerifiedCascadeTimeoutSeconds(): number {
@@ -320,8 +305,8 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
             model_id: "xyz-voice",
           },
           // Official owner (changelog 2026-01-12). Tagged union: preference is
-          // required. A bare { cascade_timeout_seconds } 400s on discriminator.
-          backup_llm_config: legalBackupLlmConfig("default"),
+          // required. default accepts 15 and GET-drops it. Never default. Never disabled.
+          backup_llm_config: legalBackupLlmConfig(),
           tool_ids: [],
           tools: [{
             type: "system",
@@ -373,34 +358,17 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
   };
 
   const reqStart = Date.now();
-  let res = await providerFetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
+  const res = await providerFetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
     method: "PATCH",
     headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
-  let patchElapsed = Date.now() - reqStart;
+  const patchElapsed = Date.now() - reqStart;
   if (!res.ok) {
     const error = await readBoundedProviderBody(res);
-    if (isBackupLlmDiscriminatorError(res.status, error)) {
-      log.warn(`setupAgentCallbackUrl: step 5/6 — default backup_llm_config rejected status=${res.status} elapsed=${patchElapsed}ms; retrying override + order custom-llm`);
-      payload.conversation_config.agent.prompt.backup_llm_config = legalBackupLlmConfig("override");
-      const retryStart = Date.now();
-      res = await providerFetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
-        method: "PATCH",
-        headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      patchElapsed += Date.now() - retryStart;
-      if (!res.ok) {
-        const retryError = await readBoundedProviderBody(res);
-        log.error(`setupAgentCallbackUrl: step 5/6 — PATCH FAILED status=${res.status} elapsed=${patchElapsed}ms body: ${retryError} (total=${Date.now() - setupStart}ms)`);
-        throw new Error(`Failed to setup agent callback URL: ${res.status} ${retryError}`);
-      }
-    } else {
-      log.error(`setupAgentCallbackUrl: step 5/6 — PATCH FAILED status=${res.status} elapsed=${patchElapsed}ms body: ${error} (total=${Date.now() - setupStart}ms)`);
-      throw new Error(`Failed to setup agent callback URL: ${res.status} ${error}`);
-    }
+    log.error(`setupAgentCallbackUrl: step 5/6 — PATCH FAILED status=${res.status} elapsed=${patchElapsed}ms body: ${error} (total=${Date.now() - setupStart}ms)`);
+    throw new Error(`Failed to setup agent callback URL: ${res.status} ${error}`);
   }
 
   const responseText = await res.text();
@@ -463,13 +431,15 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
 
   const backupLlmConfig = promptConf?.backup_llm_config as Record<string, unknown> | undefined;
   const cascadeInBackup = backupLlmConfig?.cascade_timeout_seconds;
+  const backupPreference = backupLlmConfig?.preference;
+  const backupKeys = backupLlmConfig ? Object.keys(backupLlmConfig).sort().join(",") : "(absent)";
   const effectiveUrl = customLlm?.url;
   const softTimeoutConfig = turnConf?.soft_timeout_config as Record<string, unknown> | undefined;
   const storedSoftTimeout = softTimeoutConfig?.timeout_seconds != null ? Number(softTimeoutConfig.timeout_seconds) : undefined;
   const storedSoftTimeoutMessage = typeof softTimeoutConfig?.message === "string" ? softTimeoutConfig.message : undefined;
   const storedCascade = cascadeInBackup != null ? Number(cascadeInBackup) : undefined;
 
-  log.debug(`setupAgentCallbackUrl: step 6/6 — GET verification done elapsed=${getElapsed}ms custom_llm.configured=${Boolean(effectiveUrl)} backup_llm_config.cascade_timeout_seconds=${cascadeInBackup ?? "(absent)"} soft_timeout_config.timeout_seconds=${softTimeoutConfig?.timeout_seconds ?? "(absent)"} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length} language_detection=${hasLanguageDetection} (total=${Date.now() - setupStart}ms)`);
+  log.debug(`setupAgentCallbackUrl: step 6/6 — GET verification done elapsed=${getElapsed}ms custom_llm.configured=${Boolean(effectiveUrl)} backup_llm_config.preference=${backupPreference ?? "(absent)"} backup_llm_config.keys=${backupKeys} backup_llm_config.cascade_timeout_seconds=${cascadeInBackup ?? "(absent)"} soft_timeout_config.timeout_seconds=${softTimeoutConfig?.timeout_seconds ?? "(absent)"} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length} language_detection=${hasLanguageDetection} (total=${Date.now() - setupStart}ms)`);
 
   if (!hasLanguageDetection || configuredLanguageCount !== ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length) {
     log.error(`setupAgentCallbackUrl: MULTILINGUAL CONFIG MISMATCH — language_detection=${hasLanguageDetection} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length}`);
