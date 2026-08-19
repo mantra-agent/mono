@@ -1421,6 +1421,8 @@ export const TOOLS: Record<string, ToolMeta> = {
         linkId: { type: "string", description: "Decision link ID (remove_link)" },
         title: { type: "string", description: "Decision title (create/update/record_judgment)" },
         description: { type: "string", description: "Short description / outcome text (create/update/lock/record_judgment)" },
+        answer: { type: "string", description: "The chosen answer. Required to lock an open Decision from the UI. create/update/lock persist it on the same row." },
+        vaultId: { type: "string", description: "Single owning Vault ID (create/update). Omitted create stamps the active Vault." },
         status: { type: "string", enum: ["open", "closed", "all"], description: "Filter for list/search" },
         query: { type: "string", description: "Non-empty text search over title, description, sections, reasoning (search)" },
         limit: { type: "number", description: "Max search results (default 20, max 50)" },

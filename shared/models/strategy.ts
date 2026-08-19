@@ -318,8 +318,10 @@ export const decisions = pgTable("decisions", {
   id: text("id").primaryKey().default(sql`gen_random_uuid()`),
   title: text("title").notNull(),
   description: text("description").notNull().default(""),
+  answer: text("answer").notNull().default(""),
   status: text("status").notNull().default("open"),
   trafficLight: text("traffic_light"),
+  vaultId: text("vault_id"),
   dataContent: jsonb("data_content"),
   dataPlainText: text("data_plain_text").notNull().default(""),
   scenariosContent: jsonb("scenarios_content"),
@@ -342,6 +344,7 @@ export const decisions = pgTable("decisions", {
   index("idx_decisions_status").on(table.status),
   index("idx_decisions_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_decisions_account").on(table.accountId),
+  index("idx_decisions_vault").on(table.vaultId),
   index("idx_decisions_owner_person").on(table.ownerPersonId),
   uniqueIndex("uniq_decisions_question_replay")
     .on(table.accountId, table.sourceSessionId, table.sourceToolCallId)
@@ -380,6 +383,8 @@ export const insertDecisionSchema = createInsertSchema(decisions).omit({
 }).extend({
   trafficLight: z.enum(decisionTrafficLights).nullable().optional(),
   status: z.enum(decisionStatuses).optional(),
+  answer: z.string().optional(),
+  vaultId: z.string().min(1).optional(),
 });
 
 export const insertDecisionUpdateSchema = createInsertSchema(decisionUpdates).omit({

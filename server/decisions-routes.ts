@@ -23,6 +23,15 @@ function publishChanged(source: string): void {
 const updateDecisionSchema = insertDecisionSchema.partial().extend({
   status: z.enum(decisionStatuses).optional(),
   trafficLight: z.enum(decisionTrafficLights).nullable().optional(),
+  answer: z.string().optional(),
+  vaultId: z.string().min(1).optional(),
+});
+
+const lockDecisionSchema = z.object({
+  trafficLight: z.enum(decisionTrafficLights).optional(),
+  description: z.string().optional(),
+  answer: z.string().optional(),
+  reasoning: z.string().optional(),
 });
 
 const updateContentSchema = z.object({ content: z.string().min(1) });
@@ -45,6 +54,10 @@ function errMsg(err: unknown): string {
 
 function handleError(prefix: string, err: unknown, res: Response): Response {
   if (isZodError(err)) return res.status(400).json({ error: "Validation failed", details: err.errors });
+  const status = err && typeof err === "object" && typeof (err as { status?: unknown }).status === "number"
+    ? (err as { status: number }).status
+    : undefined;
+  if (status && status >= 400 && status < 500) return res.status(status).json({ error: errMsg(err) });
   log.error(`${prefix} error:`, errMsg(err));
   return res.status(500).json({ error: errMsg(err) });
 }
@@ -121,7 +134,8 @@ export function registerDecisionsRoutes(app: Express): void {
 
   app.post("/api/decisions/:id/lock", async (req, res) => {
     try {
-      const row = await decisionsStorage.lockDecision(req.params.id);
+      const parsed = lockDecisionSchema.parse(req.body ?? {});
+      const row = await decisionsStorage.lockDecision(req.params.id, parsed);
       if (!row) return res.status(404).json({ error: "Decision not found" });
       publishChanged("lock");
       res.json(row);

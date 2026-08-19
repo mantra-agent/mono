@@ -935,6 +935,8 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 - Deliberate relationships use constrained predicates over generic `address_links`; legacy `decision_links(target_type, target_id)` is dual-written/read only behind `DECISION_LINKS_COMPATIBILITY_ENABLED` and replay-safely points to its migrated `address_link_id`. Tool `list_for_target` / `search` read that graph and principal-visible text.
 - The Decision/Strategy graph adapter keeps default Strategy roots flat, emits actors and artifacts, and exposes bounded move/assumption/end-condition/state topology only for explicitly selected Strategy addresses.
 - **Lifecycle:** open → closed (with traffic light: green/yellow/red). Closed updates are append-only.
+- A Decision belongs to exactly one Vault (`decisions.vault_id`). Create stamps the active Vault unless an explicit live same-account Vault is supplied. List/get/update inherit visible-Vault scope through `decisionScopeColumns.vaultId`. Null remains visible during backfill.
+- `answer` is the chosen close text on the same row. The UI Lock control stays hidden until that field has text. `answer_payload` remains structured Question provenance and may project into `answer` when lock/record_judgment has no explicit answer.
 - Key files: `decisions-storage.ts`, `decision-reference-index.ts`, `strategy/decision-strategy-graph-adapter.ts`
 
 ### Capabilities & Stories

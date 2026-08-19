@@ -42,8 +42,9 @@ export const decisionsHandler: ToolHandler = async (args) => {
   const summarize = (d: DecisionFull): string => {
     const lines = [
       `[${d.id}] ${d.title}`,
-      `  status=${d.status}${d.trafficLight ? ` trafficLight=${d.trafficLight}` : ""}`,
+      `  status=${d.status}${d.trafficLight ? ` trafficLight=${d.trafficLight}` : ""}${d.vaultId ? ` vault=${d.vaultId}` : ""}`,
       d.description ? `  ${d.description}` : null,
+      d.answer ? `  answer: ${d.answer}` : null,
       d.dataPlainText ? `  data: ${d.dataPlainText.slice(0, 120)}` : null,
       d.scenariosPlainText ? `  scenarios: ${d.scenariosPlainText.slice(0, 120)}` : null,
       d.planPlainText ? `  plan: ${d.planPlainText.slice(0, 120)}` : null,
@@ -153,6 +154,8 @@ export const decisionsHandler: ToolHandler = async (args) => {
         const title = requireString(a.title, "title");
         const fields: Record<string, unknown> = { title };
         if (typeof a.description === "string") fields.description = a.description;
+        if (typeof a.answer === "string") fields.answer = a.answer;
+        if (typeof a.vaultId === "string" && a.vaultId.trim()) fields.vaultId = a.vaultId.trim();
         if (typeof a.dataContent === "string") Object.assign(fields, sectionToFields("data", a.dataContent));
         if (typeof a.scenariosContent === "string") Object.assign(fields, sectionToFields("scenarios", a.scenariosContent));
         if (typeof a.planContent === "string") Object.assign(fields, sectionToFields("plan", a.planContent));
@@ -197,6 +200,8 @@ export const decisionsHandler: ToolHandler = async (args) => {
         const updates: Record<string, unknown> = {};
         if (a.title !== undefined) updates.title = String(a.title);
         if (a.description !== undefined) updates.description = String(a.description);
+        if (a.answer !== undefined) updates.answer = String(a.answer);
+        if (typeof a.vaultId === "string" && a.vaultId.trim()) updates.vaultId = a.vaultId.trim();
         if (a.trafficLight !== undefined) {
           if (a.trafficLight !== null && !(decisionTrafficLights as readonly string[]).includes(a.trafficLight)) {
             return stampDecisionReject({ result: `Invalid trafficLight: ${a.trafficLight}. Use green, yellow, or red.`, error: true });
@@ -257,6 +262,7 @@ export const decisionsHandler: ToolHandler = async (args) => {
         const row = await decisionsStorage.lockDecision(id, {
           trafficLight,
           description: typeof a.description === "string" ? a.description : undefined,
+          answer: typeof a.answer === "string" ? a.answer : undefined,
           reasoning: typeof a.reasoning === "string" ? a.reasoning : undefined,
           answerPayload,
           ownerPersonRole,
