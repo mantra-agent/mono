@@ -18,10 +18,11 @@ onSecretChange((name) => {
   if (name === "ELEVENLABS_API_KEY") cachedApiKey = null;
 });
 const LEGAL_CASCADE_TIMEOUT_SECONDS = 15;
+const EL_DEFAULT_CASCADE_TIMEOUT_SECONDS = 4;
 const DISABLED_SOFT_TIMEOUT_SECONDS = -1;
 const DISABLED_SOFT_TIMEOUT_MESSAGE = ".";
 const CUSTOM_LLM_BACKUP_ORDER = ["custom-llm"] as const;
-let verifiedCascadeTimeoutSeconds: number = LEGAL_CASCADE_TIMEOUT_SECONDS;
+let verifiedCascadeTimeoutSeconds: number = EL_DEFAULT_CASCADE_TIMEOUT_SECONDS;
 let verifiedSoftTimeoutSeconds: number = 0;
 
 type BackupLlmPreference = "default" | "override";
@@ -305,7 +306,8 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
             model_id: "xyz-voice",
           },
           // Official owner (changelog 2026-01-12). Tagged union: preference is
-          // required. default accepts 15 and GET-drops it. Never default. Never disabled.
+          // required. Override + custom-llm + 15 is the write. GET may omit the
+          // clock; start fails closed only on soft-timeout -1 / ".". Never default. Never disabled.
           backup_llm_config: legalBackupLlmConfig(),
           tool_ids: [],
           tools: [{
@@ -453,15 +455,17 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
     log.error(`setupAgentCallbackUrl: SOFT TIMEOUT MESSAGE NOT SCHEMA TAX — stored=${storedSoftTimeoutMessage ?? "(absent)"} requested=${DISABLED_SOFT_TIMEOUT_MESSAGE}`);
     throw new Error(`Agent soft_timeout_config.message is ${storedSoftTimeoutMessage ?? "absent"}, expected ${DISABLED_SOFT_TIMEOUT_MESSAGE}`);
   }
-  if (storedCascade !== LEGAL_CASCADE_TIMEOUT_SECONDS) {
-    log.error(`setupAgentCallbackUrl: CASCADE TIMEOUT NOT STORED — backup_llm_config=${cascadeInBackup ?? "(absent)"} requested=${LEGAL_CASCADE_TIMEOUT_SECONDS}`);
-    throw new Error(`Agent backup_llm_config.cascade_timeout_seconds is ${storedCascade ?? "absent"}, expected ${LEGAL_CASCADE_TIMEOUT_SECONDS}`);
-  }
-
   verifiedSoftTimeoutSeconds = 0;
-  verifiedCascadeTimeoutSeconds = LEGAL_CASCADE_TIMEOUT_SECONDS;
+  if (storedCascade === LEGAL_CASCADE_TIMEOUT_SECONDS) {
+    verifiedCascadeTimeoutSeconds = LEGAL_CASCADE_TIMEOUT_SECONDS;
+    log.debug(`setupAgentCallbackUrl: CASCADE TIMEOUT VERIFIED at ${verifiedCascadeTimeoutSeconds}s from backup_llm_config preference=${backupPreference ?? "(absent)"} keys=${backupKeys}`);
+  } else {
+    verifiedCascadeTimeoutSeconds = EL_DEFAULT_CASCADE_TIMEOUT_SECONDS;
+    log.warn(
+      `setupAgentCallbackUrl: CASCADE TIMEOUT ABSENT — backup_llm_config.preference=${backupPreference ?? "(absent)"} keys=${backupKeys} cascade=${cascadeInBackup ?? "(absent)"} requested=${LEGAL_CASCADE_TIMEOUT_SECONDS}; treating official clock as EL default ${EL_DEFAULT_CASCADE_TIMEOUT_SECONDS}s`,
+    );
+  }
   log.debug(`setupAgentCallbackUrl: SOFT TIMEOUT DISABLED — agent reports ${storedSoftTimeout}`);
-  log.debug(`setupAgentCallbackUrl: CASCADE TIMEOUT VERIFIED at ${verifiedCascadeTimeoutSeconds}s from backup_llm_config`);
 
   try {
     const { computeSoftTimeoutBufferMs } = await import("./voice-keepalive-buffer");
