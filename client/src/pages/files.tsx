@@ -150,18 +150,29 @@ export default function FilesPage() {
             ?.rootDriveResourceId;
           return !rootId || rootId === resource.id;
         });
+        // @file deep links may target a non-root bound row. Keep roots as the
+        // default tree, but always surface the focused id so the destination can scroll.
+        const focused = focusDriveResourceId
+          ? resources.find((resource) => resource.id === focusDriveResourceId)
+          : undefined;
+        const withFocus =
+          focused &&
+          focused.origin !== "upload" &&
+          !rootResources.some((resource) => resource.id === focused.id)
+            ? [...rootResources, focused]
+            : rootResources;
         const uploads = resources.filter((resource) => resource.origin === "upload");
         const visibleResources = isSearching
-          ? rootResources.filter((resource) =>
+          ? withFocus.filter((resource) =>
               resource.name.toLowerCase().includes(trimmedQuery),
             )
-          : rootResources;
+          : withFocus;
         const visibleUploads = isSearching
           ? uploads.filter((resource) => resource.name.toLowerCase().includes(trimmedQuery))
           : uploads;
         return { vault, visibleResources, visibleUploads, statusByResourceId };
       }),
-    [perVault, isSearching, trimmedQuery],
+    [perVault, isSearching, trimmedQuery, focusDriveResourceId],
   );
 
   const noSearchMatches =

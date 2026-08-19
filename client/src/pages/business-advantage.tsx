@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearch } from "wouter";
 import { Check, ChevronDown, Loader2, Plus } from "lucide-react";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
@@ -197,7 +198,9 @@ function PlanTitle({
 
 export default function BusinessPlanPage() {
   const queryClient = useQueryClient();
-  const routePlanId = useMemo(() => new URLSearchParams(window.location.search).get("plan"), []);
+  // Chip deep links use /business/plan?plan=…; read live search so SPA query changes apply.
+  const search = useSearch();
+  const routePlanId = useMemo(() => new URLSearchParams(search).get("plan"), [search]);
   const recentPlanId = useMemo(() => {
     try {
       return window.localStorage.getItem(RECENT_BUSINESS_PLAN_KEY);
@@ -220,11 +223,12 @@ export default function BusinessPlanPage() {
 
   useEffect(() => {
     if (!plans.length) return setSelectedPlanId(null);
-    if (selectedPlanId && plans.some((candidate) => candidate.id === selectedPlanId)) return;
+    // Deep link always wins when the plan is visible — including same-route query changes.
     if (routePlanId && plans.some((candidate) => candidate.id === routePlanId)) {
       setSelectedPlanId(routePlanId);
       return;
     }
+    if (selectedPlanId && plans.some((candidate) => candidate.id === selectedPlanId)) return;
     if (recentPlanId && plans.some((candidate) => candidate.id === recentPlanId)) {
       setSelectedPlanId(recentPlanId);
       return;
