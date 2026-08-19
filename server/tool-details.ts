@@ -221,8 +221,8 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: 'List scenarios: { "action": "list_scenarios" }',
   },
   decisions: {
-    description: "Personal decision log — open Decisions are live working surfaces (append Data/Scenarios/Plan), lock closes that same row with outcome/reasoning/traffic light, add_update is closed-only changelog, record_judgment mints a new closed judgment. Find with search and list_for_target.",
-    whenToUse: "Live deliberation on an open decision (append sections), honest close of that same id (lock with reasoning + trafficLight), post-lock notes (add_update), reverse lookup of what governs a person/project (list_for_target), or text find (search). Never use add_update on open rows or record_judgment to close an open row the room already owns.",
+    description: "Personal decision log — open Decisions are live working surfaces (append Data/Scenarios/Plan), lock closes that same row with outcome/reasoning/traffic light, add_update is closed-only changelog, record_judgment mints a rare closed judgment when the user made a consequential pattern-level choice. Find with search and list_for_target.",
+    whenToUse: "Live deliberation on an open decision (append sections), honest close of that same id (lock with reasoning + trafficLight), post-lock notes (add_update), reverse lookup of what governs a person/project (list_for_target), or text find (search). Never use add_update on open rows, never record_judgment to close an open row the room already owns, and never persist a Decision for every Question or reversible local fork.",
     example: 'Append on open: { "action": "append", "id": "…", "dataContent": "Pros: deep domain.\\nCons: bandwidth risk." }\nLock with judgment: { "action": "lock", "id": "…", "trafficLight": "yellow", "reasoning": "Hire as contractor first", "description": "Proceed with 90-day contract" }\nlist_for_target: { "action": "list_for_target", "targetAddress": "@person:…" }\nSearch: { "action": "search", "query": "Miller hire" }',
   },
   rules: {

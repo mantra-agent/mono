@@ -1404,7 +1404,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   decisions: {
-    description: "Personal decision log — open Decisions are live working surfaces. Open path: create → append (or update replace) Data/Scenarios/Plan → add_link. Close this same row with lock (outcome/description, trafficLight, reasoning, optional provenance). Closed path only: add_update changelog. record_judgment mints a NEW closed judgment (Question answers / one-shot) — never use it to close an open row the room already owns. Find: search, list_for_target (any address add_link accepts). Always list or search before mutating if the id is not in hand.",
+    description: "Personal decision log — open Decisions are live working surfaces. Open path: create → append (or update replace) Data/Scenarios/Plan → add_link. Close this same row with lock (outcome/description, trafficLight, reasoning, optional provenance). Closed path only: add_update changelog. record_judgment mints a NEW closed judgment only when the USER decided something consequential that is part of a broad pattern worth saving — never for every Question, UI nit, or reversible local fork, and never to close an open row the room already owns. Find: search, list_for_target (any address add_link accepts). Always list or search before mutating if the id is not in hand.",
     category: "strategy",
     sideEffectDefault: 1,
     sideEffectActions: { list: 0, get: 0, search: 0, list_for_target: 0 },

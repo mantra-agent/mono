@@ -191,9 +191,7 @@ function DecisionRow({
   const statusMeta =
     decision.status === "closed" && decision.trafficLight
       ? TRAFFIC_LABEL[decision.trafficLight]
-      : decision.status === "closed"
-        ? "Closed"
-        : null;
+      : null;
 
   return (
     <div className="min-w-0">
