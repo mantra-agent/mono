@@ -35,6 +35,16 @@ RUN cd mobile && npm ci --legacy-peer-deps
 # Copy source
 COPY . .
 
+# Client __MANTRA_BUILD_ID__ must be the deploy commit. .dockerignore excludes
+# .git, so vite cannot rev-parse HEAD. Railway supplies RAILWAY_GIT_COMMIT_SHA
+# as a build-time ARG; without it a cached `npm run build` layer can bake the
+# sentinel "development" id and spa-version-skew strands chunk failures as
+# same_build (ROUTE_MODULE_LOAD_FAILED on live).
+ARG RAILWAY_GIT_COMMIT_SHA
+ARG GIT_COMMIT_SHA
+ENV RAILWAY_GIT_COMMIT_SHA=${RAILWAY_GIT_COMMIT_SHA}
+ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
+
 # Build everything: vite (client) + esbuild (server) + gitnexus runtime + claude CLI.
 # Cache mounts removed (see note on the apt RUN above) — the gitnexus runtime
 # is therefore re-bundled from scratch on every build instead of being

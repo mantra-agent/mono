@@ -125,7 +125,13 @@ async function checkForVersionSkew(
   force: boolean,
   recoverChunkFailure = false,
 ): Promise<VersionSkewRecoveryOutcome> {
-  if (__MANTRA_BUILD_ID__ === "development") return "same_build";
+  // Local Vite dev has no deploy graph. Passive focus/visibility checks stay quiet.
+  // Confirmed chunk failures still recover: a production client can bake the
+  // sentinel "development" id when the image build lacks git metadata, and that
+  // must not strand ROUTE_MODULE_LOAD_FAILED as same_build.
+  if (__MANTRA_BUILD_ID__ === "development" && !recoverChunkFailure) {
+    return "same_build";
+  }
 
   const now = Date.now();
   if (!force && now - lastCheckAt < MIN_CHECK_INTERVAL_MS) return "same_build";
