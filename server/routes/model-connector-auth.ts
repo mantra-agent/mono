@@ -15,10 +15,8 @@ import {
   storeConnectorSubscriptionTokens,
   storeConnectorSecret,
   disconnectConnectorAuth,
-  findLegacyConnectorId,
   type SubscriptionProvider,
 } from "../model-connector-credentials";
-import type { ModelConnectorProvider } from "@shared/model-connectors";
 
 const log = createLogger("ModelConnectorAuthRoutes");
 
@@ -62,23 +60,6 @@ async function requireSubscriptionConnector(connectorId: number, provider: Subsc
 }
 
 export function registerModelConnectorAuthRoutes(app: Express): void {
-  // Static path before :id so "by-provider" is never parsed as a connector id.
-  app.get(
-    "/api/models/connectors/by-provider/:provider",
-    requireAuth,
-    requirePermission("system:read"),
-    async (req: Request, res: Response) => {
-      try {
-        const provider = req.params.provider as ModelConnectorProvider;
-        const id = await findLegacyConnectorId(provider);
-        if (!id) return res.status(404).json({ error: "No legacy connector for provider" });
-        res.json({ id, provider });
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    },
-  );
-
   app.get(
     "/api/models/connectors/:id/auth-status",
     requireAuth,

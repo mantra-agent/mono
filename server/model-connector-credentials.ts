@@ -5,7 +5,7 @@
  * provider_connections row via provider-credential-store. Global app_secrets
  * and hard-coded connected_accounts IDs remain compatibility fallbacks only.
  */
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "./db";
 import { providerConnections } from "@shared/models/platforms";
 import {
@@ -285,23 +285,8 @@ export async function disconnectConnectorAuth(connectorId: number): Promise<void
   if (!row) throw new Error("Model connector not found");
   await clearConnectorCredential(connectorId);
   // If this was the only consumer of a legacy primary and tokens were never migrated,
-  // leave legacy alone — other legacy-only rows may still need it. Explicit legacy
-  // disconnect remains on the Integrations singleton path until cutover completes.
+  // leave leftover global secrets alone — other leftover rows may still need them.
   log.info("cleared connector auth", { connectorId, provider: row.provider });
-}
-
-/** Find the sole legacy connector of a provider (Integrations singleton view). */
-export async function findLegacyConnectorId(provider: ModelConnectorProvider): Promise<number | null> {
-  const [row] = await db
-    .select({ id: providerConnections.id })
-    .from(providerConnections)
-    .where(and(
-      eq(providerConnections.connectorKind, "model"),
-      eq(providerConnections.provider, provider),
-      isNull(providerConnections.routerId),
-    ))
-    .limit(1);
-  return row?.id ?? null;
 }
 
 export function legacySubscriptionAccountId(provider: SubscriptionProvider): string {
