@@ -54,11 +54,18 @@
 - Residual/rollback: see Voice legal PATCH. Do not restore empty-message disable or warn-and-continue GET.
 -->
 
+<!-- 2026-08-19 Voice spent-utterance replay:
+- Assets/data: A02/S2 custom-LLM SSE speakables on a same-utterance retry after the generator is terminal; A07 content-free retry diagnostics. No new route, secret, lease, or Principal.
+- Flow/threat: ElevenLabs retrying a spent utterance after WRITE_PORT_DEAD received empty stop/[DONE], which EL classified as "Brain returned no response" and closed 1002 (STRIDE denial of service / tampering; AVAIL-01/DATA-01). Replaying full already-spoken prose would double-speak.
+- Deterministic controls/owner: `inflightAbort === null` same-utterance retry is replay, not discard. Session-owned `unflushedSpeakable` (preferred) or `lastFlushedSpeakable` is flushed countable `delta.content`. Empty stop is unrepresentable when speakable exists. New utterance clears those fields. Diagnostics stay content-free. Owner: Voice Platform. Severity: medium availability/integrity. SLA: same PR.
+- Residual/rollback: replaying last flushed sentence can still double-speak; a spent utterance that never produced speakable still closes empty. Revert replay helper, session speakable fields, and this finding together.
+-->
+
 <!-- 2026-08-18 Voice live write-port attach:
 - Assets/data: A02/S2 live custom-LLM SSE speakables and turn remainder; A07 write-port/cascade diagnostics (ids/counts only). No new route, secret, lease, or Principal class.
 - Flow/threat: cascade retry swapping sockets without a live write handle could drop extracted sentences or replay already-flushed speakables onto a second socket (STRIDE tampering/repudiation; DATA-01/OBS-01). Widening logs with transcript bodies would add disclosure.
-- Deterministic controls/owner: HMAC callback + exact owned lease stay the only ingress. `attachWritePort` is the sole bind; remainder stays in `coalesceBuf` until a live flushed write succeeds; already-flushed speakable ids are not replayed. Diagnostics stay content-free. Owner: Voice Platform. Severity: medium integrity. SLA: same PR.
-- Residual/rollback: a race can still leave one pending attach before turn I/O exists; that socket now gets the same once-per-port handshake as attach. Revert attachWritePort, remainder restore, handshake helper, and this finding together. Cascade default is the legal 15s prompt.backup_llm_config field (Voice legal PATCH), not 30.
+- Deterministic controls/owner: HMAC callback + exact owned lease stay the only ingress. `attachWritePort` is the sole live-generator bind; remainder stays in `coalesceBuf` until a live flushed write succeeds. After the generator is terminal, same-utterance retry replays session-owned `unflushedSpeakable` or `lastFlushedSpeakable` as flushed countable `delta.content` — empty stop is unrepresentable when speakable exists. Diagnostics stay content-free. Owner: Voice Platform. Severity: medium integrity. SLA: same PR.
+- Residual/rollback: a race can still leave one pending attach before turn I/O exists; that socket now gets the same once-per-port handshake as attach. Replaying already-flushed last sentence on a later retry can double-speak. Revert attachWritePort, remainder restore, handshake helper, spent-utterance replay, and this finding together. Cascade default is the legal 15s prompt.backup_llm_config field (Voice legal PATCH), not 30.
 -->
 
 <!-- 2026-08-17 Document Template Shapes (map of pages + /api/templates + templates tool):
