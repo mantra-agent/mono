@@ -1,4 +1,5 @@
 import type { ReferenceType } from "@shared/references";
+import { listScreenEntries } from "@shared/screen-registry";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger("ReferenceSearch");
@@ -36,6 +37,7 @@ export const REFERENCE_TYPE_LABELS: Record<string, string> = {
   rss_item: "RSS",
   pr: "PR",
   router: "Router",
+  screen: "Screen",
   account: "Account",
   user: "User",
   agent_instance: "Agent",
@@ -390,6 +392,24 @@ export async function loadReferenceSuggestions(
     ]);
 
   const suggestions: ReferenceSuggestion[] = [];
+
+  if (allow("screen")) {
+    const q = (query || "").trim().toLowerCase();
+    for (const entry of listScreenEntries()) {
+      if (q && !entry.id.includes(q) && !entry.label.toLowerCase().includes(q)) continue;
+      suggestions.push(
+        withRankMeta(
+          {
+            type: "screen",
+            id: entry.id,
+            label: entry.label,
+            description: "Screen",
+          },
+          {},
+        ),
+      );
+    }
+  }
 
   for (const page of asItemArray<LibraryPageResult>(library)) {
     const refId = page.slug || page.id;

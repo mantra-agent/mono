@@ -26,7 +26,7 @@ import type {
 import { CORE_CAPABILITY_KEYS, listContributions } from "@shared/models/mod-registry";
 import { MOD_KEYS, type ModKey } from "@shared/models/mods";
 import { PERMISSIONS } from "@shared/permissions-vocabulary";
-import { isUiInteractionTarget, UI_INTERACTION_TARGET_ROUTES } from "@shared/ui-interaction";
+import { getUiInteractionTargetHref, isUiInteractionTarget } from "@shared/ui-interaction";
 import { REGISTERED_KEY_CATALOGS } from "./registered-keys";
 
 export class ModRegistryValidationError extends Error {
@@ -211,7 +211,7 @@ function validateContribution(owner: string, c: AnyContribution, ctx: Contributi
       } else if (!ctx.clientRouteIds.has(c.routeId)) {
         push(`Navigation "${c.id}" references unknown route ID "${c.routeId}".`);
       } else {
-        const targetPath = UI_INTERACTION_TARGET_ROUTES[c.target].href.split("?")[0];
+        const targetPath = getUiInteractionTargetHref(c.target).split("?")[0];
         const routePath = ctx.clientRoutePaths.get(c.routeId);
         if (routePath !== targetPath) {
           push(

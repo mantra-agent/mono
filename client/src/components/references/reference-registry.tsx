@@ -41,6 +41,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { REFERENCE_REGISTRY, isKnownReferenceType, type ReferenceRef, type ResolvedReference } from "@shared/references";
+import { isScreenId, screenLabel, screenPath } from "@shared/screen-registry";
 
 export type ClientResolvedReference = Omit<ResolvedReference, "icon"> & {
   Icon: LucideIcon;
@@ -345,6 +346,14 @@ const registry: Record<string, RegistryEntry> = {
     Icon: Route,
     fallbackLabel: ref => metadataString(ref, "label") || `Router ${ref.id.slice(0, 8)}`,
     href: ref => metadataString(ref, "href") || `/system?tab=routers&router=${encodeURIComponent(ref.id)}`,
+  },
+  screen: {
+    Icon: Layers3,
+    // Never paint the raw slug or path — registry label is the chip title.
+    fallbackLabel: ref =>
+      metadataString(ref, "label") || (isScreenId(ref.id) ? screenLabel(ref.id) : humanizeSlug(ref.id)),
+    href: ref =>
+      metadataString(ref, "href") || (isScreenId(ref.id) ? screenPath(ref.id) : undefined),
   },
 };
 

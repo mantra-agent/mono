@@ -1,3 +1,5 @@
+import { isScreenId, SCREEN_ID_PATTERN, screenPath } from "./screen-registry";
+
 export const REFERENCE_TYPES = [
   "page",
   "person",
@@ -58,6 +60,7 @@ export const REFERENCE_TYPES = [
   "user",
   "agent_instance",
   "router",
+  "screen",
 ] as const;
 
 export type KnownReferenceType = typeof REFERENCE_TYPES[number];
@@ -195,6 +198,11 @@ export const REFERENCE_REGISTRY: Readonly<Record<KnownReferenceType, ReferenceTy
   router: definition("router", "uuid", UUID_PATTERN, {
     route: id => `/system?tab=routers&router=${encodeURIComponent(id)}`,
     capabilities: ["open"],
+  }),
+  screen: definition("screen", "slug", SCREEN_ID_PATTERN, {
+    route: id => (isScreenId(id) ? screenPath(id) : undefined),
+    capabilities: ["open"],
+    graph: false,
   }),
 };
 
