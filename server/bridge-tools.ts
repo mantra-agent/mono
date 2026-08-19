@@ -3823,7 +3823,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           });
         })
         .catch((error: any) => {
-          toolExec.error("Git tool main change mobile build trigger failed", {
+          toolExec.warn("Git tool main change mobile build trigger failed", {
             reason: input.reason,
             sourceRef,
             error: error?.message || String(error),
@@ -3865,7 +3865,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           });
         })
         .catch((error: any) => {
-          toolExec.error("Git tool main change Stage Sync Latest trigger failed", {
+          toolExec.warn("Git tool main change Stage Sync Latest trigger failed", {
             reason: input.reason,
             sourceRef,
             error: error?.message || String(error),
