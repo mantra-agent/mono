@@ -2,7 +2,6 @@ import { and, asc, eq, or, sql } from "drizzle-orm";
 import {
   documentTemplates,
   isDocumentTemplateBindingKey,
-  skillMayBindTemplateKey,
   skillTemplateBindings,
   type DocumentTemplate,
   type DocumentTemplateBindingKey,
@@ -328,7 +327,6 @@ export class DocumentTemplateStorage {
     const [skill] = await db
       .select({
         id: skills.id,
-        name: skills.name,
         scope: skills.scope,
         ownerUserId: skills.ownerUserId,
         accountId: skills.accountId,
@@ -341,9 +339,6 @@ export class DocumentTemplateStorage {
       if (skill.ownerUserId !== current.userId && skill.accountId !== current.accountId) {
         throw new Error("Skill not found");
       }
-    }
-    if (!skillMayBindTemplateKey(skill.name, key)) {
-      throw new Error(`Skill "${skill.name}" may not bind key "${key}"`);
     }
 
     const template = await this.get(normalizedTemplateId, current);
@@ -448,10 +443,6 @@ export class DocumentTemplateStorage {
       }
       if (!skillId || !skillName) {
         log.warn("templates.resolve skill missing", { skillNameOrId });
-        return null;
-      }
-      if (!skillMayBindTemplateKey(skillName, key)) {
-        log.warn("templates.resolve incompatible key", { skillName, key });
         return null;
       }
 

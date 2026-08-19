@@ -16,21 +16,6 @@ export function isDocumentTemplateBindingKey(value: string): value is DocumentTe
   return (DOCUMENT_TEMPLATE_BINDING_KEYS as readonly string[]).includes(value);
 }
 
-/**
- * Kind/path compatibility: which skill names may bind which keys.
- * Code-owned closed set — not a data catalog of skill instances beyond the two day-one producers.
- */
-export const SKILL_TEMPLATE_KEY_COMPATIBILITY: Record<string, readonly DocumentTemplateBindingKey[]> = {
-  "feature-pipeline": ["spec"],
-  reflect: ["daily", "weekly"],
-};
-
-export function skillMayBindTemplateKey(skillName: string, key: string): boolean {
-  const allowed = SKILL_TEMPLATE_KEY_COMPATIBILITY[skillName];
-  if (!allowed) return false;
-  return (allowed as readonly string[]).includes(key);
-}
-
 /** Template = id + name + page. That is the whole row. */
 export const documentTemplates = pgTable(
   "document_templates",
