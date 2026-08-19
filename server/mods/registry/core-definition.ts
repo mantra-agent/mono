@@ -41,6 +41,7 @@ export const coreDefinition: CoreDefinition = {
       clientRoute("core.route.home", "/home", "home"),
       clientRoute("core.route.session", "/session", "session"),
       clientRoute("core.route.brain", "/brain", "brain"),
+      clientRoute("core.route.personas", "/personas", "personas"),
       clientRoute("core.route.agendas", "/agendas", "agendas"),
       clientRoute("core.route.skills", "/skills", "skills"),
       clientRoute("core.route.templates", "/templates", "templates"),
@@ -92,7 +93,7 @@ export const coreDefinition: CoreDefinition = {
       nav("core.nav.timers", "Automation", "Timers", "Clock", "navigation.timers.open", "core.route.system", 6, { requiredPermissions: ["system:read"] }),
       // Agent
       nav("core.nav.orientation", "Agent", "Orientation", "Globe", "navigation.orientation.open", "core.route.orientation", 1),
-      nav("core.nav.persona", "Agent", "Persona", "User", "navigation.persona.open", "core.route.brain", 2),
+      nav("core.nav.persona", "Agent", "Persona", "User", "navigation.persona.open", "core.route.personas", 2),
       nav("core.nav.emotion", "Agent", "Emotion", "Heart", "navigation.emotion.open", "core.route.brain", 3),
       // Memory
       nav("core.nav.memory-layers", "Memory", "Layers", "DatabaseZap", "navigation.memoryLayers.open", "core.route.memory", 1),

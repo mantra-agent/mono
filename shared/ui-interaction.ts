@@ -40,7 +40,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.hooks.open": { href: "/system?tab=hooks", permission: "system:read", description: "Automate actions when events fire." },
   "navigation.timers.open": { href: "/system?tab=timers", permission: "system:read", description: "Schedule reminders and recurring runs." },
   "navigation.orientation.open": { href: "/orientation", description: "Shape how your agent understands your world." },
-  "navigation.persona.open": { href: "/brain?tab=persona", description: "Choose how your agent shows up." },
+  "navigation.persona.open": { href: "/personas", description: "Choose how your agent shows up." },
   "navigation.emotion.open": { href: "/brain?tab=emotion", description: "See your agent's emotional state." },
   "navigation.memoryLayers.open": { href: "/memory?tab=memories", description: "Browse what your agent remembers." },
   "navigation.memoryGraph.open": { href: "/memory?tab=graph", description: "Explore your memory as a graph." },

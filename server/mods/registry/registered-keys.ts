@@ -16,6 +16,7 @@ export const REGISTERED_SURFACE_KEYS = [
   "home",
   "session",
   "brain",
+  "personas",
   "agendas",
   "skills",
   "templates",

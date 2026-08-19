@@ -61,6 +61,7 @@ const ProjectsPage = lazyWithRetry(() => import("@/pages/projects"));
 const IssueDetailPage = lazyWithRetry(() => import("@/pages/issue-detail"));
 const IssueCaptureDialog = lazyWithRetry(() => import("@/components/issue-capture").then(m => ({ default: m.IssueCaptureDialog })));
 const LogsPage = lazyWithRetry(() => import("@/pages/logs"));
+const PersonasPage = lazyWithRetry(() => import("@/pages/personas"));
 const AccountPage = lazyWithRetry(() => import("@/pages/account"));
 const VaultsPage = lazyWithRetry(() => import("@/pages/vaults-admin"));
 const TeamsPage = lazyWithRetry(() => import("@/pages/teams"));
@@ -314,6 +315,7 @@ function Router() {
       <Switch>
         <Route path="/"><Redirect to="/home" /></Route>
         <Route path="/brain" component={BrainPage} />
+        <Route path="/personas" component={PersonasPage} />
         <Route path="/agendas" component={AgendasPage} />
         <Route path="/skills" component={SkillsPage} />
         <Route path="/templates" component={TemplatesPage} />

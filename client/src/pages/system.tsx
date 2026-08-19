@@ -99,11 +99,8 @@ export default function SystemPage() {
       setLocation("/performance");
       return;
     }
-    const allowed = tabs.some((t) => t.value === p.tab) ? p.tab : (tabs[0]?.value ?? "logs");
-    if (allowed !== p.tab) {
-      setLocation(`/system?tab=${encodeURIComponent(allowed)}`, { replace: true });
-      return;
-    }
+    const allowed = tabs.some((t) => t.value === p.tab) ? p.tab : null;
+    if (!allowed) return;
     setActiveTab(allowed);
   }, [search, readUrlParams, setLocation, tabs]);
 

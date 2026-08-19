@@ -10,7 +10,7 @@ const ObservationsContent = lazyWithRetry(() => import("@/pages/observations"));
 const TimersContent = lazyWithRetry(() => import("@/pages/timers").then(m => ({ default: m.TimersContent })));
 
 const EmotionContent = lazyWithRetry(() => import("@/pages/emotion-tab"));
-const PersonasContent = lazyWithRetry(() => import("@/pages/personas"));
+const PersonasContent = lazyWithRetry(() => import("@/pages/persona-tab"));
 const ModelsContent = lazyWithRetry(() => import("@/pages/models"));
 const PlansContent = lazyWithRetry(() => import("@/pages/plans"));
 
@@ -51,12 +51,20 @@ export default function BrainPage() {
   const [activeTab, setActiveTab] = useState(() => readUrlParams().tab);
 
   const handleTabChange = useCallback((tab: string) => {
+    if (tab === "persona") {
+      setLocation("/personas");
+      return;
+    }
     setActiveTab(tab);
     setLocation(`/brain?tab=${encodeURIComponent(tab)}`);
   }, [setLocation]);
 
   useEffect(() => {
     const p = readUrlParams();
+    if (p.tab === "persona") {
+      setLocation("/personas", { replace: true });
+      return;
+    }
     const nextTab = visibleTabs.some((tab) => tab.value === p.tab) ? p.tab : (visibleTabs[0]?.value ?? "observations");
     if (nextTab !== p.tab) {
       setLocation(`/brain?tab=${encodeURIComponent(nextTab)}`, { replace: true });

@@ -20,6 +20,10 @@ export function TabParamSync() {
     if (!urlTab) return;
     if (!config?.onTabChange) return;
     if (config.activeTab === urlTab) return;
+    // Path owns the tab set. A foreign slug (Personas ?tab=persona on System)
+    // must not rewrite the currently mounted page to its fallback tab.
+    const owned = config.tabs?.some((tab) => tab.value === urlTab) ?? false;
+    if (!owned) return;
     // Avoid double-firing for the same URL tab
     if (lastApplied.current === urlTab) return;
     lastApplied.current = urlTab;
