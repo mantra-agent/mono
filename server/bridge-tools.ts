@@ -6781,6 +6781,35 @@ ${refs}` : ""),
       const visiblePlat = (pred?: SQL) => combineWithVisibleScope(requireCurrentPrincipal(), platScopeColumns, pred);
       const writablePlat = (pred?: SQL) => combineWithWritableScope(requireCurrentPrincipal(), platScopeColumns, pred);
       const positiveId = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null);
+      const ENVIRONMENT_ID_ACTIONS = new Set([
+        "get_environment",
+        "get_environment_status",
+        "provision_database_roles",
+        "get_build_lifecycle",
+        "set_build_lifecycle",
+        "disable_build_lifecycle",
+        "delete_build_lifecycle",
+        "get_build_status",
+        "start_build_workflow",
+        "list_environment_workflows",
+        "update_environment",
+        "delete_environment",
+        "save_source_binding",
+        "save_hosting_binding",
+        "get_cloudflare_pages_project",
+        "deploy_cloudflare_pages",
+        "cancel_cloudflare_pages_deployment",
+        "poll_cloudflare_pages_deployment",
+        "repair_cloudflare_pages_project",
+      ]);
+      const aliasEnvironmentId = positiveId(args.platformEnvironmentId);
+      if (ENVIRONMENT_ID_ACTIONS.has(action)) {
+        const explicitId = positiveId(args.id);
+        if (aliasEnvironmentId && explicitId && aliasEnvironmentId !== explicitId) {
+          return { result: "Conflicting id and platformEnvironmentId for this environment action", error: true };
+        }
+        if (!explicitId && aliasEnvironmentId) args.id = aliasEnvironmentId;
+      }
 
       if (action === "provision_database_roles") {
         const environmentId = positiveId(args.id);

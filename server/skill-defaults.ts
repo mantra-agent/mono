@@ -175,7 +175,7 @@ import { composeFeaturePipelineSkillProcess } from "@shared/feature-pipeline";
     recommendedPersona: "Engineer",
     description:
       "Continuously monitors Mantra Web stage and production for crashes, failed builds or deployments, unhealthy runtime state, recurring error and warning signatures, material performance degradation, and failed or degraded autonomous skill runs. Deduplicates incidents, always files a durable Issue before elevating to Ray, escalates any broken environment classification, and prepares a bounded repair handoff for reproducible software defects while production remains observe-only and human-promoted.",
-    version: "1.13",
+    version: "1.14",
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "autonomous",
@@ -219,8 +219,8 @@ Every run, determine whether Mantra Web stage or production has a new or materia
 
 ## Required sensors (hard — first actions)
 Before any classification, report rewrite, or end-state summary, successfully invoke all of:
-1. \`platforms.get_environment_status\` for environment \`11\`
-2. \`platforms.get_environment_status\` for environment \`12\`
+1. \`platforms.get_environment_status\` with \`id: 11\`
+2. \`platforms.get_environment_status\` with \`id: 12\`
 3. \`railway.status\` with \`platformEnvironmentId: 11\`
 4. \`railway.status\` with \`platformEnvironmentId: 12\`
 
@@ -229,7 +229,7 @@ Do not classify healthy from prior report state, platforms alone, or a previous 
 ## Run window and evidence
 Use a 45-minute observation window unless a source only supports another bounded window. Inspect both environments independently.
 
-1. Every run, confirm both environment bindings and status by calling \`platforms.get_environment_status\` for environment \`11\` and environment \`12\`. This platforms invocation is required, not optional. Additionally read \`platforms.get_environment\` and \`platforms.get_build_lifecycle\` when deeper binding or lifecycle-policy detail is needed.
+1. Every run, confirm both environment bindings and status by calling \`platforms.get_environment_status\` with \`id: 11\` and \`id: 12\`. This platforms invocation is required, not optional. Additionally read \`platforms.get_environment\` and \`platforms.get_build_lifecycle\` when deeper binding or lifecycle-policy detail is needed.
 2. Use \`railway.status\` and bounded \`railway.deployments\` for environments 11 and 12. A removed superseded deployment is normal; only FAILED, CRASHED, BUILD_FAILED, or a latest non-success terminal state is an incident. Fetch \`build_logs\` for a failed build and runtime \`logs\` for diagnosis.
 3. Fetch both \`/api/health\` URLs. Record reachability, \`ok\`, uptime, and memory. A failed request, \`ok != true\`, repeated restart/low-uptime pattern, or sharp memory growth across runs is evidence.
 4. Query Railway runtime logs at \`error\` and \`warn\` for both environments, bounded to recent records. Normalize signatures by removing timestamps, request IDs, run IDs, UUIDs, and volatile numbers before counting. Treat one isolated warning as context, not an incident. Treat a recurring signature as actionable when it appears at least 5 times in the window, persists across 2 runs, or co-occurs with user-visible failure. Read archived middle log sections, not just info-level previews, before classifying an environment healthy.
