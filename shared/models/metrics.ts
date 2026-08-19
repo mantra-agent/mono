@@ -1,6 +1,18 @@
 import { pgTable, text, integer, real, boolean, timestamp, jsonb, index, uniqueIndex, doublePrecision } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
+import {
+  cadenceFromPeriod,
+  KPI_MAX_SAMPLES,
+  KPI_MIN_SAMPLES,
+  KPI_PERIODS,
+  KPI_STYLES,
+  normalizeKpiPeriod,
+  normalizeKpiSamples,
+  normalizeKpiStyle,
+  type KpiPeriod,
+  type KpiStyle,
+} from "../kpi-sample";
 
 // ── Enums ──────────────────────────────────────────────────────────
 
@@ -148,8 +160,14 @@ export const kpis = pgTable(
     description: text("description").notNull().default(""),
     /** Human-readable target statement shown on cards. */
     targetLabel: text("target_label").notNull().default(""),
-    /** Cadence label (e.g. Weekly, Monthly). */
+    /** Cadence label (e.g. Weekly, Monthly). Compatibility stamp of period. */
     cadence: text("cadence").notNull().default("Weekly"),
+    /** Closed calendar grain. Compiler input; cadence is the display stamp. */
+    period: text("period").notNull().default("weekly"),
+    /** How many completed buckets the KPI asks. Live is always 1. */
+    samples: integer("samples").notNull().default(1),
+    /** Renderer only: line | heat. Does not change the asked sample. */
+    style: text("style").notNull().default("line"),
     ownerLabel: text("owner_label").notNull().default(""),
     /** When true, higher values are better for band comparison. */
     direction: text("direction").notNull().default("higher_is_better"),
@@ -251,13 +269,20 @@ export const metricUpdateSchema = z.object({
   clearFields: z.array(z.enum(["description"])).optional(),
 });
 
+const kpiPeriodSchema = z.enum(KPI_PERIODS);
+const kpiStyleSchema = z.enum(KPI_STYLES);
+const kpiSamplesSchema = z.number().int().min(KPI_MIN_SAMPLES).max(KPI_MAX_SAMPLES);
+
 export const kpiCreateSchema = z.object({
   metricId: z.string().trim().min(1),
   name: nameSchema,
   slug: slugSchema.optional(),
   description: z.string().max(4000).optional().default(""),
   targetLabel: z.string().trim().max(240).optional().default(""),
-  cadence: z.string().trim().max(40).optional().default("Weekly"),
+  cadence: z.string().trim().max(40).optional(),
+  period: kpiPeriodSchema.optional(),
+  samples: kpiSamplesSchema.optional(),
+  style: kpiStyleSchema.optional(),
   ownerLabel: z.string().trim().max(80).optional().default(""),
   direction: z.enum(METRIC_DIRECTIONS).optional().default("higher_is_better"),
   bullThreshold: z.number().finite().optional().nullable(),
@@ -266,6 +291,16 @@ export const kpiCreateSchema = z.object({
   staleAfterHours: z.number().int().positive().max(24 * 365).optional().default(168),
   standingObjectiveKey: z.enum(STANDING_OBJECTIVE_KEYS).optional().nullable(),
   status: z.enum(KPI_STATUSES).optional().default("active"),
+}).transform((value) => {
+  const period = normalizeKpiPeriod(value.period, value.cadence ?? "Weekly");
+  const samples = normalizeKpiSamples(period, value.samples ?? 1);
+  return {
+    ...value,
+    period,
+    samples,
+    style: normalizeKpiStyle(value.style),
+    cadence: cadenceFromPeriod(period),
+  };
 });
 
 export const kpiUpdateSchema = z.object({
@@ -274,6 +309,9 @@ export const kpiUpdateSchema = z.object({
   description: z.string().max(4000).optional(),
   targetLabel: z.string().trim().max(240).optional(),
   cadence: z.string().trim().max(40).optional(),
+  period: kpiPeriodSchema.optional(),
+  samples: kpiSamplesSchema.optional(),
+  style: kpiStyleSchema.optional(),
   ownerLabel: z.string().trim().max(80).optional(),
   direction: z.enum(METRIC_DIRECTIONS).optional(),
   bullThreshold: z.number().finite().optional().nullable(),
@@ -349,6 +387,9 @@ export interface Kpi {
   description: string;
   targetLabel: string;
   cadence: string;
+  period: KpiPeriod;
+  samples: number;
+  style: KpiStyle;
   ownerLabel: string;
   direction: MetricDirection;
   bullThreshold: number | null;
@@ -366,6 +407,10 @@ export interface Kpi {
   updatedAt: string;
   metric?: Metric | null;
   score?: KpiScore;
+  coverage?: MetricCoverage;
+  series?: MetricSample[];
+  rangeStart?: string;
+  rangeEnd?: string;
 }
 
 export interface MetricSample {
@@ -462,19 +507,20 @@ export function slugifyMetricName(name: string): string {
 }
 
 /**
- * Score a KPI from its latest sample and band thresholds.
- * Direction higher_is_better: value >= bull → bull; >= onTrack → on_track; >= bear → bear; else critical.
- * Direction lower_is_better: inverted comparisons.
- * Missing sample → unmeasured. Past staleAfterHours → stale.
+ * Score a KPI from the asked sample and two bounds.
+ * Under = bearThreshold, Over = bullThreshold. onTrackThreshold is ignored.
+ * Closed-bucket scores skip staleAfterHours; Live may still apply it.
+ * Missing sample → unmeasured.
  */
 export function scoreKpi(input: {
   direction: MetricDirection;
   bullThreshold: number | null;
-  onTrackThreshold: number | null;
+  onTrackThreshold?: number | null;
   bearThreshold: number | null;
   staleAfterHours: number;
   sample: MetricSample | null | undefined;
   now?: Date;
+  applyStale?: boolean;
 }): KpiScore {
   const now = input.now ?? new Date();
   if (!input.sample) {
@@ -489,22 +535,24 @@ export function scoreKpi(input: {
     };
   }
 
-  const observedAt = new Date(input.sample.observedAt);
-  const ageHours = (now.getTime() - observedAt.getTime()) / (1000 * 60 * 60);
-  if (Number.isFinite(ageHours) && ageHours > input.staleAfterHours) {
-    return {
-      band: "stale",
-      value: input.sample.value,
-      unit: input.sample.unit,
-      observedAt: input.sample.observedAt,
-      sourceRef: input.sample.sourceRef,
-      evidence: input.sample.evidence,
-      label: "Stale",
-    };
+  if (input.applyStale !== false) {
+    const observedAt = new Date(input.sample.observedAt);
+    const ageHours = (now.getTime() - observedAt.getTime()) / (1000 * 60 * 60);
+    if (Number.isFinite(ageHours) && ageHours > input.staleAfterHours) {
+      return {
+        band: "stale",
+        value: input.sample.value,
+        unit: input.sample.unit,
+        observedAt: input.sample.observedAt,
+        sourceRef: input.sample.sourceRef,
+        evidence: input.sample.evidence,
+        label: "Stale",
+      };
+    }
   }
 
   const value = input.sample.value;
-  const band = classifyBand(value, input.direction, input.bullThreshold, input.onTrackThreshold, input.bearThreshold);
+  const band = classifyBand(value, input.direction, input.bullThreshold, input.bearThreshold);
 
   return {
     band,
@@ -517,32 +565,22 @@ export function scoreKpi(input: {
   };
 }
 
-function classifyBand(
+export function classifyBand(
   value: number,
   direction: MetricDirection,
-  bull: number | null,
-  onTrack: number | null,
-  bear: number | null,
+  over: number | null,
+  under: number | null,
 ): KpiScoreBand {
-  if (bull == null && onTrack == null && bear == null) {
-    return "on_track";
-  }
+  if (over == null && under == null) return "on_track";
 
   if (direction === "lower_is_better") {
-    if (bull != null && value <= bull) return "bull";
-    if (onTrack != null && value <= onTrack) return "on_track";
-    if (bear != null && value <= bear) return "bear";
-    if (bear != null && value > bear) return "critical";
-    if (onTrack != null && value > onTrack) return "bear";
+    if (under != null && value <= under) return "bull";
+    if (over != null && value > over) return "bear";
     return "on_track";
   }
 
-  // higher_is_better and target_band (treat target_band like higher for MVP)
-  if (bull != null && value >= bull) return "bull";
-  if (onTrack != null && value >= onTrack) return "on_track";
-  if (bear != null && value >= bear) return "bear";
-  if (bear != null && value < bear) return "critical";
-  if (onTrack != null && value < onTrack) return "bear";
+  if (over != null && value >= over) return "bull";
+  if (under != null && value < under) return "bear";
   return "on_track";
 }
 

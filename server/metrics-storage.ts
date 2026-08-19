@@ -24,6 +24,17 @@ import {
   type MetricUpdate,
   type StandingObjectiveKey,
 } from "@shared/models/metrics";
+import {
+  cadenceFromPeriod,
+  compileKpiSample,
+  KPI_DEFAULT_TIMEZONE,
+  normalizeKpiPeriod,
+  normalizeKpiSamples,
+  normalizeKpiStyle,
+  sampleBelongsToLatestBucket,
+  type KpiPeriod,
+  type KpiStyle,
+} from "@shared/kpi-sample";
 import { USAGE_LEASE_TAIL_MS, type UsageRangeSample } from "./hours-used";
 import type { WorkRangeSample } from "./work-metrics";
 import type { IdentityRangeSample } from "./identity-metrics";
@@ -175,21 +186,47 @@ function virtualCurrentMetric(
   };
 }
 
+function kpiQuestion(row: typeof kpis.$inferSelect): {
+  period: KpiPeriod;
+  samples: number;
+  style: KpiStyle;
+  cadence: string;
+} {
+  const period = normalizeKpiPeriod(
+    (row as { period?: string | null }).period,
+    row.cadence,
+  );
+  const rawSamples = (row as { samples?: number | null }).samples;
+  const samples = period === "live" ? 1 : normalizeKpiSamples(period, rawSamples ?? 1);
+  const style = normalizeKpiStyle((row as { style?: string | null }).style);
+  return { period, samples, style, cadence: cadenceFromPeriod(period) };
+}
+
+function unavailableScore(reason: string): KpiScore {
+  return {
+    band: "unavailable",
+    value: null,
+    unit: "",
+    observedAt: null,
+    sourceRef: null,
+    evidence: reason,
+    label: "Unavailable",
+  };
+}
+
 function mapKpi(
   row: typeof kpis.$inferSelect,
-  opts?: { metric?: Metric | null; sample?: MetricSample | null },
+  opts?: {
+    metric?: Metric | null;
+    score?: KpiScore;
+    coverage?: MetricCoverage;
+    series?: MetricSample[];
+    rangeStart?: string;
+    rangeEnd?: string;
+  },
 ): Kpi {
   const direction = (row.direction as MetricDirection) ?? "higher_is_better";
-  const score: KpiScore | undefined = opts?.sample !== undefined || opts?.metric
-    ? scoreKpi({
-        direction,
-        bullThreshold: row.bullThreshold,
-        onTrackThreshold: row.onTrackThreshold,
-        bearThreshold: row.bearThreshold,
-        staleAfterHours: row.staleAfterHours ?? 168,
-        sample: opts?.sample ?? opts?.metric?.latestSample ?? null,
-      })
-    : undefined;
+  const question = kpiQuestion(row);
 
   return {
     id: row.id,
@@ -198,7 +235,10 @@ function mapKpi(
     slug: row.slug,
     description: row.description ?? "",
     targetLabel: row.targetLabel ?? "",
-    cadence: row.cadence ?? "Weekly",
+    cadence: question.cadence,
+    period: question.period,
+    samples: question.samples,
+    style: question.style,
     ownerLabel: row.ownerLabel ?? "",
     direction,
     bullThreshold: row.bullThreshold ?? null,
@@ -215,8 +255,74 @@ function mapKpi(
     createdAt: toIso(row.createdAt) ?? new Date(0).toISOString(),
     updatedAt: toIso(row.updatedAt) ?? new Date(0).toISOString(),
     metric: opts?.metric ?? null,
-    score,
+    score: opts?.score,
+    coverage: opts?.coverage,
+    series: opts?.series,
+    rangeStart: opts?.rangeStart,
+    rangeEnd: opts?.rangeEnd,
   };
+}
+
+async function evaluateKpi(
+  row: typeof kpis.$inferSelect,
+  metric?: Metric | null,
+): Promise<{
+  metric: Metric | null;
+  score: KpiScore;
+  coverage?: MetricCoverage;
+  series: MetricSample[];
+  rangeStart: string;
+  rangeEnd: string;
+}> {
+  const question = kpiQuestion(row);
+  const compiled = compileKpiSample(question.period, question.samples, new Date(), KPI_DEFAULT_TIMEZONE);
+  const rangeStart = compiled.start.toISOString();
+  const rangeEnd = compiled.end.toISOString();
+  try {
+    const { queryMetric } = await import("./metrics/core-engine");
+    const series = await queryMetric(row.metricId, { start: compiled.start, end: compiled.end });
+    const coverage = series.coverage;
+    if (coverage.status === "unavailable" || coverage.status === "unbound") {
+      return {
+        metric: series.metric,
+        score: unavailableScore(coverage.reason),
+        coverage,
+        series: [],
+        rangeStart,
+        rangeEnd,
+      };
+    }
+    const point = [...series.samples]
+      .sort((a, b) => new Date(b.observedAt).getTime() - new Date(a.observedAt).getTime())
+      .find((sample) => sampleBelongsToLatestBucket(sample, compiled)) ?? null;
+    return {
+      metric: series.metric,
+      score: scoreKpi({
+        direction: (row.direction as MetricDirection) ?? "higher_is_better",
+        bullThreshold: row.bullThreshold,
+        bearThreshold: row.bearThreshold,
+        staleAfterHours: row.staleAfterHours ?? 168,
+        sample: point,
+        applyStale: question.period === "live",
+      }),
+      coverage,
+      series: series.samples,
+      rangeStart,
+      rangeEnd,
+    };
+  } catch (error) {
+    if ((error as { status?: number })?.status === 404) {
+      return {
+        metric: metric ?? null,
+        score: unavailableScore("Metric not found"),
+        coverage: { status: "unavailable", reason: "Metric not found" },
+        series: [],
+        rangeStart,
+        rangeEnd,
+      };
+    }
+    throw error;
+  }
 }
 
 async function latestSampleFor(
@@ -845,14 +951,13 @@ export const kpiStorage = {
 
     const out: Kpi[] = [];
     for (const { kpi: row } of rows) {
-      let metric: Metric;
       try {
-        metric = await metricsStorage.get(row.metricId);
-      } catch {
-        // Bound Product/System metrics fail closed as not found — omit the KPI.
-        continue;
+        const evaluated = await evaluateKpi(row);
+        out.push(mapKpi(row, evaluated));
+      } catch (error) {
+        if ((error as { status?: number })?.status === 404) continue;
+        throw error;
       }
-      out.push(mapKpi(row, { metric, sample: metric.latestSample ?? null }));
     }
     return out;
   },
@@ -865,16 +970,8 @@ export const kpiStorage = {
       .where(combineWithVisibleScope(principal, kpiScope, eq(kpis.id, id)))
       .limit(1);
     assertVisible(principal, row, "KPI");
-    let metric: Metric;
-    try {
-      metric = await metricsStorage.get(row.metricId);
-    } catch (error) {
-      if ((error as { status?: number })?.status === 404) {
-        throw Object.assign(new Error("KPI not found"), { status: 404 });
-      }
-      throw error;
-    }
-    return mapKpi(row, { metric, sample: metric.latestSample ?? null });
+    const evaluated = await evaluateKpi(row);
+    return mapKpi(row, evaluated);
   },
 
   async getByStandingObjective(key: StandingObjectiveKey): Promise<Kpi | null> {
@@ -891,15 +988,8 @@ export const kpiStorage = {
       )
       .limit(1);
     if (!row) return null;
-    let metric: Metric | null = null;
-    let sample: MetricSample | null = null;
-    try {
-      metric = await metricsStorage.get(row.metricId);
-      sample = metric.latestSample ?? null;
-    } catch {
-      /* ignore */
-    }
-    return mapKpi(row, { metric, sample });
+    const evaluated = await evaluateKpi(row);
+    return mapKpi(row, evaluated);
   },
 
   async create(input: KpiCreate): Promise<Kpi> {
@@ -921,18 +1011,21 @@ export const kpiStorage = {
         slug,
         description: parsed.description ?? "",
         targetLabel: parsed.targetLabel ?? "",
-        cadence: parsed.cadence ?? "Weekly",
+        cadence: parsed.cadence,
+        period: parsed.period,
+        samples: parsed.samples,
+        style: parsed.style,
         ownerLabel: parsed.ownerLabel ?? "",
         direction: parsed.direction ?? metric.direction ?? "higher_is_better",
         bullThreshold: parsed.bullThreshold ?? null,
-        onTrackThreshold: parsed.onTrackThreshold ?? null,
+        onTrackThreshold: null,
         bearThreshold: parsed.bearThreshold ?? null,
         staleAfterHours: parsed.staleAfterHours ?? 168,
         standingObjectiveKey: parsed.standingObjectiveKey ?? null,
         status: parsed.status ?? "active",
       })
       .returning();
-    return mapKpi(row, { metric, sample: metric.latestSample ?? null });
+    return mapKpi(row, await evaluateKpi(row, metric));
   },
 
   async update(id: string, input: KpiUpdate): Promise<Kpi> {
@@ -941,7 +1034,21 @@ export const kpiStorage = {
     assertWritable(principal, existing, "KPI");
     const parsed = kpiUpdateSchema.parse(input);
     const { clearFields, ...rest } = parsed;
+    const nextPeriod = rest.period
+      ? normalizeKpiPeriod(rest.period, rest.cadence ?? existing.cadence)
+      : existing.period;
+    const nextSamples = rest.samples != null || rest.period
+      ? normalizeKpiSamples(nextPeriod, rest.samples ?? (nextPeriod === "live" ? 1 : existing.samples))
+      : existing.samples;
+    const nextStyle = rest.style ? normalizeKpiStyle(rest.style) : existing.style;
     const patch: Record<string, unknown> = { ...rest, updatedAt: new Date() };
+    delete patch.onTrackThreshold;
+    if (rest.period || rest.samples != null || rest.cadence !== undefined) {
+      patch.period = nextPeriod;
+      patch.samples = nextSamples;
+      patch.cadence = cadenceFromPeriod(nextPeriod);
+    }
+    if (rest.style) patch.style = nextStyle;
 
     if (clearFields?.includes("description")) patch.description = "";
     if (clearFields?.includes("targetLabel")) patch.targetLabel = "";
@@ -970,15 +1077,7 @@ export const kpiStorage = {
       .where(combineWithWritableScope(principal, kpiScope, eq(kpis.id, id)))
       .returning();
     assertWritable(principal, row, "KPI");
-    let metric: Metric | null = null;
-    let sample: MetricSample | null = null;
-    try {
-      metric = await metricsStorage.get(row.metricId);
-      sample = metric.latestSample ?? null;
-    } catch {
-      /* ignore */
-    }
-    return mapKpi(row, { metric, sample });
+    return mapKpi(row, await evaluateKpi(row));
   },
 
   async delete(id: string): Promise<Kpi> {
@@ -990,7 +1089,7 @@ export const kpiStorage = {
       .where(combineWithWritableScope(principal, kpiScope, eq(kpis.id, id)))
       .returning();
     assertWritable(principal, row, "KPI");
-    return mapKpi(row, { metric: null, sample: null });
+    return mapKpi(row);
   },
 
   /** Score map for all active KPIs bound to standing objectives. */
@@ -1078,6 +1177,9 @@ export async function ensureMetricsDefinitionsSchema(): Promise<void> {
       bear_threshold double precision,
       stale_after_hours integer NOT NULL DEFAULT 168,
       standing_objective_key text,
+      period text NOT NULL DEFAULT 'weekly',
+      samples integer NOT NULL DEFAULT 1,
+      style text NOT NULL DEFAULT 'line',
       status text NOT NULL DEFAULT 'active',
       scope text NOT NULL DEFAULT 'user',
       owner_user_id text,
@@ -1100,4 +1202,21 @@ export async function ensureMetricsDefinitionsSchema(): Promise<void> {
     sql`CREATE UNIQUE INDEX IF NOT EXISTS kpis_vault_standing_objective_uidx ON kpis(COALESCE(vault_id, ''), standing_objective_key) WHERE standing_objective_key IS NOT NULL`,
   );
   await db.execute(sql`CREATE INDEX IF NOT EXISTS kpis_scope_owner_idx ON kpis(scope, owner_user_id)`);
+  await db.execute(sql`ALTER TABLE kpis ADD COLUMN IF NOT EXISTS period text NOT NULL DEFAULT 'weekly'`);
+  await db.execute(sql`ALTER TABLE kpis ADD COLUMN IF NOT EXISTS samples integer NOT NULL DEFAULT 1`);
+  await db.execute(sql`ALTER TABLE kpis ADD COLUMN IF NOT EXISTS style text NOT NULL DEFAULT 'line'`);
+  await db.execute(sql`
+    UPDATE kpis SET period = CASE lower(cadence)
+      WHEN 'live' THEN 'live'
+      WHEN 'hourly' THEN 'hourly'
+      WHEN 'daily' THEN 'daily'
+      WHEN 'weekly' THEN 'weekly'
+      WHEN 'monthly' THEN 'monthly'
+      WHEN 'quarterly' THEN 'quarterly'
+      WHEN 'annually' THEN 'annually'
+      WHEN 'yearly' THEN 'annually'
+      ELSE period
+    END
+    WHERE period = 'weekly'
+  `);
 }
