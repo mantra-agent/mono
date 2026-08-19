@@ -331,6 +331,10 @@ export const FEATURE_PIPELINE: Record<FeatureStage, FeaturePipelineStage> = {
         "A Tune note that judges the implementation against the spec's goals: design-principle violations, UI/UX defects, and product-fit gaps, each cited to the spec or a named governing design standard (e.g. DESIGN.md).",
         "When KPIs are linked and measurable, record the current reading (or an explicit not-yet-measurable residual) for each intended-benefit KPI.",
         "Screenshots, routes, or runtime evidence that support each qualitative finding.",
+        "Spec Picture path: every Picture bullet is a required hop. Open the new row, door, skill, session, and page — including the operator/edit surface if the Feature ships a new Skill.",
+        "Photograph each new surface. History note names the routes. A surface Smoke never opened is not already proved.",
+        "Works-broken UI is a defect. Unreadable text, layout blowouts, overlapping chrome, blank primary panels, or markdown/editor salad = cite DESIGN (human scale / reading is a tax) or the spec and file it. Taste stays Tune; corruption is not preference.",
+        "Kickback when the product is unusable. If a new surface cannot be operated, name that as a product miss so Calibrate Review can return the Feature to Develop. Do not pass on Smoke having photographed only an index page.",
       ],
       exitCriteria: [
         "Tune evidence is filed against the approved specification (and KPIs when applicable).",
@@ -668,7 +672,7 @@ ${body}
 - Context is the Feature. Load @feature, its status, its history (\`list_feature_history\`), its spec page, and the Product context pages this room's Review \`contextKinds\` require. Spec citations are extra bars, not the set. Missing required kinds fail closed. Do not rediscover Product standards from the repo in place of those pages. Repository evidence (AGENTS.md, SECURITY.md) stays independently required where the room says so.
 - Every Feature stage/status mutation must include a \`historyNote\` explaining why. History is the provenance of how the Feature got here.
 - Personas: Visionary produces idea. Architect produces spec and maintain. Engineer produces develop, test (Smoke), calibrate, and deprecate. Review is always the opposite seat (Visionary/Architect → Engineer; Engineer → Architect).
-- Test Produce is Smoke: binary works-proof on stage (build present, change present, authenticated click-path). Read projected Feature \`availability\` (on_stage | waiting | unknown) instead of rediscovering Stage. Smoke fail kicks the Feature back to develop/ready with the broken path on history. Qualitative judgment is Calibrate Produce (Tune) only — spec-vs-implementation, design/UX, goals of the spec, and KPI check-in when measurable.
+- Test Produce is Smoke: binary works-proof on stage (build present, change present, authenticated click-path). Read projected Feature \`availability\` (on_stage | waiting | unknown) instead of rediscovering Stage. Smoke fail kicks the Feature back to develop/ready with the broken path on history. Qualitative judgment is Calibrate Produce (Tune) only — spec-vs-implementation, design/UX including works-broken chrome, goals of the spec, and KPI check-in when measurable. Tune must walk the Spec Picture path and photograph each new surface.
 - Develop Review pass into Test must stamp \`changeSha\` (merge commit, not PR head) on the stage write so Test can join Stage's activeCommitSha.
 - Never merge to live or publish production. Promotion remains independently authorized.
 `;
