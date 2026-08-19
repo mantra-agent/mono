@@ -12866,7 +12866,6 @@ const cognitionTools: Record<string, ToolHandler> = {
     const allowed = new Set([
       "list",
       "get",
-      "list_legacy",
       "create",
       "add_connector",
       "update_connector",
@@ -12891,14 +12890,13 @@ const cognitionTools: Record<string, ToolHandler> = {
       const {
         listRouters,
         getRouter,
-        listLegacyModelConnectors,
         createRouter,
         addConnectorToRouter,
         moveConnectorToRouter,
         setAccountRouter,
       } = await import("./router-storage");
 
-      if (action === "list" || action === "get" || action === "list_legacy") {
+      if (action === "list" || action === "get") {
         if (!readOk) {
           return { result: "Permission denied: system:read required", error: true };
         }
@@ -12906,30 +12904,11 @@ const cognitionTools: Record<string, ToolHandler> = {
           const routers = await listRouters();
           return { result: JSON.stringify({ count: routers.length, routers }, null, 2) };
         }
-        if (action === "get") {
-          const id = typeof args.id === "string" ? args.id.trim() : "";
-          if (!id) return { result: "Missing id (Router UUID)", error: true };
-          const router = await getRouter(id);
-          if (!router) return { result: `Router ${id} not found`, error: true };
-          return { result: JSON.stringify({ router }, null, 2) };
-        }
-        const connectors = await listLegacyModelConnectors();
-        return {
-          result: JSON.stringify({
-            count: connectors.length,
-            connectors: connectors.map((c) => ({
-              id: c.id,
-              provider: c.provider,
-              label: c.label,
-              status: c.status,
-              priorityPinned: c.priorityPinned,
-              sortOrder: c.sortOrder,
-              hasCredential: Boolean(c.credentialRef),
-              routerId: c.routerId,
-              config: c.config,
-            })),
-          }, null, 2),
-        };
+        const id = typeof args.id === "string" ? args.id.trim() : "";
+        if (!id) return { result: "Missing id (Router UUID)", error: true };
+        const router = await getRouter(id);
+        if (!router) return { result: `Router ${id} not found`, error: true };
+        return { result: JSON.stringify({ router }, null, 2) };
       }
 
       if (!writeOk) {
@@ -13013,14 +12992,8 @@ const cognitionTools: Record<string, ToolHandler> = {
         if (!Number.isFinite(connectorId) || connectorId <= 0) {
           return { result: "Missing or invalid connectorId", error: true };
         }
-        let routerId: string | null = null;
-        if (args.routerId === null || args.routerId === undefined || args.routerId === "") {
-          routerId = null;
-        } else if (typeof args.routerId === "string") {
-          routerId = args.routerId.trim() || null;
-        } else {
-          return { result: "routerId must be a UUID string or null", error: true };
-        }
+        const routerId = typeof args.routerId === "string" ? args.routerId.trim() : "";
+        if (!routerId) return { result: "Missing routerId (Router UUID required)", error: true };
         const connector = await moveConnectorToRouter(connectorId, routerId);
         return {
           result: JSON.stringify({
@@ -13042,14 +13015,8 @@ const cognitionTools: Record<string, ToolHandler> = {
       }
       const accountId = typeof args.accountId === "string" ? args.accountId.trim() : "";
       if (!accountId) return { result: "Missing accountId", error: true };
-      let routerId: string | null = null;
-      if (args.routerId === null || args.routerId === undefined || args.routerId === "") {
-        routerId = null;
-      } else if (typeof args.routerId === "string") {
-        routerId = args.routerId.trim() || null;
-      } else {
-        return { result: "routerId must be a UUID string or null", error: true };
-      }
+      const routerId = typeof args.routerId === "string" ? args.routerId.trim() : "";
+      if (!routerId) return { result: "Missing routerId (Router UUID required)", error: true };
       const result = await setAccountRouter(accountId, routerId);
       return { result: JSON.stringify(result, null, 2) };
     } catch (err: any) {

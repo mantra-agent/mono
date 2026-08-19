@@ -1766,7 +1766,7 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_provider_connections_kind_order ON provider_connections(connector_kind, sort_order)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_provider_connections_kind_pin_order ON provider_connections(connector_kind, priority_pinned DESC, sort_order)`);
 
-    // LLM Router foundation — named exclusive connector pools (parallel cutover: nullable FKs).
+    // LLM Router foundation — named exclusive connector pools. Accounts require router_id.
     await pool.query(`
       CREATE TABLE IF NOT EXISTS routers (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1803,6 +1803,26 @@ export async function runSchemaBootstrap(
       SELECT 'Default', TRUE
       WHERE NOT EXISTS (SELECT 1 FROM routers WHERE is_default = TRUE)
     `);
+    await pool.query(`
+      UPDATE accounts a
+      SET router_id = d.id,
+          updated_at = CURRENT_TIMESTAMP
+      FROM routers d
+      WHERE a.router_id IS NULL
+        AND d.is_default = TRUE
+    `);
+    await pool.query(`
+      DELETE FROM provider_connections
+      WHERE connector_kind = 'model'
+        AND router_id IS NULL
+    `);
+    await pool.query(`ALTER TABLE accounts ALTER COLUMN router_id SET NOT NULL`);
+    await pool.query(
+      "DO " +
+        String.fromCharCode(36, 36) +
+        " BEGIN ALTER TABLE provider_connections ADD CONSTRAINT provider_connections_model_router_required CHECK (connector_kind <> 'model' OR router_id IS NOT NULL); EXCEPTION WHEN duplicate_object THEN NULL; END " +
+        String.fromCharCode(36, 36),
+    );
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS semantic_tier TEXT`);
     // routing_examples was a dead orientation-only signal that never survived
     // copy-on-write; drop the column rather than keep reconciling empty arrays.

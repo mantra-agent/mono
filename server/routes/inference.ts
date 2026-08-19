@@ -20,7 +20,7 @@ import { createNamedSystemPrincipal } from "../principal";
 import { principalHasPermission, requirePermission } from "../permissions";
 import { requireAuth } from "../auth";
 import { runWithApiCallReportingScope, runWithApiCallRouterFilter, type ApiCallRouterFilter } from "../file-storage/api-calls";
-import { listModelConnectors, reorderModelConnectors, updateModelConnector } from "../model-connectors";
+import { updateModelConnector } from "../model-connectors";
 import {
   claudeCliTierMappingsSchema,
   grokSubscriptionTierMappingsSchema,
@@ -967,15 +967,6 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
     }
   });
 
-  app.get("/api/models/connectors", requirePermission("system:read"), async (_req, res) => {
-    try {
-      // Models tab remains the legacy global-chain view during parallel cutover.
-      res.json({ connectors: await listModelConnectors({ legacyOnly: true }) });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
   app.patch("/api/models/connectors/:id", requirePermission("system:write"), async (req, res) => {
     try {
       const id = Number.parseInt(req.params.id, 10);
@@ -993,16 +984,6 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
       const connector = await updateModelConnector(id, body);
       if (!connector) return res.status(404).json({ error: "Model connector not found" });
       res.json({ connector });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  });
-
-  app.put("/api/models/connectors/order", requirePermission("system:write"), async (req, res) => {
-    try {
-      const { ids } = z.object({ ids: z.array(z.number().int().positive()).min(1) }).parse(req.body);
-      const connectors = await reorderModelConnectors(ids);
-      res.json({ connectors });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }

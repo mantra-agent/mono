@@ -16,7 +16,6 @@ export const SCREEN_REGISTRY = {
   observations: { label: "Observations", path: "/brain?tab=observations" },
   plans: { label: "Plans", path: "/brain?tab=plans" },
   personas: { label: "Personas", path: "/personas", aliases: ["/brain?tab=persona"] },
-  models: { label: "Models", path: "/brain?tab=model" },
   prompts: { label: "Prompts", path: "/system?tab=prompts" },
   inference: { label: "Inference", path: "/system?tab=inference" },
   routers: { label: "Routers", path: "/system?tab=routers" },

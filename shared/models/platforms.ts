@@ -229,7 +229,7 @@ export const providerConnections = pgTable(
     sortOrder: integer("sort_order").notNull().default(0),
     /** When true, this connector stays ahead of unpinned peers regardless of relative sortOrder. */
     priorityPinned: boolean("priority_pinned").notNull().default(false),
-    /** Nullable during parallel cutover. NULL = legacy global chain membership. */
+    /** Required for model connectors (CHECK + boot/migration). Non-model rows may remain null. */
     routerId: uuid("router_id").references(() => routers.id, { onDelete: "restrict" }),
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),

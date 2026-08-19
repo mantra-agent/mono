@@ -1814,10 +1814,10 @@ export function setupAuth(app: Express) {
       try {
         const accountId = req.params.id as string;
         const parsed = z.object({
-          routerId: z.string().uuid().nullable(),
+          routerId: z.string().uuid(),
         }).safeParse(req.body);
         if (!parsed.success) {
-          return res.status(400).json({ error: "routerId must be a UUID or null" });
+          return res.status(400).json({ error: "routerId must be a UUID" });
         }
         const { setAccountRouter } = await import("./router-storage");
         const result = await setAccountRouter(accountId, parsed.data.routerId);
