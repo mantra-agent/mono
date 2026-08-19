@@ -1,20 +1,18 @@
 import { normalizeQuestionPrompt } from "@shared/question-prompt";
-import { createLogger } from "../log";
-
-const log = createLogger("QuestionTool");
+import { contractReject } from "./shared/failures";
 
 export async function handleQuestion(args: Record<string, unknown>) {
   const normalized = normalizeQuestionPrompt(args);
   if (!normalized.ok) {
-    log.error(`question prompt rejected: ${normalized.error}`);
-    return {
-      result: [
+    return contractReject(
+      [
         `Question prompt rejected: ${normalized.error}`,
         "Reissue the question tool now with options as an array of { id, label, description? } objects.",
         "Do not answer the question yourself and do not end the turn without a valid question tool call.",
       ].join(" "),
-      error: true,
-    };
+      "question_input_invalid",
+      normalized.error,
+    );
   }
 
   return {

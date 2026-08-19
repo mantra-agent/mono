@@ -20,6 +20,8 @@ export type ToolFailureCode =
   | "business_internal"
   // Decisions contract rejects (caller-correctable input)
   | "decision_input_invalid"
+  // Question contract rejects (caller-correctable input)
+  | "question_input_invalid"
   // Library contract rejects (caller-correctable input)
   | "library_input_invalid"
   // Gmail / email_cache contract rejects (caller-correctable input)
