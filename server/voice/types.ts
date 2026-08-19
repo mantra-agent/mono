@@ -61,6 +61,12 @@ export interface VoiceSession {
   longestDataGapMs: number;
   disconnectReason: string | null;
   lastFiredUserContent: string;
+  /** Last flushed model speakable for the current utterance. Terminal-retry replay source. */
+  lastFlushedSpeakable: string;
+  /** Unflushed remainder after a dead write-port. Preferred terminal-retry replay source. */
+  unflushedSpeakable: string;
+  /** User ordinal that owns lastFlushedSpeakable / unflushedSpeakable. */
+  lastSpeakableUserOrdinal: number | null;
   lastCallbackAt: number;
   isReconnect: boolean;
   historyInjected: boolean;

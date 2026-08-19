@@ -89,6 +89,25 @@ function setPresence(ctx: TurnContext, next: PresenceState): void {
   ctx.presence = next;
 }
 
+function speakableOrdinal(session: VoiceSession): number | null {
+  return session.activeVoiceUserOrdinal;
+}
+
+/** Persist flushed model speakable so a spent-utterance retry can replay after the generator dies. */
+function recordFlushedSpeakable(session: VoiceSession, content: string): void {
+  if (!content) return;
+  session.lastFlushedSpeakable = content;
+  session.unflushedSpeakable = "";
+  session.lastSpeakableUserOrdinal = speakableOrdinal(session);
+}
+
+/** Hold remainder that never crossed a live flushed write. Preferred replay source. */
+function recordUnflushedSpeakable(session: VoiceSession, content: string): void {
+  if (!content) return;
+  session.unflushedSpeakable = content;
+  session.lastSpeakableUserOrdinal = speakableOrdinal(session);
+}
+
 // ── Turn IO Handlers ─────────────────────────────────────────────────────
 
 export interface TurnIOHandlers {
@@ -157,6 +176,7 @@ export function createTurnIOHandlers(
   ): boolean => {
     if (!content) return false;
     if (!isResponseAlive(writeRes())) {
+      if (kind === "model") recordUnflushedSpeakable(session, content);
       log.warn(
         `WRITE_PORT_DEAD location=writeSpeakable kind=${kind} trigger=${trigger} contentBytes=${content.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
       );
@@ -178,6 +198,7 @@ export function createTurnIOHandlers(
       return false;
     }
     if (kind === "model") {
+      recordFlushedSpeakable(session, content);
       setPresence(ctx, "speaking");
       ctx.chunkCounter.count++;
       ctx.responseSize.total += content.length;
@@ -228,6 +249,7 @@ export function createTurnIOHandlers(
   const flushCoalesceBuffer = (trigger?: string, flush: boolean = false): void => {
     if (!ctx.coalesceBuf.value) return;
     if (!isResponseAlive(writeRes())) {
+      recordUnflushedSpeakable(session, ctx.coalesceBuf.value);
       log.warn(
         `WRITE_PORT_DEAD location=flushCoalesceBuffer trigger=${trigger} holdingBytes=${ctx.coalesceBuf.value.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
       );
@@ -274,6 +296,7 @@ export function createTurnIOHandlers(
     if (!wrote) {
       ctx.coalesceBuf.value = content + remainder;
       ctx.coalesceFlushCount = Math.max(0, ctx.coalesceFlushCount - 1);
+      recordUnflushedSpeakable(session, ctx.coalesceBuf.value);
       log.warn(
         `WRITE_PORT_HOLD location=flushCoalesceBuffer trigger=${trigger} restoredBytes=${ctx.coalesceBuf.value.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
       );
