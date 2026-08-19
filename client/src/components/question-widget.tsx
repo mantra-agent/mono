@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
+import { SIMPLE_TEXT_FRAME_CLASS } from "@/components/home/simple-text-frame";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
@@ -127,6 +128,7 @@ function AnswerNoteField({
   testId,
   id,
   label,
+  autoSelectKey = 0,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -135,22 +137,36 @@ function AnswerNoteField({
   testId: string;
   id?: string;
   label: string;
+  autoSelectKey?: number;
 }) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!autoSelectKey || disabled) return;
+    const field = textareaRef.current;
+    if (!field) return;
+    field.focus();
+    field.select();
+  }, [autoSelectKey, disabled]);
+
   return (
     <div className="ml-[26px] mt-1 flex w-[calc(100%-26px)] flex-col">
       <label htmlFor={id} className="sr-only">
         {label}
       </label>
-      <Textarea
-        id={id}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        disabled={disabled}
-        rows={2}
-        placeholder={placeholder}
-        className={ANSWER_NOTE_TEXTAREA_CLASS}
-        data-testid={testId}
-      />
+      <div className={cn(SIMPLE_TEXT_FRAME_CLASS, "text-foreground")}>
+        <Textarea
+          ref={textareaRef}
+          id={id}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          disabled={disabled}
+          rows={2}
+          placeholder={placeholder}
+          className={ANSWER_NOTE_TEXTAREA_CLASS}
+          data-testid={testId}
+        />
+      </div>
     </div>
   );
 }
@@ -198,6 +214,9 @@ export function QuestionWidget({
   const [localDecisionId, setLocalDecisionId] = useState<string | undefined>(response?.decisionId);
   const isAnswered = Boolean(response) || prompt.status === "answered";
   const isSubmitting = submitting || cancelling;
+  const [noteSelectKey, setNoteSelectKey] = useState(0);
+  const [noteSelectTarget, setNoteSelectTarget] = useState<"reasoning" | "other" | null>(null);
+  const [noteSelectOptionId, setNoteSelectOptionId] = useState<string | null>(null);
 
   const widgetInstanceIdRef = useRef(`question-widget-${Math.random().toString(36).slice(2, 10)}`);
   const latestWidgetStateRef = useRef({
@@ -289,6 +308,12 @@ export function QuestionWidget({
 
   const isSingle = prompt.selectionMode === "single";
 
+  const revealNote = (target: "reasoning" | "other", optionId: string | null = null) => {
+    setNoteSelectTarget(target);
+    setNoteSelectOptionId(optionId);
+    setNoteSelectKey((current) => current + 1);
+  };
+
   const selectedPrincipleLabels = useMemo(() => {
     const ids = response?.selectedPrincipleRevisionIds ?? selectedPrinciples;
     if (!ids.length) return [];
@@ -308,11 +333,14 @@ export function QuestionWidget({
         setOtherSelected(false);
         setOtherText("");
       }
+      revealNote("reasoning", optionId);
       return;
     }
-    setSelected((current) =>
-      current.includes(optionId) ? current.filter((id) => id !== optionId) : [...current, optionId],
-    );
+    setSelected((current) => {
+      if (current.includes(optionId)) return current.filter((id) => id !== optionId);
+      return [...current, optionId];
+    });
+    if (!selected.includes(optionId)) revealNote("reasoning", optionId);
   };
 
   const toggleOther = () => {
@@ -325,6 +353,7 @@ export function QuestionWidget({
         if (carried && !otherText.trim()) setOtherText(carried);
         setSelected([]);
       }
+      if (next) revealNote("other");
       return next;
     });
   };
@@ -482,6 +511,11 @@ export function QuestionWidget({
                   placeholder="Reasoning (optional)"
                   label="Reasoning (optional)"
                   testId={`question-reasoning-${prompt.toolCallId}-${option.id}`}
+                  autoSelectKey={
+                    noteSelectTarget === "reasoning" && noteSelectOptionId === option.id
+                      ? noteSelectKey
+                      : 0
+                  }
                 />
               ) : null}
             </div>
@@ -504,6 +538,7 @@ export function QuestionWidget({
               placeholder="Add your answer"
               label="Other answer"
               testId={`question-other-text-${prompt.toolCallId}`}
+              autoSelectKey={noteSelectTarget === "other" ? noteSelectKey : 0}
             />
           ) : null}
         </div>
