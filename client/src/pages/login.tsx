@@ -32,8 +32,6 @@ interface LoginFormProps {
 function LoginForm({ initialEmail, onAuthenticated, onError }: LoginFormProps) {
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
-  const [forgotPending, setForgotPending] = useState(false);
-  const [forgotSent, setForgotSent] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const login = useLogin();
 
@@ -55,19 +53,6 @@ function LoginForm({ initialEmail, onAuthenticated, onError }: LoginFormProps) {
         },
       }
     );
-  };
-
-  const handleForgotPassword = async () => {
-    if (forgotPending) return;
-    setForgotPending(true);
-    try {
-      await apiRequest("POST", "/api/auth/forgot-password", { email: email.trim() });
-    } catch {
-      // Route is enumeration-safe and should always 200; transport failure still gets a quiet ack.
-    } finally {
-      setForgotSent(true);
-      setForgotPending(false);
-    }
   };
 
   return (
@@ -115,15 +100,13 @@ function LoginForm({ initialEmail, onAuthenticated, onError }: LoginFormProps) {
           )}
         </Button>
         <p className="text-center text-sm">
-          <button
-            type="button"
+          <Link
+            href="/forgot-password"
             className={authLinkClass}
-            onClick={handleForgotPassword}
-            disabled={forgotPending}
-            data-testid="button-forgot-password"
+            data-testid="link-forgot-password"
           >
-            {forgotPending ? "Sending…" : forgotSent ? "Check your email" : "Forgot password"}
-          </button>
+            Forgot password
+          </Link>
         </p>
         <p className="text-center text-sm">
           <Link
