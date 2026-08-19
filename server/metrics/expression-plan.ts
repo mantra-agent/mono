@@ -9,8 +9,6 @@ import type { Metric } from "@shared/models/metrics";
 export const EXPRESSION_MAX_DEPTH = 4;
 export const EXPRESSION_MAX_OPERANDS = 8;
 export const IDENTITY_STOCK_CLOCK_SLACK_MS = 5 * 60 * 1000;
-export const IDENTITY_STOCK_UNAVAILABLE_REASON =
-  "Identity stock cannot reconstruct the asked sample.";
 
 export type ExpressionOp = "+" | "-" | "*" | "/";
 
