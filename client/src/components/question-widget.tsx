@@ -145,8 +145,12 @@ function AnswerNoteField({
     if (!autoSelectKey || disabled) return;
     const field = textareaRef.current;
     if (!field) return;
-    field.focus();
-    field.select();
+    // After session navigation the field can mount before the window is focusable.
+    const frame = window.requestAnimationFrame(() => {
+      field.focus();
+      field.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [autoSelectKey, disabled]);
 
   return (
@@ -217,6 +221,7 @@ export function QuestionWidget({
   const [noteSelectKey, setNoteSelectKey] = useState(0);
   const [noteSelectTarget, setNoteSelectTarget] = useState<"reasoning" | "other" | null>(null);
   const [noteSelectOptionId, setNoteSelectOptionId] = useState<string | null>(null);
+  const didRevealInitialNoteRef = useRef(false);
 
   const widgetInstanceIdRef = useRef(`question-widget-${Math.random().toString(36).slice(2, 10)}`);
   const latestWidgetStateRef = useRef({
@@ -307,12 +312,28 @@ export function QuestionWidget({
   );
 
   const isSingle = prompt.selectionMode === "single";
+  const controlsDisabled = submitting || cancelling;
 
   const revealNote = (target: "reasoning" | "other", optionId: string | null = null) => {
     setNoteSelectTarget(target);
     setNoteSelectOptionId(optionId);
     setNoteSelectKey((current) => current + 1);
   };
+
+  // Preselected recommendation / restore must select-all when the session becomes visible,
+  // not only after an in-window click.
+  useEffect(() => {
+    if (isAnswered || response || controlsDisabled) return;
+    if (didRevealInitialNoteRef.current) return;
+    if (otherSelected) {
+      didRevealInitialNoteRef.current = true;
+      revealNote("other");
+      return;
+    }
+    if (selected.length === 0) return;
+    didRevealInitialNoteRef.current = true;
+    revealNote("reasoning", selected[selected.length - 1]);
+  }, [isAnswered, response, otherSelected, selected, controlsDisabled]);
 
   const selectedPrincipleLabels = useMemo(() => {
     const ids = response?.selectedPrincipleRevisionIds ?? selectedPrinciples;
@@ -466,7 +487,6 @@ export function QuestionWidget({
 
   if (dismissed) return null;
 
-  const controlsDisabled = submitting || cancelling;
   return (
     <div
       className="-ml-10 border rounded-md border-border/60 bg-muted/20 my-1"
