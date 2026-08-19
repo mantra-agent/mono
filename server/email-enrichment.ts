@@ -110,6 +110,35 @@ export async function runDeterministicDismissal(): Promise<{ dismissed: number; 
 
 export type EnrichmentRunStatus = "completed" | "deferred" | "failed";
 
+/**
+ * External provider quota / admission capacity is not a missing-skill or
+ * enrichment-pipeline crash. Those outcomes still fail the local fire
+ * contract (return "failed") but must not mint ERRORS fingerprints.
+ */
+function isProviderOrCapacityEnrichmentSignal(parts: {
+  detail?: string;
+  skillStatus?: string;
+  degradationReason?: string;
+  code?: string;
+}): boolean {
+  if (parts.skillStatus === "yielded") return true;
+  const code = String(parts.code || "").toUpperCase();
+  if (
+    code === "CLAUDE_CLI_USAGE_LIMIT" ||
+    code === "PROVIDER_QUOTA" ||
+    code === "RATE_LIMITED" ||
+    code === "RATE_LIMITED_429"
+  ) {
+    return true;
+  }
+  const haystack = [parts.detail, parts.degradationReason, parts.skillStatus, parts.code]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join("\n");
+  if (!haystack) return false;
+  return /claude_cli_usage_limit|provider_quota|insufficient_quota|usage limit|weekly limit|daily limit|rate limit|quota cooldown|capacity pressure|yielded under genuine capacity|chatgpt subscription limit|claude subscription usage limit/i
+    .test(haystack);
+}
+
 export async function fireEnrichmentSkillRun(): Promise<EnrichmentRunStatus> {
   const operation: EnrichmentOperation = "fire_skill_run";
   try {
@@ -121,23 +150,48 @@ export async function fireEnrichmentSkillRun(): Promise<EnrichmentRunStatus> {
     }
     if (result.status !== "succeeded") {
       const detail = result.error || result.summary || "unknown";
+      const capacity = isProviderOrCapacityEnrichmentSignal({
+        detail,
+        skillStatus: result.status,
+        degradationReason: result.degradationReason,
+      });
       const error = normalizeEnrichmentError(
         detail,
         operation,
-        "ENRICHMENT_SKILL_RUN_FAILED",
+        capacity ? "ENRICHMENT_SKILL_RUN_CAPACITY" : "ENRICHMENT_SKILL_RUN_FAILED",
         `Enrichment skill run ${result.status}: ${detail}`,
       );
       error.skillStatus = result.status;
-      log.error("Enrichment skill run failed", error, enrichmentLogContext({
+      const context = enrichmentLogContext({
         operation,
         skillStatus: result.status,
-      }));
+      });
+      if (capacity) {
+        log.warn("Enrichment skill run deferred by provider quota or capacity", error, context);
+      } else {
+        log.error("Enrichment skill run failed", error, context);
+      }
       return "failed";
     }
     return "completed";
   } catch (value) {
-    const error = normalizeEnrichmentError(value, operation, "ENRICHMENT_SKILL_RUN_EXCEPTION");
-    log.error("Enrichment skill run exception", error, enrichmentLogContext({ operation }));
+    const rawCode = value instanceof Error
+      ? String((value as Error & { code?: string }).code || "")
+      : "";
+    const capacity = isProviderOrCapacityEnrichmentSignal({
+      detail: value instanceof Error ? value.message : String(value ?? ""),
+      code: rawCode,
+    });
+    const error = normalizeEnrichmentError(
+      value,
+      operation,
+      capacity ? "ENRICHMENT_SKILL_RUN_CAPACITY" : "ENRICHMENT_SKILL_RUN_EXCEPTION",
+    );
+    if (capacity) {
+      log.warn("Enrichment skill run exception is provider quota or capacity", error, enrichmentLogContext({ operation }));
+    } else {
+      log.error("Enrichment skill run exception", error, enrichmentLogContext({ operation }));
+    }
     return "failed";
   }
 }
