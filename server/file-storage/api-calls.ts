@@ -223,6 +223,10 @@ function currentRouterFilter(): ApiCallRouterFilter {
   return routerFilterALS.getStore() ?? "all";
 }
 
+function sqlPlaceholder(index: number): string {
+  return String.fromCharCode(36) + String(index);
+}
+
 function appendRouterFilter(
   alias: string,
   conditions: string[],
@@ -235,7 +239,7 @@ function appendRouterFilter(
     return;
   }
   params.push(filter);
-  conditions.push(`${alias}.metadata->>'routerId' = ${params.length}`);
+  conditions.push(`${alias}.metadata->>'routerId' = ` + sqlPlaceholder(params.length));
 }
 
 function currentReportingScope(): ApiCallReportingScope {
@@ -278,7 +282,7 @@ function buildSinceQuery(baseQuery: string, since: Date | undefined): { query: s
   let query = `${baseQuery} WHERE ${conditions.join(" AND ")}`;
   if (since) {
     params.push(since);
-    query += ` AND timestamp >= ${params.length}`;
+    query += " AND timestamp >= " + sqlPlaceholder(params.length);
   }
   return { query, params };
 }
@@ -291,7 +295,7 @@ function buildWhereParams(since: Date | undefined, params: Array<Date | string |
   let where = `WHERE ${conditions.join(" AND ")}`;
   if (since) {
     params.push(since);
-    where += ` AND timestamp >= ${params.length}`;
+    where += " AND timestamp >= " + sqlPlaceholder(params.length);
   }
   return where;
 }

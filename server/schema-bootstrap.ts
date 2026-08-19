@@ -1792,7 +1792,12 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS period_tokens BIGINT NOT NULL DEFAULT 0`);
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS emitted_overage_tokens BIGINT NOT NULL DEFAULT 0`);
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS usage_status TEXT`);
-    await pool.query(`DO $ BEGIN ALTER TABLE accounts ADD CONSTRAINT accounts_usage_status_check CHECK (usage_status IS NULL OR usage_status IN ('ok', 'bar', 'warn', 'pause')); EXCEPTION WHEN duplicate_object THEN NULL; END $`);
+    await pool.query(
+      "DO " +
+        String.fromCharCode(36, 36) +
+        " BEGIN ALTER TABLE accounts ADD CONSTRAINT accounts_usage_status_check CHECK (usage_status IS NULL OR usage_status IN ('ok', 'bar', 'warn', 'pause')); EXCEPTION WHEN duplicate_object THEN NULL; END " +
+        String.fromCharCode(36, 36),
+    );
     await pool.query(`
       INSERT INTO routers (name, is_default)
       SELECT 'Default', TRUE
@@ -3513,21 +3518,6 @@ export async function runSchemaBootstrap(
       ["meta_cognition", "b2f6d8a9-0c7e-4f34-a1d5-6e3b4c7d8f0a"],
       ["strategy", "c3a7e9b0-1d8f-4a45-b2e6-7f4c5d8e9a1b"],
     ];
-    let migrated = 0;
-    for (const [oldId, newId] of activityMap) {
-      const result = await pool.query(
-        `UPDATE skills SET activity = $1 WHERE activity = $2`,
-        [newId, oldId],
-      );
-      migrated += result.rowCount ?? 0;
-    }
-    if (migrated > 0) {
-      log(
-        `activity GUID migration: updated ${migrated} skill rows`,
-        "migration",
-      );
-    }
-
     const settingsResult = await pool.query(
       `SELECT value FROM system_settings WHERE key = 'model_profiles'`,
     );
