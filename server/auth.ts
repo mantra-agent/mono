@@ -106,8 +106,7 @@ import { getClientPresenceSnapshot } from "./client-presence";
 import { normalizeEmailAddress } from "./email-normalization";
 import { db, acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, runWithDatabaseTransaction } from "./db";
 import { claimInvitedSubjectInTransaction } from "./invited-subject-service";
-import { sendNotification } from "./notifications";
-import { getRuntimePublicBaseUrl } from "./runtime-identity";
+import { issuePasswordResetEmail } from "./password-reset";
 
 const setupSchema = z.object({
   email: z.string().email(),
@@ -1294,46 +1293,10 @@ export function setupAuth(app: Express) {
           return res.status(400).json({ error: "No email is on file for this account" });
         }
 
-        const token = crypto.randomBytes(32).toString("hex");
-        const expires = new Date(Date.now() + 60 * 60 * 1000);
-        await storage.updateUser(user.id, {
-          resetToken: capabilityDigest(token),
-          resetExpires: expires,
-        });
-
-        const publicUrl = await getRuntimePublicBaseUrl();
-        if (!publicUrl) {
-          await storage.updateUser(user.id, { resetToken: null, resetExpires: null });
+        const result = await issuePasswordResetEmail(user);
+        if (!result.ok || !result.emailed) {
           return res.status(500).json({ error: "Reset email could not be sent" });
         }
-
-        const resetUrl = `${publicUrl}/reset/${token}`;
-        const result = await sendNotification({
-          channel: "email",
-          to: user.email,
-          subject: "Reset your Mantra password",
-          body: [
-            "Set a new password with this link:",
-            resetUrl,
-            "",
-            "This link expires in one hour and can be used once.",
-            "If you did not ask for this, you can ignore the email.",
-          ].join("\n"),
-          html: `<div style="font-family:Inter,Arial,sans-serif;background:#0a0a0a;color:#f5f5f5;padding:40px 24px"><div style="max-width:560px;margin:0 auto"><p style="font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#a3a3a3">Mantra</p><h1 style="font-size:32px;line-height:1.15;margin:28px 0 18px">Set a new password</h1><p style="font-size:17px;line-height:1.6;color:#d4d4d4">Use the link below. It expires in one hour and works once.</p><p style="margin:28px 0"><a href="${resetUrl}" style="color:#1A9BDB">Reset password</a></p><p style="font-size:15px;line-height:1.6;color:#a3a3a3">If you did not ask for this, ignore the email.</p></div></div>`,
-          metadata: { source: "password-reset", userId: user.id },
-        });
-
-        if (!result.ok) {
-          await storage.updateUser(user.id, { resetToken: null, resetExpires: null });
-          log.error(
-            "Reset password email was not accepted",
-            attributableAuthError(result.error ?? "send failed", "AUTH_RESET_REQUEST_FAILED"),
-            { status: result.status },
-          );
-          return res.status(500).json({ error: "Reset email could not be sent" });
-        }
-
-        log.info("Reset password email accepted", { userId: user.id });
         res.json({ ok: true });
       } catch (error) {
         log.error(
@@ -1341,6 +1304,40 @@ export function setupAuth(app: Express) {
           attributableAuthError(error, "AUTH_RESET_REQUEST_FAILED"),
         );
         res.status(500).json({ error: "Reset email could not be sent" });
+      }
+    },
+  );
+
+  // Public forgot-password: same issuer + consume path as authenticated reset.
+  // Always returns { ok: true } so the response never reveals whether an account exists.
+  app.post(
+    "/api/auth/forgot-password",
+    enforceAuthBudget("forgot-password", 5),
+    async (req: Request, res: Response) => {
+      try {
+        const emailRaw = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+        if (emailRaw) {
+          let email: string | null = null;
+          try {
+            email = normalizeEmailAddress(emailRaw);
+          } catch {
+            email = null;
+          }
+          if (email) {
+            const user = await storage.getUserByEmail(email);
+            if (user) {
+              await issuePasswordResetEmail(user);
+            }
+          }
+        }
+        res.json({ ok: true });
+      } catch (error) {
+        log.error(
+          "Forgot password request failed",
+          attributableAuthError(error, "AUTH_FORGOT_PASSWORD_FAILED"),
+        );
+        // Enumeration-safe: still acknowledge.
+        res.json({ ok: true });
       }
     },
   );

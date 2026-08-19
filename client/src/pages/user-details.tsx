@@ -187,16 +187,6 @@ export default function AccountPage() {
           showEmpty
           mobileLayout="inline"
           testId="account-email-row"
-          menuVisibility="always"
-          menuContent={(
-            <DropdownMenuItem
-              disabled={requestReset.isPending}
-              onSelect={() => requestReset.mutate()}
-              data-testid="menu-reset-password"
-            >
-              {requestReset.isPending ? "Sending…" : "Reset Password"}
-            </DropdownMenuItem>
-          )}
         >
           <div className="flex min-w-0 items-center justify-end gap-1">
             <Input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} data-testid="input-email" />
@@ -224,6 +214,16 @@ export default function AccountPage() {
           showEmpty
           mobileLayout="inline"
           testId="account-password-row"
+          menuVisibility="always"
+          menuContent={(
+            <DropdownMenuItem
+              disabled={requestReset.isPending}
+              onSelect={() => requestReset.mutate()}
+              data-testid="menu-reset-password"
+            >
+              {requestReset.isPending ? "Sending…" : "Reset Password"}
+            </DropdownMenuItem>
+          )}
           expandedContent={(
             <div className="space-y-2 py-1">
               <Input id="currentPassword" aria-label="Current password" placeholder="Current password" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} data-testid="input-current-password" />
