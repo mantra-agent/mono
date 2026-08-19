@@ -277,6 +277,8 @@ const adapters: AddressResolverAdapter[] = [
   }),
   simpleAdapter("business_plan", async (principal, refs) => {
     // Chip subject is the plan's live Vault name, not plan.name or Business publicName.
+    // Ownership columns must match business-plan-storage planScope. vaultId alone
+    // makes visibleScopePredicate base FALSE (no owner/account/scope columns).
     const rows = await db.select({
       id: businessPlans.id,
       vaultId: businessPlans.vaultId,
@@ -287,7 +289,12 @@ const adapters: AddressResolverAdapter[] = [
       .where(and(
         inArray(businessPlans.id, refs.map(ref => ref.id)),
         eq(vaults.isArchived, false),
-        combineWithVisibleScope(principal, { vaultId: businessPlans.vaultId }),
+        combineWithVisibleScope(principal, {
+          scope: businessPlans.scope,
+          ownerUserId: businessPlans.ownerUserId,
+          accountId: businessPlans.accountId,
+          vaultId: businessPlans.vaultId,
+        }),
       ));
     const byId = new Map(rows.map(row => [row.id, row]));
     return new Map(refs.flatMap(ref => {
