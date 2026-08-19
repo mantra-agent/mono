@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useRoute } from "wouter";
 import {
   Activity,
   Archive,
@@ -532,6 +532,7 @@ const FeatureRow = memo(function FeatureRow({
   titleSessionOwners,
   streamStore,
   streamWsConnected,
+  deepLinkOpen,
 }: {
   feature: Feature;
   products: Product[];
@@ -541,6 +542,8 @@ const FeatureRow = memo(function FeatureRow({
   /** Page-level multiplexed stream store — real-time without N subscriptions. */
   streamStore: SessionStreamStore;
   streamWsConnected: boolean;
+  /** True when the URL is this Feature's canonical /build/features/:id href. */
+  deepLinkOpen: boolean;
 }) {
   const { toast } = useToast();
   const launch = useSessionLaunch();
@@ -550,14 +553,21 @@ const FeatureRow = memo(function FeatureRow({
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(feature.summary);
   /** Expand open — history fetches only when true (lazy). */
-  const [rowExpanded, setRowExpanded] = useState(false);
+  const [rowExpanded, setRowExpanded] = useState(deepLinkOpen);
   /** Optimistic link after a row launch, before discovery/artifact indexing catches up. */
   const [launchedSessionId, setLaunchedSessionId] = useState<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!editingTitle) setTitleDraft(feature.summary);
   }, [feature.summary, editingTitle]);
+
+  useEffect(() => {
+    if (!deepLinkOpen) return;
+    setRowExpanded(true);
+    rowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [deepLinkOpen]);
 
   const deleteFeature = useMutation({
     mutationFn: async () => {
@@ -850,7 +860,7 @@ const FeatureRow = memo(function FeatureRow({
   // Child session widget mounts only when the Feature row is expanded.
   // Collapsed rows keep humming chrome (pulse title, spinner, Stop) without the strip.
   return (
-    <div className="min-w-0">
+    <div className="min-w-0" ref={rowRef}>
       <div
         className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")}
         data-testid={`feature-row-${feature.id}`}
@@ -1480,6 +1490,8 @@ const FeatureRow = memo(function FeatureRow({
 });
 
 export default function FeaturesPage() {
+  const [, featureRoute] = useRoute("/build/features/:id");
+  const focusedFeatureId = featureRoute?.id ?? null;
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
   /** Empty set = all products. Non-empty = only those product ids. */
@@ -1694,6 +1706,7 @@ export default function FeaturesPage() {
                         titleSessionOwners={titleSessionOwners}
                         streamStore={featureStreamStore}
                         streamWsConnected={featureStreamWsConnected}
+                        deepLinkOpen={focusedFeatureId === feature.id}
                       />
                   ))
                 ) : (

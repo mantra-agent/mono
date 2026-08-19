@@ -344,6 +344,7 @@ function Router() {
         <Route path="/platforms/environments/:id">{() => <RequireBuild routeId="build.route.platform-environment-detail"><PlatformEnvironmentDetailPage /></RequireBuild>}</Route>
         <Route path="/platforms">{() => <RequireBuild routeId="build.route.platforms"><PlatformsPage /></RequireBuild>}</Route>
         <Route path="/products">{() => <RequireBuild routeId="build.route.products"><ProductsPage /></RequireBuild>}</Route>
+        <Route path="/build/features/:id">{() => <RequireBuild routeId="build.route.features"><FeaturesPage /></RequireBuild>}</Route>
         <Route path="/build/features">{() => <RequireBuild routeId="build.route.features"><FeaturesPage /></RequireBuild>}</Route>
         <Route path="/memory" component={MemoryPageFull} />
         <Route path="/journal">{() => <Redirect to="/memory?tab=maintenance" />}</Route>
