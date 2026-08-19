@@ -17,6 +17,9 @@ export type ExpressionPlan =
   | { type: "literal"; value: number }
   | { type: "op"; op: ExpressionOp; left: ExpressionPlan; right: ExpressionPlan };
 
+/** Lone closed-producer binding written at save. Query never walks this node. */
+export type ProducerPlan = { type: "producer"; key: string };
+
 export type ExpressionCompileResult = {
   adapterKey: "expression";
   equation: string;
@@ -24,6 +27,19 @@ export type ExpressionCompileResult = {
   operandIds: string[];
   operands: Metric[];
 };
+
+export type ProducerCompileResult = {
+  kind: "producer";
+  equation: string;
+  plan: ProducerPlan;
+  producerKey: string;
+};
+
+export type ComposedCompileResult = {
+  kind: "expression";
+} & ExpressionCompileResult;
+
+export type MetricEquationCompileResult = ProducerCompileResult | ComposedCompileResult;
 
 type Token =
   | { kind: "metric"; id: string }
@@ -83,6 +99,42 @@ export function storedExpressionPlan(metric: Pick<Metric, "adapterKind" | "adapt
     return null;
   }
   return isExpressionPlan(metric.adapterConfig?.plan) ? metric.adapterConfig.plan as ExpressionPlan : null;
+}
+
+export function isProducerPlan(value: unknown): value is ProducerPlan {
+  if (!value || typeof value !== "object") return false;
+  const node = value as { type?: unknown; key?: unknown };
+  return node.type === "producer" && typeof node.key === "string" && node.key.trim().length > 0;
+}
+
+/**
+ * Authoring compile for every Metric equation.
+ * Lone closed producer → producer plan. Otherwise composition over @metric: only.
+ */
+export async function compileMetricEquation(input: {
+  equation: string;
+  selfId?: string;
+  isClosedProducer: (key: string) => boolean;
+  loadVisibleMetric: (id: string) => Promise<Metric | null>;
+}): Promise<MetricEquationCompileResult> {
+  const equation = input.equation.trim();
+  if (!equation) throw new ExpressionCompileError("Equation is required.");
+
+  if (input.isClosedProducer(equation) && !/[\s+\-*/()@]/.test(equation)) {
+    return {
+      kind: "producer",
+      equation,
+      plan: { type: "producer", key: equation },
+      producerKey: equation,
+    };
+  }
+
+  const composed = await compileMetricExpression({
+    equation,
+    selfId: input.selfId,
+    loadVisibleMetric: input.loadVisibleMetric,
+  });
+  return { kind: "expression", ...composed };
 }
 
 export async function compileMetricExpression(input: {

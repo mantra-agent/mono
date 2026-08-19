@@ -270,7 +270,12 @@ async function ensureEngagementDefinition(
       direction: "higher_is_better",
       samplePeriod: "daily",
       adapterKind: "internal",
-      adapterConfig: { adapterKey: definition.adapterKey },
+      adapterConfig: {
+        adapterKey: definition.adapterKey,
+        equation: definition.adapterKey,
+        plan: { type: "producer", key: definition.adapterKey },
+        producerKey: definition.adapterKey,
+      },
       status: "active",
     });
   } catch (error) {
@@ -279,7 +284,25 @@ async function ensureEngagementDefinition(
   }
 
   const resolved = await findEngagementDefinitionId(accountId, vaultId, definition.slug, desiredId);
-  if (resolved) return resolved;
+  if (resolved) {
+    // Stamp producer equation on existing engagement leaves (idempotent).
+    await db.execute(sql`
+      UPDATE metrics
+      SET adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify({
+        adapterKey: definition.adapterKey,
+        equation: definition.adapterKey,
+        plan: { type: "producer", key: definition.adapterKey },
+        producerKey: definition.adapterKey,
+      })}::jsonb,
+          updated_at = NOW()
+      WHERE id = ${resolved}
+        AND (
+          COALESCE(adapter_config->>'equation', '') IS DISTINCT FROM ${definition.adapterKey}
+          OR adapter_config->'plan' IS NULL
+        )
+    `);
+    return resolved;
+  }
   // Insert succeeded without a subsequent read hit (should be rare); return desired id.
   return desiredId;
 }
@@ -801,25 +824,36 @@ export async function stampPlatformOwnerOnProductMetrics(): Promise<number> {
   const { sql } = await import("drizzle-orm");
   const slugs = [...PRODUCT_METRIC_SLUGS];
   if (slugs.length === 0) return 0;
-  const updated = await db.execute(sql`
-    UPDATE metrics
-    SET owner_kind = 'platform',
-        owner_id = NULL,
-        adapter_config = COALESCE(adapter_config, '{}'::jsonb) || '{"adapterKey":"product"}'::jsonb,
-        updated_at = NOW()
-    WHERE slug = ANY(ARRAY[${sql.join(
-      slugs.map((slug) => sql`${slug}`),
-      sql`, `,
-    )}]::text[])
-      AND (
-        owner_kind IS DISTINCT FROM 'platform'
-        OR COALESCE(adapter_config->>'adapterKey', '') IS DISTINCT FROM 'product'
-      )
-  `);
-  const rowCount =
-    typeof (updated as { rowCount?: number }).rowCount === "number"
-      ? (updated as { rowCount: number }).rowCount
-      : 0;
+  // Stamp platform owner + producer equation atom for each product slug.
+  let rowCount = 0;
+  for (const slug of slugs) {
+    const producerPlan = {
+      adapterKey: "product",
+      key: slug,
+      equation: slug,
+      plan: { type: "producer", key: slug },
+      producerKey: slug,
+    };
+    const updated = await db.execute(sql`
+      UPDATE metrics
+      SET owner_kind = 'platform',
+          owner_id = NULL,
+          adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify(producerPlan)}::jsonb,
+          updated_at = NOW()
+      WHERE slug = ${slug}
+        AND (
+          owner_kind IS DISTINCT FROM 'platform'
+          OR COALESCE(adapter_config->>'adapterKey', '') IS DISTINCT FROM 'product'
+          OR COALESCE(adapter_config->>'equation', '') IS DISTINCT FROM ${slug}
+          OR adapter_config->'plan' IS NULL
+        )
+    `);
+    const n =
+      typeof (updated as { rowCount?: number }).rowCount === "number"
+        ? (updated as { rowCount: number }).rowCount
+        : 0;
+    rowCount += n;
+  }
   if (rowCount > 0) {
     log.info("stamped platform ownerKind on product metrics", { rowCount, slugs });
   }

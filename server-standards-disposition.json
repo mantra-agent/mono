@@ -64,7 +64,8 @@
         "server/metrics/core-engine.ts",
         "server/metrics/metric-adapters.ts",
         "server/metrics/engagement-series.ts",
-        "server/metrics/expression-plan.ts"
+        "server/metrics/expression-plan.ts",
+        "server/metrics/producer-catalog.ts"
       ],
       "owner": "Core Measurement Engine",
       "principles": ["Single Source of Truth", "Modular Systems", "Canonical Mutation Path", "Principal Scope", "Replayability", "Access Control is Centralized"],
