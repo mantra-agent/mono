@@ -302,7 +302,7 @@ const adapters: AddressResolverAdapter[] = [
       if (!row) return [];
       return [[requestedAddress(ref), resolved(ref, {
         label: `Business Plan ${row.vaultName}`,
-        href: `/business/plan?plan=${encodeURIComponent(ref.id)}`,
+        route: `/business/plan?plan=${encodeURIComponent(ref.id)}`,
         updatedAt: row.updatedAt,
       })]];
     }));
@@ -699,7 +699,14 @@ const adapters: AddressResolverAdapter[] = [
       const byId = new Map(rows.map((row) => [row.id, row]));
       for (const ref of durableRefs) {
         const row = byId.get(ref.id);
-        if (row) map.set(requestedAddress(ref), resolved(ref, { label: row.name, summary: row.mimeType, updatedAt: row.createdAt }));
+        if (row) {
+          map.set(requestedAddress(ref), resolved(ref, {
+            label: row.name,
+            summary: row.mimeType,
+            route: `/files?driveResource=${encodeURIComponent(ref.id)}`,
+            updatedAt: row.createdAt,
+          }));
+        }
       }
     }
     const legacyEntries = await Promise.all(legacyRefs.map(async ref => {
