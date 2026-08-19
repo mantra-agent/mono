@@ -281,14 +281,32 @@ export function toolFailureFromError(err: unknown): ToolFailure | null {
 }
 
 /**
- * Classify a failed GitHub REST API response by HTTP status. PR create/merge/
- * delete calls fail on auth (401/403), rate or availability limits (408/429/5xx),
- * and validation or state conflicts (404/422 and other 4xx). Detail strings carry
- * only the status code, never response bodies, to avoid leaking tokens.
+ * GitHub primary rate-limit exhaustion is often HTTP 403 (not only 429) with a
+ * body like "API rate limit exceeded" / "secondary rate limit". That is capacity,
+ * not revoked credentials — classify it as retryable before the bare-403 auth wall.
  */
-export function classifyGitHubApiStatus(status: number): ToolFailure | null {
+export function isGitHubRateLimitMessage(message: string | null | undefined): boolean {
+  if (!message) return false;
+  return /rate limit|secondary rate|abuse.?detection|too many requests/i.test(message);
+}
+
+/**
+ * Classify a failed GitHub REST API response by HTTP status (+ optional body text).
+ * PR create/merge/delete calls fail on auth (401 / non-rate-limit 403), rate or
+ * availability limits (rate-limit 403/429, 408/5xx), and validation or state
+ * conflicts (404/422 and other 4xx). Detail strings carry only the status code
+ * and a rate-limit tag when applicable — never response bodies — to avoid
+ * leaking tokens.
+ */
+export function classifyGitHubApiStatus(
+  status: number,
+  bodyOrMessage?: string | null,
+): ToolFailure | null {
+  if (status === 429 || ((status === 403 || status === 401) && isGitHubRateLimitMessage(bodyOrMessage))) {
+    return transientFailure("git_network", `github_api_${status}_rate_limit`);
+  }
   if (status === 401 || status === 403) return permissionFailure("git_auth_denied", `github_api_${status}`);
-  if (status === 408 || status === 429 || status >= 500) return transientFailure("git_network", `github_api_${status}`);
+  if (status === 408 || status >= 500) return transientFailure("git_network", `github_api_${status}`);
   if (status >= 400) return inputFailure("git_state_conflict", `github_api_${status}`);
   return null;
 }
@@ -332,6 +350,12 @@ export function classifyGitError(err: unknown): ToolFailure | null {
   }
 
   if (!haystack) return null;
+
+  // Capacity — primary/secondary rate limit (often HTTP 403 body, not auth).
+  // Must beat the bare "403" auth pattern below so exhausted quota is retryable.
+  if (isGitHubRateLimitMessage(haystack)) {
+    return transientFailure("git_network", "git github rate limit");
+  }
 
   // Auth / permission walls — credentials wrong, revoked, or prompts disabled.
   if (
