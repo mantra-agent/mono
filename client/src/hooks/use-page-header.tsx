@@ -79,5 +79,10 @@ export function usePageHeader(config: PageHeaderConfig) {
       customContent: config.customContent,
       titleHref: config.titleHref,
     });
+    // Drop this page's claim when it unmounts. Otherwise chip/programmatic
+    // navigations keep the previous title until something else overwrites it.
+    return () => {
+      setConfig(null);
+    };
   }, [config.skip, config.title, config.activeTab, stableTabs, stableOnTabChange, config.customContent, config.titleHref, setConfig]);
 }

@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { usePageHeader } from "@/hooks/use-page-header";
 import { apiRequest } from "@/lib/queryClient";
 import type { BusinessPlan, Goal, Kpi, Metric, ProjectRow } from "@shared/schema";
 import { createReferenceRef } from "@shared/references";
@@ -198,6 +199,8 @@ function PlanTitle({
 
 export default function BusinessPlanPage() {
   const queryClient = useQueryClient();
+  // Nav item title is "Plan"; claim TopBar for every entry path (chip, direct URL, nav).
+  usePageHeader({ title: "Plan" });
   // Chip deep links use /business/plan?plan=…; read live search so SPA query changes apply.
   const search = useSearch();
   const routePlanId = useMemo(() => new URLSearchParams(search).get("plan"), [search]);
