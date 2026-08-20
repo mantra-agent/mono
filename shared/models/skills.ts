@@ -208,7 +208,12 @@ export const skillReferences = pgTable("skill_references", {
   content: text("content").notNull(),
 });
 
-export const insertSkillSchema = createInsertSchema(skills).omit({
+/**
+ * Object-level insert shape. Keep this a ZodObject so consumers can `.omit` /
+ * `.partial` / `.shape` at module load. Wrapping with `.superRefine` yields
+ * ZodEffects, which has no `.omit` and crashed stage boot in skill-routes.
+ */
+export const insertSkillObjectSchema = createInsertSchema(skills).omit({
   id: true,
   successCount: true,
   failureCount: true,
@@ -242,7 +247,10 @@ export const insertSkillSchema = createInsertSchema(skills).omit({
     name: z.string().min(1),
     content: z.string().min(1),
   })).optional().default([]),
-}).superRefine((value, ctx) => {
+});
+
+/** Full create validation including name/displayName cross-field rule. */
+export const insertSkillSchema = insertSkillObjectSchema.superRefine((value, ctx) => {
   if (!value.name && !(typeof value.displayName === "string" && value.displayName.trim())) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
