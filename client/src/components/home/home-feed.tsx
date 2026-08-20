@@ -15,13 +15,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LibraryReminderPopover } from "@/components/library-reminder";
 import { ChevronRight, FileText, Loader2, MessageSquare, MoreHorizontal, Plus, X } from "lucide-react";
-import { useSessionLaunch } from "@/hooks/use-session-launch";
+import { useSkillLaunch } from "@/hooks/use-skill-launch";
 import { useProductComposition } from "@/hooks/use-product-composition";
 import {
-  SET_DAILY_GOALS_PERSONA,
   SET_DAILY_GOALS_SKILL,
   SET_DAILY_GOALS_TITLE,
-  composeSetDailyGoalsLaunchMessage,
 } from "@shared/set-daily-goals";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
@@ -73,20 +71,32 @@ function useHomeSectionCommit(section: string, open: boolean, itemCount: number)
 }
 
 /**
- * Home NOW invite — same grammar as hierarchy "+ New …" activators
- * (Goals `New Goal`, Session `New Session`, Emotion `New State`) and the
- * historical empty plan row (`New Weekly Plan`): full-width body row under the
- * section label, Plus + blue text-cta. Not a header companion primary.
+ * Home NOW invite for unset daily goals. Same launch as Habits Intentions:
+ * real set-daily-goals skill_run. Hidden once today-goal mutation marks done.
+ * Visual grammar matches plan-artifact body rows: indented, foreground (white).
  */
 function DailyGoalsDoor() {
-  const launch = useSessionLaunch();
+  const launch = useSkillLaunch();
   const composition = useProductComposition();
   const wellnessActive = composition.data?.activeMods.some((mod) => mod.key === "wellness") ?? false;
-  if (!wellnessActive) return null;
+  const intentionsStatus = useQuery<Array<{
+    completionSource?: string | null;
+    doneToday?: boolean;
+  }>>({
+    queryKey: ["/api/wellness/status"],
+    enabled: wellnessActive,
+    staleTime: 30_000,
+  });
+  const dailyGoalsDone = intentionsStatus.data?.some(
+    (activity) => activity.completionSource === "today_goal_mutated" && activity.doneToday === true,
+  ) ?? false;
+
+  if (!wellnessActive || dailyGoalsDone) return null;
+
   return (
     <button
       type="button"
-      className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80 disabled:cursor-not-allowed disabled:opacity-50"
+      className="mb-1 ml-6 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent/70 hover:text-foreground/90 disabled:cursor-not-allowed disabled:opacity-50"
       data-testid="button-daily-goals"
       data-launch-skill={SET_DAILY_GOALS_SKILL}
       aria-label={`Launch ${SET_DAILY_GOALS_TITLE}`}
@@ -94,11 +104,8 @@ function DailyGoalsDoor() {
       onClick={() => {
         if (launch.isPending) return;
         launch.mutate({
+          skillName: SET_DAILY_GOALS_SKILL,
           pendingKey: "home-daily-goals",
-          title: SET_DAILY_GOALS_TITLE,
-          personaName: SET_DAILY_GOALS_PERSONA,
-          message: composeSetDailyGoalsLaunchMessage(),
-          clientTurnSuffix: "home-daily-goals",
           errorTitle: `Could not start ${SET_DAILY_GOALS_TITLE}`,
         });
       }}

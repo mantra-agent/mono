@@ -23,7 +23,8 @@ function invalidateDeferredSessionViews(): void {
 }
 
 const INVALIDATION_MAP: Record<string, string[][]> = {
-  "data:goals_changed": [["/api/goals/today"], ["/api/home/feed"]],
+  // Intentions doneToday + Home + Daily Goals door derive from today-goal mutations.
+  "data:goals_changed": [["/api/goals/today"], ["/api/home/feed"], ["/api/wellness/status"], ["/api/wellness/pulse-buckets"]],
   "data:calendar_changed": [["/api/calendar/events"], ["/api/calendar/metadata"]],
   "data:people_changed": [["/api/people"]],
   "data:sessions_changed": [["/api/sessions"]],
@@ -192,7 +193,13 @@ function isEventSuppressed(eventName: string): boolean {
   return false;
 }
 
-type AutonomousStartedCallback = (payload: { sessionId: string; sessionKey?: string; skillId?: string }) => void;
+type AutonomousStartedCallback = (payload: {
+  sessionId: string;
+  sessionKey?: string;
+  skillId?: string;
+  /** Catalog label from the skill runner (config.label). */
+  skillName?: string;
+}) => void;
 let autonomousStartedCallback: AutonomousStartedCallback | null = null;
 
 

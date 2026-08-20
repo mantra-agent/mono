@@ -215,7 +215,11 @@ When adding admin or system UI:
 
 ## Session Launch
 
-`useSessionLaunch` is the interactive create-session + optional first-message + Focus-open primitive. Discuss call sites compose context only. Deliverable-producing buttons compose Feature/object context plus a Skill or shared contract body — never a bespoke prompt string invented at the row. Issues **Feature** converts an Issue into a Feature idea through the `issue-feature` Skill (Visionary). `useAgendaDiscussion` is a compatibility alias.
+`useSessionLaunch` is the interactive create-session + optional first-message + Focus-open primitive. Discuss call sites compose context only. Deliverable-producing buttons that only need a seated conversation compose Feature/object context plus a Skill or shared contract body — never a bespoke prompt string invented at the row.
+
+When the door **is** a Skill (Habits Intentions, Home `+ Daily Goals`, Skills Run, Issues Self Heal / Burndown), use `useSkillLaunch`: `POST /api/skills/:id/run`, wait for `chat.autonomous.started`, open Focus on that session. Do not fake a skill by pasting process text into an ordinary session — that skips `skill_runs`, scoring, and the skill lattice.
+
+Issues **Feature** converts an Issue into a Feature idea through the `issue-feature` Skill (Visionary) via session launch + contract body. `useAgendaDiscussion` is a compatibility alias for `useSessionLaunch`.
 
 ## Badge System
 
