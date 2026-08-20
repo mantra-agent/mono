@@ -1163,7 +1163,7 @@ Surface any errors returned by the cycle explicitly in the Memory section and in
     name: "reflect",
     recommendedPersona: "Coach",
     description: "Parameterized reflection skill for daily, weekly, monthly, quarterly, and annual cadence reviews. Daily writes a structured Daily Digest (unlabeled lead + Moved/Open/Learning/Memory) with that day's claims as @claim rows; other cadences stay sectioned Library briefs.",
-    version: "2.3",
+    version: "2.4",
     addToMemory: true,
     pinnedToContext: false,
     callType: "internal",
@@ -1179,6 +1179,7 @@ Surface any errors returned by the cycle explicitly in the Memory section and in
       { check: "Brief is concise and evidence-backed, naming actual outcomes, open loops, patterns, and one practical next action without live-interview questions", weight: 3 },
       { check: "Daily Digest uses unlabeled lead + closed Moved/Open/Learning/Memory sections with discrete lines, never one undifferentiated paragraph", weight: 3 },
       { check: "Daily Memory section lists that local day's claims as @claim rows (or None) via search_claims with includeReviewedRetired and createdAt bounds; Digest never writes review judgments", weight: 3 },
+      { check: "Daily edits the single existing running Daily Digest page (never a second journal/daily-digest sibling) using local-timezone YYYY-MM-DD", weight: 3 },
       { check: "Useful cadence-specific logic is preserved: daily is structured closeout against the Digest template vessel, monthly synthesizes weekly artifacts, quarterly/annual synthesize lower-cadence artifacts; weekly cadence is no longer this skill", weight: 3 },
       { check: "Library artifact is created or edited in the correct collection with cadence-specific title and tags, and linked through goals check-in artifact metadata when a supported link action exists", weight: 2 },
       { check: "Artifact is surfaced to Home/Simple Inbox only when it contains a decision, risk, carry-forward, or review-worthy synthesis", weight: 2 },
@@ -1259,22 +1260,25 @@ Rules:
 - Digest generation NEVER calls \`memory.review_claim\` and never stamps or retires claims. Review actions live on the claim surface (\`/memory?claim=\`); this skill only lists.
 
 Save to Library — one running Daily Digest page (mirror Morning Brief geometry):
-1. Resolve the page:
-   - Prefer \`library(action: "get_library_page", id: "journal")\`.
-   - If missing, try title search for "Daily Digest" / "Nightly Journal" / "Journal" before creating.
-   - If still missing, create once with:
-     - id/slug: \`journal\`
+1. Resolve the page in this exact order — stop at the first hit and never create a sibling:
+   a. \`library(action: "get_library_page", id: "05254542-0792-455c-81af-137e223df439")\` when that UUID is visible to this principal (Ray's inhabited running file).
+   b. Else \`library(action: "get_library_page", id: "journal")\`.
+   c. Else \`library(action: "search_library_pages", query: "Daily Digest")\` and adopt the existing page whose title is exactly \`Daily Digest\` (prefer tags including \`journal\` / \`daily-reflection\`). If multiple match, pick the one that already has dated \`## YYYY-MM-DD\` sections; never create a second.
+   d. Else title-search \`Nightly Journal\` / \`Journal\` the same way.
+   e. Only if every lookup above returns nothing, create **once**:
      - title: \`Daily Digest\`
      - plainTextContent starting with \`# Daily Digest\` then today's dated section
-     - tags: [\`journal\`, \`daily\`, \`digest\`, \`reflection\`]
-2. If the page exists, prepend (or replace same-day) via \`library(action: "edit_library_page")\`:
+     - tags: [\`journal\`, \`daily\`, \`digest\`, \`reflection\`, \`daily-reflection\`]
+     - Do **not** invent a second slug like \`daily-digest\` when a Daily Digest page already exists under any id.
+2. Day heading is the Timer owner's **local** calendar date (\`America/Chicago\` for Ray, or the timezone on the firing timer / world_model). Never use UTC "tomorrow" when local evening is still the prior civil day. Example: 2026-08-19 21:45 CT → \`## 2026-08-19\`, not \`## 2026-08-20\`.
+3. If the page exists, prepend (or replace same-day) via \`library(action: "edit_library_page")\` on that page's **UUID** (not a guessed slug):
    - Newest day first, immediately under any intro/purpose prose.
    - Each day starts with \`## YYYY-MM-DD\` then the structured body above.
    - Same-day rerun replaces that day's section in place — do not duplicate.
-   - Do not mint \`journal-YYYY-MM-DD\` or any dated sibling.
-3. Surface the SAME running page when useful (surfacePolicy + decision/risk/carry-forward/review-worthy synthesis), surfaceDurationHours: 48, surfaceReason naming the day.
+   - Do not mint \`journal-YYYY-MM-DD\`, \`daily-digest\`, or any dated/sibling page.
+4. Surface the SAME running page when useful (surfacePolicy + decision/risk/carry-forward/review-worthy synthesis), surfaceDurationHours: 48, surfaceReason naming the day.
 
-Do NOT create a new page per day. Do NOT put Digest under Specs/Skills canonical folders.
+Do NOT create a new page per day. Do NOT put Digest under Specs/Skills canonical folders. If you cannot edit the adopted running page, fail the run rather than creating a duplicate.
 
 ### Weekly
 Do not produce week-close. \`reflect\` / \`weekly\` is unbound. Stand Up owns Sunday work-ledger close on the same closed \`weekly\` key. If this skill is invoked with \`cadence=weekly\`, stop after naming that the cadence moved; do not write a life-review Weekly Reflection and do not call \`goals.set_weekly_reflection\`. Historical Weekly Reflection pages stay as history.
