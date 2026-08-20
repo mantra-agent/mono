@@ -1,12 +1,10 @@
 /**
- * Voice turn I/O — presence writer, phrase assembler, hold-as-presence.
- *
- * Presence is one discriminant produced only at the speakable write helper.
- * The once-per-port handshake lives next to this module in sse.ts — not inside writeSpeakable.
+ * Voice turn I/O handlers — coalescing, backpressure management,
+ * cascade keepalive, and stream chunk processing.
  */
 import type { Response } from "express";
-import type { PresenceState, VoiceSession, TurnContext } from "./types";
-import { buildSSEChunk, isResponseAlive, createTrackedWrite, openWritePort, sendSSEComment, setupSSELifecycle } from "./sse";
+import type { VoiceSession, TurnContext } from "./types";
+import { buildSSEChunk, isResponseAlive, createTrackedWrite } from "./sse";
 import { publishVoiceDiagnostic } from "./session";
 import { createLogger } from "../log";
 import { getVerifiedCascadeTimeoutSeconds, getVerifiedSoftTimeoutSeconds } from "../elevenlabs";
@@ -19,14 +17,7 @@ const log = createLogger("VoiceTurnIO");
 
 export const COALESCE_BUFFER_MAX_BYTES = 4096;
 
-/** Spoken hold sentences are gone. Continuity is the live generator + write port. */
-const SPOKEN_FILLER_PREAMBLE = /^(?:One second\.|One moment\.|Still on it\.|Working\.)\s*/i;
-
-/** Drop a model-authored stall opener so it cannot become the first flushed speakable. */
-export function stripSpokenFillerPreamble(text: string): { text: string; stripped: boolean } {
-  const next = text.replace(SPOKEN_FILLER_PREAMBLE, "");
-  return { text: next, stripped: next !== text };
-}
+const AUDIBLE_KEEPALIVE_THRESHOLD_MS = 6_500;
 
 /**
  * Split completed speakable prose from an unstable trailing fragment.
@@ -53,15 +44,9 @@ export function getCascadeTimeoutMs(): number {
   return getVerifiedCascadeTimeoutSeconds() * 1000;
 }
 
-/** Poll slightly faster than the hold window so a hold lands near the cascade-safe instant. */
-export function getPresenceHoldCheckIntervalMs(): number {
-  const windowMs = getSoftTimeoutBufferMs();
-  return Math.max(1_000, Math.min(2_000, Math.floor(windowMs / 3)));
-}
-
-/** @deprecated alias — hold cadence uses getSoftTimeoutBufferMs, not a 1–1.5s drip. */
 export function getKeepaliveCheckIntervalMs(): number {
-  return getPresenceHoldCheckIntervalMs();
+  const cascadeMs = getCascadeTimeoutMs();
+  return Math.max(1_000, Math.min(1_500, Math.floor(cascadeMs / 4)));
 }
 
 let keepaliveBufferWarningLogged = false;
@@ -80,34 +65,6 @@ export function getSoftTimeoutBufferMs(): number {
   );
 }
 
-function spineIds(session: VoiceSession, ctx: TurnContext): string {
-  return `session=${session.id} turnId=${ctx.turnId} assistantAttemptId=${ctx.assistantAttemptId}`;
-}
-
-function setPresence(ctx: TurnContext, next: PresenceState): void {
-  if (ctx.presence === next) return;
-  ctx.presence = next;
-}
-
-function speakableOrdinal(session: VoiceSession): number | null {
-  return session.activeVoiceUserOrdinal;
-}
-
-/** Persist flushed model speakable so a spent-utterance retry can replay after the generator dies. */
-function recordFlushedSpeakable(session: VoiceSession, content: string): void {
-  if (!content) return;
-  session.lastFlushedSpeakable = content;
-  session.unflushedSpeakable = "";
-  session.lastSpeakableUserOrdinal = speakableOrdinal(session);
-}
-
-/** Hold remainder that never crossed a live flushed write. Preferred replay source. */
-function recordUnflushedSpeakable(session: VoiceSession, content: string): void {
-  if (!content) return;
-  session.unflushedSpeakable = content;
-  session.lastSpeakableUserOrdinal = speakableOrdinal(session);
-}
-
 // ── Turn IO Handlers ─────────────────────────────────────────────────────
 
 export interface TurnIOHandlers {
@@ -115,27 +72,20 @@ export interface TurnIOHandlers {
   stopFillerTimer: (reason: string) => void;
   flushCoalesceBuffer: (trigger?: string, flush?: boolean) => void;
   trackContentDelivery: () => void;
-  /** Emit a flushed hold sentence when the cascade-safe window has elapsed. */
-  sendPresenceHold: () => void;
-  startKeepaliveTimer: () => void;
-  /** @deprecated drip — first-content is writeFirstContentHandshake, once per port. */
   sendCascadeKeepalive: () => void;
+  startKeepaliveTimer: () => void;
 }
 
 export function createTurnIOHandlers(
   res: Response, ctx: TurnContext, session: VoiceSession, currentTurn: number,
 ): TurnIOHandlers {
-  session.activeWriteRes = res;
-  openWritePort(res, ctx.chatId, ctx.created, session.id);
-  const writeRes = (): Response => session.activeWriteRes ?? res;
-  const _rawTrackedWrite = createTrackedWrite(writeRes, ctx.lastWrite, ctx.bp, session.id, currentTurn, () => {
+  const _rawTrackedWrite = createTrackedWrite(res, ctx.lastWrite, ctx.bp, session.id, currentTurn, () => {
     publishVoiceDiagnostic(session, "backpressure", `Backpressure detected (buffered=${ctx.bp.totalBytes} bytes)`, { turn: currentTurn, status: "active" }, ctx);
   });
 
   const trackedWrite = (data: string, label: string): boolean => {
     const ok = _rawTrackedWrite(data, label);
-    const port = writeRes();
-    if (!port.destroyed) ctx.lastWriteAt = Date.now();
+    if (!res.destroyed) ctx.lastWriteAt = Date.now();
     return ok;
   };
 
@@ -143,9 +93,9 @@ export function createTurnIOHandlers(
     if (ctx.fillerTimer) {
       clearInterval(ctx.fillerTimer);
       ctx.fillerTimer = null;
-      log.log(`turn ${currentTurn} PRESENCE_HOLD_TIMER_STOP reason=${reason} ${spineIds(session, ctx)}`);
+      log.log(`turn ${currentTurn} KEEPALIVE_TIMER_STOP reason=${reason} session=${session.id}`);
     } else {
-      log.debug(`turn ${currentTurn} PRESENCE_HOLD_TIMER_STOP skipped=not_running reason=${reason} ${spineIds(session, ctx)}`);
+      log.debug(`turn ${currentTurn} KEEPALIVE_TIMER_STOP skipped=not_running reason=${reason} session=${session.id}`);
     }
   };
 
@@ -165,240 +115,110 @@ export function createTurnIOHandlers(
     ctx.lastRealContentAt.ts = now;
   };
 
-  /**
-   * Presence writer — sole path for speakable SSE.
-   * Every speakable uses flush=true. Holds are not transcript content.
-   */
-  const writeSpeakable = (
-    content: string,
-    kind: "model" | "hold",
-    trigger: string,
-  ): boolean => {
-    if (!content) return false;
-    if (!isResponseAlive(writeRes())) {
-      if (kind === "model") recordUnflushedSpeakable(session, content);
-      log.warn(
-        `WRITE_PORT_DEAD location=writeSpeakable kind=${kind} trigger=${trigger} contentBytes=${content.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
-      );
-      return false;
-    }
-
-    const now = Date.now();
-    const sincePriorFlushed = now - ctx.lastFlushedSpeakableAt;
-    const speakableId = ctx.lastFlushedSpeakableId + 1;
-
-    const ok = trackedWrite(
-      buildSSEChunk(ctx.chatId, ctx.created, content, null, true),
-      kind === "hold" ? `presence_hold_${ctx.fillerCount + 1}` : `coalesced_${ctx.coalesceFlushCount}`,
-    );
-    if (!ok) {
-      log.debug(
-        `turn ${currentTurn} SSE_WRITE kind=${kind} speakableId=${speakableId} ok=false ${spineIds(session, ctx)}`,
-      );
-      return false;
-    }
-    if (kind === "model") {
-      recordFlushedSpeakable(session, content);
-      setPresence(ctx, "speaking");
-      ctx.chunkCounter.count++;
-      ctx.responseSize.total += content.length;
-      if (ctx.firstChunk.sentAt === null) ctx.firstChunk.sentAt = now;
-      if (ctx.firstRealContentAt.ts === null) ctx.firstRealContentAt.ts = now;
-      ctx.lastRealContentAt.ts = now;
-      let lastContentIdx = -1;
-      for (let i = ctx.segmentChronology.length - 1; i >= 0; i--) {
-        const entry = ctx.segmentChronology[i];
-        if (entry.s === "content") { lastContentIdx = i; break; }
-        if (entry.s === "tool") break;
-      }
-      if (lastContentIdx >= 0) {
-        (ctx.segmentChronology[lastContentIdx] as { s: "content"; c: string }).c += content;
-      } else {
-        ctx.segmentChronology.push({ s: "content", c: content });
-      }
-      log.info(
-        `turn ${currentTurn} PHRASE_FLUSH trigger=${trigger} forceTts=true chars=${content.length} remainder=${ctx.coalesceBuf.value.length} speakableId=${speakableId} ${spineIds(session, ctx)}`,
-      );
-    } else {
-      setPresence(ctx, "holding");
-      ctx.fillerCount++;
-      ctx.lastFillerSentAt = now;
-      log.info(
-        `turn ${currentTurn} PRESENCE_HOLD fillerCount=${ctx.fillerCount} sinceLastFlushedSpeakable=${sincePriorFlushed}ms speakableId=${speakableId} ${spineIds(session, ctx)}`,
-      );
-    }
-    ctx.lastFlushedSpeakableId = speakableId;
-    ctx.lastFlushedSpeakableAt = now;
-    ctx.lastContentSentAt = now;
-    ctx.lastContentAt.ts = now;
-    ctx.lastAudibleDeltaAt = now;
-    session.inflightChunksDelivered++;
-    const sessionGap = now - session.lastDataDeliveryAt;
-    if (sessionGap > session.longestDataGapMs) session.longestDataGapMs = sessionGap;
-    session.lastDataDeliveryAt = now;
-    log.debug(
-      `turn ${currentTurn} SSE_WRITE kind=${kind} speakableId=${speakableId} ok=${ok} ${spineIds(session, ctx)}`,
-    );
-    return ok;
-  };
-
-  /**
-   * Phrase assembler — soft flush emits completed sentences only.
-   * Forced flush allowed for turn_end, overflow, guide_introduction — not tool start.
-   */
   const flushCoalesceBuffer = (trigger?: string, flush: boolean = false): void => {
     if (!ctx.coalesceBuf.value) return;
-    if (!isResponseAlive(writeRes())) {
-      recordUnflushedSpeakable(session, ctx.coalesceBuf.value);
-      log.warn(
-        `WRITE_PORT_DEAD location=flushCoalesceBuffer trigger=${trigger} holdingBytes=${ctx.coalesceBuf.value.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
-      );
+    if (!isResponseAlive(res)) {
+      log.warn(`CONTENT_DROPPED_DEAD_RESPONSE location=flushCoalesceBuffer trigger=${trigger} contentBytes=${ctx.coalesceBuf.value.length} turn=${currentTurn} session=${session.id}`);
+      if (!ctx.contentDroppedPublished) {
+        ctx.contentDroppedPublished = true;
+        publishVoiceDiagnostic(session, "content_dropped", `Content dropped — response dead (${ctx.coalesceBuf.value.length} bytes)`, { turn: currentTurn, status: "error" }, ctx);
+      }
       return;
     }
 
-    const forceEmpty = flush === true
-      && (trigger === "turn_end" || trigger === "overflow" || trigger === "guide_introduction" || trigger === "drain");
-
+    // Soft flushes (timer / first content) emit only completed sentences and always
+    // set delta.flush so ElevenLabs speaks them during tool work. Forced flushes
+    // (pre_tool_call, turn_end, overflow, guide) empty the buffer entirely.
     let content: string;
-    let remainder = "";
-    if (forceEmpty) {
+    let forceTtsFlush = flush;
+    if (flush) {
       content = ctx.coalesceBuf.value;
       ctx.coalesceBuf.value = "";
     } else {
-      // Soft path (timer, first content) and any other force request that is not
-      // a named forced trigger — including legacy pre_tool_call — keep remainder.
       const split = takeCompletedSpeakable(ctx.coalesceBuf.value);
-      if (!split.speakable) {
-        if (trigger === "pre_tool_call") {
-          log.debug(
-            `turn ${currentTurn} PHRASE_HOLD_ACROSS_TOOL remainder=${ctx.coalesceBuf.value.length} ${spineIds(session, ctx)}`,
-          );
-        }
-        return;
-      }
+      if (!split.speakable) return;
       content = split.speakable;
-      remainder = split.remainder;
-      ctx.coalesceBuf.value = remainder;
-    }
-
-    const stripped = stripSpokenFillerPreamble(content);
-    if (stripped.stripped) {
-      log.info(`turn ${currentTurn} SPOKEN_FILLER_STRIPPED trigger=${trigger} ${spineIds(session, ctx)}`);
-      content = stripped.text;
-    }
-    if (!content) {
-      ctx.coalesceBuf.value = remainder;
-      return;
+      ctx.coalesceBuf.value = split.remainder;
+      forceTtsFlush = true;
     }
 
     ctx.coalesceFlushCount++;
-    const wrote = writeSpeakable(content, "model", trigger || "unspecified");
-    if (!wrote) {
-      ctx.coalesceBuf.value = content + remainder;
-      ctx.coalesceFlushCount = Math.max(0, ctx.coalesceFlushCount - 1);
-      recordUnflushedSpeakable(session, ctx.coalesceBuf.value);
-      log.warn(
-        `WRITE_PORT_HOLD location=flushCoalesceBuffer trigger=${trigger} restoredBytes=${ctx.coalesceBuf.value.length} turn=${currentTurn} ${spineIds(session, ctx)}`,
-      );
+    ctx.chunkCounter.count++;
+    ctx.responseSize.total += content.length;
+    if (ctx.firstChunk.sentAt === null) ctx.firstChunk.sentAt = Date.now();
+    trackContentDelivery();
+    // Scan backwards past system entries to find the last content entry to merge into.
+    // Tool entries are intentional content breaks — stop scanning if we hit one.
+    let lastContentIdx = -1;
+    for (let i = ctx.segmentChronology.length - 1; i >= 0; i--) {
+      const entry = ctx.segmentChronology[i];
+      if (entry.s === "content") { lastContentIdx = i; break; }
+      if (entry.s === "tool") break;
     }
+    if (lastContentIdx >= 0) {
+      (ctx.segmentChronology[lastContentIdx] as { s: "content"; c: string }).c += content;
+    } else {
+      ctx.segmentChronology.push({ s: "content", c: content });
+    }
+    log.debug(
+      `turn ${currentTurn} COALESCE_FLUSH trigger=${trigger || "unspecified"} forceTts=${forceTtsFlush} chars=${content.length} remainder=${ctx.coalesceBuf.value.length} session=${session.id}`,
+    );
+    trackedWrite(buildSSEChunk(ctx.chatId, ctx.created, content, null, forceTtsFlush), `coalesced_${ctx.coalesceFlushCount}`);
   };
 
-  session.attachWritePort = (req, res) => {
-    if (!res.headersSent) {
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
-      });
-    }
-    if (res.socket) res.socket.setNoDelay(true);
-    const prev = session.activeWriteRes;
-    session.activeWriteRes = res;
-    openWritePort(res, ctx.chatId, ctx.created, session.id);
-    sendSSEComment(res, "write_port_attached", session.id);
-    setupSSELifecycle(req, res, session, ctx, trackedWrite, flushCoalesceBuffer, stopFillerTimer, ctx.turnAbort, getCascadeTimeoutMs);
-    if (prev && prev !== res && !prev.writableEnded && !prev.destroyed) {
-      try { prev.end(); } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        log.warn(`WRITE_PORT_PREV_END_FAILED turn=${currentTurn} session=${session.id} error=${msg}`);
-      }
-    }
-    flushCoalesceBuffer("write_port_attached");
-  };
-
-  if (session.pendingAttach) {
-    const pending = session.pendingAttach;
-    session.pendingAttach = null;
-    session.attachWritePort(pending.req, pending.res);
-  }
-
-  const sendPresenceHold = (): void => {
-    const port = writeRes();
-    if (!isResponseAlive(port)) {
-      log.warn(`WRITE_PORT_DEAD location=sendPresenceHold turn=${currentTurn} ${spineIds(session, ctx)}`);
+  const sendCascadeKeepalive = (): void => {
+    if (!isResponseAlive(res)) {
+      log.warn(`CONTENT_DROPPED_DEAD_RESPONSE location=sendCascadeKeepalive turn=${currentTurn} session=${session.id}`);
       return;
     }
-    sendSSEComment(port, "presence_hold", session.id);
-    ctx.lastFillerSentAt = Date.now();
-    log.info(
-      `turn ${currentTurn} PRESENCE_HOLD fillerCount=${ctx.fillerCount} silent=true ${spineIds(session, ctx)}`,
-    );
-  };
-
-  /** Demolished drip. First-content is writeFirstContentHandshake — once per port, never on a timer. */
-  const sendCascadeKeepalive = (): void => {
-    log.debug(`turn ${currentTurn} CASCADE_KEEPALIVE rejected=drip ${spineIds(session, ctx)}`);
+    const bufferWord = "... ";
+    const chunk = buildSSEChunk(ctx.chatId, ctx.created, bufferWord);
+    try {
+      res.write(chunk);
+      const now = Date.now();
+      ctx.lastContentAt.ts = now;
+      ctx.lastContentSentAt = now;
+      const sessionGap = now - session.lastDataDeliveryAt;
+      if (sessionGap > session.longestDataGapMs) session.longestDataGapMs = sessionGap;
+      session.lastDataDeliveryAt = now;
+      ctx.keepalivesSent++;
+      ctx.lastKeepaliveAt = now;
+      session.inflightChunksDelivered++;
+      log.debug(`turn ${currentTurn} CASCADE_KEEPALIVE sent #${ctx.keepalivesSent} sinceTurnStart=${now - ctx.turnStart}ms sinceAudible=${now - ctx.lastAudibleDeltaAt}ms session=${session.id}`);
+    } catch (e: any) {
+      log.warn(`turn ${currentTurn} CASCADE_KEEPALIVE write failed: ${e.message} session=${session.id}`);
+    }
   };
 
   const startKeepaliveTimer = (): void => {
     if (ctx.fillerTimer) {
-      log.debug(`turn ${currentTurn} PRESENCE_HOLD_TIMER_START skipped=already_running ${spineIds(session, ctx)}`);
+      log.debug(`turn ${currentTurn} KEEPALIVE_TIMER_START skipped=already_running session=${session.id}`);
       return;
     }
-    const holdWindowMs = getSoftTimeoutBufferMs();
-    const checkIntervalMs = getPresenceHoldCheckIntervalMs();
-    log.debug(
-      `turn ${currentTurn} PRESENCE_HOLD_TIMER_START holdWindow=${holdWindowMs}ms checkInterval=${checkIntervalMs}ms cascadeTimeout=${getCascadeTimeoutMs()}ms ${spineIds(session, ctx)}`,
-    );
+    const turnKeepaliveStart = Date.now();
+    const sinceSessionLastData = turnKeepaliveStart - session.lastDataDeliveryAt;
+    log.debug(`turn ${currentTurn} KEEPALIVE_TIMER_START softTimeoutBuffer=${getSoftTimeoutBufferMs()}ms checkInterval=${getKeepaliveCheckIntervalMs()}ms cascadeTimeout=${getCascadeTimeoutMs()}ms sinceSessionLastData=${sinceSessionLastData}ms session=${session.id}`);
     ctx.fillerTimer = setInterval(() => {
       const now = Date.now();
-      const sinceFlushed = now - ctx.lastFlushedSpeakableAt;
-      if (!isResponseAlive(writeRes())) {
-        log.debug(
-          `turn ${currentTurn} PRESENCE_HOLD_TICK write_port_dead sinceFlushed=${sinceFlushed}ms — holding ${spineIds(session, ctx)}`,
-        );
+      const sinceTurnStart = now - turnKeepaliveStart;
+      const sinceLastContent = now - ctx.lastContentSentAt;
+      const sinceAudible = now - ctx.lastAudibleDeltaAt;
+      if (!isResponseAlive(res)) {
+        log.warn(`turn ${currentTurn} KEEPALIVE_TICK response_dead sinceLastContent=${sinceLastContent}ms sinceAudible=${sinceAudible}ms sinceTurnStart=${sinceTurnStart}ms — self-terminating session=${session.id}`);
+        publishVoiceDiagnostic(session, "keepalive_dead", `Keepalive detected dead response — self-terminating`, { turn: currentTurn, status: "error", elapsedMs: sinceTurnStart }, ctx);
+        stopFillerTimer("response_dead");
         return;
       }
-
-      // Hold only after cascade-safe silence on flushed speakables, and not while
-      // the model is still streaming incomplete clauses (lastAudibleDeltaAt = last model delta).
-      const sinceModelDelta = now - ctx.lastAudibleDeltaAt;
-      const shouldHold = sinceFlushed >= holdWindowMs
-        && (ctx.toolCallActive || sinceModelDelta >= holdWindowMs);
-
-      if (shouldHold) {
-        log.debug(
-          `turn ${currentTurn} PRESENCE_HOLD_TICK action=hold sinceFlushed=${sinceFlushed}ms window=${holdWindowMs}ms toolActive=${ctx.toolCallActive} ${spineIds(session, ctx)}`,
-        );
-        sendPresenceHold();
+      if (sinceAudible >= AUDIBLE_KEEPALIVE_THRESHOLD_MS) {
+        log.debug(`turn ${currentTurn} KEEPALIVE_TICK action=keepalive sinceTurnStart=${sinceTurnStart}ms sinceAudible=${sinceAudible}ms threshold=${AUDIBLE_KEEPALIVE_THRESHOLD_MS}ms audibleDeltas=${ctx.audibleDeltaCount} session=${session.id}`);
+        sendCascadeKeepalive();
       } else {
-        log.debug(
-          `turn ${currentTurn} PRESENCE_HOLD_TICK action=skip sinceFlushed=${sinceFlushed}ms window=${holdWindowMs}ms toolActive=${ctx.toolCallActive} ${spineIds(session, ctx)}`,
-        );
+        log.debug(`turn ${currentTurn} KEEPALIVE_TICK action=skip sinceAudible=${sinceAudible}ms threshold=${AUDIBLE_KEEPALIVE_THRESHOLD_MS}ms sinceTurnStart=${sinceTurnStart}ms session=${session.id}`);
       }
-    }, checkIntervalMs);
+    }, getKeepaliveCheckIntervalMs());
   };
 
-  return {
-    trackedWrite,
-    stopFillerTimer,
-    flushCoalesceBuffer,
-    trackContentDelivery,
-    sendPresenceHold,
-    startKeepaliveTimer,
-    sendCascadeKeepalive,
-  };
+  return { trackedWrite, stopFillerTimer, flushCoalesceBuffer, trackContentDelivery, sendCascadeKeepalive, startKeepaliveTimer };
 }
 
 // ── Stream Chunk Handler ─────────────────────────────────────────────────
@@ -434,9 +254,7 @@ export function createStreamChunkHandler(
       ? assembler.cancel(turnKey, reason)
       : assembler.close(turnKey, reason);
     if (outcome.outcome === "closed") {
-      log.info(
-        `voice_output_closed session=${session.id} turn=${currentTurn} turnKey=${turnKey} reason=${reason} fragments=${outcome.turn.rawFragments.length} degraded=${outcome.turn.degraded} turnId=${ctx.turnId} assistantAttemptId=${ctx.assistantAttemptId}`,
-      );
+      log.info(`voice_output_closed session=${session.id} turn=${currentTurn} turnKey=${turnKey} reason=${reason} fragments=${outcome.turn.rawFragments.length} degraded=${outcome.turn.degraded}`);
     }
   };
 
@@ -470,12 +288,15 @@ export function createStreamChunkHandler(
       log.warn(`voice_output_fragment_rejected session=${session.id} turn=${currentTurn} turnKey=${turnKey} outcome=${outcome.outcome}`);
       return;
     }
-    if (!isResponseAlive(session.activeWriteRes ?? res)) {
-      log.warn(`WRITE_PORT_DEAD location=streamChunkHandler buffering contentBytes=${content.length} turn=${currentTurn} elapsed=${Date.now() - ctx.turnStart}ms session=${session.id}`);
+    if (!isResponseAlive(res)) {
+      close("transport_failed");
+      log.warn(`CONTENT_DROPPED_DEAD_RESPONSE location=streamChunkHandler contentBytes=${content.length} turn=${currentTurn} elapsed=${Date.now() - ctx.turnStart}ms session=${session.id}`);
+      if (!ctx.contentDroppedPublished) {
+        ctx.contentDroppedPublished = true;
+        publishVoiceDiagnostic(session, "content_dropped", `Content dropped — response dead (${content.length} bytes)`, { turn: currentTurn, status: "error" }, ctx);
+      }
+      return;
     }
-    log.debug(
-      `turn ${currentTurn} MODEL_DELTA_ACCEPTED chars=${content.length} sequence=${sequence - 1} turnId=${ctx.turnId} assistantAttemptId=${ctx.assistantAttemptId} session=${session.id}`,
-    );
     ctx.lastAudibleDeltaAt = now;
     ctx.audibleDeltaCount++;
     ctx.coalesceBuf.value += content;

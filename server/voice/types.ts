@@ -26,9 +26,6 @@ export interface VoiceToolCall {
 
 export type VoiceToolMode = "standard" | "none";
 
-/** Per-turn presence discriminant — sole source for hold / speak / silent. */
-export type PresenceState = "speaking" | "holding" | "silent" | "reconnecting";
-
 export interface VoiceSession {
   id: string;
   chatSessionId: string | null;
@@ -46,12 +43,6 @@ export interface VoiceSession {
   inflightTurn: number;
   inflightDone: Promise<void> | null;
   inflightDoneResolve: (() => void) | null;
-  /** Hot-swappable custom-LLM SSE write port. Socket death replaces this; it must not abort the generator. */
-  activeWriteRes: import("express").Response | null;
-  /** Bind a cascade-retry socket under the live generator. Installs lifecycle and flushes held remainder. */
-  attachWritePort: ((req: import("express").Request, res: import("express").Response) => void) | null;
-  /** Cascade retry that arrived before turn I/O existed. Consumed once attachWritePort is installed. */
-  pendingAttach: { req: import("express").Request; res: import("express").Response } | null;
   inflightContextPromise: Promise<string> | null;
   inflightContextFocusKey: string | null;
   lastDataDeliveryAt: number;
@@ -61,12 +52,6 @@ export interface VoiceSession {
   longestDataGapMs: number;
   disconnectReason: string | null;
   lastFiredUserContent: string;
-  /** Last flushed model speakable for the current utterance. Terminal-retry replay source. */
-  lastFlushedSpeakable: string;
-  /** Unflushed remainder after a dead write-port. Preferred terminal-retry replay source. */
-  unflushedSpeakable: string;
-  /** User ordinal that owns lastFlushedSpeakable / unflushedSpeakable. */
-  lastSpeakableUserOrdinal: number | null;
   lastCallbackAt: number;
   isReconnect: boolean;
   historyInjected: boolean;
@@ -135,17 +120,10 @@ export interface TurnContext {
   chatId: string;
   created: number;
   turnEndCause: string;
-  /** One presence discriminant for the turn — produced only at the speakable write helper. */
-  presence: PresenceState;
-  /** Hold counter (spoken hold sentences). Not model content. */
   fillerCount: number;
   fillerTimer: ReturnType<typeof setInterval> | null;
   lastContentSentAt: number;
   lastFillerSentAt: number;
-  /** Clock for hold cadence: last flushed speakable (model sentence or hold). */
-  lastFlushedSpeakableAt: number;
-  /** Monotonic id of last flushed speakable for duplicate-word spine proof. */
-  lastFlushedSpeakableId: number;
   lastWriteAt: number;
   firstLlmDeltaAt: number | null;
   thinkingSuppressedChars: number;
@@ -155,7 +133,6 @@ export interface TurnContext {
   toolCallChronologyCount: number;
   toolCallActive: boolean;
   contentDroppedPublished: boolean;
-  /** @deprecated presence clocks — retained for log compatibility only */
   lastAudibleDeltaAt: number;
   audibleDeltaCount: number;
   keepalivesSent: number;

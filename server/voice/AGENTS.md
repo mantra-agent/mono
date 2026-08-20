@@ -15,9 +15,9 @@ voice/
 ├── prompt.ts             — System prompt assembly (cached), conversation messages, tool list, resolvePromptAndMessages
 ├── circuit-breaker.ts    — Circuit breaker, blocker wait, executor run detection (runtime capacity authority owns voice admission)
 ├── pipeline-log.ts       — Pipeline stage logging, turn forensics, completion summaries, expected-stage auditing
-├── turn-io.ts            — Presence writer, phrase assembler, hold-as-presence, stream chunk handler
+├── turn-io.ts            — Coalescing, backpressure, cascade keepalive, stream chunk handler, timing constants
 ├── turn-handlers.ts      — Success/abort/error handlers, runExecutorPhase (LLM agent wiring)
-├── types.ts              — Shared types: VoiceSession, VoiceMessage, TurnContext, PresenceState, SSEWriteState
+├── types.ts              — Shared types: VoiceSession, VoiceMessage, TurnContext, SSEWriteState, BackpressureState
 ├── tool-middleware.ts    — Voice-specific tool execution middleware
 ├── thinking-filter.ts    — Strips <thinking> blocks from streaming output
 ├── synthesis.ts          — Canonical portable speech synthesis for non-browser transports
@@ -27,7 +27,7 @@ voice/
 ├── sse-stream.ts         — Response SSE instrumentation
 ├── diagnostics.ts        — WebSocket routing + thinking persistence
 ├── transcript.ts         — Interim/final transcript fan-out
-├── keepalive.ts          — Soft/cascade buffer calibration re-export (hold cadence)
+├── keepalive.ts          — Cascade keepalive (re-exports calibration)
 └── index.ts              — Public custom-LLM engine surface
 ```
 
@@ -65,16 +65,8 @@ Uses per-iteration content model (`iterationResults[]`) with explicit `mergeIter
 
 Voice assistant persistence is replay-safe by canonical `turnId` and inserts the assistant row immediately after its matching user row. Provider callback completion order must never create a second assistant row for one logical turn or detach a response from the utterance that caused it.
 
-### Presence rooms (1:1 custom-LLM)
-`turn-io.ts` owns five rooms behind frozen ports (start/lease/finalize/callback/SSE/turn-identity unchanged):
-
-1. **Presence writer** — sole speakable SSE write. Every speakable uses `buildSSEChunk(..., flush=true)`. Sets `TurnContext.presence` (`speaking | holding | silent | reconnecting`). Handshake is a separate closed write in `sse.ts`, not this helper.
-2. **Phrase assembler** — soft flush (80ms timer, first content) emits only completed sentences via `takeCompletedSpeakable`. Forced empty only for `turn_end`, overflow, guide introduction. Tool start must not invent a period or force-chop; remainder survives tools.
-3. **Hold / handshake** — once per write-port, one unflushed `"... "` (`openWritePort` / `writeFirstContentHandshake`). Sent-state marks only after a successful write. After that, comments only (`: presence_hold`, `: keepalive`). No spoken filler (`One moment.`, `One second.`, `Still on it.`, `Working.`). A second successful handshake on the same socket is unrepresentable. Handshake is not transcript, not `coalesceBuf`, not `segmentChronology`.
-4. **Silent reconnect** — client keeps last live conversational visual until reconnect exhaustion; captions clear on retry; no user-facing degraded theater mid-retry.
-5. **Spine** — `session.id` + `turnId` + `assistantAttemptId` on flush/hold/SSE/reconnect events. Long-turn forensics promote to `info` when tools > 0, duration ≥ 10s, holds fired, or reconnect. No transcript bodies in diagnostics.
-
-SSE comments remain socket liveness only — never presence. One utterance owns one generator; `VoiceSession.activeWriteRes` is the only captured write handle. Same-utterance custom-LLM POSTs call `attachWritePort` — they must not increment `turnCount` or abort the generator. Attach installs drain/close on the new socket and flushes only remainder that was never spoken. A dead port holds extracted sentences in `coalesceBuf` and copies them onto `VoiceSession.unflushedSpeakable`; it does not drop them. After that generator is terminal (`inflightAbort` cleared), a same-utterance POST replays already-produced speakable as flushed countable `delta.content` (`unflushedSpeakable` first, else `lastFlushedSpeakable`). Empty `stop` + `[DONE]` is unrepresentable when speakable exists. It must not `prefixContinuation` a second answer. Coalesce, keepalive, and hold timers skip a dead port and keep running. Cascade writes `prompt.backup_llm_config` as a tagged union: `preference: "override"` + `order: ["custom-llm"]` + `cascade_timeout_seconds` **15** (range 2–15). A bare clock object 400s on discriminator `preference`. `default` accepts 15 and GET-drops it — never write `default`. Never `disabled`. Dual-write to `custom_llm` / `turn` PATCHes and GET-echoes neither. GET fails closed only on soft-timeout `-1` / `"."`. Log GET `preference`, object keys, and cascade (or absent) at warn when the clock is omitted; treat verified cascade as EL default **4** for our buffers — do not claim 15 is stored and do not abort start. Echo-absent on `custom_llm` / `turn` is expected. Do not invent a fourth home. Error paths close the socket without speaking. EL soft-timeout is `-1` with schema-tax `message` `"."` (API requires 1–200 chars even at `-1`; empty 400s; omit leaves `"One second."`; spoken dummies like `"Hhmmmm...yeah."` are unrepresentable). Dummy is schema tax, not a filler we intend to speak. The model must not write `One second.`; the writer strips that opener. First-content is exactly one unflushed `"... "` per write-port (init / early headers / every `attachWritePort`). Never again on that socket. Do not restore the 6.5s drip or flushed hold sentences. If cascade is later a mid-stream heartbeat, recut the turn model — do not drip.
+### Mid-turn TTS dispatch
+`turn-io.ts` owns the coalesce buffer and ElevenLabs SSE write. Soft flushes (80ms timer, first content) emit only completed sentence boundaries via `takeCompletedSpeakable` and always set `delta.flush=true` so ElevenLabs speaks finished progress during tool execution. Forced flushes (`pre_tool_call`, `turn_end`, overflow, guide introduction) empty the remainder with `flush=true`. Never stream unstable partial clauses with `flush=true`, and never withhold completed sentences until the turn ends.
 
 ## When Working Here
 - The `VoiceSession` interface in `types.ts` is the source of truth
