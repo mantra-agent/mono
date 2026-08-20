@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useReferenceLabel } from "@/hooks/use-reference-label";
 import { useOptionalTaskModal } from "@/contexts/task-modal-context";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
+import { useOptionalPageActivity } from "@/hooks/use-page-activity";
 import type { LucideIcon } from "lucide-react";
 import type { ClientResolvedReference } from "./reference-registry";
 
@@ -27,11 +28,12 @@ export function ReferenceChip({
   /** Icon-only chip for dense surfaces (e.g. Schedule timer rail). Label moves to title/aria-label. */
   iconOnly?: boolean;
 }) {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const taskModal = useOptionalTaskModal();
   // Chips can mount in detached React roots (TipTap reference widgets)
-  // where SidebarProvider is absent — consume the context optionally.
+  // where SidebarProvider / PageActivityProvider may be absent.
   const sidebar = useOptionalSidebar();
+  const pageActivity = useOptionalPageActivity();
   const isDegraded = resolved.status !== "resolved";
   const label = useReferenceLabel(resolved.ref.type, resolved.ref.id, resolved.label);
   const metadataDescription =
@@ -56,10 +58,26 @@ export function ReferenceChip({
       }
       if (!isExternal && resolved.href) {
         e.preventDefault();
+        // Same contract as navbar invoke: path-only pending href so RouteLoadBoundary
+        // completeNavigation(routeKey) can clear it. Query stays on the navigate target.
+        const pathOnly = resolved.href.split("?")[0] || resolved.href;
+        if (pathOnly !== location) {
+          pageActivity?.startNavigation({ href: pathOnly });
+        }
         navigate(resolved.href);
       }
     },
-    [sidebar, isExternal, resolved.href, navigate, resolved.ref.type, resolved.ref.id, taskModal],
+    [
+      sidebar,
+      isExternal,
+      resolved.href,
+      navigate,
+      location,
+      pageActivity,
+      resolved.ref.type,
+      resolved.ref.id,
+      taskModal,
+    ],
   );
 
   const Icon = IconOverride ?? resolved.Icon;

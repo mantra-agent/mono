@@ -43,12 +43,17 @@ export function PageActivityProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const startNavigation = useCallback((destination: PendingNavigation) => {
-    pendingNavigationRef.current = destination;
-    setPendingNavigation(destination);
+    // RouteLoadBoundary completes with wouter location (path only). Normalize so
+    // query-bearing chip/nav hrefs still clear when the destination mounts.
+    const normalized: PendingNavigation = {
+      href: destination.href.split("?")[0] || destination.href,
+    };
+    pendingNavigationRef.current = normalized;
+    setPendingNavigation(normalized);
     startActivity("navigation");
     if (navigationWatchdogRef.current !== null) window.clearTimeout(navigationWatchdogRef.current);
     navigationWatchdogRef.current = window.setTimeout(() => {
-      if (pendingNavigationRef.current?.href !== destination.href) return;
+      if (pendingNavigationRef.current?.href !== normalized.href) return;
       pendingNavigationRef.current = null;
       setPendingNavigation(null);
       endActivity("navigation");
@@ -56,7 +61,8 @@ export function PageActivityProvider({ children }: { children: ReactNode }) {
   }, [endActivity, startActivity]);
 
   const completeNavigation = useCallback((href: string) => {
-    if (pendingNavigationRef.current?.href !== href) return;
+    const pathOnly = href.split("?")[0] || href;
+    if (pendingNavigationRef.current?.href !== pathOnly) return;
     pendingNavigationRef.current = null;
     setPendingNavigation(null);
     if (navigationWatchdogRef.current !== null) {
@@ -92,6 +98,11 @@ export function usePageActivity() {
     throw new Error("usePageActivity must be used within PageActivityProvider");
   }
   return context;
+}
+
+/** Chips/widgets in detached trees may lack the provider — fail open. */
+export function useOptionalPageActivity() {
+  return useContext(PageActivityContext);
 }
 
 export function usePageLoadActivity(key: string, active: boolean) {
