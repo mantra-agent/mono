@@ -696,13 +696,18 @@ async function handleProduct(
         "Net New Active Users requires a positive equal-length window.",
       );
     }
+    // Immediately previous equal-length half-open window: [prevStart, range.start).
+    // Disjoint from this window [range.start, range.end). Never reuse a containing
+    // or overlapping selected range (e.g. MTD) as the baseline.
     const prevEnd = new Date(range.start.getTime());
     const prevStart = new Date(range.start.getTime() - durationMs);
     const [currentUsage, previousUsage] = await Promise.all([
       sampleUsageRange(null, range.start, range.end),
       sampleUsageRange(null, prevStart, prevEnd),
     ]);
-    const value = currentUsage.activeUsers - previousUsage.activeUsers;
+    const thisActive = currentUsage.activeUsers;
+    const prevActive = previousUsage.activeUsers;
+    const value = thisActive - prevActive;
     const finalizesAt = new Date(range.end.getTime() + USAGE_LEASE_TAIL_MS);
     const coverage: MetricCoverage =
       finalizesAt.getTime() > Date.now()
@@ -713,7 +718,7 @@ async function handleProduct(
       value,
       range,
       "internal/net-new-active-users-query-v1",
-      "Active Users(this window) minus Active Users(immediately previous equal-length window). Not Δ of Users or Accounts.",
+      `NNAU=${value} = Active Users(this ${thisActive} in [${range.start.toISOString()}, ${range.end.toISOString()})) − Active Users(previous equal-length ${prevActive} in [${prevStart.toISOString()}, ${prevEnd.toISOString()})). Not Δ of Users/Accounts; not a containing range.`,
     );
     return {
       metric: { ...metric, latestSample: sample },
