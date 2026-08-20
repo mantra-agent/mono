@@ -37,6 +37,8 @@ interface ActivityWithStatus {
   linkedMetricType: string | null;
   greatThreshold: number | null;
   goodThreshold: number | null;
+  completionSource?: string | null;
+  completionMarkers?: string[];
   lastCompletedAt: string | null;
   tier: string | null;
   metricValue: number | null;
@@ -308,6 +310,8 @@ export function ActivityDetailView({
           <ActivityDetailPanel
             activityId={activity.id}
             intervalDays={activity.intervalDays}
+            completionSource={activity.completionSource}
+            completionMarkers={activity.completionMarkers}
             metricInfo={{
               linkedMetricType: activity.linkedMetricType,
               goodThreshold: activity.goodThreshold,

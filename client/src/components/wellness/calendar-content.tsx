@@ -373,6 +373,8 @@ interface ActivityWithStatus {
   launchKind?: string | null;
   launchTarget?: string | null;
   completionSource?: string | null;
+  /** Day-deduped ISO completion times for non-log sources (e.g. Intentions). */
+  completionMarkers?: string[];
   lastCompletedAt: string | null;
   tier: string | null;
   metricValue: number | null;
@@ -916,14 +918,27 @@ function ActivityRow({
     },
   });
 
+  const heartbeatLogs = useMemo(() => {
+    if (activity.completionMarkers && activity.completionMarkers.length > 0) {
+      return activity.completionMarkers.map((completedAt, index) => ({
+        id: -(activity.id * 1000 + index + 1),
+        activityId: activity.id,
+        notes: null,
+        tier: null,
+        metricValue: null,
+        completedAt,
+      }));
+    }
+    return logs;
+  }, [activity.completionMarkers, activity.id, logs]);
+
   return (
     <div>
       <div
         data-testid={`row-activity-${activity.id}`}
         className="group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full select-none transition-colors overflow-hidden hover:bg-accent/70"
       >
-        {/* Check circle — journal rows navigate; skill rows launch; Learning expands; others log/unlog.
-            Hit target is 44px; visual circle stays compact. Stable data-activity-name for automation. */}
+        {/* Check circle — same compact density as session menu / SimpleCheckCircle (h-4). */}
         <span className="shrink-0 flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
@@ -941,12 +956,11 @@ function ActivityRow({
                     : `Log ${activity.name}`
             }
             className={cn(
-              "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors",
+              "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border bg-transparent transition-colors",
               "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-              "before:pointer-events-none before:absolute before:h-4 before:w-4 before:rounded-full before:border",
               activity.doneToday
-                ? "before:border-success before:bg-transparent text-success hover:bg-success/10"
-                : "before:border-input before:bg-transparent hover:bg-success/10 hover:before:border-success",
+                ? "border-success text-success hover:bg-success/10"
+                : "border-muted-foreground text-muted-foreground hover:border-success hover:bg-success/10",
             )}
             disabled={
               launch.isPending
@@ -980,13 +994,11 @@ function ActivityRow({
               }
             }}
           >
-            <span className="relative z-[1] inline-flex h-4 w-4 items-center justify-center">
-              {logMutation.isPending || unlogMutation.isPending || (skillTarget && launch.isPending) ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : activity.doneToday ? (
-                <Check className="h-3 w-3" />
-              ) : null}
-            </span>
+            {logMutation.isPending || unlogMutation.isPending || (skillTarget && launch.isPending) ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : activity.doneToday ? (
+              <Check className="h-3 w-3" />
+            ) : null}
           </button>
         </span>
 
@@ -1019,7 +1031,7 @@ function ActivityRow({
         {/* Quick multi-activity EKG preview (segments + spikes only) */}
         <ActivityHeartbeatSparkline
           activityId={activity.id}
-          logs={logs}
+          logs={heartbeatLogs}
           intervalDays={activity.intervalDays}
         />
 
@@ -1343,7 +1355,7 @@ export function CalendarContent() {
           onClose={() => setSelectedHeatmapDate(null)}
         />
 
-        {/* Activity hierarchy list */}
+        {/* Activity hierarchy list — session-menu density (space-y-0, py-1.5 rows) */}
         <div className="flex-1 overflow-y-auto px-3 @sm:px-4 py-3">
           {isEmpty ? (
             <div className="mb-2 flex flex-wrap gap-2 px-2">
@@ -1362,7 +1374,7 @@ export function CalendarContent() {
               </Button>
             </div>
           ) : null}
-          <div className="space-y-1">
+          <div className="space-y-0">
             {CATEGORY_ORDER.map((cat) => (
               <CategorySection
                 key={cat}
