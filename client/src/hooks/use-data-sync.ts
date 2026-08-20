@@ -45,41 +45,21 @@ const INVALIDATION_MAP: Record<string, string[][]> = {
 
 const suppressedEvents = new Map<string, number>();
 
-// Dedup guard for build-completion toasts: a single build can emit repeated
-// data:home_changed events, including after a hard refresh, so persist the
-// bounded set of observations already announced in this browser.
+// Session-local dedup only. Toasts are live notifications for the authenticated
+// shell; they must not persist across reloads or catch up from WS resume.
+// Durable attention catch-up is Home Inbox, not the toast rail.
 const recentNotifications = new Set<string>();
 const NOTIFICATION_DEDUP_WINDOW_MS = 60_000;
-const BUILD_COMPLETION_STORAGE_KEY = "mantra:build-completion-notifications";
-const MAX_STORED_BUILD_COMPLETIONS = 50;
+// Retired catch-up store — remove on boot so a prior browser cannot keep
+// pretending toast delivery is durable.
+const RETIRED_BUILD_COMPLETION_STORAGE_KEY = "mantra:build-completion-notifications";
 
-function readStoredBuildCompletions(): string[] {
-  if (typeof window === "undefined") return [];
+if (typeof window !== "undefined") {
   try {
-    const stored = JSON.parse(window.localStorage.getItem(BUILD_COMPLETION_STORAGE_KEY) ?? "[]");
-    return Array.isArray(stored)
-      ? stored.filter((value): value is string => typeof value === "string")
-      : [];
+    window.localStorage.removeItem(RETIRED_BUILD_COMPLETION_STORAGE_KEY);
   } catch {
-    return [];
+    // Best-effort cleanup of the retired catch-up key.
   }
-}
-
-function markBuildCompletionNotified(observationId: string): boolean {
-  const stored = readStoredBuildCompletions();
-  if (stored.includes(observationId)) return false;
-
-  if (typeof window !== "undefined") {
-    try {
-      window.localStorage.setItem(
-        BUILD_COMPLETION_STORAGE_KEY,
-        JSON.stringify([observationId, ...stored].slice(0, MAX_STORED_BUILD_COMPLETIONS)),
-      );
-    } catch {
-      // In-memory deduplication still protects the active page session.
-    }
-  }
-  return true;
 }
 
 export function suppressDataSyncEvent(eventName: string, durationMs = 3000) {
@@ -233,6 +213,11 @@ function maybeToastLibrarySurface(payload: Record<string, unknown> | undefined):
   if (!title) return;
 
   const pageId = typeof payload.pageId === "string" ? payload.pageId : undefined;
+  const dedupKey = pageId ? `page:${pageId}` : `page-title:${title}`;
+  if (recentNotifications.has(dedupKey)) return;
+  recentNotifications.add(dedupKey);
+  window.setTimeout(() => recentNotifications.delete(dedupKey), NOTIFICATION_DEDUP_WINDOW_MS);
+
   toast({ title: pageId ? `Page surfaced: @page:${pageId}` : `Page surfaced: ${title}` });
 }
 
@@ -255,11 +240,7 @@ function maybeToastBuildCompletion(payload: Record<string, unknown> | undefined)
     const rawReference = completion.reference;
     if (!rawReference || !isKnownReferenceType(rawReference.type) || typeof rawReference.id !== "string") continue;
     const observationId = typeof completion.observationId === "string" ? completion.observationId : rawReference.id;
-    if (
-      !observationId
-      || recentNotifications.has(`build:${observationId}`)
-      || !markBuildCompletionNotified(observationId)
-    ) continue;
+    if (!observationId || recentNotifications.has(`build:${observationId}`)) continue;
     recentNotifications.add(`build:${observationId}`);
     window.setTimeout(() => recentNotifications.delete(`build:${observationId}`), NOTIFICATION_DEDUP_WINDOW_MS);
 
@@ -335,6 +316,9 @@ export function useDataSync() {
     sharedWS.addMessageHandler("dataSync", (msg: unknown) => {
       const m = msg as Record<string, unknown>;
       if (m.type !== "event" || !m.event) return;
+      // WS resume redelivers buffered events so React Query can catch up.
+      // Toasts are live-only — never fire from replay/catch-up envelopes.
+      const isLiveEvent = m.replay !== true;
 
       const event = m.event as Record<string, unknown>;
       const eventName = event.event as string;
@@ -401,16 +385,18 @@ export function useDataSync() {
         }
       }
 
-      if (eventName === "data:home_changed") {
-        maybeToastBuildCompletion(event.payload as Record<string, unknown> | undefined);
-      }
+      if (isLiveEvent) {
+        if (eventName === "data:home_changed") {
+          maybeToastBuildCompletion(event.payload as Record<string, unknown> | undefined);
+        }
 
-      if (eventName === "data:library_changed") {
-        maybeToastLibrarySurface(event.payload as Record<string, unknown> | undefined);
-      }
+        if (eventName === "data:library_changed") {
+          maybeToastLibrarySurface(event.payload as Record<string, unknown> | undefined);
+        }
 
-      if (eventName === "data:goals_changed") {
-        maybeToastGoalChange(event.payload as Record<string, unknown> | undefined);
+        if (eventName === "data:goals_changed") {
+          maybeToastGoalChange(event.payload as Record<string, unknown> | undefined);
+        }
       }
 
 
