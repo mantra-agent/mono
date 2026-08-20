@@ -52,9 +52,36 @@ export const PRODUCT_METRIC_SLUGS = new Set([
   "shipped-prs",
   "user-memory",
   "achieved-goals",
+  "net-new-active-users",
+  "mantra-meetings",
 ]);
 
-/** Meetings is principal-scoped via the meeting index — not a product metric. */
+/**
+ * Resolve the product producer key for handleProduct.
+ * Prefer stamped plan/key; fall back to slug (including company Meetings slug).
+ */
+function productProducerKey(metric: Metric): string {
+  const config = metric.adapterConfig ?? {};
+  const plan = config.plan;
+  if (
+    plan
+    && typeof plan === "object"
+    && !Array.isArray(plan)
+    && (plan as { type?: unknown }).type === "producer"
+    && typeof (plan as { key?: unknown }).key === "string"
+  ) {
+    return String((plan as { key: string }).key).trim();
+  }
+  if (typeof config.producerKey === "string" && config.producerKey.trim()) {
+    return config.producerKey.trim();
+  }
+  if (typeof config.key === "string" && config.key.trim()) {
+    return config.key.trim();
+  }
+  return metric.slug;
+}
+
+/** Meetings engagement slug remains principal-scoped; mantra-meetings is product. */
 const PRODUCT_CURRENT_KEYS = [
   { key: "hoursUsed" as const, slug: "hours-used", name: "Hours Used", unit: "hours" },
   { key: "activeUsers" as const, slug: "active-users", name: "Active Users", unit: "users" },
@@ -413,8 +440,10 @@ async function handleProduct(
   if (!canReadPlatformMetrics(principal)) {
     throw Object.assign(new Error("Metric not found"), { status: 404 });
   }
-  if (metric.slug === "meetings") {
-    // Defensive: meetings must not land on the product adapter.
+  const producerKey = productProducerKey(metric);
+
+  // Engagement meetings must not land on the product adapter; company Meetings does.
+  if (producerKey === "meetings" || metric.slug === "meetings") {
     const value = await countCompletedMeetingsWithNotesInRange(range.start, range.end);
     const sample = singleRangeSample(
       metric,
@@ -431,7 +460,24 @@ async function handleProduct(
     };
   }
 
-  if (metric.slug === "user-memory") {
+  if (producerKey === "mantra-meetings") {
+    const value = await countCompletedMeetingsWithNotesInRange(range.start, range.end);
+    const sample = singleRangeSample(
+      metric,
+      value,
+      range,
+      "internal/mantra-meetings-query-v1",
+      "Company scorecard: completed sessions with notes (recap-ready) in the selected range.",
+    );
+    return {
+      metric: { ...metric, latestSample: sample },
+      samples: [sample],
+      valueStatus: "actual",
+      coverage: { status: "finalized" },
+    };
+  }
+
+  if (producerKey === "user-memory") {
     const {
       sampleUserMemoryStock,
       sampleUserMemoryStockAsOf,
@@ -461,7 +507,7 @@ async function handleProduct(
     };
   }
 
-  if (metric.slug === "achieved-goals") {
+  if (producerKey === "achieved-goals") {
     const { documentStoreDocuments } = await import("@shared/schema");
     const startIso = range.start.toISOString();
     const endIso = range.end.toISOString();
@@ -482,7 +528,7 @@ async function handleProduct(
       value,
       range,
       "internal/achieved-goals-platform-query-v1",
-      "Platform count of goals marked achieved in the selected range. Count only — no titles or owners.",
+      "Platform goals marked achieved in the selected range. Count only — no titles or owners.",
     );
     return {
       metric: { ...metric, latestSample: sample },
@@ -492,7 +538,7 @@ async function handleProduct(
     };
   }
 
-  if (metric.slug === "shipped-prs") {
+  if (producerKey === "shipped-prs") {
     const dayMap = await queryMergedPrSeries(range.start, range.end);
     const samples = samplesFromDayMap(metric, dayMap, range, "internal/shipped-prs-query-v1");
     // Also expose a range total sample as latest for KPI/list consumers.
@@ -517,24 +563,24 @@ async function handleProduct(
     import("../identity-metrics"),
   ]);
 
-  if (metric.slug === "accounts" || metric.slug === "registered-users") {
+  if (producerKey === "accounts" || producerKey === "registered-users") {
     const current = identityStockCanAnswerRange(range);
     const stock = current
       ? await sampleIdentityStock()
       : await sampleIdentityStockAsOf(range.end);
-    const value = metric.slug === "accounts" ? stock.accounts : stock.registeredUsers;
+    const value = producerKey === "accounts" ? stock.accounts : stock.registeredUsers;
     const evidence = current
-      ? (metric.slug === "accounts"
+      ? (producerKey === "accounts"
         ? "Count of identity accounts with status=active."
         : "Distinct users with a membership on an active (status=active) account.")
-      : (metric.slug === "accounts"
+      : (producerKey === "accounts"
         ? "Accounts reconstructed as of range.end from created and updated timestamps."
         : "Users reconstructed as of range.end from membership and account timestamps.");
     const sample = singleRangeSample(
       metric,
       value,
       range,
-      `internal/${metric.slug}-query-v1`,
+      `internal/${producerKey}-query-v1`,
       evidence,
       current,
     );
@@ -545,6 +591,41 @@ async function handleProduct(
       coverage: current
         ? { status: "finalized" }
         : { status: "partial", availableFrom: null, reason: IDENTITY_STOCK_PARTIAL_REASON },
+    };
+  }
+
+  if (producerKey === "net-new-active-users") {
+    const durationMs = range.end.getTime() - range.start.getTime();
+    if (!Number.isFinite(durationMs) || durationMs <= 0) {
+      return unavailableSeries(
+        metric,
+        "Net New Active Users requires a positive equal-length window.",
+      );
+    }
+    const prevEnd = new Date(range.start.getTime());
+    const prevStart = new Date(range.start.getTime() - durationMs);
+    const [currentUsage, previousUsage] = await Promise.all([
+      sampleUsageRange(null, range.start, range.end),
+      sampleUsageRange(null, prevStart, prevEnd),
+    ]);
+    const value = currentUsage.activeUsers - previousUsage.activeUsers;
+    const finalizesAt = new Date(range.end.getTime() + USAGE_LEASE_TAIL_MS);
+    const coverage: MetricCoverage =
+      finalizesAt.getTime() > Date.now()
+        ? { status: "provisional", finalizesAt: finalizesAt.toISOString() }
+        : { status: "finalized" };
+    const sample = singleRangeSample(
+      metric,
+      value,
+      range,
+      "internal/net-new-active-users-query-v1",
+      "Active Users(this window) minus Active Users(immediately previous equal-length window). Not Δ of Users or Accounts.",
+    );
+    return {
+      metric: { ...metric, latestSample: sample },
+      samples: [sample],
+      valueStatus: "actual",
+      coverage,
     };
   }
 
@@ -559,18 +640,18 @@ async function handleProduct(
       ? { status: "provisional", finalizesAt: finalizesAt.toISOString() }
       : { status: "finalized" };
 
-  const valueBySlug: Record<string, number> = {
+  const valueByKey: Record<string, number> = {
     "hours-used": usage.hoursUsed,
     "active-users": usage.activeUsers,
     "current-users": usage.currentUsers,
     "new-users": identity.newUsers,
   };
-  const value = valueBySlug[metric.slug];
+  const value = valueByKey[producerKey];
   if (value == null) {
-    throw Object.assign(new Error(`No product handler for slug ${metric.slug}`), { status: 500 });
+    throw Object.assign(new Error(`No product handler for producer ${producerKey}`), { status: 500 });
   }
   const coverage: MetricCoverage =
-    metric.slug === "new-users"
+    producerKey === "new-users"
       ? {
           status: "partial",
           availableFrom: identity.newUsersCoverage.availableFrom,
@@ -581,7 +662,7 @@ async function handleProduct(
     metric,
     value,
     range,
-    `internal/${metric.slug}-query-v1`,
+    `internal/${producerKey}-query-v1`,
     "Resolved from the owning product system for the selected range.",
   );
   return {
@@ -731,9 +812,47 @@ const PLATFORM_ACHIEVED_GOALS_DEFINITION = {
   key: "achieved-goals",
   name: "Achieved Goals",
   unit: "goals",
-  description: "Goals marked achieved across Mantra in the selected range.",
+  description: "Platform goals marked achieved in the period.",
   direction: "higher_is_better" as const,
   samplePeriod: "daily" as const,
+};
+
+const PLATFORM_ACTIVE_USERS_DEFINITION = {
+  key: "active-users",
+  name: "Active Users",
+  unit: "users",
+  description:
+    "Distinct users with Hours Used overlapping the asked range. Not Accounts, not registered Users stock, not connected-at-end Current Users.",
+  direction: "higher_is_better" as const,
+  samplePeriod: "custom" as const,
+};
+
+const PLATFORM_NET_NEW_ACTIVE_USERS_DEFINITION = {
+  key: "net-new-active-users",
+  name: "Net New Active Users",
+  unit: "users",
+  description:
+    "Active Users in this window minus Active Users in the immediately previous equal-length window. Unequal windows are unavailable.",
+  direction: "higher_is_better" as const,
+  samplePeriod: "custom" as const,
+};
+
+const PLATFORM_MANTRA_MEETINGS_DEFINITION = {
+  key: "mantra-meetings",
+  name: "Meetings",
+  unit: "meetings",
+  description:
+    "Company scorecard count of completed sessions with notes (recap-ready) in the selected range. Product producer — not principal engagement meetings.",
+  direction: "higher_is_better" as const,
+  samplePeriod: "custom" as const,
+};
+
+/** Catalog description overrides stamped onto existing product rows (idempotent). */
+const PRODUCT_DESCRIPTION_BY_SLUG: Record<string, string> = {
+  "achieved-goals": PLATFORM_ACHIEVED_GOALS_DEFINITION.description,
+  "active-users": PLATFORM_ACTIVE_USERS_DEFINITION.description,
+  "net-new-active-users": PLATFORM_NET_NEW_ACTIVE_USERS_DEFINITION.description,
+  "mantra-meetings": PLATFORM_MANTRA_MEETINGS_DEFINITION.description,
 };
 
 const HOURS_USED_PER_USER_SLUG = "hours-used-per-user";
@@ -809,13 +928,19 @@ async function ensureHoursUsedPerUserMetric(): Promise<void> {
   `);
 }
 
-/** Stamp User Memory + platform Achieved Goals as product rows. */
+/**
+ * Stamp User Memory, Achieved Goals, Active Users, NNAU, and company Meetings
+ * as product rows. ensure is idempotent on (account, vault, slug).
+ */
 export async function ensureProductCatalogDefinitions(): Promise<void> {
   const { ensurePlatformBusinessMetrics } = await import("../metrics-storage");
   const { USER_MEMORY_PLATFORM_DEFINITION } = await import("../user-memory-metric");
   await ensurePlatformBusinessMetrics([
     USER_MEMORY_PLATFORM_DEFINITION,
     PLATFORM_ACHIEVED_GOALS_DEFINITION,
+    PLATFORM_ACTIVE_USERS_DEFINITION,
+    PLATFORM_NET_NEW_ACTIVE_USERS_DEFINITION,
+    PLATFORM_MANTRA_MEETINGS_DEFINITION,
   ]);
   await ensureHoursUsedPerUserMetric();
 }
@@ -824,7 +949,8 @@ export async function stampPlatformOwnerOnProductMetrics(): Promise<number> {
   const { sql } = await import("drizzle-orm");
   const slugs = [...PRODUCT_METRIC_SLUGS];
   if (slugs.length === 0) return 0;
-  // Stamp platform owner + producer equation atom for each product slug.
+  // Stamp platform owner + producer equation atom + internal/active for each product slug.
+  // Existing catalog rows (e.g. scorecard Achieved Goals / mantra-meetings) keep their ids.
   let rowCount = 0;
   for (const slug of slugs) {
     const producerPlan = {
@@ -834,18 +960,28 @@ export async function stampPlatformOwnerOnProductMetrics(): Promise<number> {
       plan: { type: "producer", key: slug },
       producerKey: slug,
     };
+    const description = PRODUCT_DESCRIPTION_BY_SLUG[slug] ?? null;
     const updated = await db.execute(sql`
       UPDATE metrics
       SET owner_kind = 'platform',
           owner_id = NULL,
+          adapter_kind = 'internal',
+          status = 'active',
           adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify(producerPlan)}::jsonb,
+          description = COALESCE(${description}, description),
           updated_at = NOW()
       WHERE slug = ${slug}
         AND (
           owner_kind IS DISTINCT FROM 'platform'
+          OR adapter_kind IS DISTINCT FROM 'internal'
+          OR status IS DISTINCT FROM 'active'
           OR COALESCE(adapter_config->>'adapterKey', '') IS DISTINCT FROM 'product'
           OR COALESCE(adapter_config->>'equation', '') IS DISTINCT FROM ${slug}
           OR adapter_config->'plan' IS NULL
+          OR (
+            ${description} IS NOT NULL
+            AND description IS DISTINCT FROM ${description}
+          )
         )
     `);
     const n =
