@@ -154,29 +154,27 @@ export const insertReflectionEntrySchema = createInsertSchema(reflectionEntries)
 export type ReflectionEntry = typeof reflectionEntries.$inferSelect;
 export type InsertReflectionEntry = z.infer<typeof insertReflectionEntrySchema>;
 
+/** Everyone-gets-them seed catalog. Insert-missing only — never deletes extras. */
 export const DEFAULT_WELLNESS_ACTIVITIES = [
-  { name: "Intentions", benefit: "Direction", risk: "A day without a chosen aim", estimated_minutes: 5, estimated_cost: 0, interval_days: 1, category: "daily_practice" },
-  { name: "Gratitude", benefit: "Positivity", risk: "Negativity bias", estimated_minutes: 5, estimated_cost: 0, interval_days: 1, category: "daily_practice" },
-  { name: "Learning", benefit: "Reflection and growth", risk: "Autopilot without reflection", estimated_minutes: 5, estimated_cost: 0, interval_days: 1, category: "daily_practice" },
-  { name: "Journaling", benefit: "Processing", risk: "Stagnation without reflection", estimated_minutes: 10, estimated_cost: 0, interval_days: 1, category: "daily_practice" },
-  { name: "Meditation", benefit: "Focus", risk: "Rumination if unguided", estimated_minutes: 15, estimated_cost: 0, interval_days: 1, category: "daily_practice" },
-  { name: "Reading", benefit: "Learning", risk: "Insomnia & eye strain", estimated_minutes: 30, estimated_cost: 0, interval_days: 1, category: "daily_practice" },
-  { name: "Stretching", benefit: "Flexibility", risk: "Stiffness & chronic pain", estimated_minutes: 10, estimated_cost: 0, interval_days: 1, category: "daily_practice" },
-  { name: "Workout", benefit: "Metabolism", risk: "Sarcopenia & metabolic decline", estimated_minutes: 45, estimated_cost: 0, interval_days: 3, category: "weekly_ritual" },
-  { name: "Cardio", benefit: "Endurance", risk: "Cardiovascular disease risk", estimated_minutes: 30, estimated_cost: 0, interval_days: 4, category: "weekly_ritual" },
-  { name: "Yoga", benefit: "Flexibility", risk: "Crunchy", estimated_minutes: 60, estimated_cost: 0, interval_days: 4, category: "weekly_ritual" },
-  { name: "Cleaning", benefit: "Clarity", risk: "Clutter-related stress", estimated_minutes: 60, estimated_cost: 0, interval_days: 7, category: "weekly_ritual" },
-  { name: "Cooking", benefit: "Nutrition", risk: "Poor diet choices", estimated_minutes: 60, estimated_cost: 50, interval_days: 7, category: "weekly_ritual" },
-  { name: "Datenight", benefit: "Wellbeing", risk: "Isolation & loneliness", estimated_minutes: 60, estimated_cost: 0, interval_days: 7, category: "weekly_ritual" },
-  { name: "Expression", benefit: "Actualization", risk: "Burnout without creative outlet", estimated_minutes: 60, estimated_cost: 0, interval_days: 7, category: "weekly_ritual" },
-  { name: "Nature", benefit: "Stress Reduction", risk: "Nature deficit disorder", estimated_minutes: 60, estimated_cost: 0, interval_days: 14, category: "monthly_renewal" },
-  { name: "Sunlight", benefit: "Relaxation", risk: "", estimated_minutes: 15, estimated_cost: 0, interval_days: 14, category: "monthly_renewal" },
-  { name: "Dancing", benefit: "Flow", risk: "Crustiness", estimated_minutes: 60, estimated_cost: 0, interval_days: 30, category: "monthly_renewal" },
-  { name: "Cleanse", benefit: "Health", risk: "Fat", estimated_minutes: 300, estimated_cost: 0, interval_days: 45, category: "quarterly_reset" },
-  { name: "Haircut", benefit: "Appearance", risk: "", estimated_minutes: 60, estimated_cost: 0, interval_days: 45, category: "quarterly_reset" },
-  { name: "Massage", benefit: "Tension Release", risk: "Chronic tension buildup", estimated_minutes: 60, estimated_cost: 80, interval_days: 45, category: "quarterly_reset" },
-  { name: "Camping", benefit: "Connection", risk: "Disconnection", estimated_minutes: 1800, estimated_cost: 0, interval_days: 180, category: "annual_checkup" },
-  { name: "Dentist", benefit: "Health", risk: "Dental complications", estimated_minutes: 60, estimated_cost: 100, interval_days: 360, category: "annual_checkup" },
-  { name: "Ecstasis", benefit: "Actualization", risk: "Stagnation", estimated_minutes: 180, estimated_cost: 0, interval_days: 360, category: "annual_checkup" },
-  { name: "Physical", benefit: "Health", risk: "Missed health signals", estimated_minutes: 60, estimated_cost: 50, interval_days: 360, category: "annual_checkup" },
+  {
+    name: "Steps",
+    benefit:
+      "Daily walking improves mood, energy, and long-term health — even modest step counts beat long sitting.",
+    interval_days: 1,
+    category: "daily_practice",
+  },
+  {
+    name: "Reading",
+    benefit:
+      "Regular reading sharpens focus and builds cognitive reserve; sustained readers show slower age-related decline on standard cognitive tests.",
+    interval_days: 1,
+    category: "daily_practice",
+  },
+  {
+    name: "Intentions",
+    benefit:
+      "A few concrete morning aims shrink the day to what matters — less overwhelm, more end-of-day satisfaction.",
+    interval_days: 1,
+    category: "daily_practice",
+  },
 ] as const;

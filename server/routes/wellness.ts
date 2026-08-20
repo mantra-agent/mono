@@ -465,7 +465,6 @@ export async function queryActivityStatusWithBuckets() {
 export async function createWellnessActivity(data: {
   name: string;
   benefit?: string | null;
-  risk?: string | null;
   intervalDays: number;
   category?: string;
   linkedMetricType?: string | null;
@@ -483,7 +482,6 @@ export async function createWellnessActivity(data: {
     name: data.name,
     ...sensitiveOwnershipValues(requireCurrentPrincipal()),
     benefit: data.benefit ?? null,
-    risk: data.risk ?? null,
     intervalDays: data.intervalDays,
     category,
     isDefault: false,
@@ -499,7 +497,6 @@ export async function createWellnessActivity(data: {
 export async function updateWellnessActivity(id: number, data: Partial<{
   name: string;
   benefit: string | null;
-  risk: string | null;
   intervalDays: number;
   category: string;
   linkedMetricType: string | null;
@@ -512,7 +509,10 @@ export async function updateWellnessActivity(id: number, data: Partial<{
   if (data.category !== undefined && !VALID_CATEGORIES.includes(data.category)) throw new Error(`category must be one of: ${VALID_CATEGORIES.join(", ")}`);
 
   let warning: string | undefined;
-  const updates: Record<string, any> = { ...data };
+  // risk is a leftover column — never accept it as a writable habit field
+  const { risk: _ignoredRisk, ...safeData } = data as typeof data & { risk?: unknown };
+  void _ignoredRisk;
+  const updates: Record<string, any> = { ...safeData };
 
   // If category is changing, null out window (semantics differ per category)
   if (data.category !== undefined) {
@@ -840,12 +840,19 @@ async function seedDefaultWellnessActivities(): Promise<number> {
   let inserted = 0;
   for (const a of DEFAULT_WELLNESS_ACTIVITIES) {
     const result = await pool.query(
-      `INSERT INTO wellness_activities (name, benefit, risk, estimated_minutes, estimated_cost, interval_days, category, is_default)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+      `INSERT INTO wellness_activities (name, benefit, interval_days, category, is_default)
+       VALUES ($1, $2, $3, $4, true)
        ON CONFLICT (name) DO NOTHING`,
-      [a.name, a.benefit, a.risk, a.estimated_minutes, a.estimated_cost, a.interval_days, a.category],
+      [a.name, a.benefit, a.interval_days, a.category],
     );
     if (result.rowCount && result.rowCount > 0) inserted++;
+    // Locked benefit copy for catalog rows that already exist (name match only).
+    await pool.query(
+      `UPDATE wellness_activities
+       SET benefit = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE name = $2 AND benefit IS DISTINCT FROM $1`,
+      [a.benefit, a.name],
+    );
   }
 
   for (const stamp of WELLNESS_LAUNCH_BACKFILL) {
@@ -1492,12 +1499,12 @@ export async function registerWellnessRoutes(app: Express) {
 
   app.post("/api/wellness/activities", requireAuth, async (req, res) => {
     try {
-      const { name, benefit, risk, intervalDays, category, linkedMetricType, greatThreshold, goodThreshold, windowStart, windowEnd } = req.body;
+      const { name, benefit, intervalDays, category, linkedMetricType, greatThreshold, goodThreshold, windowStart, windowEnd } = req.body;
       if (!name || !intervalDays) {
         return res.status(400).json({ error: "name and intervalDays are required" });
       }
       const activity = await createWellnessActivity({
-        name, benefit, risk, intervalDays, category,
+        name, benefit, intervalDays, category,
         linkedMetricType, greatThreshold, goodThreshold, windowStart, windowEnd,
       });
       res.json(activity);
@@ -1516,7 +1523,28 @@ export async function registerWellnessRoutes(app: Express) {
   app.patch("/api/wellness/activities/:id", requireAuth, async (req, res) => {
     try {
       const id = parseInt(String(req.params.id), 10);
-      const result = await updateWellnessActivity(id, req.body);
+      const {
+        name,
+        benefit,
+        intervalDays,
+        category,
+        linkedMetricType,
+        greatThreshold,
+        goodThreshold,
+        windowStart,
+        windowEnd,
+      } = req.body ?? {};
+      const result = await updateWellnessActivity(id, {
+        ...(name !== undefined ? { name } : {}),
+        ...(benefit !== undefined ? { benefit } : {}),
+        ...(intervalDays !== undefined ? { intervalDays } : {}),
+        ...(category !== undefined ? { category } : {}),
+        ...(linkedMetricType !== undefined ? { linkedMetricType } : {}),
+        ...(greatThreshold !== undefined ? { greatThreshold } : {}),
+        ...(goodThreshold !== undefined ? { goodThreshold } : {}),
+        ...(windowStart !== undefined ? { windowStart } : {}),
+        ...(windowEnd !== undefined ? { windowEnd } : {}),
+      });
       if (!result) return res.status(404).json({ error: "Activity not found" });
       const response: any = result.activity;
       if (result.warning) response._warning = result.warning;
@@ -1541,19 +1569,6 @@ export async function registerWellnessRoutes(app: Express) {
       res.json(activity);
     } catch (error: any) {
       log.error("archive activity error:", error.message);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/wellness/load-defaults", requireAuth, async (_req, res) => {
-    try {
-      let inserted = 0;
-      const seeded = await seedDefaultWellnessActivities();
-      inserted = seeded;
-      await seedMetricLinks();
-      res.json({ ok: true, inserted });
-    } catch (error: any) {
-      log.error("load defaults error:", error.message);
       res.status(500).json({ error: error.message });
     }
   });

@@ -30,7 +30,6 @@ interface ActivityWithStatus {
   id: number;
   name: string;
   benefit: string | null;
-  risk: string | null;
   intervalDays: number;
   category: string;
   isDefault: boolean;
@@ -281,9 +280,6 @@ export function ActivityDetailView({
             </ProfileTreeRow>
             <ProfileTreeRow label="Benefit" hasValue={Boolean(activity.benefit)} showEmpty mobileLayout="inline" testId="row-wellness-benefit">
               <DetailEditableText value={activity.benefit ?? ""} activityId={activity.id} field="benefit" placeholder="Why this matters" multiline />
-            </ProfileTreeRow>
-            <ProfileTreeRow label="Risk" hasValue={Boolean(activity.risk)} showEmpty mobileLayout="inline" testId="row-wellness-risk">
-              <DetailEditableText value={activity.risk ?? ""} activityId={activity.id} field="risk" placeholder="Risk if skipped" multiline />
             </ProfileTreeRow>
             <ProfileTreeRow label="Frequency" hasValue showEmpty mobileLayout="inline" testId="row-wellness-frequency">
               <div className="flex min-w-0 items-center justify-end gap-2">

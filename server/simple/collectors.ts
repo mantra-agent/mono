@@ -307,7 +307,6 @@ function itemFromWellnessActivity(activity: WellnessActivityStatus, section: Sim
       windowLabel,
       estimatedMinutes: activity.estimatedMinutes,
       benefit: activity.benefit,
-      risk: activity.risk,
     },
     actions: [
       { id: `complete-wellness-${activity.id}`, label: "Done", type: "complete", sourceRef, payload: { activityId: activity.id } },

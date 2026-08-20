@@ -616,8 +616,8 @@ async function genHealth(dir: string): Promise<{ count: number }> {
   let count = 0;
   try {
     const activities = await db.execute(
-      sql`SELECT name, benefit, risk, category, interval_days, estimated_minutes, estimated_cost,
-               requirements, linked_metric_type, great_threshold, good_threshold, created_at
+      sql`SELECT name, benefit, category, interval_days,
+               linked_metric_type, great_threshold, good_threshold, created_at
           FROM wellness_activities WHERE archived_at IS NULL ORDER BY category, name`
     );
     const activitiesMd =
@@ -626,11 +626,7 @@ async function genHealth(dir: string): Promise<{ count: number }> {
         `## ${a.name ?? "Activity"}\n` +
         `- **Category:** ${a.category ?? ""}\n` +
         `- **Interval:** every ${a.interval_days ?? "?"} days\n` +
-        (a.estimated_minutes ? `- **Est. Time:** ${a.estimated_minutes} min\n` : "") +
-        (a.estimated_cost ? `- **Est. Cost:** ${a.estimated_cost}\n` : "") +
         (a.benefit ? `- **Benefit:** ${a.benefit}\n` : "") +
-        (a.risk ? `- **Risk of skipping:** ${a.risk}\n` : "") +
-        (a.requirements ? `- **Requirements:** ${a.requirements}\n` : "") +
         (a.linked_metric_type ? `- **Linked Metric:** ${a.linked_metric_type}\n` : "") +
         (a.great_threshold != null ? `- **Great Threshold:** ${a.great_threshold}\n` : "") +
         (a.good_threshold != null ? `- **Good Threshold:** ${a.good_threshold}\n` : "")
