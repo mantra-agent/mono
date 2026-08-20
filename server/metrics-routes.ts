@@ -4,6 +4,7 @@ import { requirePermission } from "./permissions";
 import {
   ensureEngagementMetrics,
   ensureMetricsDefinitionsSchema,
+  ensureScorecardKpiWrappers,
   kpiStorage,
   metricsStorage,
   queryMetric,
@@ -292,6 +293,14 @@ export function registerMetricsRoutes(app: Express): void {
       try {
         await ensureReady();
         await ensureSeeded();
+        const principal = getCurrentPrincipal();
+        if (principal) {
+          await Promise.all([
+            ensureProductCatalogDefinitions().catch(() => undefined),
+            stampPlatformOwnerOnProductMetrics().catch(() => undefined),
+            ensureScorecardKpiWrappers().catch(() => undefined),
+          ]);
+        }
         const query = typeof req.query.query === "string" ? req.query.query : undefined;
         const businessId = typeof req.query.businessId === "string" ? req.query.businessId : undefined;
         const list = await kpiStorage.list(query, businessId);
