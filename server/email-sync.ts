@@ -32,6 +32,26 @@ const log = createLogger("EmailSync");
 const FULL_SYNC_CAP = 500;
 const MAX_ACCOUNTS_PER_VAULT = 20;
 const EMAIL_SYNC_STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000;
+// Inline Email Sync holds the TimerScheduler serial queue. A hung Gmail
+// history/message fan-out previously stranded Daily Digest and every later
+// scheduled fire for hours. Bound each phase so the queue can recover.
+const INCREMENTAL_SYNC_BUDGET_MS = 12 * 60 * 1000;
+const FULL_SYNC_BUDGET_MS = 20 * 60 * 1000;
+const SYNC_ACCOUNT_BUDGET_MS = 25 * 60 * 1000;
+
+function assertEmailSyncBudget(
+  startedAt: number,
+  budgetMs: number,
+  phase: string,
+  accountId: string,
+): void {
+  if (Date.now() - startedAt < budgetMs) return;
+  const err = new Error(
+    `Email sync ${phase} exceeded ${budgetMs}ms budget account=${accountId}`,
+  ) as Error & { code?: string };
+  err.code = "EMAIL_SYNC_BUDGET_EXCEEDED";
+  throw err;
+}
 
 type EmailSyncOperation =
   | "sync_account"
@@ -541,18 +561,29 @@ async function upsertCursor(accountId: string, data: {
 }
 
 async function fullSync(accountId: string): Promise<{ count: number; historyId: string | null }> {
+  const startedAt = Date.now();
   log.log(`[fullSync] Starting full sync for account=${accountId} cap=${FULL_SYNC_CAP}`);
 
   const stubs = await listMessages(undefined, FULL_SYNC_CAP, accountId, { paginate: true, paginationCap: FULL_SYNC_CAP });
+  assertEmailSyncBudget(startedAt, FULL_SYNC_BUDGET_MS, "list_messages", accountId);
   log.log(`[fullSync] account=${accountId} fetched ${stubs.length} message stubs`);
 
   let synced = 0;
   let failed = 0;
   let lastError = "";
   let latestHistoryId: string | null = null;
+  let budgetCut = false;
 
   for (const stub of stubs) {
     if (!stub.id) continue;
+    if (Date.now() - startedAt >= FULL_SYNC_BUDGET_MS) {
+      budgetCut = true;
+      log.warn(
+        `[fullSync] account=${accountId} budget cut after ${synced}/${stubs.length} messages ` +
+          `elapsedMs=${Date.now() - startedAt}`,
+      );
+      break;
+    }
     try {
       const raw = await getMessage(stub.id, 'full', accountId);
       const normalized = normalizeGmailMessage(raw, accountId);
@@ -570,14 +601,19 @@ async function fullSync(accountId: string): Promise<{ count: number; historyId: 
   if (failed > 0) {
     log.warn(`[fullSync] account=${accountId} failed=${failed}/${stubs.length} lastError=${lastError}`);
   }
-  log.log(`[fullSync] account=${accountId} synced=${synced} latestHistoryId=${latestHistoryId}`);
+  log.log(
+    `[fullSync] account=${accountId} synced=${synced} latestHistoryId=${latestHistoryId}` +
+      (budgetCut ? " budgetCut=true" : ""),
+  );
   return { count: synced, historyId: latestHistoryId };
 }
 
 async function incrementalSync(accountId: string, startHistoryId: string): Promise<{ count: number; historyId: string | null }> {
+  const startedAt = Date.now();
   log.log(`[incrementalSync] account=${accountId} startHistoryId=${startHistoryId}`);
 
   const { history, historyId: newHistoryId } = await getHistoryList(startHistoryId, accountId);
+  assertEmailSyncBudget(startedAt, INCREMENTAL_SYNC_BUDGET_MS, "history_list", accountId);
 
   const messageIds = new Set<string>();
   for (const record of history) {
@@ -596,7 +632,16 @@ async function incrementalSync(accountId: string, startHistoryId: string): Promi
   let skipped404 = 0;
   let externallyArchived = 0;
   let lastError = "";
+  let budgetCut = false;
   for (const msgId of messageIds) {
+    if (Date.now() - startedAt >= INCREMENTAL_SYNC_BUDGET_MS) {
+      budgetCut = true;
+      log.warn(
+        `[incrementalSync] account=${accountId} budget cut after ${synced}/${messageIds.size} messages ` +
+          `elapsedMs=${Date.now() - startedAt}`,
+      );
+      break;
+    }
     try {
       const raw = await getMessage(msgId, 'full', accountId);
       const normalized = normalizeGmailMessage(raw, accountId);
@@ -622,7 +667,12 @@ async function incrementalSync(accountId: string, startHistoryId: string): Promi
   if (externallyArchived > 0) {
     log.log(`[incrementalSync] account=${accountId} marked ${externallyArchived} externally-archived messages as done`);
   }
-  log.log(`[incrementalSync] account=${accountId} synced=${synced} newHistoryId=${newHistoryId}`);
+  // Partial progress under budget is still success — cursor advances so the
+  // next hourly cycle continues rather than replaying the same fan-out forever.
+  log.log(
+    `[incrementalSync] account=${accountId} synced=${synced} newHistoryId=${newHistoryId}` +
+      (budgetCut ? " budgetCut=true" : ""),
+  );
   return { count: synced, historyId: newHistoryId };
 }
 

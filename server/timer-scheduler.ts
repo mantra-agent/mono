@@ -195,6 +195,11 @@ const MAX_DEFERRED_RETRY_COUNT = Math.ceil(
   DEFERRED_RETRY_WINDOW_MS / DEFERRED_RETRY_DELAY_MS,
 );
 const MANAGED_EVENT_CLAIM_STALE_MS = 35 * 60 * 1000;
+// Hard ceiling for one serial-queue handler. Skill timers return "accepted"
+// after Runtime enqueue and must not hit this; inline system handlers (Email
+// Sync) can hang on provider I/O and otherwise strand every later scheduled
+// fire (Daily Digest 21:00 sat behind a hung email-sync for hours).
+const SERIAL_HANDLER_BUDGET_MS = 50 * 60 * 1000;
 
 const DEFERRED_RETRY_REASONS = [
   "admission_deferred_or_already_running",
@@ -1161,7 +1166,29 @@ class TimerScheduler {
     timer: Timer,
     run: TimerRun,
   ): Promise<TimerHandlerResult> {
-    return timerHandlerRouter.execute(timer, run);
+    // Serial queue is one-at-a-time. Without a budget, a single hung system
+    // handler (provider stall inside Email Sync) holds every later scheduled
+    // fire — including cadence skills whose setTimeout already fired into the
+    // queue. Skill handlers that only enqueue Runtime return quickly and stay
+    // well under this ceiling.
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        timerHandlerRouter.execute(timer, run),
+        new Promise<TimerHandlerResult>((_resolve, reject) => {
+          timeoutId = setTimeout(() => {
+            const err = new Error(
+              `Timer handler exceeded serial budget ${SERIAL_HANDLER_BUDGET_MS}ms ` +
+                `timer="${timer.name}" type=${timer.type} runId=${run.id}`,
+            );
+            (err as Error & { code?: string }).code = "TIMER_SERIAL_HANDLER_TIMEOUT";
+            reject(err);
+          }, SERIAL_HANDLER_BUDGET_MS);
+        }),
+      ]);
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
   }
 
   private async finalizeTimerRun(
