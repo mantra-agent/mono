@@ -352,6 +352,17 @@ export const coreDefinition: CoreDefinition = {
         readinessKind: "secret",
         requiredSecrets: ["RECALL_API_KEY", "RECALL_REGION"],
       }),
+      integration("core.integration.stripe", "stripe", "available", ["billing"], {
+        label: "Stripe",
+        iconKey: "CreditCard",
+        route: "stripe",
+        detailSurface: "stripe",
+        statusFields: ["stripe"],
+        requiredPermissions: ["system:read"],
+        readinessKind: "secret",
+        requiredSecrets: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
+        audience: "primary",
+      }),
     ],
   },
 };

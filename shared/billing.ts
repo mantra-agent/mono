@@ -60,7 +60,7 @@ export const BILLING_PRICE_LABELS: Record<BillingPriceKey, string> = {
   extra_agent: "Extra Agent",
   extra_participant: "Extra Participant",
   token_overage: "Token overage meter ($3 / M past include)",
-  tive_custom: "TIVE custom licensed monthly",
+  tive_custom: "Custom licensed monthly",
 };
 
 export function isBillingPackageKey(value: string): value is BillingPackageKey {

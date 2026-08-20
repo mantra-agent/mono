@@ -93,7 +93,9 @@ import {
   Clock,
   GitBranch,
   Share2,
+  CreditCard,
 } from "lucide-react";
+import { StripeDetail } from "@/pages/billing-admin";
 import { SiX } from "react-icons/si";
 import { SecretsForSection } from "@/components/SecretControl";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
@@ -118,6 +120,7 @@ const INTEGRATION_ICONS = {
   Bot,
   Box,
   ClipboardList,
+  CreditCard,
   Glasses,
   Globe,
   GitBranch,
@@ -4806,6 +4809,7 @@ const INTEGRATION_DETAIL_SURFACES: Record<string, () => React.ReactNode> = {
   meta: () => <MetaDetail />,
   oura: () => <OuraDetail />,
   slack: () => <SlackDetail />,
+  stripe: () => <StripeDetail />,
 };
 
 function IntegrationDetail({ integration }: { integration: ResolvedIntegrationCard }) {

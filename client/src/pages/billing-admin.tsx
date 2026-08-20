@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CreditCard, Loader2 } from "lucide-react";
-import { ProfileDetailSection } from "@/components/profile-detail-section";
+import { IntegrationTreeSection } from "@/components/integrations/integration-tree-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { SecretsForSection } from "@/components/SecretControl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
@@ -15,8 +16,8 @@ const BILLING_PRICES_QUERY_KEY = ["/api/admin/billing/prices"] as const;
 
 interface BillingPricesResponse {
   prices: BillingPriceMapRow[];
-  requiredForTive: string[];
-  completeForTive: boolean;
+  unmapped: BillingPriceKey[];
+  complete: boolean;
 }
 
 function formatAmount(cents: number | null | undefined): string {
@@ -98,7 +99,8 @@ function PriceRow({
   );
 }
 
-export default function BillingAdminPage() {
+/** Integrations → Stripe detail: credentials + closed Price map for every paying Account. */
+export function StripeDetail() {
   const { hasPermission } = useAuth();
   const canRead = hasPermission("system:read") || hasPermission("system:write");
   const canWrite = hasPermission("system:write");
@@ -113,63 +115,70 @@ export default function BillingAdminPage() {
     const prices = data?.prices ?? [];
     const by = (keys: BillingPriceKey[]) => prices.filter((row) => keys.includes(row.key));
     return {
-      tive: by(["tive_custom", "token_overage"]),
-      ladder: by(["max", "max_plus", "factory_plus"]),
+      packages: by(["max", "max_plus", "factory_plus", "tive_custom"]),
+      usage: by(["token_overage"]),
       extras: by(["extra_principal", "extra_agent", "extra_participant"]),
     };
   }, [data?.prices]);
 
   if (!canRead) {
     return (
-      <div className="p-6 text-sm text-muted-foreground">
-        Billing price map requires system access.
-      </div>
-    );
-  }
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-6 text-sm text-destructive">
-        {(error as Error).message || "Failed to load billing prices"}
+      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+        Stripe billing configuration requires system access.
       </div>
     );
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-4 p-6">
-      <p className="text-sm text-muted-foreground">
-        Map closed Mantra collector keys to Stripe Price IDs from the Dashboard.
-        Create Prices in Stripe first; this screen only stores the id map used by Checkout.
-        TIVE needs <span className="font-mono">tive_custom</span> +{" "}
-        <span className="font-mono">token_overage</span>
-        {data?.completeForTive ? " — ready." : " — incomplete."}
-      </p>
+    <div className="min-w-0 space-y-2" data-testid="stripe-detail">
+      <IntegrationTreeSection label="Credentials" initialOpen testIdPrefix="stripe-credentials">
+        <div className="min-w-0 px-2 py-1.5">
+          <SecretsForSection section="stripe" />
+        </div>
+      </IntegrationTreeSection>
 
-      <ProfileDetailSection title="TIVE first" defaultOpen testId="billing-section-tive">
-        {groups.tive.map((row) => (
-          <PriceRow key={row.key} row={row} canWrite={canWrite} />
-        ))}
-      </ProfileDetailSection>
-
-      <ProfileDetailSection title="Ladder" defaultOpen={false} testId="billing-section-ladder">
-        {groups.ladder.map((row) => (
-          <PriceRow key={row.key} row={row} canWrite={canWrite} />
-        ))}
-      </ProfileDetailSection>
-
-      <ProfileDetailSection title="Extras" defaultOpen={false} testId="billing-section-extras">
-        {groups.extras.map((row) => (
-          <PriceRow key={row.key} row={row} canWrite={canWrite} />
-        ))}
-      </ProfileDetailSection>
+      <IntegrationTreeSection
+        label="Price map"
+        initialOpen
+        testIdPrefix="stripe-prices"
+        icon={<CreditCard className="h-3.5 w-3.5" />}
+      >
+        <div className="space-y-2 px-2 py-1.5">
+          <p className="text-xs text-muted-foreground">
+            Map closed Mantra collector keys to Stripe Price IDs. Create Prices in the Stripe Dashboard first;
+            Checkout only uses ids stored here. Applies to every paying Account.
+            {data
+              ? data.complete
+                ? " Map complete."
+                : ` Unmapped: ${data.unmapped.join(", ") || "none"}.`
+              : null}
+          </p>
+          {isLoading ? (
+            <div className="flex justify-center py-6">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : error ? (
+            <p className="text-sm text-destructive">{(error as Error).message || "Failed to load prices"}</p>
+          ) : (
+            <>
+              <p className="text-xs font-medium text-muted-foreground">Licensed packages</p>
+              {groups.packages.map((row) => (
+                <PriceRow key={row.key} row={row} canWrite={canWrite} />
+              ))}
+              <p className="pt-2 text-xs font-medium text-muted-foreground">Usage</p>
+              {groups.usage.map((row) => (
+                <PriceRow key={row.key} row={row} canWrite={canWrite} />
+              ))}
+              <p className="pt-2 text-xs font-medium text-muted-foreground">Extras</p>
+              {groups.extras.map((row) => (
+                <PriceRow key={row.key} row={row} canWrite={canWrite} />
+              ))}
+            </>
+          )}
+        </div>
+      </IntegrationTreeSection>
     </div>
   );
 }
+
+export default StripeDetail;

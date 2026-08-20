@@ -57,12 +57,11 @@ export function registerBillingRoutes(app: Express): void {
     async (_req: Request, res: Response) => {
       try {
         const prices = await listBillingPriceMap();
+        const unmapped = prices.filter((row) => !row.mapped).map((row) => row.key);
         res.json({
           prices,
-          requiredForTive: ["tive_custom", "token_overage"] as const,
-          completeForTive: prices
-            .filter((row) => row.key === "tive_custom" || row.key === "token_overage")
-            .every((row) => row.mapped),
+          unmapped,
+          complete: unmapped.length === 0,
         });
       } catch (error) {
         sendCollectorError(res, error);

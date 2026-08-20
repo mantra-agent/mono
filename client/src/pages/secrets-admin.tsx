@@ -43,10 +43,6 @@ export default function SecretsAdminPage() {
         <SecretsForSection section="sentry" />
       </ProfileDetailSection>
 
-      <ProfileDetailSection title="Stripe" defaultOpen testId="secrets-section-stripe">
-        <SecretsForSection section="stripe" />
-      </ProfileDetailSection>
-
       <ProfileDetailSection title="Oura" defaultOpen testId="secrets-section-oura">
         <SecretsForSection section="oura" />
       </ProfileDetailSection>
