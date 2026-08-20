@@ -6810,7 +6810,7 @@ ${refs}` : ""),
     const action = typeof args.action === "string" ? args.action : "";
     if (!action) return { result: "Missing 'action' parameter", error: true };
 
-    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "provision_database_roles", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "list_products", "create_product", "update_product", "create_product_legacy", "update_product_legacy", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection", "get_cloudflare_pages_project", "deploy_cloudflare_pages", "cancel_cloudflare_pages_deployment", "poll_cloudflare_pages_deployment", "repair_cloudflare_pages_project", "list_features", "get_feature", "create_feature", "update_feature", "archive_feature", "delete_feature", "link_feature_kpi", "unlink_feature_kpi", "list_feature_sessions", "list_feature_history"]);
+    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "provision_database_roles", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "list_products", "create_product", "update_product", "create_product_legacy", "update_product_legacy", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection", "get_cloudflare_pages_project", "deploy_cloudflare_pages", "cancel_cloudflare_pages_deployment", "poll_cloudflare_pages_deployment", "repair_cloudflare_pages_project", "list_features", "get_feature", "create_feature", "update_feature", "archive_feature", "delete_feature", "link_feature_kpi", "unlink_feature_kpi", "list_feature_sessions", "list_feature_history", "play_feature", "fast_forward_feature", "pause_feature", "stop_feature"]);
     if (!allowed.has(action)) {
       return { result: `Unknown platforms action: ${action}. Allowed: ${[...allowed].join(", ")}`, error: true };
     }
@@ -6997,7 +6997,7 @@ ${refs}` : ""),
         return { result: JSON.stringify(updated, null, 2) };
       }
 
-      if (["list_features", "get_feature", "create_feature", "update_feature", "archive_feature", "delete_feature", "link_feature_kpi", "unlink_feature_kpi", "list_feature_sessions", "list_feature_history"].includes(action)) {
+      if (["list_features", "get_feature", "create_feature", "update_feature", "archive_feature", "delete_feature", "link_feature_kpi", "unlink_feature_kpi", "list_feature_sessions", "list_feature_history", "play_feature", "fast_forward_feature", "pause_feature", "stop_feature"].includes(action)) {
         const { featureStorage } = await import("./feature-storage");
         if (action === "list_features") {
           return {
@@ -7038,6 +7038,45 @@ ${refs}` : ""),
           });
           if (!history) return { result: "Feature not found", error: true };
           return { result: JSON.stringify(history, null, 2) };
+        }
+        if (["play_feature", "fast_forward_feature", "pause_feature", "stop_feature"].includes(action)) {
+          // Remotes Features-row chrome in the originating browser tab.
+          // Fast Forward mode is sessionStorage there; launch/stop reuse the
+          // same session create + abort paths. No stage/status writes.
+          const feature = await featureStorage.get(featureId);
+          if (!feature) return { result: "Feature not found", error: true };
+          const sessionId = typeof args._sessionId === "string" ? args._sessionId : "";
+          const clientId = typeof args._clientId === "string" ? args._clientId : undefined;
+          const origin = typeof args._origin === "string" ? args._origin : "";
+          if (!sessionId || !clientId || (origin !== "interactive" && origin !== "voice")) {
+            return {
+              result: JSON.stringify({
+                featureId,
+                act: action.replace(/_feature$/, ""),
+                outcome: "unavailable",
+                reason: "no_active_client",
+                detail: "Feature controls require an interactive browser tab (same origin as ui tool).",
+              }, null, 2),
+              error: true,
+            };
+          }
+          const act =
+            action === "play_feature" ? "play"
+              : action === "fast_forward_feature" ? "fast_forward"
+                : action === "pause_feature" ? "pause"
+                  : "stop";
+          const { requestFeatureControl } = await import("./feature-control-coordinator");
+          const result = await requestFeatureControl({
+            sessionId,
+            clientId,
+            featureId,
+            act,
+          });
+          const unavailable = result.outcome !== "completed";
+          return {
+            result: JSON.stringify(result, null, 2),
+            ...(unavailable ? { error: true } : {}),
+          };
         }
         return { result: JSON.stringify(await featureStorage.unlinkKpi(featureId, String(args.linkId)), null, 2) };
       }

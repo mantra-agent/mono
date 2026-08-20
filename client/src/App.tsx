@@ -27,6 +27,7 @@ import { ExecutorStatusProvider } from "@/hooks/use-executor-status";
 import { FocusSessionProvider, useFocusSession } from "@/hooks/use-focus-session";
 import { SessionActivityProvider } from "@/hooks/use-session-activity";
 import { FeatureFastForwardHost } from "@/components/feature-fast-forward-host";
+import { FeaturePipelineControlHost } from "@/components/feature-pipeline-control-host";
 import { NativeMeetingTranscriptionProvider } from "@/hooks/use-native-meeting-transcription";
 import { FocusContextProvider } from "@/hooks/use-focus-context";
 import { TaskModalProvider } from "@/contexts/task-modal-context";
@@ -605,6 +606,8 @@ function AppShell() {
               <SessionActivityProvider>
                 {/* Fast Forward sequencer outlives /features FeatureRow mounts. */}
                 <FeatureFastForwardHost />
+                {/* Agent Feature play/fast-forward/pause/stop remotes the same acts. */}
+                <FeaturePipelineControlHost />
                 <NativeMeetingTranscriptionProvider>
                   <FocusContextProvider>
                     <TaskModalProvider>
