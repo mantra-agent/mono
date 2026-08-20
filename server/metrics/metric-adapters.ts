@@ -7,8 +7,8 @@
  */
 import { AsyncLocalStorage } from "async_hooks";
 import { createHash } from "crypto";
-import { and, eq, isNull, sql } from "drizzle-orm";
-import { metrics } from "@shared/schema";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { kpis, metrics } from "@shared/schema";
 import {
   metricAdapterKeyOf,
   type Metric,
@@ -1171,6 +1171,362 @@ export async function ensureProductCatalogDefinitions(): Promise<void> {
        OR slug = 'activation-rate'
   `);
   await ensureHoursUsedPerUserMetric();
+  await ensureScorecardKpiWrappers();
+}
+
+/**
+ * Company scorecard KPI wrappers — one Metric each, no standingObjectiveKey.
+ * Retunes existing fixed-id KPIs and mints missing wrappers by metric slug.
+ * Hours Used bands are monotonic for higher_is_better (bear under bull).
+ * Dark Metrics stay unmeasured KPIs (no fabricated samples).
+ */
+type ScorecardKpiSpec = {
+  /** Prefer fixed id when the row already exists in production. */
+  id?: string;
+  /** Legacy slug aliases to adopt before minting. */
+  matchSlugs: string[];
+  slug: string;
+  name: string;
+  metricSlug: string;
+  /** Prefer fixed metric id when the catalog row is stable. */
+  metricId?: string;
+  description: string;
+  targetLabel: string;
+  cadence: string;
+  period: "daily" | "weekly" | "monthly" | "live";
+  ownerLabel: string;
+  direction: "higher_is_better" | "lower_is_better";
+  bullThreshold: number | null;
+  bearThreshold: number | null;
+  staleAfterHours: number;
+  status: "active" | "draft";
+};
+
+const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
+  {
+    id: "kpi_1ebe9dee0b2927af71d6e905",
+    matchSlugs: ["hours-used-kpi"],
+    slug: "hours-used-kpi",
+    name: "Hours Used",
+    metricSlug: "hours-used",
+    metricId: "metric_hours_used_1d52cbc6-d922-4afd-b5e8-0eeeb5babd47",
+    description:
+      "Lagging engagement KPI: authenticated connected hours (unioned per user). Bands are monotonic higher_is_better — bear is the floor, bull the stretch.",
+    targetLabel: "Sustain at least 8 authenticated hours used per day",
+    cadence: "Weekly",
+    period: "weekly",
+    ownerLabel: "Product",
+    direction: "higher_is_better",
+    // Was inverted (bear 250 > on-track 8). Scorer uses bear=under, bull=over only.
+    bullThreshold: 300,
+    bearThreshold: 8,
+    staleAfterHours: 48,
+    status: "active",
+  },
+  {
+    id: "kpi_3de012b5b3b39b4eb6dde7a6",
+    matchSlugs: ["achieved-goals-kpi"],
+    slug: "achieved-goals-kpi",
+    name: "Achieved Goals",
+    metricSlug: "achieved-goals",
+    metricId: "metric_a6f0ae8469109539b853fb22",
+    description:
+      "Platform goals marked achieved in the period (documentType=goal + status=achieved + completedAt in range). Not a customer-only filter.",
+    targetLabel: "Platform goals reach achieved each month",
+    cadence: "Monthly",
+    period: "monthly",
+    ownerLabel: "Product",
+    direction: "higher_is_better",
+    bullThreshold: 40,
+    bearThreshold: 5,
+    staleAfterHours: 1080,
+    status: "active",
+  },
+  {
+    id: "kpi_ee48891843f5c019cb4abc33",
+    matchSlugs: ["activation-rate-kpi"],
+    slug: "activation-rate-kpi",
+    name: "Activation Rate",
+    metricSlug: "activation-rate",
+    metricId: "metric_aa254f4fa3cb2955d22e30a6",
+    description:
+      "Share of measured Accounts at commercial activation_level activated|retained. Not onboarding completed. Unmeasured until activation_level is written.",
+    targetLabel: "Activate at least 60% of measured accounts",
+    cadence: "Monthly",
+    period: "monthly",
+    ownerLabel: "Product",
+    direction: "higher_is_better",
+    bullThreshold: 75,
+    bearThreshold: 30,
+    staleAfterHours: 1080,
+    status: "active",
+  },
+  {
+    id: "kpi_cdfea8c022b9da620323e04b",
+    matchSlugs: ["monthly-account-churn-kpi", "monthly-customer-churn-kpi"],
+    slug: "monthly-account-churn-kpi",
+    name: "Monthly Account Churn",
+    metricSlug: "monthly-account-churn",
+    metricId: "metric_89a6d21438755204c41091be",
+    description:
+      "Paying-account loss (included_tokens IS NOT NULL at window start that cancel or become non-paying). lower_is_better. Dark until lifecycle events exist.",
+    targetLabel: "Keep monthly paying-account churn at or below 5%",
+    cadence: "Monthly",
+    period: "monthly",
+    ownerLabel: "Customer Success",
+    direction: "lower_is_better",
+    // lower_is_better: bull when value <= bull (under), bear when value > bear (over)
+    bullThreshold: 2,
+    bearThreshold: 10,
+    staleAfterHours: 1080,
+    status: "active",
+  },
+  {
+    matchSlugs: ["mantra-meetings-kpi", "meetings-kpi"],
+    slug: "meetings-kpi",
+    name: "Meetings",
+    metricSlug: "mantra-meetings",
+    metricId: "metric_0fabe2a49667c865bedc3cf7",
+    description:
+      "Company scorecard: recap-ready completed sessions with notes in the period. Product Meetings — not principal engagement meetings.",
+    targetLabel: "Grow recap-ready meetings week over week",
+    cadence: "Weekly",
+    period: "weekly",
+    ownerLabel: "Product",
+    direction: "higher_is_better",
+    bullThreshold: 15,
+    bearThreshold: 3,
+    staleAfterHours: 168,
+    status: "active",
+  },
+  {
+    matchSlugs: ["net-new-active-users-kpi", "nnau-kpi"],
+    slug: "net-new-active-users-kpi",
+    name: "Net New Active Users",
+    metricSlug: "net-new-active-users",
+    description:
+      "Δ Active Users across adjacent equal-length windows. Not Δ of Users/Accounts stock. Unequal windows stay unavailable.",
+    targetLabel: "Net new active users positive each month",
+    cadence: "Monthly",
+    period: "monthly",
+    ownerLabel: "Growth",
+    direction: "higher_is_better",
+    bullThreshold: 5,
+    bearThreshold: 0,
+    staleAfterHours: 1080,
+    status: "active",
+  },
+  {
+    matchSlugs: ["user-memory-kpi"],
+    slug: "user-memory-kpi",
+    name: "User Memory",
+    metricSlug: "user-memory",
+    description:
+      "Active canonical and linked vNext memory claims held across Mantra (platform stock).",
+    targetLabel: "Grow durable user memory claims",
+    cadence: "Weekly",
+    period: "weekly",
+    ownerLabel: "Product",
+    direction: "higher_is_better",
+    bullThreshold: 2000,
+    bearThreshold: 500,
+    staleAfterHours: 168,
+    status: "active",
+  },
+  {
+    matchSlugs: ["same-cohort-nrr-kpi", "nrr-kpi"],
+    slug: "same-cohort-nrr-kpi",
+    name: "Same-Cohort NRR",
+    metricSlug: "same-cohort-nrr",
+    metricId: "metric_e81c001644039d637eca4550",
+    description:
+      "Ending recurring revenue from the opening cohort divided by opening cohort revenue. Unmeasured until cohort snapshots exist.",
+    targetLabel: "Same-cohort NRR at or above 100%",
+    cadence: "Monthly",
+    period: "monthly",
+    ownerLabel: "Finance",
+    direction: "higher_is_better",
+    bullThreshold: 120,
+    bearThreshold: 90,
+    staleAfterHours: 1080,
+    status: "active",
+  },
+  {
+    matchSlugs: ["shipped-prs-kpi"],
+    slug: "shipped-prs-kpi",
+    name: "Shipped PRs",
+    metricSlug: "shipped-prs",
+    metricId: "metric_187a9b4d67a6842334327fd3",
+    description:
+      "Pull requests merged to main on Mantra mono from the merged-PR ledger. Production deploys are not equivalent.",
+    targetLabel: "Ship at least 20 PRs per week",
+    cadence: "Weekly",
+    period: "weekly",
+    ownerLabel: "Engineering",
+    direction: "higher_is_better",
+    bullThreshold: 40,
+    bearThreshold: 10,
+    staleAfterHours: 168,
+    status: "active",
+  },
+  {
+    matchSlugs: ["net-promoter-score-kpi", "nps-kpi"],
+    slug: "nps-kpi",
+    name: "NPS",
+    metricSlug: "net-promoter-score",
+    metricId: "metric_ee71f6d2e2e3130a15952f80",
+    description:
+      "Standard NPS from stored users.nps_score. Unmeasured until survey collection writes scores.",
+    targetLabel: "NPS at or above 40",
+    cadence: "Monthly",
+    period: "monthly",
+    ownerLabel: "Customer Success",
+    direction: "higher_is_better",
+    bullThreshold: 50,
+    bearThreshold: 20,
+    staleAfterHours: 1080,
+    status: "active",
+  },
+];
+
+export async function ensureScorecardKpiWrappers(): Promise<number> {
+  const principal = getCurrentPrincipal();
+  if (!principal?.userId || !principal.accountId) return 0;
+
+  let touched = 0;
+  for (const spec of SCORECARD_KPI_SPECS) {
+    try {
+      const metricRow = await resolveScorecardMetric(spec, principal.accountId);
+      if (!metricRow) {
+        log.warn("scorecard KPI skipped — metric missing", {
+          kpiSlug: spec.slug,
+          metricSlug: spec.metricSlug,
+        });
+        continue;
+      }
+
+      const existing = await findScorecardKpi(spec, principal.accountId);
+      if (existing) {
+        const updated = await db.execute(sql`
+          UPDATE kpis
+          SET metric_id = ${metricRow.id},
+              name = ${spec.name},
+              slug = ${spec.slug},
+              description = ${spec.description},
+              target_label = ${spec.targetLabel},
+              cadence = ${spec.cadence},
+              period = ${spec.period},
+              samples = 1,
+              style = 'line',
+              owner_label = ${spec.ownerLabel},
+              direction = ${spec.direction},
+              bull_threshold = ${spec.bullThreshold},
+              on_track_threshold = NULL,
+              bear_threshold = ${spec.bearThreshold},
+              stale_after_hours = ${spec.staleAfterHours},
+              standing_objective_key = NULL,
+              status = ${spec.status},
+              updated_at = NOW()
+          WHERE id = ${existing.id}
+            AND (
+              metric_id IS DISTINCT FROM ${metricRow.id}
+              OR name IS DISTINCT FROM ${spec.name}
+              OR slug IS DISTINCT FROM ${spec.slug}
+              OR description IS DISTINCT FROM ${spec.description}
+              OR target_label IS DISTINCT FROM ${spec.targetLabel}
+              OR cadence IS DISTINCT FROM ${spec.cadence}
+              OR period IS DISTINCT FROM ${spec.period}
+              OR owner_label IS DISTINCT FROM ${spec.ownerLabel}
+              OR direction IS DISTINCT FROM ${spec.direction}
+              OR bull_threshold IS DISTINCT FROM ${spec.bullThreshold}
+              OR bear_threshold IS DISTINCT FROM ${spec.bearThreshold}
+              OR on_track_threshold IS NOT NULL
+              OR stale_after_hours IS DISTINCT FROM ${spec.staleAfterHours}
+              OR standing_objective_key IS NOT NULL
+              OR status IS DISTINCT FROM ${spec.status}
+            )
+        `);
+        const n =
+          typeof (updated as { rowCount?: number }).rowCount === "number"
+            ? (updated as { rowCount: number }).rowCount
+            : 0;
+        touched += n;
+        continue;
+      }
+
+      const id = spec.id ?? `kpi_scorecard_${spec.slug.replace(/-/g, "_")}`;
+      await db.execute(sql`
+        INSERT INTO kpis (
+          id, metric_id, name, slug, description, target_label, cadence, period, samples, style,
+          owner_label, direction, bull_threshold, on_track_threshold, bear_threshold,
+          stale_after_hours, standing_objective_key, status,
+          scope, owner_user_id, account_id, vault_id, created_by_user_id
+        ) VALUES (
+          ${id}, ${metricRow.id}, ${spec.name}, ${spec.slug}, ${spec.description}, ${spec.targetLabel},
+          ${spec.cadence}, ${spec.period}, 1, 'line',
+          ${spec.ownerLabel}, ${spec.direction}, ${spec.bullThreshold}, NULL, ${spec.bearThreshold},
+          ${spec.staleAfterHours}, NULL, ${spec.status},
+          ${"user"}, ${principal.userId}, ${principal.accountId}, ${metricRow.vaultId}, ${principal.userId}
+        )
+        ON CONFLICT DO NOTHING
+      `);
+      touched += 1;
+    } catch (error) {
+      log.warn("scorecard KPI ensure failed", {
+        kpiSlug: spec.slug,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (touched > 0) {
+    log.info("ensured scorecard KPI wrappers", { touched });
+  }
+  return touched;
+}
+
+async function resolveScorecardMetric(
+  spec: ScorecardKpiSpec,
+  accountId: string,
+): Promise<{ id: string; vaultId: string | null } | null> {
+  if (spec.metricId) {
+    const [byId] = await db
+      .select({ id: metrics.id, vaultId: metrics.vaultId })
+      .from(metrics)
+      .where(eq(metrics.id, spec.metricId))
+      .limit(1);
+    if (byId?.id) return { id: byId.id, vaultId: byId.vaultId ?? null };
+  }
+  const [bySlug] = await db
+    .select({ id: metrics.id, vaultId: metrics.vaultId })
+    .from(metrics)
+    .where(and(eq(metrics.accountId, accountId), eq(metrics.slug, spec.metricSlug)))
+    .orderBy(desc(metrics.updatedAt))
+    .limit(1);
+  return bySlug?.id ? { id: bySlug.id, vaultId: bySlug.vaultId ?? null } : null;
+}
+
+async function findScorecardKpi(
+  spec: ScorecardKpiSpec,
+  accountId: string,
+): Promise<{ id: string } | null> {
+  if (spec.id) {
+    const [byId] = await db
+      .select({ id: kpis.id })
+      .from(kpis)
+      .where(eq(kpis.id, spec.id))
+      .limit(1);
+    if (byId?.id) return byId;
+  }
+  const slugs = Array.from(new Set([spec.slug, ...spec.matchSlugs]));
+  const rows = await db
+    .select({ id: kpis.id, slug: kpis.slug })
+    .from(kpis)
+    .where(and(eq(kpis.accountId, accountId), inArray(kpis.slug, slugs)))
+    .orderBy(desc(kpis.updatedAt))
+    .limit(10);
+  const preferred = rows.find((row) => row.slug === spec.slug) ?? rows[0];
+  return preferred?.id ? { id: preferred.id } : null;
 }
 
 export async function stampPlatformOwnerOnProductMetrics(): Promise<number> {

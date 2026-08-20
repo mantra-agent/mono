@@ -48,6 +48,7 @@ export type {
 export {
   ensureEngagementMetrics,
   ensureProductCatalogDefinitions,
+  ensureScorecardKpiWrappers,
   canReadPlatformMetrics,
   canReadSystemMetrics,
   isPlatformMetric,
