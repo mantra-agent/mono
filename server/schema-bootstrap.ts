@@ -4814,6 +4814,16 @@ export async function runSchemaBootstrap(
     );
   });
 
+  await heal("skills display_name column", async () => {
+    await pool.query(
+      `ALTER TABLE skills ADD COLUMN IF NOT EXISTS display_name TEXT`,
+    );
+    // Backfill once: free human label starts equal to the stable machine name.
+    await pool.query(
+      `UPDATE skills SET display_name = name WHERE display_name IS NULL OR btrim(display_name) = ''`,
+    );
+  });
+
   await heal("skills run-quality config columns", async () => {
     await pool.query(
       `ALTER TABLE skills ADD COLUMN IF NOT EXISTS score_threshold REAL`,

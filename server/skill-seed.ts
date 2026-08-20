@@ -26,10 +26,13 @@ const log = createLogger("SkillSeed");
 /** Skill lattice payload — hash identity/protocol/run-shape/references only. */
 export interface SkillRevisionPayload {
   name: string;
+  /** Free human label; null falls back to `name` in UI. */
+  displayName: string | null;
   description: string;
   whenToUse: string;
   process: string;
   outputSpec: string;
+  /** Leftover structural seed gates only; product quality is process-text review. */
   checklist: unknown;
   scoreThreshold: number | null;
   sessionType: string | null;
@@ -58,6 +61,7 @@ export function skillPayloadHash(payload: SkillRevisionPayload): string {
 /** Canonical skill payload field order — the merge/diff surface (Persona REVISION_FIELDS mirror). */
 export const SKILL_PAYLOAD_FIELDS: (keyof SkillRevisionPayload)[] = [
   "name",
+  "displayName",
   "description",
   "whenToUse",
   "process",
@@ -91,6 +95,7 @@ export function changedSkillFields(
 export type SkillRevisionSource = Pick<
   typeof skills.$inferSelect,
   | "name"
+  | "displayName"
   | "description"
   | "whenToUse"
   | "process"
@@ -112,6 +117,7 @@ export function skillRevisionPayload(
     .sort((a, b) => a.name.localeCompare(b.name) || a.content.localeCompare(b.content));
   return {
     name: row.name,
+    displayName: row.displayName ?? null,
     description: row.description,
     whenToUse: row.whenToUse,
     process: row.process,
@@ -124,6 +130,25 @@ export function skillRevisionPayload(
     pinnedToContext: row.pinnedToContext,
     references: sortedRefs,
   };
+}
+
+/** Human-facing skill label — free displayName wins; machine name is fallback. */
+export function skillDisplayLabel(skill: { name: string; displayName?: string | null }): string {
+  const label = typeof skill.displayName === "string" ? skill.displayName.trim() : "";
+  return label || skill.name;
+}
+
+/** Mint a stable kebab machine name from free display text. */
+export function mintSkillMachineName(display: string): string {
+  const slug = display
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  if (/^[a-z][a-z0-9-]*$/.test(slug)) return slug;
+  const stripped = slug.replace(/^[^a-z]+/, "");
+  if (/^[a-z][a-z0-9-]*$/.test(stripped)) return stripped.slice(0, 48);
+  return `skill-${randomUUID().slice(0, 8)}`;
 }
 
 /** One code catalog entry projected onto the lattice payload merge surface. */
@@ -145,6 +170,8 @@ export function codeCatalogSkillInputs(): CodeCatalogSkillInput[] {
     version: def.version || "1.0",
     input: {
       name: def.name,
+      // Catalog seeds keep machine name as the starting human label.
+      displayName: def.name,
       description: def.description,
       whenToUse: def.whenToUse ?? `Used for ${def.name} operations`,
       process: def.process,

@@ -64,7 +64,10 @@ export const checklistItemSchema = z.object({
 
 export const skills = pgTable("skills", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  /** Stable machine identity (kebab). Never user-facing rename surface. */
   name: varchar("name", { length: 64 }).notNull(),
+  /** Free human label. Null means fall back to `name`. */
+  displayName: text("display_name"),
   description: text("description").notNull(),
 
   authority: text("authority").notNull().default("full"),
@@ -219,7 +222,10 @@ export const insertSkillSchema = createInsertSchema(skills).omit({
   updateState: true,
   instanceId: true,
 }).extend({
-  name: z.string().min(1).max(64).regex(/^[a-z][a-z0-9-]*$/, "Lowercase letters, numbers, and hyphens only"),
+  /** Stable machine id. Optional on create when displayName is provided — server mints a kebab slug. */
+  name: z.string().min(1).max(64).regex(/^[a-z][a-z0-9-]*$/, "Lowercase letters, numbers, and hyphens only").optional(),
+  /** Free human label — no kebab constraint. */
+  displayName: z.string().min(1).max(200).nullable().optional(),
   description: z.string().min(1).max(1024),
   authority: z.enum(skillAuthorities).default("full"),
   status: z.enum(skillStatuses).default("draft"),
@@ -228,12 +234,22 @@ export const insertSkillSchema = createInsertSchema(skills).omit({
   whenToUse: z.string().optional().default(""),
   outputSpec: z.string().optional().default(""),
   addToMemory: z.boolean().optional().default(true),
+  /** Leftover structural seed gates only; product quality is process-text review. */
   checklist: z.array(checklistItemSchema).optional().default([]),
   scoreThreshold: z.number().min(0).max(1).nullable().optional(),
+  recommendedPersonaTemplateId: z.number().int().positive().nullable().optional(),
   references: z.array(z.object({
     name: z.string().min(1),
     content: z.string().min(1),
   })).optional().default([]),
+}).superRefine((value, ctx) => {
+  if (!value.name && !(typeof value.displayName === "string" && value.displayName.trim())) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide a display name (or a stable machine name)",
+      path: ["displayName"],
+    });
+  }
 });
 
 export const skillFailureDismissals = pgTable("skill_failure_dismissals", {

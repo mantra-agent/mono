@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import type { JSONContent } from "@tiptap/core";
 import { usePageHeader } from "@/hooks/use-page-header";
 // focus context removed — inline expansion, no selection model
@@ -57,7 +57,6 @@ import { formatDistanceToNow } from "date-fns";
 
 import {
   Plus,
-  Pencil,
   Trash2,
   ChevronDown,
   ChevronRight,
@@ -68,12 +67,8 @@ import {
   Clock,
   Lightbulb,
   X,
-  Download,
   Upload,
-  Pin,
-
   ExternalLink,
-  MoreVertical,
   MoreHorizontal,
   Search,
   FileText,
@@ -96,7 +91,6 @@ import type {
   SkillWithReferences,
   SkillScore,
   SkillRun,
-  ChecklistItem,
   CheckResult,
 } from "@shared/models/skills";
 import type { PromptModule } from "@shared/models/prompt-modules";
@@ -270,16 +264,6 @@ function SkillDescriptionEditor({
   );
 }
 
-function downloadJson(data: unknown, filename: string) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 // ─── Skill Default Lattice grammar (Persona parity) ──────────────────────────
 // Payload builders + the change-stage controls. The visual/interaction motif is
 // shared with Personas via `@/components/lattice-controls`; only the skill-shaped
@@ -287,9 +271,9 @@ function downloadJson(data: unknown, filename: string) {
 
 const SKILL_FIELD_LABELS: Record<string, string> = {
   name: "Name",
+  displayName: "Name",
   description: "Description",
   process: "Process",
-  checklist: "Checklist",
   scoreThreshold: "Score threshold",
   sessionType: "System",
   recommendedPersonaTemplateId: "Persona",
@@ -299,10 +283,16 @@ const SKILL_FIELD_LABELS: Record<string, string> = {
 
 const skillLabelFor = (field: string) => SKILL_FIELD_LABELS[field] ?? field;
 
+function skillLabel(skill: { name: string; displayName?: string | null }): string {
+  const label = typeof skill.displayName === "string" ? skill.displayName.trim() : "";
+  return label || skill.name;
+}
+
 /** Current lattice payload of a skill — mirrors the server SKILL_PAYLOAD_FIELDS shape. */
 function skillCurrentPayload(skill: SkillWithReferences): Record<string, unknown> {
   return {
     name: skill.name,
+    displayName: skill.displayName ?? skill.name,
     description: skill.description,
     process: skill.process,
     checklist: skill.checklist ?? [],
@@ -323,15 +313,16 @@ function skillTemplateId(skill: SkillWithReferences): string | null {
 
 function buildSkillApplyAll(skill: SkillWithReferences, templateId: string): PendingSync {
   const changes = skillCurrentPayload(skill);
+  const label = skillLabel(skill);
   return {
     mode: "apply",
-    title: `Apply ${skill.name} to default?`,
-    description: `Publish ${skill.name}'s current values as the platform default for everyone. Skills following the default update automatically; customized copies get an "Update available".`,
+    title: `Apply ${label} to default?`,
+    description: `Publish ${label}'s current values as the platform default for everyone. Skills following the default update automatically; customized copies get an "Update available".`,
     rows: buildDiffRows(skill.platformBaseline, changes, skillLabelFor),
     run: async () => {
       await apiRequest("POST", `/api/skills/platform/${templateId}/publish`, {
         changes,
-        changeSummary: `Apply ${skill.name} to default`,
+        changeSummary: `Apply ${skillLabel(skill)} to default`,
         confirmed: true,
       });
     },
@@ -344,7 +335,7 @@ function buildSkillApplyField(skill: SkillWithReferences, templateId: string, fi
   return {
     mode: "apply",
     title: `Apply ${label} to default?`,
-    description: `Publish ${skill.name}'s ${label} as the platform default for everyone.`,
+    description: `Publish ${skillLabel(skill)}'s ${label} as the platform default for everyone.`,
     rows: buildDiffRows({ [field]: skill.platformBaseline?.[field] }, changes, skillLabelFor),
     run: async () => {
       await apiRequest("POST", `/api/skills/platform/${templateId}/publish`, {
@@ -359,8 +350,8 @@ function buildSkillApplyField(skill: SkillWithReferences, templateId: string, fi
 function buildSkillRevertAll(skill: SkillWithReferences): PendingSync {
   return {
     mode: "revert",
-    title: `Revert ${skill.name} to default?`,
-    description: `Discard ${skill.name}'s customizations and restore the current platform default.`,
+    title: `Revert ${skillLabel(skill)} to default?`,
+    description: `Discard ${skillLabel(skill)}'s customizations and restore the current platform default.`,
     rows: buildDiffRows(skillCurrentPayload(skill), skill.platformBaseline, skillLabelFor),
     run: async () => {
       await apiRequest("POST", `/api/skills/${skill.id}/reset`, {});
@@ -374,7 +365,7 @@ function buildSkillRevertField(skill: SkillWithReferences, field: string): Pendi
   return {
     mode: "revert",
     title: `Revert ${label} to default?`,
-    description: `Discard ${skill.name}'s ${label} customization and restore the current platform default.`,
+    description: `Discard ${skillLabel(skill)}'s ${label} customization and restore the current platform default.`,
     rows: buildDiffRows({ [field]: skillCurrentPayload(skill)[field] }, { [field]: baselineValue }, skillLabelFor),
     run: async () => {
       await apiRequest("PATCH", `/api/skills/${skill.id}`, { [field]: baselineValue });
@@ -427,8 +418,6 @@ function SkillTreeRow({
   onToggleExpand,
   onRun,
   onDelete,
-  onExport,
-  onPin,
 }: {
   skill: SkillWithReferences;
   expanded: boolean;
@@ -436,16 +425,15 @@ function SkillTreeRow({
   onToggleExpand: () => void;
   onRun: () => void;
   onDelete: () => void;
-  onExport: () => void;
-  onPin: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [editingName, setEditingName] = useState(false);
-  const [nameDraft, setNameDraft] = useState(skill.name);
+  const [nameDraft, setNameDraft] = useState(skillLabel(skill));
   const { toast } = useToast();
   const renameSkill = useMutation({
-    mutationFn: async (name: string) => {
-      await apiRequest("PATCH", `/api/skills/${skill.id}`, { name });
+    mutationFn: async (displayName: string) => {
+      // Free human label only — machine `name` stays the durable id.
+      await apiRequest("PATCH", `/api/skills/${skill.id}`, { displayName });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/skills"] }),
     onError: (err: Error) => toast({ title: "Couldn't rename skill", description: err.message, variant: "destructive" }),
@@ -453,8 +441,9 @@ function SkillTreeRow({
   });
   const commitName = () => {
     const next = nameDraft.trim();
-    if (!next || next === skill.name) {
-      setNameDraft(skill.name);
+    const current = skillLabel(skill);
+    if (!next || next === current) {
+      setNameDraft(current);
       setEditingName(false);
       return;
     }
@@ -501,12 +490,12 @@ function SkillTreeRow({
               }
               if (event.key === "Escape") {
                 event.preventDefault();
-                setNameDraft(skill.name);
+                setNameDraft(skillLabel(skill));
                 setEditingName(false);
               }
             }}
             onBlur={commitName}
-            className="h-6 flex-1 min-w-0 border-0 bg-muted/40 px-1.5 text-sm font-mono shadow-none focus-visible:ring-1"
+            className="h-6 flex-1 min-w-0 border-0 bg-muted/40 px-1.5 text-sm shadow-none focus-visible:ring-1"
             data-testid={`input-skill-row-name-${skill.id}`}
           />
         ) : (
@@ -515,12 +504,12 @@ function SkillTreeRow({
             className="min-w-0 flex-1 truncate text-left text-sm"
             onClick={(event) => {
               event.stopPropagation();
-              setNameDraft(skill.name);
+              setNameDraft(skillLabel(skill));
               setEditingName(true);
             }}
             data-testid={`text-skill-name-${skill.id}`}
           >
-            {skill.name}
+            {skillLabel(skill)}
           </button>
         )}
         {/* Lattice marks: green inbound (default advanced), amber local-ahead. */}
@@ -551,22 +540,14 @@ function SkillTreeRow({
               onClick={(e) => { e.stopPropagation(); setMenuOpen(true); }}
               data-testid={`button-skill-menu-${skill.id}`}
             >
-              <MoreVertical className="h-3.5 w-3.5" />
+              <MoreHorizontal className="h-3.5 w-3.5" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
             <DropdownMenuItem onClick={() => { setMenuOpen(false); onRun(); }} data-testid="menu-run-skill">
               <Play className="h-3.5 w-3.5 mr-2" /> Run
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => { setMenuOpen(false); onPin(); }} data-testid="menu-pin-skill">
-              <Pin className={cn("h-3.5 w-3.5 mr-2", skill.pinnedToContext && "fill-current text-info")} />
-              {skill.pinnedToContext ? "Unpin from Context" : "Pin to Context"}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => { setMenuOpen(false); onToggleExpand(); }} data-testid="menu-edit-skill">
-              <Pencil className="h-3.5 w-3.5 mr-2" /> Edit
-            </DropdownMenuItem>
-            {(cell.showRevert && lattice.canRevert) || cell.showUpdate || cell.showMerge || (cell.showPublish && lattice.canPublish) ? (
+            {(cell.showRevert && lattice.canRevert) || cell.showUpdate || cell.showMerge || (cell.showPublish && lattice.canPublish) || skill.scope !== "global" ? (
               <DropdownMenuSeparator />
             ) : null}
             {cell.showRevert && lattice.canRevert ? (
@@ -594,16 +575,10 @@ function SkillTreeRow({
                 Publish
               </DropdownMenuItem>
             ) : null}
-            <DropdownMenuItem onClick={() => { setMenuOpen(false); onExport(); }} data-testid="menu-export-skill">
-              <Download className="h-3.5 w-3.5 mr-2" /> Export
-            </DropdownMenuItem>
             {skill.scope !== "global" && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => { setMenuOpen(false); onDelete(); }} className="text-destructive" data-testid="menu-delete-skill">
-                  <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
-                </DropdownMenuItem>
-              </>
+              <DropdownMenuItem onClick={() => { setMenuOpen(false); onDelete(); }} className="text-destructive" data-testid="menu-delete-skill">
+                <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
+              </DropdownMenuItem>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
@@ -651,22 +626,16 @@ function SkillListSidebar({
   lastRuns,
   isLoading,
   onImport,
-  onExportAll,
   onRun,
   onDelete,
-  onExport,
-  onPin,
   failedNames,
 }: {
   skills: SkillWithReferences[];
   lastRuns: Record<string, string>;
   isLoading: boolean;
   onImport: () => void;
-  onExportAll: () => void;
   onRun: (skill: SkillWithReferences) => void;
   onDelete: (skill: SkillWithReferences) => void;
-  onExport: (skill: SkillWithReferences) => void;
-  onPin: (skill: SkillWithReferences) => void;
   failedNames: Set<string>;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -687,17 +656,7 @@ function SkillListSidebar({
     let filtered = skills;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      filtered = skills.filter(s => s.name.toLowerCase().includes(q));
-    }
-
-    const pinned: SkillWithReferences[] = [];
-    const unpinned: SkillWithReferences[] = [];
-    for (const s of filtered) {
-      if (s.pinnedToContext) {
-        pinned.push(s);
-      } else {
-        unpinned.push(s);
-      }
+      filtered = skills.filter((s) => skillLabel(s).toLowerCase().includes(q) || s.name.toLowerCase().includes(q));
     }
 
     const sortGroup = (group: SkillWithReferences[]) => {
@@ -715,12 +674,12 @@ function SkillListSidebar({
         const bTime = new Date(lastRuns[b.name]).getTime();
         return bTime - aTime;
       });
-      withoutRun.sort((a, b) => a.name.localeCompare(b.name));
+      withoutRun.sort((a, b) => skillLabel(a).localeCompare(skillLabel(b)));
       return [...withRun, ...withoutRun];
     };
 
     const byOwner = new Map<"core" | ModKey, SkillWithReferences[]>();
-    for (const skill of sortGroup(unpinned)) {
+    for (const skill of sortGroup(filtered)) {
       const owner = skill.sourceMod ?? "core";
       const group = byOwner.get(owner);
       if (group) group.push(skill);
@@ -728,7 +687,6 @@ function SkillListSidebar({
     }
 
     return {
-      pinned: sortGroup(pinned),
       sections: SOURCE_MOD_ORDER
         .filter((owner) => byOwner.has(owner))
         .map((owner) => ({ owner, title: SOURCE_MOD_LABELS[owner], skills: byOwner.get(owner)! })),
@@ -744,12 +702,10 @@ function SkillListSidebar({
       onToggleExpand={() => { setCreating(false); toggleExpanded(skill.id); }}
       onRun={() => onRun(skill)}
       onDelete={() => onDelete(skill)}
-      onExport={() => onExport(skill)}
-      onPin={() => onPin(skill)}
     />
   ));
 
-  const total = sorted.pinned.length + sorted.sections.reduce((sum, section) => sum + section.skills.length, 0);
+  const total = sorted.sections.reduce((sum, section) => sum + section.skills.length, 0);
 
   return (
     <ScrollArea className="flex-1">
@@ -778,15 +734,12 @@ function SkillListSidebar({
           <DropdownMenu open={globalMenuOpen} onOpenChange={setGlobalMenuOpen}>
             <DropdownMenuTrigger asChild>
               <Button size="sm" variant="ghost" className="h-7 w-7 p-0 shrink-0" data-testid="button-skills-overflow">
-                <MoreVertical className="h-3.5 w-3.5" />
+                <MoreHorizontal className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => { setGlobalMenuOpen(false); onImport(); }} data-testid="menu-import-skills">
                 <Upload className="h-3.5 w-3.5 mr-2" /> Import
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => { setGlobalMenuOpen(false); onExportAll(); }} data-testid="menu-export-all-skills">
-                <Download className="h-3.5 w-3.5 mr-2" /> Export All
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -817,9 +770,6 @@ function SkillListSidebar({
           </div>
         ) : (
           <div className="space-y-1">
-            <SkillTreeSection title="PINNED" isEmpty={sorted.pinned.length === 0}>
-              {renderRows(sorted.pinned)}
-            </SkillTreeSection>
             {sorted.sections.map((section) => (
               <SkillTreeSection key={section.owner} title={section.title} isEmpty={section.skills.length === 0}>
                 {renderRows(section.skills)}
@@ -1154,35 +1104,53 @@ function SkillEditor({
   onCancel?: () => void;
 }) {
   const { toast } = useToast();
-  const [name, setName] = useState(skill?.name ?? "");
+  const [name, setName] = useState(skill ? skillLabel(skill) : "");
   const [description, setDescription] = useState(skill?.description ?? "");
   const [process, setProcess] = useState(skill?.process ?? "");
-  const [checklist, setChecklist] = useState<ChecklistItem[]>(Array.isArray(skill?.checklist) ? skill.checklist as ChecklistItem[] : []);
   const [sessionType, setSessionType] = useState<string>(skill?.sessionType || "agent");
-  const [personaChoice, setPersonaChoice] = useState<number | "recommended">("recommended");
-  const personaTouchedRef = useRef(false);
+  /** Selected global persona template id, or "recommended" for product default. */
+  const [personaChoice, setPersonaChoice] = useState<number | "recommended">(
+    typeof skill?.recommendedPersonaTemplateId === "number"
+      ? skill.recommendedPersonaTemplateId
+      : "recommended",
+  );
   const [version, setVersion] = useState(skill?.version ?? "1.0");
 
   useEffect(() => {
     if (!skill) return;
-    setName(skill.name);
+    setName(skillLabel(skill));
     setDescription(skill.description);
     setProcess(skill.process);
-    setChecklist(Array.isArray(skill.checklist) ? skill.checklist as ChecklistItem[] : []);
     setSessionType(skill.sessionType || "agent");
     setVersion(skill.version);
+    setPersonaChoice(
+      typeof skill.recommendedPersonaTemplateId === "number"
+        ? skill.recommendedPersonaTemplateId
+        : "recommended",
+    );
   }, [skill]);
 
-  const { data: personas = [] } = useQuery<{ id: number; name: string }[]>({
+  const { data: personas = [] } = useQuery<{
+    id: number;
+    name: string;
+    source: "seed" | "user";
+    templatePersonaId: number | null;
+    isSystem?: boolean;
+  }[]>({
     queryKey: ["/api/personas"],
   });
 
-  const { data: personaConfig } = useQuery<{
-    preferences: Record<string, number>;
-    recommendations: Record<string, { templateId: number; name: string }>;
-  }>({
-    queryKey: ["/api/skills/persona-config"],
-  });
+  // Global selectable templates only — product recommendation is platform-owned.
+  const personaTemplates = useMemo(
+    () => personas.filter((p) => p.source === "seed" && !p.isSystem),
+    [personas],
+  );
+
+  const recommendedTemplateId = skill?.recommendedPersonaTemplateId ?? null;
+  const recommendedName =
+    (recommendedTemplateId != null
+      ? personaTemplates.find((p) => p.id === recommendedTemplateId)?.name
+      : null) ?? null;
 
   // /api/timers returns { timers, globalPaused } — same envelope as the Timers page.
   // Treating the body as Timer[] made expand crash with `.filter is not a function`.
@@ -1198,25 +1166,6 @@ function SkillEditor({
     return timers.filter((timer) => timer.skillId && keys.has(timer.skillId));
   }, [skill, timers]);
 
-  useEffect(() => {
-    personaTouchedRef.current = false;
-    const saved = skill ? personaConfig?.preferences[skill.id] : undefined;
-    setPersonaChoice(typeof saved === "number" ? saved : "recommended");
-  }, [skill, personaConfig]);
-
-  const recommendedName = skill
-    ? personaConfig?.recommendations[skill.id]?.name ?? null
-    : null;
-
-  const savePersonaPreference = async (skillId: string, nextChoice: number | "recommended") => {
-    await apiRequest("PUT", `/api/skills/${skillId}/persona-preference`, {
-      personaId: nextChoice === "recommended" ? null : nextChoice,
-    });
-    await queryClient.invalidateQueries({
-      queryKey: ["/api/skills/persona-config"],
-    });
-  };
-
   const commitField = async (patch: Record<string, unknown>) => {
     if (!skill) return;
     try {
@@ -1228,13 +1177,6 @@ function SkillEditor({
         description: err instanceof Error ? err.message : "Update failed",
         variant: "destructive",
       });
-    }
-  };
-
-  const persistChecklist = (next: ChecklistItem[]) => {
-    setChecklist(next);
-    if (skill) {
-      void commitField({ checklist: next.filter((item) => item.check.trim().length > 0) });
     }
   };
 
@@ -1254,19 +1196,18 @@ function SkillEditor({
   const createMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/skills", {
-        name,
+        displayName: name.trim(),
         description,
         authority: "full",
         process,
         qualityCriteria: "",
-        checklist: checklist.filter((item) => item.check.trim().length > 0),
         sessionType,
         status: "draft",
         version,
+        recommendedPersonaTemplateId:
+          personaChoice === "recommended" ? null : personaChoice,
       });
-      const created = await res.json() as { id: string };
-      if (personaTouchedRef.current) await savePersonaPreference(created.id, personaChoice);
-      return created;
+      return await res.json() as { id: string };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
@@ -1285,8 +1226,8 @@ function SkillEditor({
           <Input
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder="my-skill-name"
-            className="h-7 text-right text-xs font-mono"
+            placeholder="Skill name"
+            className="h-7 text-right text-xs"
             data-testid="input-skill-name"
           />
         </ProfileTreeRow>
@@ -1320,14 +1261,25 @@ function SkillEditor({
           data-testid="input-version"
         />
       </ProfileTreeRow>
-      <ProfileTreeRow label="Persona" hasValue showEmpty mobileLayout="inline" testId="row-skill-persona">
+      <ProfileTreeRow
+        label="Persona"
+        hasValue
+        showEmpty
+        mobileLayout="inline"
+        testId="row-skill-persona"
+        menuContent={fieldMenu("recommendedPersonaTemplateId")}
+        menuVisibility="hover"
+      >
         <Select
           value={personaChoice === "recommended" ? "recommended" : String(personaChoice)}
           onValueChange={(value) => {
             const next = value === "recommended" ? "recommended" : Number(value);
-            personaTouchedRef.current = true;
             setPersonaChoice(next);
-            if (skill) void savePersonaPreference(skill.id, next);
+            if (skill) {
+              void commitField({
+                recommendedPersonaTemplateId: next === "recommended" ? null : next,
+              });
+            }
           }}
         >
           <SelectTrigger className={FIELD_SELECT_TRIGGER_CLASS} data-testid="select-persona">
@@ -1335,9 +1287,9 @@ function SkillEditor({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="recommended">
-              {recommendedName ?? "Default persona"}
+              {recommendedName ? `Recommended · ${recommendedName}` : "Default persona"}
             </SelectItem>
-            {personas.map((persona) => (
+            {personaTemplates.map((persona) => (
               <SelectItem key={persona.id} value={String(persona.id)}>{persona.name}</SelectItem>
             ))}
           </SelectContent>
@@ -1409,74 +1361,6 @@ function SkillEditor({
         minHeightClass="min-h-20"
         markdown
       />
-      <ProfileDetailSection
-        title="Checklist"
-        count={checklist.length}
-        headerAction={(
-          <button type="button" className="text-xs text-cta" onClick={() => setChecklist([...checklist, { check: "", weight: 1 }])} data-testid="button-add-checklist-item">
-            Add
-          </button>
-        )}
-      >
-        {checklist.length === 0 ? (
-          <div className="px-2 py-1.5 text-sm text-muted-foreground">No custom checklist.</div>
-        ) : checklist.map((item, index) => (
-          <ProfileTreeRow
-            key={index}
-            label={`Check ${index + 1}`}
-            hasValue
-            showEmpty
-            mobileLayout="inline"
-            testId={`checklist-item-${index}`}
-            menuContent={fieldMenu("checklist")}
-            menuVisibility="hover"
-            actionContent={(
-              <button
-                type="button"
-                className="text-xs text-destructive"
-                onClick={() => persistChecklist(checklist.filter((_, current) => current !== index))}
-                data-testid={`button-remove-checklist-item-${index}`}
-              >
-                Remove
-              </button>
-            )}
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              <Input
-                value={item.check}
-                onChange={(event) => {
-                  const next = [...checklist];
-                  next[index] = { ...next[index], check: event.target.value };
-                  setChecklist(next);
-                }}
-                onBlur={() => {
-                  if (skill) persistChecklist(checklist);
-                }}
-                placeholder="What to verify..."
-                className="h-7 text-right text-xs"
-                data-testid={`input-checklist-check-${index}`}
-              />
-              <Input
-                type="number"
-                value={item.weight ?? 1}
-                onChange={(event) => {
-                  const next = [...checklist];
-                  next[index] = { ...next[index], weight: parseFloat(event.target.value) || 1 };
-                  setChecklist(next);
-                }}
-                onBlur={() => {
-                  if (skill) persistChecklist(checklist);
-                }}
-                min={0}
-                step={0.5}
-                className="h-7 w-16 text-right text-xs"
-                title="Weight"
-                data-testid={`input-checklist-weight-${index}`}
-              />
-            </div>
-          </ProfileTreeRow>
-        ))}
-      </ProfileDetailSection>
       {skill ? <RunHistorySection skillName={skill.name} /> : null}
       {!skill ? (
         <div className="flex justify-end gap-2 px-2 py-1">
@@ -1551,56 +1435,18 @@ export function SkillsContent({ embedded }: { embedded?: boolean }) {
       const response = await apiRequest("POST", `/api/skills/${skill.id}/run`);
       return response.json() as Promise<Record<string, unknown>>;
     },
-    onSuccess: (result, skill) => {
+    onSuccess: (_result, skill) => {
       queryClient.invalidateQueries({ queryKey: ["/api/skills/last-runs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/skills", skill.name, "runs"] });
       toast({
-        title: `Running ${skill.name}`,
+        title: `Running ${skillLabel(skill)}`,
         description: "The run is starting.",
       });
     },
     onError: (err: Error, skill) => {
-      toast({ title: `Failed to run ${skill.name}`, description: err.message, variant: "destructive" });
+      toast({ title: `Failed to run ${skillLabel(skill)}`, description: err.message, variant: "destructive" });
     },
   });
-
-  const handleExportSkill = async (skill: SkillWithReferences) => {
-    try {
-      const res = await fetch(`/api/skills/${skill.id}/export`);
-      if (!res.ok) throw new Error("Export failed");
-      const data = await res.json();
-      downloadJson(data, `skill-${skill.name}.json`);
-      toast({ title: `Exported "${skill.name}"` });
-    } catch {
-      toast({ title: "Export failed", variant: "destructive" });
-    }
-  };
-
-  const handleExportAll = async () => {
-    try {
-      const res = await fetch("/api/skills/export");
-      if (!res.ok) throw new Error("Export failed");
-      const data = await res.json();
-      downloadJson(data, `skills-export-${new Date().toISOString().slice(0, 10)}.json`);
-      toast({ title: `Exported ${data.length} skills` });
-    } catch {
-      toast({ title: "Export failed", variant: "destructive" });
-    }
-  };
-
-  const handlePin = async (skill: SkillWithReferences) => {
-    try {
-      await apiRequest("PATCH", `/api/skills/${skill.id}`, {
-        pinnedToContext: !skill.pinnedToContext,
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
-      toast({
-        title: skill.pinnedToContext ? "Unpinned from context" : "Pinned to context",
-      });
-    } catch {
-      toast({ title: "Failed to update pin status", variant: "destructive" });
-    }
-  };
 
   const handleImport = () => {
     const input = document.createElement("input");
@@ -1634,11 +1480,8 @@ export function SkillsContent({ embedded }: { embedded?: boolean }) {
         lastRuns={lastRuns}
         isLoading={isLoading}
         onImport={handleImport}
-        onExportAll={handleExportAll}
         onRun={(skill) => runMutation.mutate(skill)}
         onDelete={(skill) => setDeletingSkill(skill)}
-        onExport={handleExportSkill}
-        onPin={handlePin}
         failedNames={unseenNames}
       />
 
@@ -1647,7 +1490,7 @@ export function SkillsContent({ embedded }: { embedded?: boolean }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete skill?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete <span className="font-mono font-medium">{deletingSkill?.name}</span> and all its references. This action cannot be undone.
+              This will permanently delete <span className="font-medium">{deletingSkill ? skillLabel(deletingSkill) : ""}</span> and all its references. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
