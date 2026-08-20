@@ -329,6 +329,33 @@ function goalTimestampInBounds(
   return Number.isFinite(t) && t >= startMs && t <= endMs;
 }
 
+/**
+ * One completion mark per local calendar day (latest timestamp wins).
+ * Heartbeat/trends consume these for non-log completion sources.
+ */
+function dayDedupedCompletionMarkers(dates: Date[]): string[] {
+  const byDay = new Map<string, number>();
+  for (const date of dates) {
+    const t = date.getTime();
+    if (!Number.isFinite(t)) continue;
+    const key = userDateStr(date);
+    const prev = byDay.get(key);
+    if (prev === undefined || t > prev) byDay.set(key, t);
+  }
+  return [...byDay.values()]
+    .sort((a, b) => b - a)
+    .map((t) => new Date(t).toISOString());
+}
+
+async function loadTodayGoalMutationDates(): Promise<Date[]> {
+  const todayGoals = await goalsService.listAll({ horizon: "today", includeDormant: true });
+  return todayGoals
+    .flatMap((goal) => [goal.createdAt, goal.updatedAt])
+    .filter((value): value is string => Boolean(value))
+    .map((value) => new Date(value))
+    .filter((date) => Number.isFinite(date.getTime()));
+}
+
 export async function queryActivityStatus() {
   const activities = await queryWellnessActivities();
 
@@ -354,19 +381,18 @@ export async function queryActivityStatus() {
   const needsTodayGoalMutation = activities.some(
     (a) => wellnessCompletionSource(a.completionSource) === "today_goal_mutated",
   );
-  const todayGoals = needsTodayGoalMutation
-    ? await goalsService.listAll({ horizon: "today", includeDormant: true })
+  const todayGoalMutationDays = needsTodayGoalMutation
+    ? await loadTodayGoalMutationDates()
     : [];
-  const todayGoalMutationDays = todayGoals
-    .flatMap((goal) => [goal.createdAt, goal.updatedAt])
-    .filter((value): value is string => Boolean(value))
-    .map((value) => new Date(value))
-    .filter((date) => Number.isFinite(date.getTime()));
-  const todayGoalMutatedToday = todayGoals.some(
-    (goal) =>
-      goalTimestampInBounds(goal.createdAt, todayStartMs, todayEndMs)
-      || goalTimestampInBounds(goal.updatedAt, todayStartMs, todayEndMs),
+  const todayGoalMutatedToday = todayGoalMutationDays.some(
+    (date) => {
+      const t = date.getTime();
+      return t >= todayStartMs && t <= todayEndMs;
+    },
   );
+  const todayGoalCompletionMarkers = needsTodayGoalMutation
+    ? dayDedupedCompletionMarkers(todayGoalMutationDays)
+    : [];
 
   return activities.map((a) => {
     const completion = wellnessCompletionSource(a.completionSource);
@@ -408,6 +434,8 @@ export async function queryActivityStatus() {
       launchKind: wellnessLaunchKind(a.launchKind),
       launchTarget: a.launchTarget ?? null,
       completionSource: completion,
+      // Heartbeat/sparkline evidence for non-log completion sources (Intentions).
+      completionMarkers: completion === "today_goal_mutated" ? todayGoalCompletionMarkers : undefined,
       lastCompletedAt: lastCompleted?.toISOString() ?? null,
       tier: lastLog?.tier ?? null,
       metricValue: lastLog?.metricValue ?? null,
@@ -1605,6 +1633,22 @@ export async function registerWellnessRoutes(app: Express) {
       const activities = await queryWellnessActivities();
       const activity = activities.find(a => a.id === id);
       if (!activity) return res.status(404).json({ error: "Activity not found" });
+
+      const completion = wellnessCompletionSource(activity.completionSource);
+      if (completion === "today_goal_mutated") {
+        // Synthetic log-shaped rows so trends/heartbeat share one paint path.
+        const markers = dayDedupedCompletionMarkers(await loadTodayGoalMutationDates());
+        const synthetic = markers.map((completedAt, index) => ({
+          id: -(index + 1),
+          activityId: id,
+          notes: null,
+          tier: null,
+          metricValue: null,
+          completedAt,
+        })) as WellnessLog[];
+        const trends = computeActivityTrends(synthetic, activity.intervalDays);
+        return res.json(trends);
+      }
 
       const allLogs = await db
         .select()
