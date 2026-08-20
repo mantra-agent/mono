@@ -38,12 +38,10 @@ import {
   wellnessCompletionSource,
   wellnessRefusesManualLog,
 } from "@shared/wellness-activity-launch";
-import { useSessionLaunch } from "@/hooks/use-session-launch";
+import { useSkillLaunch } from "@/hooks/use-skill-launch";
 import {
-  SET_DAILY_GOALS_PERSONA,
   SET_DAILY_GOALS_SKILL,
   SET_DAILY_GOALS_TITLE,
-  composeSetDailyGoalsLaunchMessage,
 } from "@shared/set-daily-goals";
 import { cn } from "@/lib/utils";
 
@@ -822,7 +820,7 @@ function ActivityRow({
   const { toast } = useToast();
   const tz = useCalendarTimezone();
   const [, setLocation] = useLocation();
-  const launch = useSessionLaunch();
+  const launch = useSkillLaunch();
   const activityKey = activity.name.toLowerCase();
   const isExpandable = EXPANDABLE_ACTIVITIES.has(activityKey);
   const launchKind = wellnessLaunchKind(activity.launchKind);
@@ -972,13 +970,9 @@ function ActivityRow({
                 return;
               }
               if (skillTarget) {
-                const pendingKey = `wellness-skill-${activity.id}`;
                 launch.mutate({
-                  pendingKey,
-                  title: SET_DAILY_GOALS_TITLE,
-                  personaName: SET_DAILY_GOALS_PERSONA,
-                  message: composeSetDailyGoalsLaunchMessage(),
-                  clientTurnSuffix: pendingKey,
+                  skillName: skillTarget,
+                  pendingKey: `wellness-skill-${activity.id}`,
                   errorTitle: `Could not start ${SET_DAILY_GOALS_TITLE}`,
                 });
                 return;

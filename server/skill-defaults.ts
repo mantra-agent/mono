@@ -1963,7 +1963,7 @@ Identity investment, not therapy. If they indicate imminent danger, self-harm, o
     name: "set-daily-goals",
     recommendedPersona: "Coach",
     description: "Conversation-first daily intention. Aligns at most three today-horizon goals, then prepends today onto one rolling Intentions page. Not a second planner.",
-    version: "1.0",
+    version: "1.1",
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "agent",
@@ -1972,10 +1972,11 @@ Identity investment, not therapy. If they indicate imminent danger, self-harm, o
     admissionTier: "request",
     temperature: 0.4,
     whenToUse: "Launched from Habits Intentions or Home + Daily Goals when Ray is setting today's aims.",
-    outputSpec: "At most three active today-horizon goals after confirm, plus today's dated section prepended on the unsourced rolling Intentions page. Never set_daily_plan. Never surface.",
+    outputSpec: "At most three active today-horizon goals after confirm, plus today's dated section prepended on the unsourced rolling Intentions page. Never set_daily_plan. Never surface. Never recommend aims already completed recently.",
     checklist: [
       { check: "First response is conversation-first: no Library page write and no today-goal mutations before Ray confirms the set", weight: 4 },
-      { check: "Loaded this_week parent goals, existing today goals, and rolling @page:intentions (create once if missing) without mutating them in Phase 1", weight: 3 },
+      { check: "Loaded this_week parent goals, existing today goals, recent completions (goals/tasks/milestones/projects), and rolling @page:intentions (create once if missing) without mutating them in Phase 1", weight: 3 },
+      { check: "Draft excluded aims already completed or clearly done in recent goal/task/milestone/project history", weight: 3 },
       { check: "After confirmation, at most 3 active today-horizon goals; reuse equivalent, create only when none exists, parent this_week where clear", weight: 3 },
       { check: "After confirmation, prepended today's dated section onto slug intentions / title Intentions, newest first, never surfaced", weight: 3, kind: "tool_invoked", tool: "library" },
       { check: "Never called set_daily_plan and never minted Daily Plan — YYYY-MM-DD or intentions-YYYY-MM-DD", weight: 4 },
@@ -1990,12 +1991,17 @@ Your first job is conversation, not mutation.
 ### Phase 1: Start the conversation
 On the first turn:
 
-1. Load only:
+1. Load:
    - parent \`this_week\` goals via \`goals(action: "list", horizon: "this_week")\`;
    - existing today-horizon goals via \`goals(action: "list", horizon: "today")\`;
+   - recent completion history so you do not re-recommend finished work:
+     - today and this_week goals already \`achieved\` / done-shaped status;
+     - \`work(action: "list_tasks")\` for recently completed tasks (status done) on active projects when available;
+     - active projects/milestones via \`work(action: "list_projects")\` / project detail when a candidate aim maps to one;
    - the rolling Intentions page: \`library(action: "get_library_page", id: "intentions")\`. If missing, create it once with slug \`intentions\`, title \`Intentions\`, and do **not** surface it. Then stop writing.
-2. Draft 1–3 today-goal candidates from that frame.
-3. Ask what to change.
+2. Build an exclusion set from that history: anything already completed today, already achieved this week, or clearly finished on a task/milestone/project in the recent window must not appear as a fresh draft aim.
+3. Draft 1–3 today-goal candidates from the week frame minus the exclusion set. Prefer unfinished week aims and real open work over inventing new labels for finished outcomes.
+4. Ask what to change.
 
 Do **not** create or update goals in Phase 1 after the optional first-time page create.
 Do **not** prepend today's section in Phase 1.
@@ -2006,9 +2012,10 @@ Preferred opening:
 
 - "Here is the week frame: ..."
 - "Existing today goals: ..."
+- "Already done / skip: ..." (only when something would otherwise be re-suggested)
 - "My draft: 1, 2, 3. What would you change?"
 
-If the week frame is empty, ask what the 1–3 aims should be rather than inventing a plan.
+If the week frame is empty after exclusions, ask what the 1–3 aims should be rather than inventing finished work.
 
 ### Phase 2: Mutate today-goals only after Ray confirms
 After Ray confirms the set:
@@ -2019,6 +2026,7 @@ After Ray confirms the set:
 - Keep at most 3 active today-horizon goals.
 - Parent each to a \`this_week\` goal where the relationship is clear.
 - Leave leftover today-goals that Ray did not choose; do not delete them.
+- Still do not mint aims that match the exclusion set unless Ray explicitly insists.
 
 ### Phase 3: Prepend today onto the rolling page
 Only after Phase 2, load slug \`intentions\` again and prepend today's dated section at the top. Newest first. Preserve history.
@@ -2043,6 +2051,7 @@ Then stop. Return the selected today-goals and the @page:intentions reference. N
 
 ## Hard rules
 - Conversation first.
+- Check recent completions before drafting.
 - Today-horizon only.
 - Cap 3 active today-goals after confirm.
 - Rolling page, never surfaced.
