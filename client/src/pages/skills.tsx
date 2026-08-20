@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import type { JSONContent } from "@tiptap/core";
 import { usePageHeader } from "@/hooks/use-page-header";
 // focus context removed — inline expansion, no selection model
