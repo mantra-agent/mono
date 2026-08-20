@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import type { Express } from "express";
 import { storage } from "./storage";
-import { insertSkillSchema } from "@shared/schema";
+import { insertSkillObjectSchema, insertSkillSchema } from "@shared/schema";
 import type { Skill, SkillReference } from "@shared/models/skills";
 import { createLogger } from "./log";
 import { db } from "./db";
@@ -25,11 +25,12 @@ const log = createLogger("SkillRoutes");
 
 interface ImportResult { name: string; action: string; error?: string }
 
-const updateSkillSchema = insertSkillSchema
+// Compose from the ZodObject, never the superRefined insertSkillSchema (ZodEffects has no .omit).
+const updateSkillSchema = insertSkillObjectSchema
   .omit({ references: true, whenToUse: true, outputSpec: true, addToMemory: true })
   .partial()
   .extend({
-    references: insertSkillSchema.shape.references.optional(),
+    references: insertSkillObjectSchema.shape.references.optional(),
   });
 
 function stripSkillForExport(skill: Skill & { references?: SkillReference[]; trustScore?: number }) {
