@@ -968,7 +968,7 @@ const PLATFORM_ACTIVATION_RATE_DEFINITION = {
 
 const PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION = {
   key: "monthly-account-churn",
-  name: "Monthly Account Churn",
+  name: "Monthly Logo Churn",
   unit: "%",
   description:
     "Paying accounts (included_tokens IS NOT NULL) active at window start that cancel or become non-paying in the window, divided by paying at start. Dark until lifecycle events exist — never fabricate from identity status noise.",
@@ -1062,10 +1062,17 @@ async function ensureHoursUsedPerUserMetric(): Promise<void> {
 }
 
 /**
- * Rename Monthly Customer Churn → Monthly Account Churn on Metric + KPI rows.
+ * Converge legacy scorecard display names without changing stable slugs or ids.
  * Idempotent; keeps metric id so KPI bindings stay intact.
  */
-export async function renameMonthlyCustomerChurnToAccountChurn(): Promise<number> {
+export async function configureScorecardDisplayNames(): Promise<number> {
+  const meetingsUpdated = await db.execute(sql`
+    UPDATE metrics
+    SET name = ${PLATFORM_MANTRA_MEETINGS_DEFINITION.name},
+        updated_at = NOW()
+    WHERE slug = ${PLATFORM_MANTRA_MEETINGS_DEFINITION.key}
+      AND name IS DISTINCT FROM ${PLATFORM_MANTRA_MEETINGS_DEFINITION.name}
+  `);
   const metricUpdated = await db.execute(sql`
     UPDATE metrics
     SET name = ${PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.name},
@@ -1094,14 +1101,18 @@ export async function renameMonthlyCustomerChurnToAccountChurn(): Promise<number
   `);
   const kpiUpdated = await db.execute(sql`
     UPDATE kpis
-    SET name = ${"Monthly Account Churn"},
+    SET name = ${PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.name},
         slug = ${"monthly-account-churn-kpi"},
         description = ${"Lagging KPI for Multiply User Leverage: paying-account loss (included_tokens IS NOT NULL at window start that cancel or become non-paying). Not customer-headcount churn."},
         updated_at = NOW()
     WHERE id = 'kpi_cdfea8c022b9da620323e04b'
        OR slug = 'monthly-customer-churn-kpi'
-       OR (slug = 'monthly-account-churn-kpi' AND name IS DISTINCT FROM ${"Monthly Account Churn"})
+       OR (slug = 'monthly-account-churn-kpi' AND name IS DISTINCT FROM ${PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.name})
   `);
+  const meetingsN =
+    typeof (meetingsUpdated as { rowCount?: number }).rowCount === "number"
+      ? (meetingsUpdated as { rowCount: number }).rowCount
+      : 0;
   const metricN =
     typeof (metricUpdated as { rowCount?: number }).rowCount === "number"
       ? (metricUpdated as { rowCount: number }).rowCount
@@ -1110,9 +1121,9 @@ export async function renameMonthlyCustomerChurnToAccountChurn(): Promise<number
     typeof (kpiUpdated as { rowCount?: number }).rowCount === "number"
       ? (kpiUpdated as { rowCount: number }).rowCount
       : 0;
-  const total = metricN + kpiN;
+  const total = meetingsN + metricN + kpiN;
   if (total > 0) {
-    log.info("renamed Monthly Customer Churn → Monthly Account Churn", { metricN, kpiN });
+    log.info("configured scorecard display names", { meetingsN, metricN, kpiN });
   }
   return total;
 }
@@ -1125,7 +1136,7 @@ export async function renameMonthlyCustomerChurnToAccountChurn(): Promise<number
 export async function ensureProductCatalogDefinitions(): Promise<void> {
   const { ensurePlatformBusinessMetrics } = await import("../metrics-storage");
   const { USER_MEMORY_PLATFORM_DEFINITION } = await import("../user-memory-metric");
-  await renameMonthlyCustomerChurnToAccountChurn();
+  await configureScorecardDisplayNames();
   await ensurePlatformBusinessMetrics([
     USER_MEMORY_PLATFORM_DEFINITION,
     PLATFORM_ACHIEVED_GOALS_DEFINITION,
@@ -1270,7 +1281,7 @@ const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
     id: "kpi_cdfea8c022b9da620323e04b",
     matchSlugs: ["monthly-account-churn-kpi", "monthly-customer-churn-kpi"],
     slug: "monthly-account-churn-kpi",
-    name: "Monthly Account Churn",
+    name: "Monthly Logo Churn",
     metricSlug: "monthly-account-churn",
     metricId: "metric_89a6d21438755204c41091be",
     description:
@@ -1537,7 +1548,7 @@ async function findScorecardKpi(
 export async function stampPlatformOwnerOnProductMetrics(): Promise<number> {
   const { sql } = await import("drizzle-orm");
   // Rename before stamp so legacy monthly-customer-churn does not get a stale equation.
-  await renameMonthlyCustomerChurnToAccountChurn();
+  await configureScorecardDisplayNames();
   const slugs = [...PRODUCT_METRIC_SLUGS].filter((slug) => slug !== "monthly-customer-churn");
   if (slugs.length === 0) return 0;
   // Stamp platform owner + producer equation atom + internal/active for each product slug.

@@ -49,7 +49,7 @@ const PRODUCT_PRODUCERS: MetricProducerDefinition[] = [
    */
   {
     key: "mantra-meetings",
-    label: "Meetings (company)",
+    label: "Meetings",
     family: "product",
     adapterKey: "product",
     adapterKind: "internal",
@@ -85,7 +85,7 @@ const PRODUCT_PRODUCERS: MetricProducerDefinition[] = [
    */
   {
     key: "monthly-account-churn",
-    label: "Monthly Account Churn",
+    label: "Monthly Logo Churn",
     family: "product",
     adapterKey: "product",
     adapterKind: "internal",
