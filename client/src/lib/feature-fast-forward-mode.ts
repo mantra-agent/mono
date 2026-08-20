@@ -20,6 +20,14 @@ export const fastForwardLaunchInFlight = new Set<string>();
 export const fastForwardLastLaunchByFeature = new Map<string, FeatureFastForwardLastLaunch>();
 export const fastForwardLaunchedSessionByFeature = new Map<string, string>();
 
+/**
+ * Auto AI Review (no Fast Forward mode) remembers the last settled Review
+ * attempt per Feature so a Review-fail stays operator-owned until status leaves
+ * needs_review. Keyed by featureId → `${stage}:${launchedAt}`.
+ */
+export const autoReviewAttemptByFeature = new Map<string, string>();
+export const autoReviewLaunchInFlight = new Set<string>();
+
 export function featureFastForwardStorageKey(featureId: string): string {
   return `${FEATURE_FAST_FORWARD_KEY_PREFIX}${featureId}`;
 }
