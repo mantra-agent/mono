@@ -191,6 +191,7 @@ export async function registerSetupRoutes(app: Express) {
         }
       })(),
       sendgrid: !!(getSecretSync("SENDGRID_API_KEY") && getSecretSync("SENDGRID_FROM_EMAIL")),
+      stripe: !!(getSecretSync("STRIPE_SECRET_KEY") && getSecretSync("STRIPE_WEBHOOK_SECRET")),
       phone: false,
       meta: !!(await (async () => {
         try {

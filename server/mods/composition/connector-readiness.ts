@@ -121,6 +121,8 @@ export function secretConnectorReadiness(connectorKey: string): ConnectorReadine
       return allSecrets("EXPO_ACCESS_TOKEN") ? "ready" : "setup-required";
     case "recall":
       return allSecrets("RECALL_API_KEY", "RECALL_REGION") ? "ready" : "setup-required";
+    case "stripe":
+      return allSecrets("STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET") ? "ready" : "setup-required";
     default:
       return undefined;
   }

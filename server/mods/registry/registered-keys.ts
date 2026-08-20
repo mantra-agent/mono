@@ -141,6 +141,7 @@ export const REGISTERED_ICON_KEYS = [
   "Radio",
   "Smartphone",
   "Landmark",
+  "CreditCard",
   "MessageSquare",
 ] as const;
 export type RegisteredIconKey = (typeof REGISTERED_ICON_KEYS)[number];
@@ -170,6 +171,7 @@ export const REGISTERED_CONNECTOR_KEYS = [
   "oura",
   "recall",
   "slack",
+  "stripe",
 ] as const;
 export type RegisteredConnectorKey = (typeof REGISTERED_CONNECTOR_KEYS)[number];
 
