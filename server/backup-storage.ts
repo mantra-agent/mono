@@ -13,12 +13,65 @@ import { exportBrain, importDbTables, BRAIN_EXPORT_DIR } from "./routes/brain";
 import { spawn } from "child_process";
 import * as fs from "fs/promises";
 import { createWriteStream, createReadStream } from "fs";
+import { pipeline } from "node:stream/promises";
 import * as path from "path";
 import * as os from "os";
 
 const log = createLogger("Backup");
 
 const S3_PREFIX = "private/backups/";
+
+/**
+ * Canonical Brain archive put path: stream local file → object storage with
+ * ContentLength, then HeadObject size-match. Complete is unrepresentable without
+ * stored size === local size. Never materializes the archive as one Buffer.
+ */
+async function putBrainArchiveAndVerify(
+  localPath: string,
+  s3Key: string,
+): Promise<{ localSize: number; storedSize: number }> {
+  const fileStat = await fs.stat(localPath);
+  const localSize = fileStat.size;
+  if (!Number.isFinite(localSize) || localSize < 0) {
+    throw new Error(`Invalid local archive size for ${s3Key}`);
+  }
+
+  log.debug(`Streaming Brain archive to ${s3Key} (${formatBytes(localSize)})...`);
+  const body = createReadStream(localPath);
+  try {
+    await storageBackend.putObject(s3Key, body, {
+      contentType: "application/gzip",
+      contentLength: localSize,
+    });
+  } catch (err) {
+    body.destroy();
+    throw err;
+  }
+
+  const meta = await storageBackend.headObject(s3Key);
+  const storedSize = meta?.contentLength;
+  if (typeof storedSize !== "number" || !Number.isFinite(storedSize)) {
+    throw new Error(
+      `Brain archive size match failed for ${s3Key}: missing stored contentLength after put (local=${localSize})`,
+    );
+  }
+  if (storedSize !== localSize) {
+    throw new Error(
+      `Brain archive size match failed for ${s3Key}: stored=${storedSize} local=${localSize}`,
+    );
+  }
+
+  log.debug(`Brain archive size match ok for ${s3Key}: ${formatBytes(storedSize)}`);
+  return { localSize, storedSize };
+}
+
+/** Stream object storage → local disk without materializing one Buffer. */
+async function downloadBrainArchiveToFile(s3Key: string, destPath: string): Promise<number> {
+  const stream = await storageBackend.getObjectStream(s3Key);
+  await pipeline(stream, createWriteStream(destPath));
+  const st = await fs.stat(destPath);
+  return st.size;
+}
 
 // ---------------------------------------------------------------------------
 // Restore job progress tracking (in-memory, transient)
@@ -202,14 +255,9 @@ async function runBackupAsync(jobId: string): Promise<void> {
 
     log.debug(`[${jobId}] Export complete: ${result.totalTables} tables, ${result.totalRows} rows, archive=${result.archivePath}`);
 
-    // 2. Read archive and upload to S3
-    const archiveBuffer = await fs.readFile(result.archivePath);
+    // 2. Stream archive to object storage; complete only after HeadObject size match
     const s3Key = `${S3_PREFIX}${jobId}.tar.gz`;
-    log.debug(`[${jobId}] Uploading to S3 (${formatBytes(archiveBuffer.length)})...`);
-
-    await storageBackend.putObject(s3Key, archiveBuffer, {
-      contentType: "application/gzip",
-    });
+    const { storedSize } = await putBrainArchiveAndVerify(result.archivePath, s3Key);
 
     // 3. Build table manifest from export results
     const manifest: Record<string, { rows: number; bytes: number }> = {};
@@ -238,12 +286,12 @@ async function runBackupAsync(jobId: string): Promise<void> {
 
     const durationMs = Date.now() - startMs;
 
-    // 4. Update job row
+    // 4. Update job row — compressed_size is stored object size after match
     await db.execute(sql`
       UPDATE backup_jobs SET
         status = 'complete',
         s3_key = ${s3Key},
-        compressed_size = ${archiveBuffer.length},
+        compressed_size = ${storedSize},
         table_count = ${result.totalTables},
         total_rows = ${result.totalRows},
         duration_ms = ${durationMs},
@@ -264,7 +312,7 @@ async function runBackupAsync(jobId: string): Promise<void> {
     `);
 
     log.log(
-      `Backup ${jobId} complete: ${result.totalTables} tables, ${result.totalRows} rows, ${formatBytes(archiveBuffer.length)} in ${durationMs}ms`,
+      `Backup ${jobId} complete: ${result.totalTables} tables, ${result.totalRows} rows, ${formatBytes(storedSize)} in ${durationMs}ms`,
     );
 
     // 5. Prune old backups
@@ -314,19 +362,13 @@ export async function createBackupFromUpload(
   ).rows[0].id as string;
 
   try {
-    // 1. Read file size
-    const fileStat = await fs.stat(filePath);
-    log.debug(`[UploadBackup] Job ${jobId}: processing uploaded file (${formatBytes(fileStat.size)})`);
-
-    // 2. Upload to R2 at standard key pattern
+    // 1. Stream upload + HeadObject size match (local size alone cannot stamp complete)
+    log.debug(`[UploadBackup] Job ${jobId}: processing uploaded file`);
     const s3Key = `${S3_PREFIX}${jobId}.tar.gz`;
-    const archiveBuffer = await fs.readFile(filePath);
-    await storageBackend.putObject(s3Key, archiveBuffer, {
-      contentType: "application/gzip",
-    });
-    log.debug(`[UploadBackup] Job ${jobId}: uploaded to ${s3Key}`);
+    const { storedSize } = await putBrainArchiveAndVerify(filePath, s3Key);
+    log.debug(`[UploadBackup] Job ${jobId}: uploaded and size-matched ${s3Key} (${formatBytes(storedSize)})`);
 
-    // 3. Extract metadata from archive
+    // 2. Extract metadata from archive (disk path; no whole-archive Buffer)
     let tableCount = 0;
     let totalRows = 0;
     const manifest: Record<string, { rows: number; bytes: number }> = {};
@@ -380,13 +422,13 @@ export async function createBackupFromUpload(
       await fs.rm(extractDir, { recursive: true, force: true }).catch(() => {});
     }
 
-    // 4. Update job row to complete
+    // 3. Update job row to complete — compressed_size is stored size after match
     const durationMs = Date.now() - startMs;
     const result = await db.execute(sql`
       UPDATE backup_jobs SET
         status = 'complete',
         s3_key = ${s3Key},
-        compressed_size = ${fileStat.size},
+        compressed_size = ${storedSize},
         table_count = ${tableCount},
         total_rows = ${totalRows},
         duration_ms = ${durationMs},
@@ -396,7 +438,7 @@ export async function createBackupFromUpload(
       RETURNING *
     `);
 
-    log.debug(`[UploadBackup] Job ${jobId}: complete — ${tableCount} tables, ${totalRows} rows, ${formatBytes(fileStat.size)} in ${durationMs}ms`);
+    log.debug(`[UploadBackup] Job ${jobId}: complete — ${tableCount} tables, ${totalRows} rows, ${formatBytes(storedSize)} in ${durationMs}ms`);
     return result.rows[0] as BackupJob;
   } catch (err: any) {
     const durationMs = Date.now() - startMs;
@@ -587,12 +629,11 @@ export async function restoreFromBackup(
   const extractDir = await fs.mkdtemp(path.join(os.tmpdir(), "backup-restore-"));
 
   try {
-    // 1. Download archive from S3
+    // 1. Stream archive from object storage to disk (never one Buffer)
     log.debug(`[Restore] Downloading ${backup.s3_key} (compressed_size=${backup.compressed_size ? formatBytes(backup.compressed_size) : "unknown"})...`);
-    const archiveBuffer = await storageBackend.getObjectBuffer(backup.s3_key);
     const archivePath = path.join(extractDir, "backup.tar.gz");
-    await fs.writeFile(archivePath, archiveBuffer);
-    log.debug(`[Restore] Download complete (${formatBytes(archiveBuffer.length)})`);
+    const downloadedBytes = await downloadBrainArchiveToFile(backup.s3_key, archivePath);
+    log.debug(`[Restore] Download complete (${formatBytes(downloadedBytes)})`);
 
     // 2. Extract tar.gz
     log.debug(`[Restore] Extracting archive...`);

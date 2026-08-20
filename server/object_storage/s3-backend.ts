@@ -339,7 +339,7 @@ export const storageBackend = {
   async putObject(
     key: string,
     body: Buffer | Uint8Array | string | Readable,
-    opts: { contentType?: string; cacheControl?: string } = {},
+    opts: { contentType?: string; cacheControl?: string; contentLength?: number } = {},
   ): Promise<void> {
     const { client, config } = getClient();
     await client.send(
@@ -349,6 +349,9 @@ export const storageBackend = {
         Body: body as PutObjectCommandInput["Body"],
         ContentType: opts.contentType,
         CacheControl: opts.cacheControl,
+        // Load-bearing for Readable bodies (Brain archives): without ContentLength,
+        // some S3-compatible stacks buffer or reject large streams.
+        ...(typeof opts.contentLength === "number" ? { ContentLength: opts.contentLength } : {}),
       }),
     );
   },
