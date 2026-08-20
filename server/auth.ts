@@ -107,6 +107,7 @@ import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
 import { getClientPresenceSnapshot } from "./client-presence";
 import { normalizeEmailAddress } from "./email-normalization";
 import { db, acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, runWithDatabaseTransaction } from "./db";
+import { getPostgresErrorCode } from "./postgres-errors";
 import { claimInvitedSubjectInTransaction } from "./invited-subject-service";
 import { issuePasswordResetEmail } from "./password-reset";
 
@@ -218,42 +219,77 @@ function rowsToCountMap(
   return map;
 }
 
+/**
+ * Optional admin-tree metrics. Each leg is independently fail-soft: statement
+ * timeout / transient SQL must not fail the identity-graph contract (500 /
+ * AUTH_ADMIN_IDENTITY_GRAPH_FAILED). Missing legs project as zero.
+ */
+async function loadIdentityMetricMap(
+  label: "timers" | "claims" | "tokens",
+  run: () => Promise<{ rows?: Array<{ instance_id: string | null; count: number | string | null }> }>,
+): Promise<Map<string, number>> {
+  try {
+    const result = await run();
+    return rowsToCountMap(result.rows ?? []);
+  } catch (error) {
+    const code = getPostgresErrorCode(error);
+    // 57014 = statement_timeout — expected under api_calls volume; degrade.
+    log.warn("identity graph instance metric degraded", {
+      metric: label,
+      code,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return new Map();
+  }
+}
+
 async function getIdentityInstanceMetrics(): Promise<Map<string, IdentityInstanceMetrics>> {
-  const [timerResult, claimResult, tokenResult] = await Promise.all([
-    db.execute<{ instance_id: string; count: number }>(sql`
-      SELECT m.instance_id, count(*)::int AS count
-      FROM timers t
-      INNER JOIN agent_instance_memberships m
-        ON m.user_id = t.owner_user_id
-       AND m.account_id = t.account_id
-      WHERE t.scope = 'user'
-        AND t.enabled = true
-        AND t.owner_user_id IS NOT NULL
-        AND t.account_id IS NOT NULL
-      GROUP BY m.instance_id
-    `),
-    db.execute<{ instance_id: string; count: number }>(sql`
-      SELECT instance_id, count(*)::int AS count
-      FROM memory_vnext_claims
-      WHERE lifecycle_stage IN ('canonical', 'linked')
-        AND instance_id IS NOT NULL
-      GROUP BY instance_id
-    `),
-    db.execute<{ instance_id: string; count: number }>(sql`
-      SELECT m.instance_id, COALESCE(SUM(c.input_tokens), 0)::bigint AS count
-      FROM api_calls c
-      INNER JOIN agent_instance_memberships m
-        ON m.user_id = c.owner_user_id
-       AND m.account_id = c.account_id
-      WHERE c.timestamp >= NOW() - INTERVAL '7 days'
-        AND c.owner_user_id IS NOT NULL
-        AND c.account_id IS NOT NULL
-      GROUP BY m.instance_id
-    `),
+  // Run legs independently so one slow aggregate cannot abort the whole graph.
+  const [timers, claims, tokens] = await Promise.all([
+    loadIdentityMetricMap("timers", () =>
+      db.execute<{ instance_id: string; count: number }>(sql`
+        SELECT m.instance_id, count(*)::int AS count
+        FROM timers t
+        INNER JOIN agent_instance_memberships m
+          ON m.user_id = t.owner_user_id
+         AND m.account_id = t.account_id
+        WHERE t.scope = 'user'
+          AND t.enabled = true
+          AND t.owner_user_id IS NOT NULL
+          AND t.account_id IS NOT NULL
+        GROUP BY m.instance_id
+      `),
+    ),
+    loadIdentityMetricMap("claims", () =>
+      db.execute<{ instance_id: string; count: number }>(sql`
+        SELECT instance_id, count(*)::int AS count
+        FROM memory_vnext_claims
+        WHERE lifecycle_stage IN ('canonical', 'linked')
+          AND instance_id IS NOT NULL
+        GROUP BY instance_id
+      `),
+    ),
+    // Pre-aggregate api_calls on (owner, account) so the 7d window rides
+    // idx_api_calls_owner_timestamp, then join the small membership table.
+    // Direct join of every 7d row × memberships was timing out (57014).
+    loadIdentityMetricMap("tokens", () =>
+      db.execute<{ instance_id: string; count: number }>(sql`
+        SELECT m.instance_id, COALESCE(SUM(t.tokens), 0)::bigint AS count
+        FROM (
+          SELECT owner_user_id, account_id, SUM(input_tokens)::bigint AS tokens
+          FROM api_calls
+          WHERE timestamp >= NOW() - INTERVAL '7 days'
+            AND owner_user_id IS NOT NULL
+            AND account_id IS NOT NULL
+          GROUP BY owner_user_id, account_id
+        ) t
+        INNER JOIN agent_instance_memberships m
+          ON m.user_id = t.owner_user_id
+         AND m.account_id = t.account_id
+        GROUP BY m.instance_id
+      `),
+    ),
   ]);
-  const timers = rowsToCountMap(timerResult.rows ?? []);
-  const claims = rowsToCountMap(claimResult.rows ?? []);
-  const tokens = rowsToCountMap(tokenResult.rows ?? []);
   const instanceIds = new Set([...timers.keys(), ...claims.keys(), ...tokens.keys()]);
   const map = new Map<string, IdentityInstanceMetrics>();
   for (const instanceId of instanceIds) {
