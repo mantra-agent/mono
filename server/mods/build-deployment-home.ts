@@ -540,6 +540,24 @@ export async function dismissBuildDeploymentHomeItem(
         ),
       ))
       .returning({ id: buildDeploymentHomeProjections.id });
-    return Boolean(updated);
+    if (updated) return true;
+
+    // Stale Home complete / double-click: already dismissed is success.
+    const [existing] = await tx
+      .select({
+        id: buildDeploymentHomeProjections.id,
+        dismissedAt: buildDeploymentHomeProjections.dismissedAt,
+      })
+      .from(buildDeploymentHomeProjections)
+      .where(combineWithWritableScope(
+        principal,
+        projectionScope,
+        and(
+          eq(buildDeploymentHomeProjections.id, canonicalProjectionId),
+          eq(buildDeploymentHomeProjections.reasonKey, canonicalReasonKey),
+        ),
+      ))
+      .limit(1);
+    return Boolean(existing?.dismissedAt);
   }));
 }

@@ -125,9 +125,9 @@ async function completeBuildDeployment(
   }
   const dismissed = await dismissBuildDeploymentHomeItem(principal, projectionId, reasonKey);
   if (!dismissed) {
-    const err = new Error("Build deployment item is unavailable");
-    (err as any).statusCode = 404;
-    throw err;
+    // Projection advanced, Build inactive, or feed race — not a server defect.
+    // Treat as idempotent clear so Home check-circle races do not page ERRORS.
+    return { ok: true, type: "build_deployment", projectionId, alreadyGone: true };
   }
   return { ok: true, type: "build_deployment", projectionId };
 }
@@ -151,9 +151,8 @@ async function completeReportedIssue(
   }
   const dismissed = await dismissReportedIssueHomeItem(principal, issueId, reasonKey);
   if (!dismissed) {
-    const err = new Error("Reported Issue item is unavailable");
-    (err as any).statusCode = 404;
-    throw err;
+    // Build/permission gate or concurrent clear — client race, not ERRORS.
+    return { ok: true, type: "reported_issue", issueId, alreadyGone: true };
   }
   return { ok: true, type: "reported_issue", issueId };
 }
@@ -361,7 +360,13 @@ export function registerHomeRoutes(app: Express) {
     } catch (err: any) {
       const message = err instanceof Error ? err.message : String(err);
       const status = typeof err?.statusCode === "number" ? err.statusCode : 500;
-      log.error(`POST /api/home/items/${req.params.id}/complete failed: ${message}`);
+      // 4xx is caller/input or gone state (stale feed, missing fields) — warn only.
+      // 5xx remains error so real producer failures still page ERRORS.
+      if (status >= 400 && status < 500) {
+        log.warn(`POST /api/home/items/${req.params.id}/complete failed: ${message}`);
+      } else {
+        log.error(`POST /api/home/items/${req.params.id}/complete failed: ${message}`);
+      }
       res.status(status).json({ error: message, operation: "complete_home_item" });
     }
   });
