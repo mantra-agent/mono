@@ -148,6 +148,7 @@ export type RegisteredIconKey = (typeof REGISTERED_ICON_KEYS)[number];
 export const REGISTERED_CONNECTOR_KEYS = [
   "google",
   "box",
+  "monday",
   "elevenlabs",
   "cartesia",
   "twilio",

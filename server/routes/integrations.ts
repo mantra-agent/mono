@@ -440,6 +440,73 @@ export async function registerIntegrationsRoutes(app: Express) {
     res.json({ oauthConfigured: boxOAuthConfigured() });
   });
 
+  app.get("/api/monday/status", requireAuth, async (_req, res) => {
+    const { mondayOAuthConfigured } = await import("../integrations/monday/oauth");
+    res.json({ oauthConfigured: mondayOAuthConfigured() });
+  });
+
+  app.post("/api/monday/oauth/start", requireAuth, async (req, res) => {
+    try {
+      const vaultId = String(req.body?.vaultId || "");
+      if (!vaultId || !req.principal) return res.status(400).json({ error: "vaultId is required" });
+      const { getMondayAuthUrl } = await import("../integrations/monday/oauth");
+      res.json({ url: await getMondayAuthUrl(vaultId, req.principal, req.get("host") || undefined) });
+    } catch (error: any) {
+      res.status(error.status || 500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/monday/oauth/callback", requireAuth, async (req, res) => {
+    try {
+      const code = String(req.query.code || "");
+      const state = String(req.query.state || "");
+      if (!code || !state || !req.principal) return res.status(400).send("Missing Monday OAuth code or state");
+      const { handleMondayOAuthCallback } = await import("../integrations/monday/oauth");
+      await handleMondayOAuthCallback(code, state, req.principal, req.get("host") || undefined);
+      res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#e0e0e0"><h2>Monday Connected</h2><p>You can close this window.</p><script>
+(function () {
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage({ type: "mantra:monday-oauth", status: "connected" }, window.location.origin);
+    }
+  } catch (e) {}
+  setTimeout(function () { window.close(); }, 1200);
+})();
+</script></body></html>`);
+    } catch (error: any) {
+      log.error("Monday OAuth callback failed", { error: error.message });
+      const message = String(error?.message || "Authorization failed").replace(/[<>&"']/g, "");
+      const callbackPayload = JSON.stringify({ type: "mantra:monday-oauth", status: "failed", message });
+      res.status(500).send(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#e0e0e0"><h2>Authorization Failed</h2><p>${message}</p><script>
+(function () {
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage(${callbackPayload}, window.location.origin);
+    }
+  } catch (e) {}
+})();
+</script></body></html>`);
+    }
+  });
+
+  app.delete("/api/monday/accounts/:id", requireAuth, async (req, res) => {
+    try {
+      const { getAccount, deleteAccount } = await import("../connected-accounts");
+      const account = await getAccount(req.params.id);
+      if (!account || account.provider !== "monday") return res.status(404).json({ error: "Monday account not found" });
+      const confirmation = String(req.body?.confirmation || "");
+      if (confirmation !== (account.email || account.label)) {
+        return res.status(400).json({ error: "Account confirmation does not match" });
+      }
+      const { revokeMondayAccount } = await import("../integrations/monday/oauth");
+      await revokeMondayAccount(req.params.id);
+      await deleteAccount(req.params.id);
+      res.json({ removed: true });
+    } catch (error: any) {
+      res.status(error.status || 500).json({ error: error.message });
+    }
+  });
+
   app.post("/api/box/oauth/start", requireAuth, async (req, res) => {
     try {
       const vaultId = String(req.body?.vaultId || "");

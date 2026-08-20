@@ -135,6 +135,24 @@ export async function registerSetupRoutes(app: Express) {
       gmailHealthy: gmailHealthResult.configured ? gmailHealthResult.healthy : undefined,
       gdrive: !!getSecretSync("GOOGLE_CLIENT_ID") && !!getSecretSync("GOOGLE_CLIENT_SECRET"),
       box: !!getSecretSync("BOX_CLIENT_ID") && !!getSecretSync("BOX_CLIENT_SECRET"),
+      monday: await (async () => {
+        try {
+          const accounts = await (await import("../connected-accounts")).listVisibleConnectedAccounts("monday");
+          return accounts.some((a) => a.healthy !== false);
+        } catch {
+          return false;
+        }
+      })(),
+      mondayHealthy: await (async () => {
+        try {
+          const accounts = await (await import("../connected-accounts")).listVisibleConnectedAccounts("monday");
+          const account = accounts[0];
+          if (!account) return undefined;
+          return account.healthy !== false;
+        } catch {
+          return undefined;
+        }
+      })(),
       twitter: await (async () => {
         try {
           const { isTwitterConnected } = await import("../twitter");

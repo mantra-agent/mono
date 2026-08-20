@@ -29,6 +29,7 @@ import { usePageHeader } from "@/hooks/use-page-header";
 import { useVaults } from "@/hooks/use-vaults";
 import { DriveSection } from "@/components/integrations/drive-section";
 import { BoxSection } from "@/components/integrations/box-section";
+import { MondaySection } from "@/components/integrations/monday-section";
 import { SlackDetail } from "@/components/integrations/slack-section";
 import {
   Select,
@@ -88,6 +89,7 @@ import {
   Radio,
   MessageSquare,
   Box,
+  ClipboardList,
   Clock,
   GitBranch,
   Share2,
@@ -115,6 +117,7 @@ const INTEGRATION_ICONS = {
   Activity,
   Bot,
   Box,
+  ClipboardList,
   Glasses,
   Globe,
   GitBranch,
@@ -1931,6 +1934,17 @@ function BoxDetail() {
     <div className="min-w-0" data-testid="box-detail">
       <IntegrationTreeSection label="Box account" initialOpen>
         <BoxSection vaultId={activeVaultId || undefined} />
+      </IntegrationTreeSection>
+    </div>
+  );
+}
+
+function MondayDetail() {
+  const { activeVaultId } = useVaults();
+  return (
+    <div className="min-w-0" data-testid="monday-detail">
+      <IntegrationTreeSection label="Monday account" initialOpen>
+        <MondaySection vaultId={activeVaultId || undefined} />
       </IntegrationTreeSection>
     </div>
   );
@@ -4739,6 +4753,7 @@ function SendGridDetail() {
 const INTEGRATION_DETAIL_SURFACES: Record<string, () => React.ReactNode> = {
   google: () => <GoogleDetail />,
   box: () => <BoxDetail />,
+  monday: () => <MondayDetail />,
   elevenlabs: () => (
     <div className="space-y-4">
       <WebhookBaseUrlSection />

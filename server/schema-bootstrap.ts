@@ -2348,6 +2348,7 @@ export async function runSchemaBootstrap(
     );
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_connected_accounts_vault ON connected_accounts(vault_id)`);
     await pool.query(`CREATE TABLE IF NOT EXISTS google_oauth_transactions (token_hash TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, principal_account_id TEXT NOT NULL, vault_id TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'google', label TEXT, redirect_origin TEXT, expires_at TIMESTAMPTZ NOT NULL, consumed_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`ALTER TABLE google_oauth_transactions ADD COLUMN IF NOT EXISTS code_verifier TEXT`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_google_oauth_transactions_expires ON google_oauth_transactions(expires_at)`);
     await pool.query(`CREATE TABLE IF NOT EXISTS subscription_oauth_transactions (state_hash TEXT PRIMARY KEY, provider TEXT NOT NULL, code_verifier TEXT NOT NULL, redirect_uri TEXT NOT NULL, connector_id INTEGER, expires_at TIMESTAMPTZ NOT NULL, consumed_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
     await pool.query(`ALTER TABLE subscription_oauth_transactions ADD COLUMN IF NOT EXISTS connector_id INTEGER`);
