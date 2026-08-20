@@ -12,6 +12,7 @@ import { createLogger } from "../log";
 import { getRuntimeIdentity } from "../runtime-identity";
 import { hasActiveModAccess } from "../mods/mod-access";
 import { loadSlackCredentials, postSlackMessage } from "./client";
+import { markdownToSlackMrkdwn } from "./mrkdwn";
 
 const outboundLog = createLogger("SlackOutbound");
 const storageLog = createLogger("SlackStorage");
@@ -541,6 +542,10 @@ export async function sendOnce(input: SlackOutboundSendInput): Promise<SlackOutb
   const text = input.text.trim();
   if (!text) throw new Error("slack_body_empty");
   if ([...text].length > OUTBOUND_BODY_MAX) throw new Error("slack_body_too_long");
+  // Model/skill text is Markdown. Slack renders mrkdwn. Convert at the sole
+  // outbound mutation boundary so inbound replies and slack.send share one converter.
+  const rendered = markdownToSlackMrkdwn(text).replace(/\s+$/g, "").trim() || text;
+  if ([...rendered].length > OUTBOUND_BODY_MAX) throw new Error("slack_body_too_long");
 
   const idempotencyKey = input.idempotencyKey.trim();
   if (idempotencyKey.length < 8 || idempotencyKey.length > 120) {
@@ -702,7 +707,7 @@ export async function sendOnce(input: SlackOutboundSendInput): Promise<SlackOutb
       const credentials = await loadSlackCredentials(installation);
       const receipt = await postSlackMessage(credentials, {
         channel: destinationSlackId,
-        text,
+        text: rendered,
         clientMsgId: deliveryClientMsgId,
       });
       await db.execute(sql`

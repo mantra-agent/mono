@@ -87,9 +87,13 @@ const WEEKLY_SUMMARY_SHAPE_MARKDOWN = `# Weekly Summary shape
 
 Work-ledger close. Process stays on the skill.
 
+## Today
+
+Who carried what this week, grouped by Person. None when no live owners.
+
 ## Does Not Add Up
 
-Contradictions across the week's board. None when it agrees.
+Bandwidth across the week. None when it fits.
 
 ## Unlocks
 
@@ -116,9 +120,13 @@ const STAND_UP_SHAPE_MARKDOWN = `# Stand Up shape
 
 Work-ledger open. Process stays on the skill.
 
+## Today
+
+Who is on what today. Group by Person. None when no live owners.
+
 ## Does Not Add Up
 
-Inspected contradictions. None when the board and graph agree.
+Bandwidth, not integrity. None when the day fits.
 
 ## Unlocks
 
@@ -126,7 +134,7 @@ Highest-leverage incomplete work, ranked by blocked_by fan-in. None when no unre
 
 ## Board
 
-Active projects, their milestones, and live tasks.
+Active projects, their milestones, and live tasks. Appendix.
 `;
 
 const DAILY_BRIEF_SHAPE_MARKDOWN = `# Daily Brief shape
@@ -290,9 +298,9 @@ async function ensureShapePage(seed: (typeof SHAPE_SEEDS)[number]): Promise<void
     });
   }
 
-  // Official Spec and recut Weekly Summary vessels may converge. Daily/Brief/Stand-up
-  // stay insert-only for body text. Identity (live + global + canonical id) is not optional.
-  if (seed.templateId !== "spec" && seed.templateId !== "weekly-summary") return;
+  // Official Spec, recut Weekly Summary, and recut Stand Up vessels may converge.
+  // Daily Digest / Brief stay insert-only for body text. Identity is not optional.
+  if (seed.templateId !== "spec" && seed.templateId !== "weekly-summary" && seed.templateId !== "stand-up") return;
   if (normalizeShapeMarkdown(existing.plainTextContent) === nextPlain) return;
 
   await db
@@ -306,7 +314,7 @@ async function ensureShapePage(seed: (typeof SHAPE_SEEDS)[number]): Promise<void
       updatedAt: new Date(),
     })
     .where(eq(libraryPages.id, existing.id));
-  log.info("converged official spec shape page", { pageId: existing.id });
+  log.info("converged official shape page", { pageId: existing.id, templateId: seed.templateId });
 }
 
 async function ensureGlobalTemplate(seed: (typeof SHAPE_SEEDS)[number]): Promise<void> {
@@ -382,7 +390,7 @@ async function unbindRetiredSkillKey(skillName: string, key: "spec" | "daily" | 
   }
 }
 
-/** Day-one shape pages, global map rows, and skill binds. Identity (live + global + canonical id) heals on every boot. Spec and recut weekly-summary may also converge body text. Never overwrites account overlays. */
+/** Day-one shape pages, global map rows, and skill binds. Identity (live + global + canonical id) heals on every boot. Spec, recut weekly-summary, and recut stand-up may also converge body text. Never overwrites account overlays. */
 export async function ensureDocumentTemplateSeeds(): Promise<void> {
   for (const seed of SHAPE_SEEDS) {
     await ensureShapePage(seed);
