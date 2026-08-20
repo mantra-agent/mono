@@ -102,7 +102,12 @@ export interface Assumptions {
   openingCash: number;
   startingAccounts: number;
   startingUsers: number;
-  quarterOneNewAccounts: number;
+  /** USD per MQL for the same-month paid sales funnel. ≤ 0 → zero MQLs. */
+  costPerMql: number;
+  /** Monthly MQL → SQL conversion, 0–100. */
+  mqlToSqlPct: number;
+  /** Monthly SQL → closed-won conversion, 0–100. */
+  sqlToClosedWonPct: number;
   averageUsersPerNewAccount: number;
   accountExpansion90d: number;
   downsideAccountExpansion90d: number;
@@ -258,7 +263,9 @@ export function defaultAssumptions(): Assumptions {
     openingCash: 12_500,
     startingAccounts: 0,
     startingUsers: 0,
-    quarterOneNewAccounts: 10,
+    costPerMql: 0,
+    mqlToSqlPct: 0,
+    sqlToClosedWonPct: 0,
     averageUsersPerNewAccount: 1,
     accountExpansion90d: 1.5,
     downsideAccountExpansion90d: 1.35,
@@ -352,7 +359,7 @@ const legacyStageSchema = z.object({
 
 const rawAssumptionsSchema = z.object({
   modelVersion: z.number().optional(), horizonMonths: z.number().optional(), startCalendarMonth: z.string().optional(), openingCash: z.number().optional(), startingCash: z.number().optional(),
-  startingAccounts: z.number().optional(), startingCustomers: z.number().optional(), startingUsers: z.number().optional(), quarterOneNewAccounts: z.number().optional(), averageUsersPerNewAccount: z.number().optional(), accountExpansion90d: z.number().optional(), downsideAccountExpansion90d: z.number().optional(),
+  startingAccounts: z.number().optional(), startingCustomers: z.number().optional(), startingUsers: z.number().optional(), quarterOneNewAccounts: z.number().optional(), costPerMql: z.number().optional(), mqlToSqlPct: z.number().optional(), sqlToClosedWonPct: z.number().optional(), averageUsersPerNewAccount: z.number().optional(), accountExpansion90d: z.number().optional(), downsideAccountExpansion90d: z.number().optional(),
   annualAccountChurnPct: z.number().optional(), annualExistingAccountUserGrowthPct: z.number().optional(), annualExistingAccountUserContractionPct: z.number().optional(), annualAccountUpgradePct: z.number().optional(),
   annualGrossLogoRetentionPct: z.number().optional(), annualNrrPct: z.number().optional(), individualEntrySharePct: z.number().optional(), maxSubscriptionMonthly: z.number().optional(), revenuePerCustomerMonthly: z.number().optional(),
   maxPlusSubscriptionMonthly: z.number().optional(), enterpriseSubscriptionMonthly: z.number().optional(), participantSeatMonthly: z.number().optional(), averageEntrySeatsPerTeamAccount: z.number().optional(),
@@ -563,7 +570,11 @@ export function normalizeAssumptions(input: unknown): Assumptions {
     startCalendarMonth: raw.startCalendarMonth && MONTH_PATTERN.test(raw.startCalendarMonth) ? raw.startCalendarMonth : defaults.startCalendarMonth,
     openingCash: nonNegative(compatibility.openingCash, defaults.openingCash), startingAccounts: nonNegative(compatibility.startingAccounts, defaults.startingAccounts),
     startingUsers: nonNegative(raw.startingUsers, Math.max(nonNegative(compatibility.startingAccounts, defaults.startingAccounts), defaults.startingUsers)),
-    quarterOneNewAccounts: nonNegative(raw.quarterOneNewAccounts, defaults.quarterOneNewAccounts), averageUsersPerNewAccount: Math.max(1, nonNegative(raw.averageUsersPerNewAccount, defaults.averageUsersPerNewAccount)),
+    // quarterOneNewAccounts is retired: leftover JSON is ignored; funnel rates default to honest zeros.
+    costPerMql: nonNegative(raw.costPerMql, defaults.costPerMql),
+    mqlToSqlPct: bounded(raw.mqlToSqlPct, 0, 100, defaults.mqlToSqlPct),
+    sqlToClosedWonPct: bounded(raw.sqlToClosedWonPct, 0, 100, defaults.sqlToClosedWonPct),
+    averageUsersPerNewAccount: Math.max(1, nonNegative(raw.averageUsersPerNewAccount, defaults.averageUsersPerNewAccount)),
     accountExpansion90d: nonNegative(compatibility.accountExpansion90d, defaults.accountExpansion90d), downsideAccountExpansion90d: nonNegative(raw.downsideAccountExpansion90d, defaults.downsideAccountExpansion90d),
     annualAccountChurnPct: bounded(raw.annualAccountChurnPct, 0, 100, 100 - bounded(raw.annualGrossLogoRetentionPct, 0, 100, defaults.annualGrossLogoRetentionPct)),
     annualExistingAccountUserGrowthPct: nonNegative(raw.annualExistingAccountUserGrowthPct, defaults.annualExistingAccountUserGrowthPct),
@@ -684,7 +695,7 @@ export interface MonthRow {
   maxAccounts: number; maxPlusAccounts: number; factoryPlusAccounts: number;
   newUsers: number; expandedUsers: number; contractedUsers: number; existingAccountUsers: number; activeUsers: number;
   principals: number; participants: number; agents: number;
-  meetings: number; internalMeetings: number; externalMeetings: number; newAccountsFromMeetings: number; newAccountsFromSales: number; expandedUsersFromMeetings: number;
+  meetings: number; internalMeetings: number; externalMeetings: number; newAccountsFromMeetings: number; newAccountsFromSales: number; salesMqls: number; salesSqls: number; expandedUsersFromMeetings: number;
   hoursUsed: number; activationHours: number; checkInHours: number; tokensUsed: number; tokenCost: number;
   startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; userContractionRevenue: number; tierExpansionRevenue: number; sameCohortRecurringRevenue: number; cohortNrr: number;
   subscriptionRevenue: number; seatExpansionRevenue: number; overageRevenue: number; productRevenue: number; productArr: number;
@@ -701,7 +712,7 @@ export interface PeriodRow {
   key: string; label: string; startMonth: number; endMonth: number; monthCount: number;
   phaseKey: PhaseKey; phaseLabel: string; financingKey: FinancingKey;
   activeAccounts: number; maxAccounts: number; maxPlusAccounts: number; factoryPlusAccounts: number;
-  newAccounts: number; newAccountsFromMeetings: number; newAccountsFromSales: number; churnedAccounts: number; activeUsers: number; newUsers: number; expandedUsers: number; contractedUsers: number;
+  newAccounts: number; newAccountsFromMeetings: number; newAccountsFromSales: number; salesMqls: number; salesSqls: number; churnedAccounts: number; activeUsers: number; newUsers: number; expandedUsers: number; contractedUsers: number;
   principals: number; participants: number; agents: number;
   meetings: number; internalMeetings: number; externalMeetings: number; expandedUsersFromMeetings: number;
   hoursUsed: number; activationHours: number; checkInHours: number; tokensUsed: number; tokenCost: number; supportActivationCogs: number; supportCheckInCogs: number;
@@ -789,6 +800,35 @@ const RETIRED_PACKAGE_ASSUMPTION_KEY_SET = new Set<string>(RETIRED_PACKAGE_ASSUM
 
 export function isRetiredPackageAssumptionKey(key: string): key is RetiredPackageAssumptionKey {
   return RETIRED_PACKAGE_ASSUMPTION_KEY_SET.has(key);
+}
+
+/** Volume/mix keys retired from Forecast assumptions (normalize drops leftover JSON). */
+export const RETIRED_VOLUME_ASSUMPTION_KEYS = ["quarterOneNewAccounts"] as const;
+export type RetiredVolumeAssumptionKey = (typeof RETIRED_VOLUME_ASSUMPTION_KEYS)[number];
+const RETIRED_VOLUME_ASSUMPTION_KEY_SET = new Set<string>(RETIRED_VOLUME_ASSUMPTION_KEYS);
+
+export function isRetiredVolumeAssumptionKey(key: string): key is RetiredVolumeAssumptionKey {
+  return RETIRED_VOLUME_ASSUMPTION_KEY_SET.has(key);
+}
+
+/** Unique Budget line name that feeds the same-month paid sales funnel. */
+export const ACQUISITION_SPENDING_LINE_NAME = "Acquisition Spending";
+
+/** Dollars from the unique Budget line named Acquisition Spending; 0 if missing or duplicated. */
+export function resolveAcquisitionSpendingDollars(departments: BudgetDepartment[] | undefined): number {
+  if (!departments?.length) return 0;
+  const needle = ACQUISITION_SPENDING_LINE_NAME.trim().toLowerCase();
+  let matchCents: number | null = null;
+  for (const department of departments) {
+    for (const category of department.categories) {
+      for (const item of category.lineItems) {
+        if (item.name.trim().toLowerCase() !== needle) continue;
+        if (matchCents !== null) return 0;
+        matchCents = item.monthlyAmountCents;
+      }
+    }
+  }
+  return matchCents === null ? 0 : matchCents / 100;
 }
 
 function requirePricing(pricing: BusinessPricing | undefined): BusinessPricing {
@@ -900,6 +940,7 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
   const seatDeltaAt = (ageMonths: number) => Math.max(0, maxPlusRecognizedMonthly(ageMonths) - maxRecognizedMonthly(ageMonths));
   const departmentOpex = Object.fromEntries((budgetDepartments ?? []).map((department) => [department.id, departmentMonthlyTotal(department) / 100]));
   const canonicalBudgetOpex = budgetDepartments ? budgetMonthlyTotal(budgetDepartments) / 100 : null;
+  const budgetAcquisitionSpending = resolveAcquisitionSpendingDollars(budgetDepartments);
   const roleById = new Map(roles.map((role) => [role.id, role]));
   const derivedHires: DerivedHire[] = [];
   if (hiringSlots) {
@@ -964,14 +1005,16 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
       const startOfMonthAge = age - 1;
       startUsers += cohort.accounts * Math.pow(accountSurvivalMonthly, startOfMonthAge) * cohort.usersPerAccount * Math.pow(netUserMovementMonthly, startOfMonthAge);
     }
-    const seedAccounts = month <= 3 ? assumptions.quarterOneNewAccounts / 3 : 0;
-    const seedUsers = seedAccounts * catalogPeoplePerAccount;
-    const meetings = (startUsers + seedUsers) * hoursUsedPerUser * assumptions.meetingsPerHour;
+    // Meetings from start-of-month users only — paid sales logos must not mint same-month meetings.
+    const meetings = startUsers * hoursUsedPerUser * assumptions.meetingsPerHour;
     const internalMeetings = meetings * internalMeetingShare;
     const externalMeetings = meetings - internalMeetings;
     const newAccountsFromMeetings = externalMeetings * assumptions.newAccountsPerExternalMeeting;
     const expandedUsersFromMeetings = internalMeetings * assumptions.expandedUsersPerInternalMeeting;
-    const newAccountsFromSales = seedAccounts;
+    const acquisitionSpendBase = budgetAcquisitionSpending;
+    const salesMqls = assumptions.costPerMql > 0 ? acquisitionSpendBase / assumptions.costPerMql : 0;
+    const salesSqls = salesMqls * (assumptions.mqlToSqlPct / 100);
+    const newAccountsFromSales = salesSqls * (assumptions.sqlToClosedWonPct / 100);
     const newAccounts = newAccountsFromSales + newAccountsFromMeetings;
     cohorts.push({ birthMonth: month, accounts: newAccounts, usersPerAccount: catalogPeoplePerAccount });
     let activeAccounts = 0;
@@ -1084,12 +1127,12 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     const supportCogs = supportActivationCogs + supportCheckInCogs;
     const activeHires = derivedHires.filter((hire) => hire.startMonth <= month);
     const keyHireStaffOpex = activeHires.reduce((sum, hire) => hire.costAllocation === "product_cogs" ? sum : sum + hire.monthlyCost, 0);
-    const keyHireAcquisitionSpend = activeHires.filter((hire) => hire.costAllocation === "acquisition_split").reduce((sum, hire) => sum + hire.monthlyCost * hire.acquisitionAllocationPct / 100, 0);
     const keyHireHeadcount = activeHires.reduce((sum, hire) => sum + hire.headcount, 0);
     const productCogs = includedTokenCogs + supportCogs;
     const lane = assumptions.monthlyCashLanes[month - 1];
     const totalCashRevenue = productRevenue;
-    const acquisitionSpend = newAccounts * blendedEntryCac + keyHireAcquisitionSpend;
+    // Acquisition spend metric is the Budget Acquisition Spending line only (not logos × CAC).
+    const acquisitionSpend = acquisitionSpendBase;
     const manualOpex = (category: OpexCategory) => assumptions.operatingCosts.filter((cost) => cost.classification === "opex" && (cost.opexCategory ?? "g_and_a") === category && activeCost(cost, month)).reduce((sum, cost) => sum + cost.monthlyAmount, 0);
     const staffOpex = keyHireStaffOpex + manualOpex("staff");
     const staffByRole: Record<string, number> = {};
@@ -1120,13 +1163,13 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
       maxAccounts, maxPlusAccounts, factoryPlusAccounts,
       newUsers, expandedUsers, contractedUsers, existingAccountUsers, activeUsers,
       principals, participants, agents,
-      meetings, internalMeetings, externalMeetings, newAccountsFromMeetings, newAccountsFromSales, expandedUsersFromMeetings,
+      meetings, internalMeetings, externalMeetings, newAccountsFromMeetings, newAccountsFromSales, salesMqls, salesSqls, expandedUsersFromMeetings,
       hoursUsed, activationHours, checkInHours, tokensUsed, tokenCost, startingCohortRevenue, churnedRevenue, userExpansionRevenue, userContractionRevenue, tierExpansionRevenue, sameCohortRecurringRevenue, cohortNrr,
       subscriptionRevenue, seatExpansionRevenue, overageRevenue, productRevenue, productArr: productRevenue * 12,
       activeSeats, requiredTierUpgrades, overageDominant: false,
       totalCashRevenue, includedTokenCogs, seatCogs, supportCogs, supportActivationCogs, supportCheckInCogs, overageTokenCogs, requiredOverageTokensMillions, totalTokenUsageMillions: tokensUsed / 1_000_000 + requiredOverageTokensMillions, overageGrossMargin,
       productCogs, productGrossMargin: safeRatio(productRevenue - productCogs, productRevenue),
-      blendedCompanyGrossMargin: safeRatio(totalCashRevenue - productCogs, totalCashRevenue), acquisitionSpend, blendedCac: newAccounts > 0 ? acquisitionSpend / newAccounts : blendedEntryCac,
+      blendedCompanyGrossMargin: safeRatio(totalCashRevenue - productCogs, totalCashRevenue), acquisitionSpend, blendedCac: newAccountsFromSales > 0 ? acquisitionSpendBase / newAccountsFromSales : 0,
       cacPaybackMonths: baselineCacPaybackMonths, headcount, operatingExpense, capex: lane.capex, grossProfit, staffOpex, staffByRole, acquisitionOpex, budgetOpex, departmentOpex, totalOpex, operatingIncome, netCashChange, financingCash, endingCash, trailingBurn, runwayMonths: trailingBurn > 0 ? Math.max(0, endingCash) / trailingBurn : Number.POSITIVE_INFINITY,
     });
   }
@@ -1299,6 +1342,8 @@ export function aggregateMonths(months: MonthRow[], mode: PeriodMode): PeriodRow
       newAccounts: sum((row) => row.newAccounts),
       newAccountsFromMeetings: sum((row) => row.newAccountsFromMeetings),
       newAccountsFromSales: sum((row) => row.newAccountsFromSales),
+      salesMqls: sum((row) => row.salesMqls),
+      salesSqls: sum((row) => row.salesSqls),
       churnedAccounts: sum((row) => row.churnedAccounts),
       activeUsers: last.activeUsers,
       newUsers: sum((row) => row.newUsers),

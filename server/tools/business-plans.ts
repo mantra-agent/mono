@@ -730,10 +730,16 @@ async function handleModelAction(action: string, args: Record<string, unknown>) 
 
     if (action === "set_assumption") {
       if (typeof valueArg !== "number") return { result: "business.set_assumption requires a numeric value", error: true };
-      const { assumptionsPatchSchema, isRetiredPackageAssumptionKey } = await import("@shared/models/business-model");
+      const { assumptionsPatchSchema, isRetiredPackageAssumptionKey, isRetiredVolumeAssumptionKey } = await import("@shared/models/business-model");
       if (isRetiredPackageAssumptionKey(assumptionKey)) {
         return {
           result: `business.set_assumption rejected "${assumptionKey}": package prices, includes, extras, and markup live on Pricing. Use update_package or update_extras.`,
+          error: true,
+        };
+      }
+      if (isRetiredVolumeAssumptionKey(assumptionKey)) {
+        return {
+          result: `business.set_assumption rejected "${assumptionKey}": retired. Paid sales is costPerMql, mqlToSqlPct, and sqlToClosedWonPct driven by Budget Acquisition Spending.`,
           error: true,
         };
       }
