@@ -58,11 +58,13 @@ export async function convergeBootSchema(): Promise<void> {
         const { ensureModPlatformSchema } = await import("./mod-schema");
         const { ensureBuildDeploymentSchema } = await import("./build-deployment-schema");
         const { ensureReportedIssueHomeSchema } = await import("./reported-issue-home-schema");
+        const { ensureObjectShareHomeSchema } = await import("./object-share-home-schema");
         await ensureRuntimeKernelSchema(pool);
         await ensureLifeAddressingSchema(pool);
         await ensureModPlatformSchema(pool);
         await ensureBuildDeploymentSchema(pool);
         await ensureReportedIssueHomeSchema(pool);
+        await ensureObjectShareHomeSchema(pool);
       },
     },
     {

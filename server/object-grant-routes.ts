@@ -82,6 +82,16 @@ function handleError(res: Response, error: unknown, fallback: string) {
 }
 
 export function registerObjectGrantRoutes(app: Express) {
+  // Recent person subjects this caller has granted (Share sheet recents). Caller-scoped only.
+  app.get("/api/objects/grants/recent-people", async (_req, res) => {
+    try {
+      const people = await objectGrantService.listRecentPeople();
+      res.json({ people });
+    } catch (error: unknown) {
+      handleError(res, error, "Failed to list recent share people");
+    }
+  });
+
   // Who has access — admin-gated list of live grants with display labels.
   app.get("/api/objects/:objectType/:objectId/grants", async (req, res) => {
     try {

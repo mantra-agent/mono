@@ -31,6 +31,7 @@ const PUBLIC_RULES: ApiPolicyRule[] = [
   { classification: "public", pattern: /^\/api\/auth\/(?:invite|reset)\/[^/]+$/, reason: "single-use authentication capability redemption" },
   { classification: "public", prefixes: ["/api/voice/llm/"], reason: "voice provider callback ingress" },
   { classification: "public", methods: ["POST"], exact: ["/api/voice/start", "/api/voice/diagnostic"], reason: "provisional onboarding voice start (auth enforced at route via requireAuthenticatedOrProvisionalVoice) and unauthenticated voice telemetry sink" },
+  { classification: "personal", methods: ["GET"], exact: ["/api/objects/grants/recent-people"], reason: "authenticated caller-scoped recent share people; ObjectGrantService.listRecentPeople is the authority" },
   { classification: "public", prefixes: ["/api/objects/", "/objects"], methods: ["GET"], reason: "object read path with object ACL checks downstream" },
   { classification: "personal", prefixes: ["/api/uploads"], reason: "authenticated user upload path" },
   { classification: "public", exact: ["/api/glasses/events"], methods: ["GET"], reason: "unauthenticated glasses SSE auto-pair bootstrap; route auto-pairs to the default user and issues a device token internally" },

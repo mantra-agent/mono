@@ -39,6 +39,7 @@ import { sensitiveVisiblePredicate } from "../sensitive-scope";
 import { visiblePersonPredicate } from "../person-vault-access";
 import { listBuildDeploymentHomeItems } from "../mods/build-deployment-home";
 import { listReportedIssueHomeItems } from "../mods/reported-issue-home";
+import { listObjectShareHomeItems } from "../object-share-home";
 
 const log = createLogger("SimpleCollectors");
 
@@ -1956,6 +1957,70 @@ function itemFromReportedIssue(
   };
 }
 
+function itemFromObjectShare(
+  share: Awaited<ReturnType<typeof listObjectShareHomeItems>>[number],
+  index: number,
+  timezone: string,
+): SimpleFeedItem {
+  const href = share.href || "/home";
+  const sourceRef: SimpleSourceRef = {
+    type: "artifact",
+    id: String(share.grantId),
+    label: share.objectTitle,
+    href,
+    observedAt: share.createdAt.toISOString(),
+  };
+  const references = [share.sharerReference, share.objectReference].filter(
+    (ref): ref is NonNullable<typeof ref> => Boolean(ref),
+  );
+  return {
+    id: `object-share-${share.grantId}`,
+    section: "inbox",
+    widgetType: "inbox_item",
+    title: share.sentence,
+    status: "active",
+    priority: 9 + index,
+    sourceRefs: [sourceRef],
+    references,
+    anchorTime: share.createdAt.toISOString(),
+    actionTime: share.createdAt.toISOString(),
+    time: stackTimeOverDate(formatClockTime(share.createdAt, timezone), share.createdAt, timezone),
+    completable: true,
+    payload: {
+      kind: "object_share",
+      grantId: share.grantId,
+      objectType: share.objectType,
+      objectId: share.objectId,
+      objectTitle: share.objectTitle,
+      sharerUserId: share.sharerUserId,
+      sharerLabel: share.sharerLabel,
+      reasonKey: share.reasonKey,
+      href: share.href,
+      inboxAddedAt: share.createdAt.toISOString(),
+    },
+    actions: [
+      {
+        id: `dismiss-object-share-${share.grantId}`,
+        label: "Clear share",
+        type: "complete",
+        sourceRef,
+        payload: {
+          kind: "object_share",
+          grantId: share.grantId,
+          reasonKey: share.reasonKey,
+        },
+      },
+      {
+        id: `open-object-share-${share.grantId}`,
+        label: "Open",
+        type: "navigate",
+        href,
+        sourceRef,
+      },
+    ],
+  };
+}
+
 // ─── Main collector ───
 
 export async function collectSimpleContext(): Promise<SimpleContextBundle> {
@@ -2169,6 +2234,8 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
       deployments.forEach((deployment, index) => items.push(itemFromBuildDeployment(deployment, index, timezone)));
       const reports = await listReportedIssueHomeItems(principal);
       reports.forEach((report, index) => items.push(itemFromReportedIssue(report, index, timezone)));
+      const shares = await listObjectShareHomeItems(principal);
+      shares.forEach((share, index) => items.push(itemFromObjectShare(share, index, timezone)));
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

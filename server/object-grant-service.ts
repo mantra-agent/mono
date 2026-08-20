@@ -1,5 +1,5 @@
-import { and, eq, isNull } from "drizzle-orm";
-import { milestones, objectGrants, privilegedAccessAudit, projects, tasks } from "@shared/schema";
+import { and, desc, eq, gte, inArray, isNull } from "drizzle-orm";
+import { invitedSubjects, milestones, objectGrants, privilegedAccessAudit, projects, tasks, users } from "@shared/schema";
 import { vaults } from "@shared/models/vaults";
 import { driveResources } from "@shared/schema";
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, type DrizzleTx } from "./db";
@@ -13,6 +13,16 @@ import type { Principal } from "./principal";
 
 const log = createLogger("ObjectGrantService");
 const MAX_MEETING_DEFAULT_GRANT_SUBJECTS = 500;
+const RECENT_PEOPLE_LIMIT = 8;
+const RECENT_PEOPLE_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+
+export interface RecentGrantPerson {
+  subjectType: "user" | "invited_subject";
+  subjectId: string;
+  label: string;
+  email: string | null;
+  lastGrantedAt: string;
+}
 
 export type ObjectGrantSubjectType = "user" | "invited_subject" | "team" | "organization";
 export type ObjectGrantOriginType = "meeting" | "manual";
@@ -175,12 +185,18 @@ async function writeGrantAudit(
   });
 }
 
+interface GrantMutationResult {
+  grant: typeof objectGrants.$inferSelect;
+  /** True only when a new live row was inserted (not unchanged capability). */
+  inserted: boolean;
+}
+
 async function grantInTransaction(
   tx: DrizzleTx,
   principal: Principal & { userId: string },
   input: GrantObjectAccessInput,
   preResolvedSubject?: ResolvedSecuritySubject,
-): Promise<typeof objectGrants.$inferSelect> {
+): Promise<GrantMutationResult> {
   const resolvedSubject = preResolvedSubject ?? (input.subjectType === "invited_subject"
     ? await resolveInvitedSubjectReferenceInTransaction(tx, input.subjectId, { create: true })
     : { subjectType: input.subjectType, subjectId: normalizeSubjectId(input.subjectId) });
@@ -200,6 +216,7 @@ async function grantInTransaction(
 
   const originId = normalizeOriginId(input.originId);
   let grant = active;
+  let inserted = false;
   const unchanged = active &&
     active.capability === input.capability &&
     active.originType === input.originType &&
@@ -216,6 +233,7 @@ async function grantInTransaction(
       originType: input.originType,
       originId,
     }).returning();
+    inserted = true;
   }
 
   if (!grant) throw new Error("Object grant mutation produced no active grant");
@@ -229,7 +247,7 @@ async function grantInTransaction(
     originType: input.originType,
     originId,
   });
-  return grant;
+  return { grant, inserted };
 }
 
 async function revokeInTransaction(
@@ -275,13 +293,30 @@ export class ObjectGrantService {
       return grantInTransaction(tx, principal, input, resolvedSubject);
     });
     log.info("object grant granted", {
-      grantId: result.id,
-      objectType: result.objectType,
-      objectId: result.objectId,
-      subjectType: result.subjectType,
-      capability: result.capability,
+      grantId: result.grant.id,
+      objectType: result.grant.objectType,
+      objectId: result.grant.objectId,
+      subjectType: result.grant.subjectType,
+      capability: result.grant.capability,
+      inserted: result.inserted,
     });
-    return result;
+    // Notice hangs off new manual person inserts only — never meeting/task paths
+    // (those call grantInTransaction directly) and never unchanged re-shares.
+    if (
+      result.inserted
+      && result.grant.originType === "manual"
+      && (result.grant.subjectType === "user" || result.grant.subjectType === "invited_subject")
+    ) {
+      void import("./object-share-notice")
+        .then(({ notifyObjectShareRecipients }) => notifyObjectShareRecipients(result.grant))
+        .catch((error) => {
+          log.warn("object share notice dispatch failed", {
+            grantId: result.grant.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }
+    return result.grant;
   }
 
   async revoke(input: RevokeObjectAccessInput): Promise<boolean> {
@@ -308,6 +343,87 @@ export class ObjectGrantService {
         eq(objectGrants.objectId, objectId),
         isNull(objectGrants.revokedAt),
       )).orderBy(objectGrants.createdAt);
+    });
+  }
+
+  /**
+   * Caller-scoped recent person subjects this user granted (any object).
+   * Distinct subject, newest first, cap 8, window 90 days. Includes subjects
+   * whose latest grant was later revoked. Never returns other users' grants.
+   */
+  async listRecentPeople(): Promise<RecentGrantPerson[]> {
+    const principal = requireCurrentUserPrincipal();
+    requireGrantActor(principal);
+    const since = new Date(Date.now() - RECENT_PEOPLE_WINDOW_MS);
+    const rows = await db
+      .select({
+        subjectType: objectGrants.subjectType,
+        subjectId: objectGrants.subjectId,
+        createdAt: objectGrants.createdAt,
+      })
+      .from(objectGrants)
+      .where(and(
+        eq(objectGrants.grantedByUserId, principal.userId),
+        inArray(objectGrants.subjectType, ["user", "invited_subject"]),
+        gte(objectGrants.createdAt, since),
+      ))
+      .orderBy(desc(objectGrants.createdAt))
+      .limit(200);
+
+    const seen = new Set<string>();
+    const distinct: Array<{ subjectType: "user" | "invited_subject"; subjectId: string; createdAt: Date }> = [];
+    for (const row of rows) {
+      if (row.subjectType !== "user" && row.subjectType !== "invited_subject") continue;
+      const key = `${row.subjectType}:${row.subjectId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      distinct.push({
+        subjectType: row.subjectType,
+        subjectId: row.subjectId,
+        createdAt: row.createdAt,
+      });
+      if (distinct.length >= RECENT_PEOPLE_LIMIT) break;
+    }
+
+    if (distinct.length === 0) return [];
+
+    const userIds = distinct.filter((d) => d.subjectType === "user").map((d) => d.subjectId);
+    const invitedIds = distinct.filter((d) => d.subjectType === "invited_subject").map((d) => d.subjectId);
+    const userRows = userIds.length
+      ? await db.select({ id: users.id, email: users.email }).from(users).where(inArray(users.id, userIds))
+      : [];
+    const invitedRows = invitedIds.length
+      ? await db
+          .select({
+            id: invitedSubjects.id,
+            label: invitedSubjects.displayLabel,
+            email: invitedSubjects.normalizedEmail,
+          })
+          .from(invitedSubjects)
+          .where(inArray(invitedSubjects.id, invitedIds))
+      : [];
+    const userMap = new Map(userRows.map((r) => [r.id, r]));
+    const invitedMap = new Map(invitedRows.map((r) => [r.id, r]));
+
+    return distinct.map((d) => {
+      if (d.subjectType === "user") {
+        const u = userMap.get(d.subjectId);
+        return {
+          subjectType: d.subjectType,
+          subjectId: d.subjectId,
+          label: u?.email ?? d.subjectId,
+          email: u?.email ?? null,
+          lastGrantedAt: d.createdAt.toISOString(),
+        };
+      }
+      const s = invitedMap.get(d.subjectId);
+      return {
+        subjectType: d.subjectType,
+        subjectId: d.subjectId,
+        label: s?.label ?? s?.email ?? d.subjectId,
+        email: s?.email ?? null,
+        lastGrantedAt: d.createdAt.toISOString(),
+      };
     });
   }
 
@@ -340,7 +456,7 @@ export class ObjectGrantService {
         capability: "write",
         originType: origin.originType,
         originId: origin.originId,
-      });
+      }); // internal path — no recipient notice (manual Share only)
     }
   }
 
@@ -375,7 +491,7 @@ export class ObjectGrantService {
         capability: "read",
         originType: "meeting",
         originId: normalizedMeetingId,
-      });
+      }); // meeting defaults stay silent
     }
     return subjects.length;
   }
