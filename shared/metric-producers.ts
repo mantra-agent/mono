@@ -52,3 +52,8 @@ export const METRIC_PRODUCER_FAMILY_LABEL: Record<MetricProducerFamily, string> 
   system: "System producers",
   warehouse: "Warehouse",
 };
+
+/** O(1) closed-key lookup for equation authoring highlight (not a registry type). */
+export const METRIC_PRODUCER_KEYS: ReadonlySet<string> = new Set(
+  METRIC_PRODUCER_PICKER_ITEMS.map((item) => item.key),
+);

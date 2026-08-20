@@ -7,6 +7,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
+  type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import { cn } from "@/lib/utils";
 import { parseReferenceText } from "@shared/reference-parser";
@@ -16,13 +19,18 @@ type EditableReferenceInputProps = {
   value: string;
   onChange: (value: string, cursorPosition: number) => void;
   onCursorChange?: (cursorPosition: number) => void;
-  onKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void;
-  onPaste?: (event: React.ClipboardEvent<HTMLDivElement>) => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
+  onPaste?: (event: ClipboardEvent<HTMLDivElement>) => void;
   onFocus?: () => void;
   onBlur?: () => void;
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  /**
+   * Optional decoration for non-reference text runs (e.g. metric producer tokens).
+   * Must preserve the exact character content — extractValue walks text nodes only.
+   */
+  renderPlainText?: (text: string, index: number) => ReactNode;
 };
 
 export type EditableReferenceInputHandle = {
@@ -169,6 +177,7 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
       placeholder,
       disabled,
       className,
+      renderPlainText,
     },
     ref,
   ) {
@@ -423,7 +432,7 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
       >
         {parts.map((part, index) =>
           part.kind === "text" ? (
-            <span key={index}>{part.text}</span>
+            <span key={index}>{renderPlainText ? renderPlainText(part.text, index) : part.text}</span>
           ) : (
             <span
               key={index}

@@ -1,6 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronRight, Database, FunctionSquare, Loader2, Plus, PenLine, SlidersHorizontal, Trash2 } from "lucide-react";
+import {
+  ChevronRight,
+  Database,
+  FunctionSquare,
+  Loader2,
+  MoreHorizontal,
+  Plus,
+  PenLine,
+  SlidersHorizontal,
+  Trash2,
+} from "lucide-react";
 import {
   METRIC_CATALOG_FAMILIES,
   METRIC_CATALOG_FAMILY_LABEL,
@@ -11,6 +21,7 @@ import {
 } from "@shared/models/metrics";
 import {
   METRIC_PRODUCER_FAMILY_LABEL,
+  METRIC_PRODUCER_KEYS,
   METRIC_PRODUCER_PICKER_ITEMS,
   type MetricProducerFamily,
 } from "@shared/metric-producers";
@@ -48,6 +59,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { EditableReferenceInput } from "@/components/references/editable-reference-input";
 import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
 import { serializeReference } from "@shared/references";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
@@ -128,6 +140,99 @@ function equationOf(metric: Metric): string {
   return typeof raw === "string" ? raw : "";
 }
 
+/** Closed producer keys only — not a reference type. Confirms syntax without a chip. */
+function renderEquationPlainText(text: string, partIndex: number): ReactNode {
+  const nodes: ReactNode[] = [];
+  const pattern = /[A-Za-z][A-Za-z0-9_-]*/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  let tokenIndex = 0;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > last) {
+      nodes.push(text.slice(last, match.index));
+    }
+    const token = match[0];
+    if (METRIC_PRODUCER_KEYS.has(token)) {
+      nodes.push(
+        <span
+          key={`${partIndex}-p-${tokenIndex++}`}
+          className="rounded-sm bg-muted/60 px-0.5 font-mono text-xs text-foreground"
+        >
+          {token}
+        </span>,
+      );
+    } else {
+      nodes.push(token);
+    }
+    last = match.index + token.length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes.length > 0 ? nodes : text;
+}
+
+function appendEquationToken(equation: string, token: string): string {
+  const trimmed = equation.trimEnd();
+  return trimmed ? `${trimmed} ${token}` : token;
+}
+
+function ProducersCatalogDialog({
+  open,
+  onOpenChange,
+  onPick,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onPick: (key: string) => void;
+}) {
+  const producersByFamily = useMemo(() => {
+    const map = new Map<MetricProducerFamily, typeof METRIC_PRODUCER_PICKER_ITEMS[number][]>();
+    for (const item of METRIC_PRODUCER_PICKER_ITEMS) {
+      const list = map.get(item.family) ?? [];
+      list.push(item);
+      map.set(item.family, list);
+    }
+    return map;
+  }, []);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Producers</DialogTitle>
+          <DialogDescription>Closed tokens that answer a Metric. Pick one to insert.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {([...producersByFamily.entries()] as Array<
+            [MetricProducerFamily, typeof METRIC_PRODUCER_PICKER_ITEMS[number][]]
+          >).map(([family, items]) => (
+            <div key={family} className="space-y-1.5">
+              <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                {METRIC_PRODUCER_FAMILY_LABEL[family]}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {items.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className="rounded-md border border-border px-1.5 py-0.5 font-mono text-xs text-foreground hover:bg-accent"
+                    data-testid={`metric-producer-${item.key}`}
+                    onClick={() => {
+                      onPick(item.key);
+                      onOpenChange(false);
+                    }}
+                  >
+                    {item.key}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function MetricEquationEditor({
   equation,
   onEquationChange,
@@ -141,71 +246,68 @@ function MetricEquationEditor({
   onOperandsChange: (next: ReferencePickerValue[]) => void;
   excludeMetricId?: string;
 }) {
-  const producersByFamily = useMemo(() => {
-    const map = new Map<MetricProducerFamily, typeof METRIC_PRODUCER_PICKER_ITEMS[number][]>();
-    for (const item of METRIC_PRODUCER_PICKER_ITEMS) {
-      const list = map.get(item.family) ?? [];
-      list.push(item);
-      map.set(item.family, list);
-    }
-    return map;
-  }, []);
+  const [producersOpen, setProducersOpen] = useState(false);
 
   return (
-    <div className="space-y-2">
-      <Input
-        placeholder="Equation"
-        value={equation}
-        onChange={(e) => onEquationChange(e.target.value)}
-        data-testid="metric-equation"
-        className="font-mono text-sm"
+    <div className="space-y-1.5">
+      <div className="flex items-start gap-1">
+        <div className="min-w-0 flex-1" data-testid="metric-equation">
+          <EditableReferenceInput
+            value={equation}
+            onChange={(next) => onEquationChange(next)}
+            placeholder="Equation"
+            className="min-h-8 rounded-md border border-input bg-background px-2 py-1.5 font-mono text-xs leading-relaxed text-foreground"
+            renderPlainText={renderEquationPlainText}
+          />
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              aria-label="Equation actions"
+              data-testid="metric-equation-menu"
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault();
+                setProducersOpen(true);
+              }}
+              data-testid="metric-equation-producers"
+            >
+              Producers
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <ReferencePicker
+        value={operands}
+        onChange={(next) => {
+          const added = next.find((item) => !operands.some((existing) => existing.id === item.id));
+          onOperandsChange(next);
+          if (!added) return;
+          if (excludeMetricId && added.id === excludeMetricId) return;
+          const token = serializeReference({ type: "metric", id: added.id });
+          onEquationChange(appendEquationToken(equation, token));
+        }}
+        types={["metric"]}
+        mode="multi"
+        variant="inline"
+        dense
+        placeholder="Add metric"
+        className="text-xs"
+        testId="metric-equation-operand"
+        excludeIds={excludeMetricId ? [excludeMetricId] : undefined}
       />
-      <div className="space-y-1.5">
-        <div className="text-xs text-muted-foreground">Producers</div>
-        {([...producersByFamily.entries()] as Array<[MetricProducerFamily, typeof METRIC_PRODUCER_PICKER_ITEMS[number][]]>).map(
-          ([family, items]) => (
-            <div key={family} className="space-y-1">
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
-                {METRIC_PRODUCER_FAMILY_LABEL[family]}
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {items.map((item) => (
-                  <button
-                    key={item.key}
-                    type="button"
-                    className="rounded-md border border-border px-1.5 py-0.5 font-mono text-[11px] text-foreground hover:bg-accent"
-                    data-testid={`metric-producer-${item.key}`}
-                    onClick={() => {
-                      onEquationChange(equation.trim() ? `${equation.trim()} ${item.key}` : item.key);
-                    }}
-                  >
-                    {item.key}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ),
-        )}
-      </div>
-      <div className="space-y-1">
-        <div className="text-xs text-muted-foreground">Metrics</div>
-        <ReferencePicker
-          value={operands}
-          onChange={(next) => {
-            const added = next.find((item) => !operands.some((existing) => existing.id === item.id));
-            onOperandsChange(next);
-            if (!added) return;
-            if (excludeMetricId && added.id === excludeMetricId) return;
-            const token = serializeReference({ type: "metric", id: added.id });
-            onEquationChange(equation.trim() ? `${equation.trim()} ${token}` : token);
-          }}
-          types={["metric"]}
-          mode="multi"
-          variant="inline"
-          placeholder="Add metric"
-          testId="metric-equation-operand"
-        />
-      </div>
+      <ProducersCatalogDialog
+        open={producersOpen}
+        onOpenChange={setProducersOpen}
+        onPick={(key) => onEquationChange(appendEquationToken(equation, key))}
+      />
     </div>
   );
 }
@@ -320,23 +422,42 @@ function MetricDefinitionEditor({ metric }: { metric: Metric }) {
   const [equation, setEquation] = useState(equationOf(metric));
   const [operands, setOperands] = useState<ReferencePickerValue[]>([]);
   const isManual = metric.adapterKind === "manual" || equationOf(metric) === "manual";
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedRef = useRef({
+    description: metric.description ?? "",
+    equation: equationOf(metric),
+  });
+  const descriptionRef = useRef(description);
+  const equationRef = useRef(equation);
+  descriptionRef.current = description;
+  equationRef.current = equation;
 
   useEffect(() => {
     setDescription(metric.description ?? "");
     setEquation(equationOf(metric));
+    lastSavedRef.current = {
+      description: metric.description ?? "",
+      equation: equationOf(metric),
+    };
   }, [metric.id, metric.description, metric.adapterConfig]);
 
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, []);
+
   const mutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (payload: { description: string; equation: string }) => {
       const res = await apiRequest("PATCH", `/api/metrics/${metric.id}`, {
-        description,
-        adapterConfig: { equation: equation.trim() },
+        description: payload.description,
+        adapterConfig: { equation: payload.equation },
       });
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, payload) => {
+      lastSavedRef.current = payload;
       queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/metrics") });
-      toast({ title: "Metric saved", description: metric.name });
     },
     onError: (error: unknown) => {
       toast({
@@ -347,32 +468,44 @@ function MetricDefinitionEditor({ metric }: { metric: Metric }) {
     },
   });
 
-  const canSave = equation.trim().length > 0 && !mutation.isPending;
+  const queueSave = useCallback(() => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      const nextDescription = descriptionRef.current;
+      const nextEquation = equationRef.current.trim();
+      if (!nextEquation) return;
+      const last = lastSavedRef.current;
+      if (nextDescription === last.description && nextEquation === last.equation) return;
+      mutation.mutate({ description: nextDescription, equation: nextEquation });
+    }, 700);
+  }, [mutation]);
 
   return (
-    <div className="max-w-xl space-y-3 py-1">
+    <div className="relative max-w-xl space-y-2 py-1">
+      {mutation.isPending ? (
+        <Loader2 className="absolute right-0 top-0 h-3.5 w-3.5 animate-spin text-muted-foreground" />
+      ) : null}
       <Textarea
         placeholder="Description"
         value={description}
-        onChange={(e) => setDescription(e.target.value)}
+        onChange={(e) => {
+          setDescription(e.target.value);
+          queueSave();
+        }}
+        onBlur={queueSave}
         data-testid={`metric-description-${metric.slug}`}
+        className="min-h-[2.5rem] resize-none border-0 bg-transparent px-0 py-0 text-xs leading-relaxed text-muted-foreground shadow-none focus-visible:ring-0"
       />
       <MetricEquationEditor
         equation={equation}
-        onEquationChange={setEquation}
+        onEquationChange={(next) => {
+          setEquation(next);
+          queueSave();
+        }}
         operands={operands}
         onOperandsChange={setOperands}
         excludeMetricId={metric.id}
       />
-      <Button
-        size="sm"
-        onClick={() => mutation.mutate()}
-        disabled={!canSave}
-        data-testid={`metric-save-${metric.slug}`}
-      >
-        {mutation.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-        Save definition
-      </Button>
       {isManual ? <RecordSampleForm metric={metric} /> : null}
     </div>
   );
@@ -473,13 +606,20 @@ function CreateMetricDialog() {
           <DialogTitle>New metric</DialogTitle>
           <DialogDescription>Name, description, and equation. The equation is the definition.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <Input placeholder="Metric name" value={name} onChange={(e) => setName(e.target.value)} data-testid="metric-name" />
+        <div className="space-y-2">
+          <Input
+            placeholder="Metric name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            data-testid="metric-name"
+            className="text-sm"
+          />
           <Textarea
             placeholder="Description"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             data-testid="metric-description"
+            className="min-h-[2.5rem] resize-none text-xs leading-relaxed text-muted-foreground"
           />
           <MetricEquationEditor
             equation={equation}
