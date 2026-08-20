@@ -1,7 +1,7 @@
 import type { ToolHandlerResult } from "../contracts";
 import { createLogger } from "../../log";
 import { safeStringify } from "../../utils/safe-stringify";
-import { parseCachedEmailMessageId, rejectInvalidCachedEmailMessageId } from "./gmail-boundary";
+import { gmailInput, parseCachedEmailMessageId, rejectInvalidCachedEmailMessageId } from "./gmail-boundary";
 
 const log = createLogger("EmailCache");
 
@@ -28,7 +28,7 @@ export async function handleGmailMailboxRead(args: Record<string, any>): Promise
 
   if (subAction === "search") {
     const query = args.query;
-    if (!query || typeof query !== "string") return { result: "Missing 'query' string parameter for search action.", error: true };
+    if (!query || typeof query !== "string") return gmailInput("Missing 'query' string parameter for search action.", "missing_search_query");
     const days = Math.max(1, Math.min(args.days || 7, 90));
     const searchLimit = Math.max(1, Math.min(args.limit || 20, 100));
     const { db } = await import("../../db");
@@ -96,7 +96,7 @@ export async function handleGmailMailboxRead(args: Record<string, any>): Promise
 async function resolveThread(args: Record<string, any>): Promise<ToolHandlerResult> {
   const rawRef = String(args.ref || args.query || args.thread_id || "").trim();
   const explicitAccountId = typeof args.account_id === "string" && args.account_id.trim() ? args.account_id.trim() : null;
-  if (!rawRef) return { result: "Missing email ref. Provide ref, query, or thread_id.", error: true };
+  if (!rawRef) return gmailInput("Missing email ref. Provide ref, query, or thread_id.", "missing_email_ref");
   const withoutAt = rawRef.startsWith("@") ? rawRef.slice(1) : rawRef;
   const firstColon = withoutAt.indexOf(":");
   const refType = firstColon > 0 ? withoutAt.slice(0, firstColon) : "email_thread";
@@ -118,7 +118,7 @@ async function resolveThread(args: Record<string, any>): Promise<ToolHandlerResu
       .from(emailMessages)
       .where(combineWithVisibleScope(principal, emailScope, eqOp(emailMessages.id, messageId)))
       .limit(1);
-    if (!message) return { result: `Email message ${messageId} not found.`, error: true };
+    if (!message) return gmailInput(`Email message ${messageId} not found.`, "message_not_found");
     accountId = message.accountId;
     providerThreadId = message.providerThreadId || message.providerMessageId;
   } else {
@@ -128,7 +128,7 @@ async function resolveThread(args: Record<string, any>): Promise<ToolHandlerResu
       providerThreadId = refId.slice(idColon + 1);
     } else providerThreadId = refId;
   }
-  if (!providerThreadId) return { result: `Invalid email thread ref: ${rawRef}`, error: true };
+  if (!providerThreadId) return gmailInput(`Invalid email thread ref: ${rawRef}`, "invalid_thread_ref");
   const threadConditions = [eqOp(emailMessages.providerThreadId, providerThreadId)];
   if (accountId) threadConditions.push(eqOp(emailMessages.accountId, accountId));
   const messages = await db.select({
@@ -152,7 +152,7 @@ async function resolveThread(args: Record<string, any>): Promise<ToolHandlerResu
     .where(combineWithVisibleScope(principal, emailScope, andOp(...threadConditions)))
     .orderBy(ascOp(emailMessages.date))
     .limit(50);
-  if (messages.length === 0) return { result: `Email thread ${providerThreadId} not found.`, error: true };
+  if (messages.length === 0) return gmailInput(`Email thread ${providerThreadId} not found.`, "thread_not_found");
   const latest = messages[messages.length - 1];
   const [enrichment] = await db.select().from(emailEnrichments)
     .where(combineWithVisibleScope(principal, enrichmentScope, andOp(eqOp(emailEnrichments.providerThreadId, providerThreadId), eqOp(emailEnrichments.accountId, latest.accountId))))
@@ -174,7 +174,7 @@ async function resolveThread(args: Record<string, any>): Promise<ToolHandlerResu
 
 async function getMessage(args: Record<string, any>): Promise<ToolHandlerResult> {
   if (args.message_id == null || args.message_id === "") {
-    return { result: "Missing 'message_id' parameter.", error: true };
+    return gmailInput("Missing 'message_id' parameter.", "missing_message_id");
   }
   const messageId = parseCachedEmailMessageId(args.message_id);
   if (messageId == null) return rejectInvalidCachedEmailMessageId(args.message_id);
@@ -189,7 +189,7 @@ async function getMessage(args: Record<string, any>): Promise<ToolHandlerResult>
   const [message] = await db.select().from(emailMessages)
     .where(combineWithVisibleScope(principal, messageScope, eqOp(emailMessages.id, messageId)))
     .limit(1);
-  if (!message) return { result: `Email message ${messageId} not found.`, error: true };
+  if (!message) return gmailInput(`Email message ${messageId} not found.`, "message_not_found");
   let enrichment = null;
   if (message.providerThreadId) {
     const [row] = await db.select().from(emailEnrichments)

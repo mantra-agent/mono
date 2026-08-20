@@ -4,12 +4,24 @@ import {
   type GoogleAccountPermissions,
 } from "../../connected-accounts";
 import { createLogger } from "../../log";
+import {
+  internalFailure,
+  permissionFailure,
+} from "../../tool-failure";
 import type { ToolHandler, ToolHandlerResult } from "../contracts";
 import { contractReject } from "../shared/failures";
 
 const toolExec = createLogger("ToolExec");
 
 export type GmailSubHandler = (args: Record<string, any>) => Promise<ToolHandlerResult>;
+
+/**
+ * Caller-correctable gmail/email_cache contract reject.
+ * Bare error:true left failureKind null → Executor TOOL_FAILED_GMAIL red ERRORS.
+ */
+export function gmailInput(result: string, detail?: string): ToolHandlerResult {
+  return contractReject(result, "gmail_input_invalid", detail);
+}
 
 /**
  * email_messages.id is a positive integer PK. Hex Gmail provider ids and other
@@ -30,9 +42,8 @@ export function parseCachedEmailMessageId(value: unknown): number | null {
 }
 
 export function rejectInvalidCachedEmailMessageId(raw: unknown): ToolHandlerResult {
-  return contractReject(
+  return gmailInput(
     `Invalid message_id: expected a positive integer cache id (email_messages.id), got ${JSON.stringify(raw)}. Use the Cache ID from email_cache listings, not a Gmail provider hex id.`,
-    "gmail_input_invalid",
     "message_id_not_integer",
   );
 }
@@ -41,7 +52,12 @@ export function createGmailHandler(handlers: Record<string, GmailSubHandler>): T
   return async (args) => {
     const action = (args.action as string | undefined) || "status";
     const handler = handlers[action];
-    if (!handler) return { result: `Unknown gmail action: ${action}. Available: status, search, read, batch_read, draft, reply, update_draft, recent, download_attachment, triage_log, email_cache`, error: true };
+    if (!handler) {
+      return gmailInput(
+        `Unknown gmail action: ${action}. Available: status, search, read, batch_read, draft, reply, update_draft, recent, download_attachment, triage_log, email_cache`,
+        String(action),
+      );
+    }
     try {
       return await handler(args);
     } catch (err: any) {
@@ -51,9 +67,15 @@ export function createGmailHandler(handlers: Record<string, GmailSubHandler>): T
           result: "Gmail authentication expired — the OAuth token has been revoked or expired. The user needs to re-authorize their Google account in Settings → Connections. Let them know their Gmail connection needs to be refreshed.",
           error: true,
           needsReauth: true,
+          failure: permissionFailure("integration_auth_failed", "gmail_invalid_grant"),
         };
       }
-      return { result: `Gmail tool error: ${err.message}`, error: true };
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        result: `Gmail tool error: ${message}`,
+        error: true,
+        failure: internalFailure("gmail_internal", message.slice(0, 160)),
+      };
     }
   };
 }
@@ -96,6 +118,7 @@ export async function checkGmailPermission(
         result: {
           result: `Permission denied: ${label}${email ? ` (${email})` : ""} is not allowed to ${actionLabel}. This can be changed in Settings → Connections.`,
           error: true,
+          failure: permissionFailure("integration_auth_failed", `gmail_${String(permission)}_denied`),
         },
       };
     }
@@ -108,6 +131,7 @@ export async function checkGmailPermission(
       result: {
         result: `Permission denied: No connected Google account is allowed to ${actionLabel}. This can be changed in Settings → Connections.`,
         error: true,
+        failure: permissionFailure("integration_auth_failed", `gmail_${String(permission)}_none_allowed`),
       },
     };
   }

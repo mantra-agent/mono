@@ -1,5 +1,5 @@
 import type { ToolHandlerResult } from "../contracts";
-import { checkGmailPermission, resolveGmailAccountId } from "./gmail-boundary";
+import { checkGmailPermission, gmailInput, resolveGmailAccountId } from "./gmail-boundary";
 import { createLogger } from "../../log";
 import { WORKSPACE_DIR } from "../../paths";
 import { TRIAGE_MAX_RESULTS } from "../../skill-defaults";
@@ -56,7 +56,7 @@ export function createGmailProviderHandlers(dependencies: GmailProviderDependenc
     const { getAttachment, listGmailAccounts } = await import("../../gmail");
     const messageId = args.id;
     const attachmentId = args.attachmentId;
-    if (!messageId || !attachmentId) return { result: "Missing message id or attachmentId", error: true };
+    if (!messageId || !attachmentId) return gmailInput("Missing message id or attachmentId", "missing_attachment_ids");
     let accountId = permission.resolvedAccountId || await resolveGmailAccountId(args.account);
 
     let attachment: { data: string; size: number } | null = null;
@@ -72,7 +72,7 @@ export function createGmailProviderHandlers(dependencies: GmailProviderDependenc
           toolExec.debug("gmail attachment account fallback", account.id, error);
         }
       }
-      if (!attachment) return { result: "Attachment not found in any connected account", error: true };
+      if (!attachment) return gmailInput("Attachment not found in any connected account", "attachment_not_found");
     }
 
     const rawData = attachment.data.replace(/-/g, "+").replace(/_/g, "/");
@@ -113,18 +113,18 @@ export function createGmailProviderHandlers(dependencies: GmailProviderDependenc
     log.debug(`effective query: "${query}"`);
     const excludeSet = new Set<string>(args.excludeMessageIds || []);
     const maxResults = Math.min(args.maxResults || BATCH_READ_MAX_RESULTS, BATCH_READ_MAX_RESULTS);
-    if (!ids && !query) return { result: "Provide either 'ids' (array of message IDs) or 'query' (search string) for batch_read", error: true };
+    if (!ids && !query) return gmailInput("Provide either 'ids' (array of message IDs) or 'query' (search string) for batch_read", "missing_ids_or_query");
 
     const accounts = await listGmailAccounts();
     if (accounts.length === 0) {
       log.error("failed: no Gmail accounts connected");
-      return { result: "No Gmail accounts connected. Connect an account in Settings → Connections.", error: true };
+      return gmailInput("No Gmail accounts connected. Connect an account in Settings → Connections.", "no_accounts");
     }
     const resolvedAccountId = permission.resolvedAccountId || await resolveGmailAccountId(args.account);
     const targets = dependencies.resolveTargetAccounts(resolvedAccountId, accounts);
     if (targets.length === 0) {
       log.error(`failed: resolveTargetAccounts returned empty for resolvedAccountId=${resolvedAccountId}`);
-      return { result: "Could not resolve target Gmail account. Check that the account is still connected in Settings → Connections.", error: true };
+      return gmailInput("Could not resolve target Gmail account. Check that the account is still connected in Settings → Connections.", "account_unresolved");
     }
     log.debug(`resolvedAccountId=${resolvedAccountId} targets=${targets.map((target) => `${target.id}(${target.label})`).join(", ")}`);
 

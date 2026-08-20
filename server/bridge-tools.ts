@@ -404,12 +404,16 @@ async function listMessagesMultiAccount(
 
 function formatListErrors(errors: string[], fallbackMessage: string, expectData = false): ToolHandlerResult {
   if (errors.length > 0) {
+    // Auth/token walls on list are permission — not uncoded TOOL_FAILED_GMAIL.
     return {
       result: `Gmail API errors prevented fetching messages:\n${errors.join("\n")}\n\nThis likely means the account tokens need to be refreshed. The user should re-authorize the Gmail accounts in Settings → Connections.`,
       error: true,
+      failure: permissionFailure("integration_auth_failed", "gmail_list_api"),
     };
   }
-  return { result: fallbackMessage, ...(expectData ? { error: true } : {}) };
+  // Empty result with expectData is caller-correctable input (no match / all excluded).
+  if (expectData) return contractReject(fallbackMessage, "gmail_input_invalid", "empty_list");
+  return { result: fallbackMessage };
 }
 
 function findTextBody(payload: GmailMessagePayload | undefined): string {
@@ -458,7 +462,12 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
   if (result) return result;
   const subAction = args.cache_action || "get_untriaged";
 
-  return { result: `Unknown cache_action "${subAction}". Use "get_untriaged", "mark_triaged", "get_unenriched", "store_enrichment", "search", "sync_status", "pipeline_counts", "get_message", "diagnose", or "run_downstream".`, error: true };
+  // Caller misuse of cache_action is input, not an uncaught producer defect.
+  return contractReject(
+    `Unknown cache_action "${subAction}". Use "get_untriaged", "mark_triaged", "get_unenriched", "store_enrichment", "search", "sync_status", "pipeline_counts", "get_message", "diagnose", or "run_downstream".`,
+    "gmail_input_invalid",
+    String(subAction),
+  );
 }
 
 const gmailSharedDependencies = {

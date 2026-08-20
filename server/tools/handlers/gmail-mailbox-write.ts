@@ -1,6 +1,6 @@
 import type { ToolHandlerResult } from "../contracts";
 import { createLogger } from "../../log";
-import { parseCachedEmailMessageId, rejectInvalidCachedEmailMessageId } from "./gmail-boundary";
+import { gmailInput, parseCachedEmailMessageId, rejectInvalidCachedEmailMessageId } from "./gmail-boundary";
 
 const log = createLogger("EmailCache");
 const VALID_TIERS = new Set(["🔴", "🟡", "🟢", "📋", "🗑️", "respond_now", "respond_today", "acknowledge", "fyi", "noise"]);
@@ -17,11 +17,11 @@ async function markTriaged(args: Record<string, any>): Promise<ToolHandlerResult
   const { storage } = await import("../../storage");
   const entries: Array<{ cacheId: number; tier: string; reason: string }> = args.entries;
   if (!entries || !Array.isArray(entries) || entries.length === 0) {
-    return { result: "Missing or empty 'entries' array. Each entry needs: cacheId, tier, reason.", error: true };
+    return gmailInput("Missing or empty 'entries' array. Each entry needs: cacheId, tier, reason.", "missing_entries");
   }
   for (const entry of entries) {
-    if (!entry.cacheId || !entry.tier) return { result: `Invalid entry — each needs cacheId and tier. Got: ${JSON.stringify(entry)}`, error: true };
-    if (!VALID_TIERS.has(entry.tier)) return { result: `Invalid tier "${entry.tier}". Valid: 🔴, 🟡, 🟢, 📋, 🗑️ (or respond_now, respond_today, acknowledge, fyi, noise)`, error: true };
+    if (!entry.cacheId || !entry.tier) return gmailInput(`Invalid entry — each needs cacheId and tier. Got: ${JSON.stringify(entry)}`, "invalid_entry");
+    if (!VALID_TIERS.has(entry.tier)) return gmailInput(`Invalid tier "${entry.tier}". Valid: 🔴, 🟡, 🟢, 📋, 🗑️ (or respond_now, respond_today, acknowledge, fyi, noise)`, "invalid_tier");
     entry.tier = TIER_NORMALIZE[entry.tier] || entry.tier;
   }
   const dismissed = await storage.batchUpdateEmailTriageState(entries.map((entry) => ({ id: entry.cacheId, tier: entry.tier, reason: entry.reason || "" })));
@@ -73,14 +73,16 @@ async function storeEnrichment(args: Record<string, any>): Promise<ToolHandlerRe
   const { storage } = await import("../../storage");
   const { thread_id, account_id, message_id, summary, decisions, actions, dismissed, dismiss_reason, model, tokens_used } = args;
   if (!thread_id || !account_id || message_id == null || message_id === "") {
-    return { result: "Missing required thread_id, account_id, or message_id.", error: true };
+    return gmailInput("Missing required thread_id, account_id, or message_id.", "missing_enrichment_ids");
   }
   const cachedMessageId = parseCachedEmailMessageId(message_id);
   if (cachedMessageId == null) return rejectInvalidCachedEmailMessageId(message_id);
   const sourceEmail = await storage.getCachedEmailById(cachedMessageId);
-  if (!sourceEmail) return { result: `Email message ${cachedMessageId} not found.`, error: true };
+  if (!sourceEmail) return gmailInput(`Email message ${cachedMessageId} not found.`, "message_not_found");
   const sourceThreadId = sourceEmail.providerThreadId || sourceEmail.providerMessageId;
-  if (sourceThreadId !== thread_id || sourceEmail.accountId !== account_id) return { result: "Email enrichment identity does not match the visible source message.", error: true };
+  if (sourceThreadId !== thread_id || sourceEmail.accountId !== account_id) {
+    return gmailInput("Email enrichment identity does not match the visible source message.", "enrichment_identity_mismatch");
+  }
   const neverDismissTiers = new Set(["🟡", "🔴"]);
   let shouldDismiss = !!dismissed;
   const { db } = await import("../../db");
