@@ -355,14 +355,12 @@ export default function BusinessModelPage() {
   }, [draft, kpiById]);
   const projection = useMemo(() => liveAssumptions && budget && hiring && pricing ? computeProjection(liveAssumptions, rolesData?.roles ?? hiring.roles, budget.departments, hiring.slots, pricing) : null, [budget, hiring, liveAssumptions, pricing, rolesData]);
   const periods = useMemo(() => projection ? aggregateMonths(projection.months, period) : [], [projection, period]);
-  const staffRoles = useMemo(() => {
-    if (!draft || !hiring || periods.length === 0) return [];
-    const labels = new Map<string, string>(hiring.roles.map((role) => [role.id, role.title]));
-    for (const cost of draft.operatingCosts) {
-      if (cost.classification === "opex" && (cost.opexCategory ?? "g_and_a") === "staff") labels.set(cost.id, cost.label);
-    }
-    return [...new Set(periods.flatMap((row) => Object.keys(row.staffByRole)))].map((id) => ({ id, label: labels.get(id) ?? id })).sort((left, right) => left.label.localeCompare(right.label));
-  }, [draft, hiring, periods]);
+  const staffComponents = useMemo(() => ([
+    { id: "salary" as const, label: "Salary" },
+    { id: "match" as const, label: "401k Matching" },
+    { id: "hdv" as const, label: "Health/Dental/Vision" },
+    { id: "taxes" as const, label: "Taxes" },
+  ]), []);
 
   if (error || budgetError || pricingError) {
     return (
@@ -429,8 +427,17 @@ export default function BusinessModelPage() {
             <AssumptionDriver assumptionKey="expandedUsersPerInternalMeeting" label="Users per internal meeting" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
               <NumericInput ariaLabel="Expanded users per internal meeting" value={liveAssumptions.expandedUsersPerInternalMeeting} min={0} step={0.01} disabled={sampled("expandedUsersPerInternalMeeting")} onChange={(expandedUsersPerInternalMeeting) => updateGlobal({ expandedUsersPerInternalMeeting })} />
             </AssumptionDriver>
-            <AssumptionDriver assumptionKey="loadedCostMultiplier" label="Loaded comp multiplier" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-              <NumericInput ariaLabel="Fully loaded staff comp multiplier on base salary plus bonus" value={liveAssumptions.loadedCostMultiplier} min={0.5} step={0.05} suffix="×" disabled={sampled("loadedCostMultiplier")} onChange={(loadedCostMultiplier) => updateGlobal({ loadedCostMultiplier })} />
+            <AssumptionDriver assumptionKey="matchRatePct" label="401k match rate" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Employer 401k match rate on cash wages" value={liveAssumptions.matchRatePct} min={0} max={25} step={0.5} suffix="%" disabled={sampled("matchRatePct")} onChange={(matchRatePct) => updateGlobal({ matchRatePct })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="healthcareCoverageRatePct" label="Healthcare coverage rate" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Employer share of health dental vision premiums" value={liveAssumptions.healthcareCoverageRatePct} min={0} max={100} step={5} suffix="%" disabled={sampled("healthcareCoverageRatePct")} onChange={(healthcareCoverageRatePct) => updateGlobal({ healthcareCoverageRatePct })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="monthlyHdvPremiumPerEmployee" label="HDV premium / employee" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Average monthly health dental vision premium per employee before coverage rate" value={liveAssumptions.monthlyHdvPremiumPerEmployee} min={0} step={25} prefix="$" disabled={sampled("monthlyHdvPremiumPerEmployee")} onChange={(monthlyHdvPremiumPerEmployee) => updateGlobal({ monthlyHdvPremiumPerEmployee })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="employerTaxRatePct" label="Employer tax rate" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Employer payroll tax rate on cash wages" value={liveAssumptions.employerTaxRatePct} min={0} max={25} step={0.1} suffix="%" disabled={sampled("employerTaxRatePct")} onChange={(employerTaxRatePct) => updateGlobal({ employerTaxRatePct })} />
             </AssumptionDriver>
             {draft.financingEvents.map((event) => {
               const liveEvent = liveAssumptions.financingEvents.find((candidate) => candidate.key === event.key) ?? event;
@@ -523,8 +530,15 @@ export default function BusinessModelPage() {
               {tree.grossProfit && <DataRow label="Gross Profit" indent periods={periods} render={(row) => fmtCurrency(row.grossProfit)} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />}
               <DataRow label="OpEx" periods={periods} render={(row) => fmtCurrency(-row.totalOpex)} onToggle={() => toggleTree("opex")} open={tree.opex} emphasize />
               {tree.opex && <DataRow label="Staff" indent periods={periods} render={(row) => tree.staff ? "" : fmtCurrency(-row.staffOpex)} onToggle={() => toggleTree("staff")} open={tree.staff} tone={() => "text-muted-foreground"} />}
-              {tree.opex && tree.staff && staffRoles.map((role) => (
-                <DataRow key={role.id} label={role.label} indent={2} periods={periods} render={(row) => (row.staffByRole[role.id] ?? 0) >= 0.5 ? fmtCurrency(-(row.staffByRole[role.id] ?? 0)) : "—"} tone={() => "text-muted-foreground"} />
+              {tree.opex && tree.staff && staffComponents.map((component) => (
+                <DataRow
+                  key={component.id}
+                  label={component.label}
+                  indent={2}
+                  periods={periods}
+                  render={(row) => (row.staffByComponent?.[component.id] ?? 0) >= 0.5 ? fmtCurrency(-(row.staffByComponent?.[component.id] ?? 0)) : "—"}
+                  tone={() => "text-muted-foreground"}
+                />
               ))}
               {tree.opex && budget.departments.map((department) => (
                 <DataRow key={department.id} label={department.name} indent periods={periods} render={(row) => fmtCurrency(-(row.departmentOpex[department.id] ?? 0))} tone={() => "text-muted-foreground"} />

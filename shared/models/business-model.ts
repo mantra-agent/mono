@@ -1,7 +1,16 @@
 import { z } from "zod";
 import { budgetMonthlyTotal, departmentMonthlyTotal, type BudgetDepartment } from "./business-budgets";
 import type { JobRole } from "./job-roles";
-import { loadedMonthlyForRole, monthOffset, type BusinessHiringSlot } from "./business-hiring";
+import {
+  baseMonthlyForRole,
+  EMPTY_STAFF_COST_COMPONENTS,
+  monthOffset,
+  staffCostComponentsForBase,
+  totalStaffCostComponents,
+  type BusinessHiringSlot,
+  type StaffCostComponents,
+  type StaffLoadAssumptions,
+} from "./business-hiring";
 import type { BusinessPricing, PricingPackageKey, PricingPackageView } from "./business-pricing";
 import {
   FORECAST_METRIC_CATALOG,
@@ -13,6 +22,20 @@ export const HORIZON_MIN = 1;
 export const HORIZON_MAX = 120;
 export const LOADED_COST_MULTIPLIER_MIN = 0.5;
 export const LOADED_COST_MULTIPLIER_MAX = 3;
+export const MATCH_RATE_PCT_MIN = 0;
+export const MATCH_RATE_PCT_MAX = 25;
+export const HEALTHCARE_COVERAGE_RATE_PCT_MIN = 0;
+export const HEALTHCARE_COVERAGE_RATE_PCT_MAX = 100;
+export const EMPLOYER_TAX_RATE_PCT_MIN = 0;
+export const EMPLOYER_TAX_RATE_PCT_MAX = 25;
+export const MONTHLY_HDV_PREMIUM_PER_EMPLOYEE_MIN = 0;
+export const MONTHLY_HDV_PREMIUM_PER_EMPLOYEE_MAX = 5_000;
+export const STAFF_COST_COMPONENT_LABELS = {
+  salary: "Salary",
+  match: "401k Matching",
+  hdv: "Health/Dental/Vision",
+  taxes: "Taxes",
+} as const;
 export const PHASE_KEYS = ["phase_0", "phase_1", "phase_2", "phase_3"] as const;
 export type PhaseKey = (typeof PHASE_KEYS)[number];
 export const FINANCING_KEYS = ["pre_seed", "seed", "series_a"] as const;
@@ -164,7 +187,12 @@ export interface Assumptions {
   roundIncrement: number;
   fundraisingLeadMonths: number;
   trailingBurnMonths: number;
+  /** @deprecated Compatibility only — derived from explicit staff load rates when absent. */
   loadedCostMultiplier: number;
+  matchRatePct: number;
+  healthcareCoverageRatePct: number;
+  employerTaxRatePct: number;
+  monthlyHdvPremiumPerEmployee: number;
   phases: PhaseAssumption[];
   financingEvents: FinancingEvent[];
   operatingCosts: OperatingCostEntry[];
@@ -317,12 +345,34 @@ export function defaultAssumptions(): Assumptions {
     fundraisingLeadMonths: 4,
     trailingBurnMonths: 3,
     loadedCostMultiplier: 1,
+    matchRatePct: 4,
+    healthcareCoverageRatePct: 100,
+    employerTaxRatePct: 8,
+    monthlyHdvPremiumPerEmployee: 1_880,
     phases: defaultPhases(),
     financingEvents: defaultFinancingEvents(),
     operatingCosts: defaultOperatingCosts(),
     monthlyCashLanes: defaultMonthlyCashLanes(horizonMonths),
     assumptionKpis: {},
   };
+}
+
+export function staffLoadFromAssumptions(assumptions: Pick<
+  Assumptions,
+  "matchRatePct" | "healthcareCoverageRatePct" | "employerTaxRatePct" | "monthlyHdvPremiumPerEmployee"
+>): StaffLoadAssumptions {
+  return {
+    matchRatePct: assumptions.matchRatePct,
+    healthcareCoverageRatePct: assumptions.healthcareCoverageRatePct,
+    employerTaxRatePct: assumptions.employerTaxRatePct,
+    monthlyHdvPremiumPerEmployee: assumptions.monthlyHdvPremiumPerEmployee,
+  };
+}
+
+export function deriveLoadedCostMultiplier(load: StaffLoadAssumptions): number {
+  const wageLoad = 1 + Math.max(0, load.matchRatePct) / 100 + Math.max(0, load.employerTaxRatePct) / 100;
+  const hdvShare = (Math.max(0, load.monthlyHdvPremiumPerEmployee) * 12 * Math.max(0, load.healthcareCoverageRatePct) / 100) / 185_000;
+  return Math.min(LOADED_COST_MULTIPLIER_MAX, Math.max(LOADED_COST_MULTIPLIER_MIN, wageLoad + hdvShare));
 }
 
 const keyHireSchema = z.object({
@@ -370,7 +420,9 @@ const rawAssumptionsSchema = z.object({
   infrastructurePerActiveAccount: z.number().optional(), supportPerActiveAccount: z.number().optional(), seatInferenceAndSupportCost: z.number().optional(), paymentProcessingPct: z.number().optional(), onboardingCostPerNewAccount: z.number().optional(),
   productizedOnboardingMonth: z.number().optional(), productizedOnboardingCostPerNewAccount: z.number().optional(),
   plgSharePct: z.number().optional(), plgCac: z.number().optional(), topDownCac: z.number().optional(), reserveAtNextGate: z.number().optional(), roundIncrement: z.number().optional(),
-  fundraisingLeadMonths: z.number().optional(), trailingBurnMonths: z.number().optional(), loadedCostMultiplier: z.number().optional(), phases: z.array(phaseSchema).max(4).optional(), financingEvents: z.array(financingSchema).max(4).optional(),
+  fundraisingLeadMonths: z.number().optional(), trailingBurnMonths: z.number().optional(), loadedCostMultiplier: z.number().optional(),
+  matchRatePct: z.number().optional(), healthcareCoverageRatePct: z.number().optional(), employerTaxRatePct: z.number().optional(), monthlyHdvPremiumPerEmployee: z.number().optional(),
+  phases: z.array(phaseSchema).max(4).optional(), financingEvents: z.array(financingSchema).max(4).optional(),
   operatingCosts: z.array(operatingCostSchema).max(40).optional(), monthlyCashLanes: z.array(cashLaneSchema).max(HORIZON_MAX).optional(), stages: z.array(legacyStageSchema).max(4).optional(),
   assumptionKpis: z.record(z.string()).optional(),
 }).strict();
@@ -565,7 +617,7 @@ export function normalizeAssumptions(input: unknown): Assumptions {
     const month = index + 1; const value = laneByMonth.get(month);
     return { month, capex: nonNegative(value?.capex, 0) };
   });
-  return {
+  const next: Assumptions = {
     modelVersion: MODEL_VERSION, horizonMonths,
     startCalendarMonth: raw.startCalendarMonth && MONTH_PATTERN.test(raw.startCalendarMonth) ? raw.startCalendarMonth : defaults.startCalendarMonth,
     openingCash: nonNegative(compatibility.openingCash, defaults.openingCash), startingAccounts: nonNegative(compatibility.startingAccounts, defaults.startingAccounts),
@@ -629,10 +681,23 @@ export function normalizeAssumptions(input: unknown): Assumptions {
     plgSharePct: bounded(raw.plgSharePct, 0, 100, defaults.plgSharePct), plgCac: nonNegative(raw.plgCac, defaults.plgCac), topDownCac: nonNegative(raw.topDownCac, defaults.topDownCac),
     reserveAtNextGate: nonNegative(raw.reserveAtNextGate, defaults.reserveAtNextGate), roundIncrement: Math.max(1, nonNegative(raw.roundIncrement, defaults.roundIncrement)),
     fundraisingLeadMonths: whole(raw.fundraisingLeadMonths, 0, 24, defaults.fundraisingLeadMonths), trailingBurnMonths: whole(raw.trailingBurnMonths, 1, 12, defaults.trailingBurnMonths),
+    matchRatePct: bounded(raw.matchRatePct, MATCH_RATE_PCT_MIN, MATCH_RATE_PCT_MAX, defaults.matchRatePct),
+    healthcareCoverageRatePct: bounded(raw.healthcareCoverageRatePct, HEALTHCARE_COVERAGE_RATE_PCT_MIN, HEALTHCARE_COVERAGE_RATE_PCT_MAX, defaults.healthcareCoverageRatePct),
+    employerTaxRatePct: bounded(
+      raw.employerTaxRatePct,
+      EMPLOYER_TAX_RATE_PCT_MIN,
+      EMPLOYER_TAX_RATE_PCT_MAX,
+      raw.employerTaxRatePct == null && raw.loadedCostMultiplier != null
+        ? Math.max(0, (Number(raw.loadedCostMultiplier) - 1) * 100)
+        : defaults.employerTaxRatePct,
+    ),
+    monthlyHdvPremiumPerEmployee: bounded(raw.monthlyHdvPremiumPerEmployee, MONTHLY_HDV_PREMIUM_PER_EMPLOYEE_MIN, MONTHLY_HDV_PREMIUM_PER_EMPLOYEE_MAX, defaults.monthlyHdvPremiumPerEmployee),
     loadedCostMultiplier: bounded(raw.loadedCostMultiplier, LOADED_COST_MULTIPLIER_MIN, LOADED_COST_MULTIPLIER_MAX, defaults.loadedCostMultiplier),
     phases, financingEvents, operatingCosts, monthlyCashLanes,
     assumptionKpis: normalizeAssumptionKpis(raw.assumptionKpis),
   };
+  next.loadedCostMultiplier = deriveLoadedCostMultiplier(staffLoadFromAssumptions(next));
+  return next;
 }
 
 function normalizeAssumptionKpis(value: unknown): Record<string, string> {
@@ -703,7 +768,7 @@ export interface MonthRow {
   totalCashRevenue: number; includedTokenCogs: number; seatCogs: number; supportCogs: number; supportActivationCogs: number; supportCheckInCogs: number; overageTokenCogs: number; requiredOverageTokensMillions: number; totalTokenUsageMillions: number; overageGrossMargin: number;
   productCogs: number; productGrossMargin: number; blendedCompanyGrossMargin: number;
   acquisitionSpend: number; blendedCac: number; cacPaybackMonths: number; headcount: number; operatingExpense: number; capex: number;
-  grossProfit: number; staffOpex: number; staffByRole: Record<string, number>; acquisitionOpex: number; budgetOpex: number; departmentOpex: Record<string, number>;
+  grossProfit: number; staffOpex: number; staffByComponent: StaffCostComponents; staffByRole: Record<string, number>; acquisitionOpex: number; budgetOpex: number; departmentOpex: Record<string, number>;
   totalOpex: number; operatingIncome: number;
   netCashChange: number; financingCash: number; endingCash: number; trailingBurn: number; runwayMonths: number;
 }
@@ -718,7 +783,7 @@ export interface PeriodRow {
   hoursUsed: number; activationHours: number; checkInHours: number; tokensUsed: number; tokenCost: number; supportActivationCogs: number; supportCheckInCogs: number;
   startingCohortRevenue: number; churnedRevenue: number; userExpansionRevenue: number; userContractionRevenue: number; tierExpansionRevenue: number; cohortNrr: number;
   totalCashRevenue: number; productRevenue: number; productCogs: number; supportCogs: number; cogs: number; mrr: number; arr: number; grossProfit: number;
-  staffOpex: number; staffByRole: Record<string, number>; acquisitionOpex: number; budgetOpex: number; departmentOpex: Record<string, number>;
+  staffOpex: number; staffByComponent: StaffCostComponents; staffByRole: Record<string, number>; acquisitionOpex: number; budgetOpex: number; departmentOpex: Record<string, number>;
   totalOpex: number; operatingIncome: number;
   acquisitionSpend: number; netCashChange: number; financingCash: number; endingCash: number; runwayMonths: number;
 }
@@ -901,6 +966,8 @@ function roundUp(value: number, increment: number): number {
 interface DerivedHire {
   id: string;
   startMonth: number;
+  baseMonthly: number;
+  components: StaffCostComponents;
   monthlyCost: number;
   costAllocation: HireCostAllocation;
   acquisitionAllocationPct: number;
@@ -942,18 +1009,41 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
   const canonicalBudgetOpex = budgetDepartments ? budgetMonthlyTotal(budgetDepartments) / 100 : null;
   const budgetAcquisitionSpending = resolveAcquisitionSpendingDollars(budgetDepartments);
   const roleById = new Map(roles.map((role) => [role.id, role]));
+  const staffLoad = staffLoadFromAssumptions(assumptions);
   const derivedHires: DerivedHire[] = [];
   if (hiringSlots) {
     for (const slot of hiringSlots) {
       const role = roleById.get(slot.roleId);
       if (!role || slot.status !== "approved" || !slot.plannedStartMonth) continue;
-      derivedHires.push({ id: role.id, startMonth: monthOffset(assumptions.startCalendarMonth, slot.plannedStartMonth) + 1, monthlyCost: loadedMonthlyForRole(role, assumptions.loadedCostMultiplier), costAllocation: "opex", acquisitionAllocationPct: 0, headcount: 1 });
+      const baseMonthly = baseMonthlyForRole(role);
+      const components = staffCostComponentsForBase(baseMonthly, 1, staffLoad);
+      derivedHires.push({
+        id: role.id,
+        startMonth: monthOffset(assumptions.startCalendarMonth, slot.plannedStartMonth) + 1,
+        baseMonthly,
+        components,
+        monthlyCost: totalStaffCostComponents(components),
+        costAllocation: "opex",
+        acquisitionAllocationPct: 0,
+        headcount: 1,
+      });
     }
   } else {
     for (const phase of assumptions.phases) for (const hire of phase.keyHires) {
       const role = roleById.get(hire.roleId); if (!role) continue;
       const headcount = Math.max(1, hire.headcount ?? 1);
-      derivedHires.push({ id: role.id, startMonth: hire.startMonth ?? phase.startMonth ?? 1, monthlyCost: loadedMonthlyForRole(role, assumptions.loadedCostMultiplier) * headcount, costAllocation: hire.costAllocation ?? "opex", acquisitionAllocationPct: hire.acquisitionAllocationPct ?? 0, headcount });
+      const baseMonthly = baseMonthlyForRole(role) * headcount;
+      const components = staffCostComponentsForBase(baseMonthly, headcount, staffLoad);
+      derivedHires.push({
+        id: role.id,
+        startMonth: hire.startMonth ?? phase.startMonth ?? 1,
+        baseMonthly,
+        components,
+        monthlyCost: totalStaffCostComponents(components),
+        costAllocation: hire.costAllocation ?? "opex",
+        acquisitionAllocationPct: hire.acquisitionAllocationPct ?? 0,
+        headcount,
+      });
     }
   }
   const accountSurvivalMonthly = Math.pow(1 - assumptions.annualAccountChurnPct / 100, 1 / 12);
@@ -1126,7 +1216,6 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     const supportCheckInCogs = checkInHours * SUPPORT_LOADED_HOURLY;
     const supportCogs = supportActivationCogs + supportCheckInCogs;
     const activeHires = derivedHires.filter((hire) => hire.startMonth <= month);
-    const keyHireStaffOpex = activeHires.reduce((sum, hire) => hire.costAllocation === "product_cogs" ? sum : sum + hire.monthlyCost, 0);
     const keyHireHeadcount = activeHires.reduce((sum, hire) => sum + hire.headcount, 0);
     const productCogs = includedTokenCogs + supportCogs;
     const lane = assumptions.monthlyCashLanes[month - 1];
@@ -1134,16 +1223,26 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     // Acquisition spend metric is the Budget Acquisition Spending line only (not logos × CAC).
     const acquisitionSpend = acquisitionSpendBase;
     const manualOpex = (category: OpexCategory) => assumptions.operatingCosts.filter((cost) => cost.classification === "opex" && (cost.opexCategory ?? "g_and_a") === category && activeCost(cost, month)).reduce((sum, cost) => sum + cost.monthlyAmount, 0);
-    const staffOpex = keyHireStaffOpex + manualOpex("staff");
+    const staffByComponent: StaffCostComponents = { ...EMPTY_STAFF_COST_COMPONENTS };
     const staffByRole: Record<string, number> = {};
     for (const hire of activeHires) {
       if (hire.costAllocation === "product_cogs") continue;
+      staffByComponent.salary += hire.components.salary;
+      staffByComponent.match += hire.components.match;
+      staffByComponent.hdv += hire.components.hdv;
+      staffByComponent.taxes += hire.components.taxes;
       staffByRole[hire.id] = (staffByRole[hire.id] ?? 0) + hire.monthlyCost;
     }
     for (const cost of assumptions.operatingCosts) {
       if (cost.classification !== "opex" || (cost.opexCategory ?? "g_and_a") !== "staff" || !activeCost(cost, month)) continue;
-      staffByRole[cost.id] = (staffByRole[cost.id] ?? 0) + cost.monthlyAmount;
+      const manualComponents = staffCostComponentsForBase(cost.monthlyAmount, Math.max(0, cost.headcount), staffLoad);
+      staffByComponent.salary += manualComponents.salary;
+      staffByComponent.match += manualComponents.match;
+      staffByComponent.hdv += manualComponents.hdv;
+      staffByComponent.taxes += manualComponents.taxes;
+      staffByRole[cost.id] = (staffByRole[cost.id] ?? 0) + totalStaffCostComponents(manualComponents);
     }
+    const staffOpex = totalStaffCostComponents(staffByComponent);
     const acquisitionOpex = 0;
     const budgetOpex = canonicalBudgetOpex ?? manualOpex("marketing") + manualOpex("g_and_a");
     const totalOpex = staffOpex + budgetOpex;
@@ -1170,7 +1269,7 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
       totalCashRevenue, includedTokenCogs, seatCogs, supportCogs, supportActivationCogs, supportCheckInCogs, overageTokenCogs, requiredOverageTokensMillions, totalTokenUsageMillions: tokensUsed / 1_000_000 + requiredOverageTokensMillions, overageGrossMargin,
       productCogs, productGrossMargin: safeRatio(productRevenue - productCogs, productRevenue),
       blendedCompanyGrossMargin: safeRatio(totalCashRevenue - productCogs, totalCashRevenue), acquisitionSpend, blendedCac: newAccountsFromSales > 0 ? acquisitionSpendBase / newAccountsFromSales : 0,
-      cacPaybackMonths: baselineCacPaybackMonths, headcount, operatingExpense, capex: lane.capex, grossProfit, staffOpex, staffByRole, acquisitionOpex, budgetOpex, departmentOpex, totalOpex, operatingIncome, netCashChange, financingCash, endingCash, trailingBurn, runwayMonths: trailingBurn > 0 ? Math.max(0, endingCash) / trailingBurn : Number.POSITIVE_INFINITY,
+      cacPaybackMonths: baselineCacPaybackMonths, headcount, operatingExpense, capex: lane.capex, grossProfit, staffOpex, staffByComponent, staffByRole, acquisitionOpex, budgetOpex, departmentOpex, totalOpex, operatingIncome, netCashChange, financingCash, endingCash, trailingBurn, runwayMonths: trailingBurn > 0 ? Math.max(0, endingCash) / trailingBurn : Number.POSITIVE_INFINITY,
     });
   }
 
@@ -1378,6 +1477,12 @@ export function aggregateMonths(months: MonthRow[], mode: PeriodMode): PeriodRow
       arr: last.productArr,
       grossProfit: sum((row) => row.grossProfit),
       staffOpex: sum((row) => row.staffOpex),
+      staffByComponent: {
+        salary: sum((row) => row.staffByComponent.salary),
+        match: sum((row) => row.staffByComponent.match),
+        hdv: sum((row) => row.staffByComponent.hdv),
+        taxes: sum((row) => row.staffByComponent.taxes),
+      },
       staffByRole: Object.fromEntries([...new Set(slice.flatMap((row) => Object.keys(row.staffByRole)))].map((roleId) => [
         roleId,
         sum((row) => row.staffByRole[roleId] ?? 0),
