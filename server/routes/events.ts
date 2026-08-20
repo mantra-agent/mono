@@ -16,7 +16,12 @@ import { requirePermission } from "../permissions";
 import { requireAuth } from "../auth";
 import { initialStreamingContent } from "@shared/streaming-types";
 import { isUiInteractionResult } from "@shared/ui-interaction";
+import { isFeatureControlResult } from "@shared/feature-control";
 import { cancelUiInteractionsForSocket, resolveUiInteractionResult } from "../ui-interaction-coordinator";
+import {
+  cancelFeatureControlsForSocket,
+  resolveFeatureControlResult,
+} from "../feature-control-coordinator";
 
 const eventsLog = createLogger("EventsWS");
 let eventsConnectionCounter = 0;
@@ -77,6 +82,20 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
           });
           if (!accepted) {
             eventsLog.warn("WS:UI_INTERACTION_RESULT_REJECTED", { connectionId, commandId: msg.commandId });
+          }
+          return;
+        }
+        if (isFeatureControlResult(msg)) {
+          const accepted = resolveFeatureControlResult({
+            socket: ws,
+            commandId: msg.commandId,
+            outcome: msg.outcome,
+            reason: msg.reason,
+            sessionId: msg.sessionId,
+            fastForwardOn: msg.fastForwardOn,
+          });
+          if (!accepted) {
+            eventsLog.warn("WS:FEATURE_CONTROL_RESULT_REJECTED", { connectionId, commandId: msg.commandId });
           }
           return;
         }
@@ -260,6 +279,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
       eventBus.removeListener("event", handler);
       unregisterSocketPresence(ws);
       cancelUiInteractionsForSocket(ws);
+      cancelFeatureControlsForSocket(ws);
 
       // Clear committed and authorization-pending Session subscription state.
       sessionManager.unsubscribeAll(ws);
