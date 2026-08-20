@@ -11,6 +11,8 @@ import { isDurablyActiveSession } from "@shared/models/chat";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSessionLaunch } from "@/hooks/use-session-launch";
 import {
+  autoReviewAttemptByFeature,
+  autoReviewLaunchInFlight,
   clearFeatureFastForwardRuntime,
   fastForwardLastLaunchByFeature,
   fastForwardLaunchInFlight,
@@ -25,11 +27,15 @@ import {
 } from "@/lib/feature-fast-forward-mode";
 
 /**
- * Shell-owned Fast Forward sequencer.
+ * Shell-owned Feature pipeline host.
  *
- * Mode is sessionStorage per Feature. Launch + settle memory is process-local.
- * Host stays mounted under SessionActivityProvider so walking continues after
- * leaving /features. Only runPipelineLaunch paths — no stage/status writes.
+ * 1. Fast Forward — sessionStorage mode per Feature; sequences Produce → Review.
+ * 2. Auto AI Review — when status is needs_review and Fast Forward is off,
+ *    launch Review once through the same runPipelineLaunch path.
+ *
+ * Launch + settle memory is process-local. Host stays mounted under
+ * SessionActivityProvider so walking continues after leaving /features.
+ * Only runPipelineLaunch paths — no stage/status writes.
  */
 
 function isActivePipelineSession(session: ChatSession | undefined | null): boolean {
@@ -50,36 +56,21 @@ type FeatureSessionLink = {
   createdAt?: string | null;
 };
 
-function FeatureFastForwardWalker({
-  feature,
-  products,
-  sessionsById,
-}: {
-  feature: FeatureFastForwardRow;
-  products: ProductContext[];
-  sessionsById: Map<string, ChatSession>;
-}) {
-  const launch = useSessionLaunch();
-  const [settleTick, setSettleTick] = useState(0);
-  const settleRefetchKeyRef = useRef<string | null>(null);
-  const launchedSessionId = fastForwardLaunchedSessionByFeature.get(feature.id) ?? null;
-
-  const turnOff = useCallback(() => {
-    clearFeatureFastForwardRuntime(feature.id);
-    // Force host rescan of sessionStorage keys.
-    window.dispatchEvent(new Event("feature-fast-forward-changed"));
-  }, [feature.id]);
-
+function useOwnedPipelineSession(
+  featureId: string,
+  launchedSessionId: string | null,
+  sessionsById: Map<string, ChatSession>,
+) {
   const { data: linkedSessions = [] } = useQuery<FeatureSessionLink[]>({
-    queryKey: ["/api/features", feature.id, "sessions"],
+    queryKey: ["/api/features", featureId, "sessions"],
     queryFn: async () => {
-      const response = await apiRequest("GET", `/api/features/${feature.id}/sessions`);
+      const response = await apiRequest("GET", `/api/features/${featureId}/sessions`);
       return response.json();
     },
     staleTime: 15_000,
   });
 
-  const ownedSession = useMemo(() => {
+  return useMemo(() => {
     const candidates = new Map<string, ChatSession>();
     if (launchedSessionId) {
       const launched = sessionsById.get(launchedSessionId);
@@ -97,11 +88,15 @@ function FeatureFastForwardWalker({
     if (active[0]) return active[0];
     if (!launchedSessionId) return null;
     return sessionsById.get(launchedSessionId) ?? null;
-  }, [launchedSessionId, linkedSessions, sessionsById]);
+  }, [featureId, launchedSessionId, linkedSessions, sessionsById]);
+}
 
-  const isSessionInProgress = Boolean(
-    ownedSession && isActivePipelineSession(ownedSession),
-  );
+function usePipelineLaunch(
+  feature: FeatureFastForwardRow,
+  products: ProductContext[],
+  onLaunchError?: () => void,
+) {
+  const launch = useSessionLaunch();
 
   const runPipelineLaunch = useCallback(
     (job: "produce" | "review") => {
@@ -145,13 +140,38 @@ function FeatureFastForwardWalker({
               queryKey: ["/api/features", feature.id, "sessions"],
             });
           },
-          onError: () => turnOff(),
+          onError: () => onLaunchError?.(),
         },
       );
     },
-    [feature, launch, products, turnOff],
+    [feature, launch, onLaunchError, products],
   );
 
+  return { launch, runPipelineLaunch };
+}
+
+function FeatureFastForwardWalker({
+  feature,
+  products,
+  sessionsById,
+}: {
+  feature: FeatureFastForwardRow;
+  products: ProductContext[];
+  sessionsById: Map<string, ChatSession>;
+}) {
+  const [settleTick, setSettleTick] = useState(0);
+  const settleRefetchKeyRef = useRef<string | null>(null);
+  const launchedSessionId = fastForwardLaunchedSessionByFeature.get(feature.id) ?? null;
+
+  const turnOff = useCallback(() => {
+    clearFeatureFastForwardRuntime(feature.id);
+    // Force host rescan of sessionStorage keys.
+    window.dispatchEvent(new Event("feature-fast-forward-changed"));
+  }, [feature.id]);
+
+  const ownedSession = useOwnedPipelineSession(feature.id, launchedSessionId, sessionsById);
+  const isSessionInProgress = Boolean(ownedSession && isActivePipelineSession(ownedSession));
+  const { launch, runPipelineLaunch } = usePipelineLaunch(feature, products, turnOff);
   const runPipelineLaunchRef = useRef(runPipelineLaunch);
   runPipelineLaunchRef.current = runPipelineLaunch;
 
@@ -229,8 +249,89 @@ function FeatureFastForwardWalker({
 }
 
 /**
- * Mount once in the authenticated shell. Renders nothing; drives active
- * Fast Forward Features while the SPA tab lives.
+ * Always-on AI Review: when a Feature reaches needs_review and Fast Forward is
+ * off, launch Review once through the same path the AI Review button uses.
+ * Does not advance stage, answer Questions, or re-fire after Review-fail.
+ */
+function FeatureAutoReviewWalker({
+  feature,
+  products,
+  sessionsById,
+}: {
+  feature: FeatureFastForwardRow;
+  products: ProductContext[];
+  sessionsById: Map<string, ChatSession>;
+}) {
+  const launchedSessionId = fastForwardLaunchedSessionByFeature.get(feature.id) ?? null;
+  const ownedSession = useOwnedPipelineSession(feature.id, launchedSessionId, sessionsById);
+  const isSessionInProgress = Boolean(ownedSession && isActivePipelineSession(ownedSession));
+
+  const onAutoReviewLaunchError = useCallback(() => {
+    autoReviewLaunchInFlight.delete(feature.id);
+    const last = fastForwardLastLaunchByFeature.get(feature.id);
+    // Fence this attempt so a launch error does not spin forever.
+    if (last?.job === "review") {
+      autoReviewAttemptByFeature.set(feature.id, `${last.stage}:${last.launchedAt}`);
+    }
+  }, [feature.id]);
+
+  const { launch, runPipelineLaunch } = usePipelineLaunch(feature, products, onAutoReviewLaunchError);
+  const runPipelineLaunchRef = useRef(runPipelineLaunch);
+  runPipelineLaunchRef.current = runPipelineLaunch;
+
+  // Leaving needs_review (pass, human edit, or stage move) clears the attempt
+  // fence so the next Produce→needs_review cycle can auto-fire again.
+  useEffect(() => {
+    if (feature.status !== "needs_review") {
+      autoReviewAttemptByFeature.delete(feature.id);
+      autoReviewLaunchInFlight.delete(feature.id);
+    }
+  }, [feature.id, feature.status]);
+
+  useEffect(() => {
+    if (feature.status !== "needs_review") return;
+    // Fast Forward walker owns the walk when mode is on.
+    if (readFeatureFastForward(feature.id)) return;
+    if (sessionHasQuestion(ownedSession) || sessionHasError(ownedSession)) return;
+    if (isSessionInProgress) {
+      autoReviewLaunchInFlight.delete(feature.id);
+      return;
+    }
+    if (launch.isPending) return;
+
+    const last = fastForwardLastLaunchByFeature.get(feature.id) ?? null;
+    // Still waiting for the session we just launched to appear in the index.
+    if (last?.job === "review" && !ownedSession && launchedSessionId) return;
+
+    // Review-fail: Review settled, stage unchanged, still needs_review.
+    // Stamp the attempt so we do not re-launch until status leaves this room.
+    if (last?.job === "review" && last.stage === feature.stage) {
+      const attemptKey = `${last.stage}:${last.launchedAt}`;
+      autoReviewAttemptByFeature.set(feature.id, attemptKey);
+      return;
+    }
+
+    if (autoReviewLaunchInFlight.has(feature.id)) return;
+    if (autoReviewAttemptByFeature.has(feature.id)) return;
+
+    autoReviewLaunchInFlight.add(feature.id);
+    runPipelineLaunchRef.current("review");
+  }, [
+    feature.id,
+    feature.stage,
+    feature.status,
+    isSessionInProgress,
+    launch.isPending,
+    launchedSessionId,
+    ownedSession,
+  ]);
+
+  return null;
+}
+
+/**
+ * Mount once in the authenticated shell. Renders nothing; drives Fast Forward
+ * mode walks and always-on AI Review while the SPA tab lives.
  */
 export function FeatureFastForwardHost() {
   const [activeIds, setActiveIds] = useState<string[]>(() => listFeatureFastForwardIdsFromStorage());
@@ -248,26 +349,26 @@ export function FeatureFastForwardHost() {
     };
   }, []);
 
+  // Always poll Features so needs_review auto-review can fire without FF mode.
   const features = useQuery<FeatureFastForwardRow[]>({
     queryKey: ["/api/features"],
     queryFn: async () => {
       const response = await apiRequest("GET", "/api/features");
       return response.json();
     },
-    enabled: activeIds.length > 0,
     staleTime: 10_000,
+    refetchInterval: 10_000,
   });
 
   const products = useQuery<ProductContext[]>({
     queryKey: ["/api/products"],
-    enabled: activeIds.length > 0,
     staleTime: 30_000,
   });
 
   const sessions = useQuery<ChatSession[]>({
     queryKey: ["/api/sessions"],
-    enabled: activeIds.length > 0,
     staleTime: 10_000,
+    refetchInterval: 10_000,
   });
 
   const sessionsById = useMemo(() => {
@@ -283,6 +384,16 @@ export function FeatureFastForwardHost() {
     return map;
   }, [features.data]);
 
+  const autoReviewIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const row of features.data ?? []) {
+      if (row.status !== "needs_review") continue;
+      if (readFeatureFastForward(row.id)) continue;
+      ids.push(row.id);
+    }
+    return ids;
+  }, [features.data, activeIds]);
+
   // Drop flags whose Features disappeared or are no longer eligible.
   useEffect(() => {
     if (!features.data) return;
@@ -295,7 +406,8 @@ export function FeatureFastForwardHost() {
     }
   }, [activeIds, featureById, features.data]);
 
-  if (activeIds.length === 0) return null;
+  const hasWalkers = activeIds.length > 0 || autoReviewIds.length > 0;
+  if (!hasWalkers && !features.data) return null;
 
   return (
     <>
@@ -306,7 +418,19 @@ export function FeatureFastForwardHost() {
         if (!featureAllowsFastForward(feature.stage)) return null;
         return (
           <FeatureFastForwardWalker
-            key={id}
+            key={`ff-${id}`}
+            feature={feature}
+            products={productList}
+            sessionsById={sessionsById}
+          />
+        );
+      })}
+      {autoReviewIds.map((id) => {
+        const feature = featureById.get(id);
+        if (!feature) return null;
+        return (
+          <FeatureAutoReviewWalker
+            key={`ar-${id}`}
             feature={feature}
             products={productList}
             sessionsById={sessionsById}
