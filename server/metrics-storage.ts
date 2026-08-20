@@ -205,6 +205,17 @@ async function compilePersistedExpression(input: {
     incomingConfig != null
     && Object.prototype.hasOwnProperty.call(incomingConfig, "equation");
 
+  // Sparse definition edits do not change the executable binding. Compiling the
+  // stored equation here makes a display-name update depend on every operand
+  // still being visible and valid, even though the caller did not edit it.
+  if (input.existing && !equationTouched) {
+    return {
+      adapterKind: input.existing.adapterKind,
+      adapterConfig: existingConfig,
+      didCompile: false,
+    };
+  }
+
   // Ignore authored adapterKind. Derive from the equation when compiling.
   if (!equation) {
     if (input.requireEquation || equationTouched) {
