@@ -29,7 +29,11 @@ let waitingForCapacity = 0;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let _isLaunching = false;
 
-async function withIsolatedBrowserCapacity<T>(activity: string, fn: () => Promise<T>): Promise<T> {
+async function withIsolatedBrowserCapacity<T>(
+  activity: string,
+  fn: () => Promise<T>,
+  timeoutMs: number = PAGE_TIMEOUT_MS,
+): Promise<T> {
   const { admissionController } = await import("./run-admission");
   const runId = `browser:${activity}:${randomUUID()}`;
   let waiting = true;
@@ -47,7 +51,7 @@ async function withIsolatedBrowserCapacity<T>(activity: string, fn: () => Promis
         activePages--;
         resetIdleTimer();
       }
-    }, { activity, timeout: PAGE_TIMEOUT_MS });
+    }, { activity, timeout: timeoutMs });
   } finally {
     if (waiting) waitingForCapacity--;
   }
@@ -250,6 +254,78 @@ async function exchangeAutomationAuthOnTarget(
   };
 }
 
+const WEB_TEST_REPLICA_WAIT_MS = 45_000;
+const WEB_TEST_SPA_EVIDENCE_MS = 20_000;
+const WEB_TEST_SCREENSHOT_CAPACITY_MS = 90_000;
+const WEB_TEST_LOGIN_PAINT = "#login-email, [data-testid='input-login-email']";
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isAuthMeRequest(url: string): boolean {
+  try {
+    return new URL(url).pathname === "/api/auth/me";
+  } catch {
+    return false;
+  }
+}
+
+/** Post-listen, not Railway SUCCESS and not boot-complete (GitNexus). */
+async function waitForReplicaServing(
+  origin: string,
+  timeoutMs: number,
+): Promise<"ready" | "timeout"> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${origin}/api/boot/status`, {
+        headers: { Accept: "application/json" },
+      });
+      if (res.ok) {
+        const body = (await res.json()) as {
+          phases?: Array<{ name?: string; status?: string }>;
+        };
+        const server = body.phases?.find((phase) => phase.name === "server");
+        if (server?.status === "done") return "ready";
+      }
+    } catch {
+      // mid-boot or unreachable — keep polling
+    }
+    await sleepMs(1_000);
+  }
+  return "timeout";
+}
+
+async function gotoWithSpaEvidence(
+  page: Page,
+  target: string,
+  timeoutMs: number,
+): Promise<"me" | "login" | "timeout"> {
+  let meSeen = false;
+  const onRequest = (req: { url: () => string }) => {
+    if (isAuthMeRequest(req.url())) meSeen = true;
+  };
+  page.on("request", onRequest);
+  try {
+    await page.goto(target, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (meSeen) return "me";
+      const loginVisible = await page
+        .locator(WEB_TEST_LOGIN_PAINT)
+        .first()
+        .isVisible()
+        .catch(() => false);
+      if (loginVisible) return "login";
+      await sleepMs(250);
+    }
+    return meSeen ? "me" : "timeout";
+  } finally {
+    page.off("request", onRequest);
+  }
+}
+
 const VIEWPORT_PRESETS: Record<string, { width: number; height: number }> = {
   desktop: { width: 1440, height: 900 },
   tablet:  { width: 768,  height: 1024 },
@@ -291,7 +367,8 @@ export type WebTestOutcome =
   | "auth_failed"
   | "step_failed"
   | "origin_escaped"
-  | "capture_failed";
+  | "capture_failed"
+  | "not_ready";
 
 export type WebTestAuthUsed = "none" | "principal-cookie" | "automation-auth";
 
@@ -651,7 +728,9 @@ export async function screenshotPage(
     auth?: unknown;
   },
 ): Promise<WebTestResult> {
-  return withIsolatedBrowserCapacity("browser.screenshot", async () => {
+  return withIsolatedBrowserCapacity(
+    "browser.screenshot",
+    async () => {
     let page: Page | null = null;
     let screenshotContext: BrowserContext | null = null;
     let session: ScreenshotSession | null = null;
@@ -723,6 +802,17 @@ export async function screenshotPage(
       const viewportSize = resolveViewportSize(options?.viewport);
       const vpOpt = options?.viewport;
       const fullPage = options?.fullPage ?? false;
+      const needsAppEvidence = authArg.mode === "integration" || localApp;
+
+      if (needsAppEvidence) {
+        const replica = await waitForReplicaServing(entryOrigin, WEB_TEST_REPLICA_WAIT_MS);
+        if (replica === "timeout") {
+          return emptyResult(
+            "not_ready",
+            `Replica at ${entryOrigin} did not finish listen (boot server phase) within ${WEB_TEST_REPLICA_WAIT_MS}ms`,
+          );
+        }
+      }
 
       await ensureBrowser();
       if (!browser) throw new Error("Browser not available");
@@ -794,7 +884,15 @@ export async function screenshotPage(
       page.setDefaultNavigationTimeout(30_000);
 
       try {
-        await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 });
+        if (needsAppEvidence) {
+          const spa = await gotoWithSpaEvidence(page, url, WEB_TEST_SPA_EVIDENCE_MS);
+          if (spa === "timeout") {
+            outcome = "not_ready";
+            errorMessage = `SPA at ${url} issued neither GET /api/auth/me nor login paint within ${WEB_TEST_SPA_EVIDENCE_MS}ms`;
+          }
+        } else {
+          await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         outcome = "capture_failed";
@@ -811,8 +909,8 @@ export async function screenshotPage(
       if (originOf(finalUrl) !== entryOrigin) {
         outcome = "origin_escaped";
         errorMessage = `Entry navigation left origin ${entryOrigin} → ${originOf(finalUrl)}`;
-      } else {
-        // Run closed steps
+      } else if (outcome === "ok") {
+        // Run closed steps only after replica + SPA evidence. not_ready photographs then stops.
         for (let i = 0; i < steps.length; i++) {
           const step = steps[i];
           try {
@@ -844,7 +942,17 @@ export async function screenshotPage(
                     );
                   }
                 }
-                await page.goto(target, { waitUntil: "networkidle", timeout: 30_000 });
+                if (needsAppEvidence) {
+                  const spa = await gotoWithSpaEvidence(page, target, WEB_TEST_SPA_EVIDENCE_MS);
+                  if (spa === "timeout") {
+                    throw new WebTestError(
+                      "not_ready",
+                      `SPA at ${target} issued neither GET /api/auth/me nor login paint within ${WEB_TEST_SPA_EVIDENCE_MS}ms`,
+                    );
+                  }
+                } else {
+                  await page.goto(target, { waitUntil: "domcontentloaded", timeout: 30_000 });
+                }
                 detail = `navigated ${target}`;
                 break;
               }
@@ -990,7 +1098,9 @@ export async function screenshotPage(
       resetIdleTimer();
       if (session) await session.cleanup();
     }
-  });
+  },
+    WEB_TEST_SCREENSHOT_CAPACITY_MS,
+  );
 }
 
 export interface TargetBoundBrowserEvidence {

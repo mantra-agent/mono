@@ -439,7 +439,7 @@ export const webTools: Record<string, ToolHandler> = {
         "origin_escaped",
         "auth_failed",
       ]);
-      if (result.outcome === "ok") {
+      if (result.outcome === "ok" || result.outcome === "not_ready") {
         return { result: body };
       }
       if (correctable.has(result.outcome)) {
@@ -449,9 +449,8 @@ export const webTools: Record<string, ToolHandler> = {
           failure: inputFailure(`web_test_${result.outcome}`, result.errorMessage?.slice(0, 160)),
         };
       }
-      // capture_failed and any future non-correctable outcomes are provider/
-      // browser environment faults (DNS, admission, Chromium crash) — amber
-      // transient, never uncoded TOOL_FAILED_WEB.
+      // capture_failed is a browser/provider fault. not_ready already returned
+      // above as a blocked residual (no error) so Smoke cannot pass or fail.
       return {
         result: body,
         error: true,
