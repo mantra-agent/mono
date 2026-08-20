@@ -31,7 +31,7 @@ import {
 import type { JSONContent } from "@tiptap/core";
 import { RichTextEditor } from "@/components/rich-text-editor";
 import { markdownToTiptap, normalizeTiptapDoc, tiptapToMarkdown } from "@shared/markdown-tiptap";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { useIsMobileViewport } from "@/hooks/use-mobile";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -572,6 +572,7 @@ function NewFeature({
 const FeatureRow = memo(function FeatureRow({
   feature,
   products,
+  people,
   sessionsById,
   titleSessionOwners,
   streamStore,
@@ -580,6 +581,7 @@ const FeatureRow = memo(function FeatureRow({
 }: {
   feature: Feature;
   products: Product[];
+  people: Person[];
   sessionsById: Map<string, ChatSession>;
   /** sessionId → featureId exclusive title ownership from the page. */
   titleSessionOwners: Map<string, string>;
@@ -591,9 +593,11 @@ const FeatureRow = memo(function FeatureRow({
 }) {
   const { toast } = useToast();
   const launch = useSessionLaunch();
-  const isMobile = useIsMobile();
-  /** Desktop opens Focus; mobile stays on Features (under-row session strip). */
-  const launchOpenFocus = !isMobile;
+  // Viewport/native only — container-aware isMobile is true in the narrow Features
+  // column on desktop and would suppress Focus (session never highlights).
+  const isMobileViewport = useIsMobileViewport();
+  /** Desktop opens Focus; phone/native keeps the under-row session strip. */
+  const launchOpenFocus = !isMobileViewport;
   const [editingSpec, setEditingSpec] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
   const [descriptionDoc, setDescriptionDoc] = useState<JSONContent>(() =>
@@ -836,9 +840,6 @@ const FeatureRow = memo(function FeatureRow({
       }
     : null;
 
-  const ownerValue: ReferencePickerValue[] = feature.owner_person_id
-    ? [{ type: "person", id: feature.owner_person_id, label: feature.owner_person_id }]
-    : [];
   const specValue: ReferencePickerValue[] = feature.spec_page_id
     ? [{ type: "page", id: feature.spec_page_id, label: feature.spec_page_id }]
     : [];
@@ -989,14 +990,15 @@ const FeatureRow = memo(function FeatureRow({
   const showFastForward = featureAllowsFastForward(feature.stage);
   const nextJobGated =
     resolveFeaturePipelineJob(feature.status) === "produce" && playIsGated(feature.availability);
-  // Filled CTA control — whole button is CTA blue; no Sparkles badge (AI Review keeps sparkle).
+  // Same ghost icon grammar as Play — CTA-blue glyph, no filled square, no Sparkles.
   const fastForwardControl = showFastForward ? (
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
           type="button"
+          variant="ghost"
           size="icon"
-          className="h-5 min-h-5 w-5 min-w-5 shrink-0 rounded bg-cta text-cta-foreground hover:bg-cta/90 disabled:opacity-40 [&_svg]:size-3"
+          className="h-5 min-h-5 w-5 min-w-5 shrink-0 rounded text-cta hover:bg-accent hover:text-cta disabled:opacity-40 [&_svg]:size-3"
           disabled={launch.isPending || nextJobGated}
           aria-label={`Fast Forward ${feature.summary}`}
           onClick={(event) => {
@@ -1384,41 +1386,8 @@ const FeatureRow = memo(function FeatureRow({
                     : "Approve (no next stage)"}
                 </DropdownMenuItem>
               </>
-            ) : (
-              <DropdownMenuItem
-                disabled={launch.isPending}
-                onSelect={(event) => {
-                  event.preventDefault();
-                  runPipelineLaunch("produce");
-                }}
-                data-testid={`button-feature-launch-${feature.stage}-produce-${feature.id}`}
-              >
-                {produceLaunchPending ? (
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Play className="mr-2 h-3.5 w-3.5 fill-current text-cta" />
-                )}
-                {produceContract.actionLabel}
-              </DropdownMenuItem>
-            )}
-            {!fastForwardOn && showFastForward && (
-              <DropdownMenuItem
-                disabled={
-                  launch.isPending ||
-                  isSessionInProgress ||
-                  (resolveFeaturePipelineJob(feature.status) === "produce" &&
-                    playIsGated(feature.availability))
-                }
-                onSelect={(event) => {
-                  event.preventDefault();
-                  startFastForward();
-                }}
-                data-testid={`button-feature-menu-fast-forward-${feature.id}`}
-              >
-                <FastForward className="mr-2 h-3.5 w-3.5 fill-current text-cta" />
-                Fast Forward
-              </DropdownMenuItem>
-            )}
+            ) : null}
+            {/* Play / Fast Forward stay on the row chrome only — not duplicated in …. */}
             <DropdownMenuItem
               disabled={launch.isPending || isSessionInProgress}
               onSelect={(event) => {
@@ -1438,22 +1407,34 @@ const FeatureRow = memo(function FeatureRow({
               <DropdownMenuSubTrigger data-testid={`menu-feature-owner-${feature.id}`}>
                 <User className="mr-2 h-3.5 w-3.5" />
                 Owner
+                {feature.owner_person_id ? (
+                  <span className="ml-auto max-w-[7rem] truncate pl-2 text-xs text-muted-foreground">
+                    <InlineReferenceText text={`@person:${feature.owner_person_id}`} />
+                  </span>
+                ) : null}
               </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-56 p-2" onClick={(event) => event.stopPropagation()}>
-                <ReferencePicker
-                  types={["person"]}
-                  mode="single"
-                  variant="compact"
-                  dense
-                  placeholder="Owner"
-                  value={ownerValue}
-                  onChange={(next) => {
-                    const personId = next[0]?.id;
+              <DropdownMenuSubContent className="max-h-64 w-56 overflow-y-auto">
+                <DropdownMenuRadioGroup
+                  value={feature.owner_person_id ?? ""}
+                  onValueChange={(personId) => {
                     if (!personId || personId === feature.owner_person_id) return;
                     update.mutate({ ownerPersonId: personId });
                   }}
-                  testId={`picker-feature-owner-${feature.id}`}
-                />
+                >
+                  {people.length === 0 ? (
+                    <DropdownMenuItem disabled>No people loaded</DropdownMenuItem>
+                  ) : (
+                    people.map((person) => (
+                      <DropdownMenuRadioItem
+                        key={person.id}
+                        value={person.id}
+                        data-testid={`menu-feature-owner-${person.id}-${feature.id}`}
+                      >
+                        {person.name}
+                      </DropdownMenuRadioItem>
+                    ))
+                  )}
+                </DropdownMenuRadioGroup>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
             <DropdownMenuSub>
@@ -1578,10 +1559,7 @@ const FeatureRow = memo(function FeatureRow({
             ) : feature.description?.trim() ? (
               <button
                 type="button"
-                className={cn(
-                  "block w-full text-left hover:text-foreground",
-                  FEATURE_DESCRIPTION_PROSE_CLASS,
-                )}
+                className={cn("block w-full text-left", FEATURE_DESCRIPTION_PROSE_CLASS)}
                 onClick={() => {
                   descriptionDraftRef.current = (feature.description ?? "").trimEnd();
                   setDescriptionDoc(featureDescriptionDoc(feature.description));
@@ -1594,7 +1572,7 @@ const FeatureRow = memo(function FeatureRow({
             ) : (
               <button
                 type="button"
-                className="text-xs leading-relaxed text-muted-foreground/50 hover:text-muted-foreground"
+                className="text-xs leading-relaxed text-muted-foreground/50"
                 onClick={() => {
                   descriptionDraftRef.current = "";
                   setDescriptionDoc(featureDescriptionDoc(""));
@@ -1662,26 +1640,26 @@ const FeatureRow = memo(function FeatureRow({
             )}
           </ProfileTreeRow>
 
-          <div className="pt-1" data-testid={`feature-history-${feature.id}`}>
+          {/* Same row pitch as Spec / SessionMenu; body uses description frame width + 5-line cap. */}
+          <div data-testid={`feature-history-${feature.id}`}>
             <ProfileTreeRow
               label="History"
               icon={<History className="h-3.5 w-3.5" />}
-              hasValue={historyRows.length > 0}
+              hasValue
               showEmpty
-              mobileLayout="stacked"
-              defaultOpen={false}
+              mobileLayout="inline"
+              defaultOpen
               testId={`feature-history-header-${feature.id}`}
+              expandedContentClassName="!pl-2"
               expandedContent={
                 historyRows.length === 0 ? (
-                  <p className="text-xs text-muted-foreground/50">No stage or status changes yet.</p>
+                  <div className={cn(FEATURE_DESCRIPTION_FRAME_CLASS, "text-muted-foreground/50")}>
+                    No stage or status changes yet.
+                  </div>
                 ) : (
-                  <ul className="max-h-48 space-y-1.5 overflow-y-auto">
+                  <div className={cn(FEATURE_DESCRIPTION_FRAME_CLASS, "space-y-1.5")}>
                     {historyRows.map((row) => (
-                      <li
-                        key={row.id}
-                        className="rounded-md border border-border/20 bg-muted/20 px-2 py-1.5"
-                        data-testid={`feature-history-row-${row.id}`}
-                      >
+                      <div key={row.id} data-testid={`feature-history-row-${row.id}`}>
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="text-xs font-medium text-foreground">
                             {formatHistoryTransition(row)}
@@ -1695,9 +1673,9 @@ const FeatureRow = memo(function FeatureRow({
                             <ReferenceText content={row.note} />
                           </div>
                         ) : null}
-                      </li>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
                 )
               }
             >
@@ -1963,6 +1941,7 @@ export default function FeaturesPage() {
                         key={feature.id}
                         feature={feature}
                         products={productList}
+                        people={people.data?.people ?? []}
                         sessionsById={sessionsById}
                         titleSessionOwners={titleSessionOwners}
                         streamStore={featureStreamStore}

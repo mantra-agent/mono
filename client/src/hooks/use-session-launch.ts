@@ -33,9 +33,10 @@ export interface SessionLaunch {
   errorTitle?: string;
   /**
    * Open the Focus session surface after create. Default true.
-   * Features passes `!isMobile`: desktop opens Focus; mobile keeps the
-   * under-row session strip so launch does not full-screen leave the page.
-   * Fast Forward host auto-walks keep false so the sequencer does not thrash Focus.
+   * Features passes `!useIsMobileViewport()` (not container-aware isMobile —
+   * the Features column is often <768px on desktop and would suppress Focus).
+   * Phone/native keeps the under-row strip. Fast Forward host auto-walks keep
+   * false so the sequencer does not thrash Focus.
    */
   openFocus?: boolean;
 }
