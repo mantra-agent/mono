@@ -1792,10 +1792,18 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS period_tokens BIGINT NOT NULL DEFAULT 0`);
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS emitted_overage_tokens BIGINT NOT NULL DEFAULT 0`);
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS usage_status TEXT`);
+    // Commercial activation seat — not onboarding REGISTERED/ACTIVATED.
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS activation_level TEXT`);
     await pool.query(
       "DO " +
         String.fromCharCode(36, 36) +
         " BEGIN ALTER TABLE accounts ADD CONSTRAINT accounts_usage_status_check CHECK (usage_status IS NULL OR usage_status IN ('ok', 'bar', 'warn', 'pause')); EXCEPTION WHEN duplicate_object THEN NULL; END " +
+        String.fromCharCode(36, 36),
+    );
+    await pool.query(
+      "DO " +
+        String.fromCharCode(36, 36) +
+        " BEGIN ALTER TABLE accounts ADD CONSTRAINT accounts_activation_level_check CHECK (activation_level IS NULL OR activation_level IN ('none', 'invited', 'registered', 'activated', 'retained')); EXCEPTION WHEN duplicate_object THEN NULL; END " +
         String.fromCharCode(36, 36),
     );
     await pool.query(`
@@ -2835,6 +2843,18 @@ export async function runSchemaBootstrap(
     // password hashes cannot prove that an account crossed the signup boundary.
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_signup_at TIMESTAMPTZ`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_password_signup_at ON users(password_signup_at) WHERE password_signup_at IS NOT NULL`);
+  });
+
+  await heal("users nps score seat", async () => {
+    // Scorecard NPS seat. Nullable until survey collection writes 0–10.
+    // No collection writer in this heal — empty stays unmeasured.
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS nps_score DOUBLE PRECISION`);
+    await pool.query(
+      "DO " +
+        String.fromCharCode(36, 36) +
+        " BEGIN ALTER TABLE users ADD CONSTRAINT users_nps_score_check CHECK (nps_score IS NULL OR (nps_score >= 0 AND nps_score <= 10)); EXCEPTION WHEN duplicate_object THEN NULL; END " +
+        String.fromCharCode(36, 36),
+    );
   });
 
   await heal("users insert defaults", async () => {

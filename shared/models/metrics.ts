@@ -55,6 +55,11 @@ const PRODUCT_CATALOG_SLUGS = new Set([
   "achieved-goals",
   "net-new-active-users",
   "mantra-meetings",
+  "net-promoter-score",
+  "activation-rate",
+  "monthly-account-churn",
+  // Legacy slug kept until rename heal converges catalog rows.
+  "monthly-customer-churn",
 ]);
 
 const ENGAGEMENT_ADAPTER_KEYS = new Set(["tasks", "interactions", "wellness", "meetings", "goals"]);

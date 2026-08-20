@@ -54,6 +54,11 @@ export const PRODUCT_METRIC_SLUGS = new Set([
   "achieved-goals",
   "net-new-active-users",
   "mantra-meetings",
+  "net-promoter-score",
+  "activation-rate",
+  "monthly-account-churn",
+  // Legacy slug retained only so stamp/rename heals still match pre-rename rows.
+  "monthly-customer-churn",
 ]);
 
 /**
@@ -538,6 +543,95 @@ async function handleProduct(
     };
   }
 
+  // NPS: average of stored users.nps_score when any scores exist; else unavailable.
+  // Does not invent survey events. Collection writer is a later Feature.
+  if (producerKey === "net-promoter-score") {
+    const { users } = await import("@shared/schema");
+    const [row] = await db
+      .select({
+        respondents: sql<number>`count(*)::int`,
+        promoters: sql<number>`count(*) FILTER (WHERE ${users.npsScore} >= 9)::int`,
+        detractors: sql<number>`count(*) FILTER (WHERE ${users.npsScore} <= 6)::int`,
+      })
+      .from(users)
+      .where(sql`${users.npsScore} IS NOT NULL`);
+    const respondents = Number(row?.respondents ?? 0);
+    if (respondents <= 0) {
+      return unavailableSeries(
+        metric,
+        "No users.nps_score values yet. NPS stays unmeasured until survey collection writes scores.",
+      );
+    }
+    const promoters = Number(row?.promoters ?? 0);
+    const detractors = Number(row?.detractors ?? 0);
+    const value = ((promoters - detractors) / respondents) * 100;
+    const sample = singleRangeSample(
+      metric,
+      value,
+      range,
+      "internal/nps-score-query-v1",
+      `NPS from ${respondents} stored user score(s). Point-in-time over users.nps_score; not a period cohort until collection stamps response times.`,
+    );
+    return {
+      metric: { ...metric, latestSample: sample },
+      samples: [sample],
+      valueStatus: "actual",
+      coverage: { status: "partial", availableFrom: null, reason: "NPS is point-in-time over stored scores until response timestamps exist." },
+    };
+  }
+
+  // Activation Rate: share of Accounts with activation_level = activated|retained.
+  // Distinct from onboarding completed. Empty levels → unavailable (do not infer).
+  if (producerKey === "activation-rate") {
+    const { accounts } = await import("@shared/schema");
+    const [row] = await db
+      .select({
+        measured: sql<number>`count(*) FILTER (WHERE ${accounts.activationLevel} IS NOT NULL)::int`,
+        activated: sql<number>`count(*) FILTER (WHERE ${accounts.activationLevel} IN ('activated', 'retained'))::int`,
+      })
+      .from(accounts)
+      .where(eq(accounts.status, "active"));
+    const measured = Number(row?.measured ?? 0);
+    if (measured <= 0) {
+      return unavailableSeries(
+        metric,
+        "No accounts.activation_level values yet. Activation Rate stays unmeasured until commercial activation is written — not onboarding completed.",
+      );
+    }
+    const activated = Number(row?.activated ?? 0);
+    const value = (activated / measured) * 100;
+    const sample = singleRangeSample(
+      metric,
+      value,
+      range,
+      "internal/activation-rate-query-v1",
+      `Share of active Accounts with activation_level activated|retained among ${measured} measured seat(s). Not onboarding REGISTERED/ACTIVATED.`,
+    );
+    return {
+      metric: { ...metric, latestSample: sample },
+      samples: [sample],
+      valueStatus: "actual",
+      coverage: {
+        status: "partial",
+        availableFrom: null,
+        reason: "Activation Rate is point-in-time over activation_level until lifecycle events exist.",
+      },
+    };
+  }
+
+  // Monthly Account Churn: paying = included_tokens IS NOT NULL.
+  // Dark until cancel/non-paying lifecycle events exist — never fabricate from status noise.
+  if (
+    producerKey === "monthly-account-churn"
+    || producerKey === "monthly-customer-churn"
+    || metric.slug === "monthly-customer-churn"
+  ) {
+    return unavailableSeries(
+      metric,
+      "Monthly Account Churn needs paying-at-start and cancel/non-paying lifecycle events. Paying seat is included_tokens IS NOT NULL; identity status noise is not churn.",
+    );
+  }
+
   if (producerKey === "shipped-prs") {
     const dayMap = await queryMergedPrSeries(range.start, range.end);
     const samples = samplesFromDayMap(metric, dayMap, range, "internal/shipped-prs-query-v1");
@@ -847,12 +941,46 @@ const PLATFORM_MANTRA_MEETINGS_DEFINITION = {
   samplePeriod: "custom" as const,
 };
 
+const PLATFORM_NPS_DEFINITION = {
+  key: "net-promoter-score",
+  name: "Net Promoter Score",
+  unit: "score",
+  description:
+    "Standard NPS from stored users.nps_score (promoters 9–10 minus detractors 0–6). Unmeasured until survey collection writes scores. No collection writer in this producer.",
+  direction: "higher_is_better" as const,
+  samplePeriod: "monthly" as const,
+};
+
+const PLATFORM_ACTIVATION_RATE_DEFINITION = {
+  key: "activation-rate",
+  name: "Activation Rate",
+  unit: "%",
+  description:
+    "Share of active Accounts with commercial activation_level activated|retained among measured seats. Not onboarding REGISTERED vs ACTIVATED. Unmeasured until activation_level is written.",
+  direction: "higher_is_better" as const,
+  samplePeriod: "monthly" as const,
+};
+
+const PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION = {
+  key: "monthly-account-churn",
+  name: "Monthly Account Churn",
+  unit: "%",
+  description:
+    "Paying accounts (included_tokens IS NOT NULL) active at window start that cancel or become non-paying in the window, divided by paying at start. Dark until lifecycle events exist — never fabricate from identity status noise.",
+  direction: "lower_is_better" as const,
+  samplePeriod: "monthly" as const,
+};
+
 /** Catalog description overrides stamped onto existing product rows (idempotent). */
 const PRODUCT_DESCRIPTION_BY_SLUG: Record<string, string> = {
   "achieved-goals": PLATFORM_ACHIEVED_GOALS_DEFINITION.description,
   "active-users": PLATFORM_ACTIVE_USERS_DEFINITION.description,
   "net-new-active-users": PLATFORM_NET_NEW_ACTIVE_USERS_DEFINITION.description,
   "mantra-meetings": PLATFORM_MANTRA_MEETINGS_DEFINITION.description,
+  "net-promoter-score": PLATFORM_NPS_DEFINITION.description,
+  "activation-rate": PLATFORM_ACTIVATION_RATE_DEFINITION.description,
+  "monthly-account-churn": PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.description,
+  "monthly-customer-churn": PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.description,
 };
 
 const HOURS_USED_PER_USER_SLUG = "hours-used-per-user";
@@ -929,25 +1057,127 @@ async function ensureHoursUsedPerUserMetric(): Promise<void> {
 }
 
 /**
- * Stamp User Memory, Achieved Goals, Active Users, NNAU, and company Meetings
- * as product rows. ensure is idempotent on (account, vault, slug).
+ * Rename Monthly Customer Churn → Monthly Account Churn on Metric + KPI rows.
+ * Idempotent; keeps metric id so KPI bindings stay intact.
+ */
+export async function renameMonthlyCustomerChurnToAccountChurn(): Promise<number> {
+  const metricUpdated = await db.execute(sql`
+    UPDATE metrics
+    SET name = ${PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.name},
+        slug = ${PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.key},
+        description = ${PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.description},
+        adapter_kind = 'internal',
+        status = 'active',
+        owner_kind = 'platform',
+        owner_id = NULL,
+        adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify({
+          adapterKey: "product",
+          key: PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.key,
+          equation: PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.key,
+          plan: { type: "producer", key: PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.key },
+          producerKey: PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.key,
+        })}::jsonb,
+        updated_at = NOW()
+    WHERE id = 'metric_89a6d21438755204c41091be'
+       OR slug = 'monthly-customer-churn'
+       OR (slug = 'monthly-account-churn' AND (
+         name IS DISTINCT FROM ${PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.name}
+         OR description IS DISTINCT FROM ${PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.description}
+         OR adapter_kind IS DISTINCT FROM 'internal'
+         OR owner_kind IS DISTINCT FROM 'platform'
+       ))
+  `);
+  const kpiUpdated = await db.execute(sql`
+    UPDATE kpis
+    SET name = ${"Monthly Account Churn"},
+        slug = ${"monthly-account-churn-kpi"},
+        description = ${"Lagging KPI for Multiply User Leverage: paying-account loss (included_tokens IS NOT NULL at window start that cancel or become non-paying). Not customer-headcount churn."},
+        updated_at = NOW()
+    WHERE id = 'kpi_cdfea8c022b9da620323e04b'
+       OR slug = 'monthly-customer-churn-kpi'
+       OR (slug = 'monthly-account-churn-kpi' AND name IS DISTINCT FROM ${"Monthly Account Churn"})
+  `);
+  const metricN =
+    typeof (metricUpdated as { rowCount?: number }).rowCount === "number"
+      ? (metricUpdated as { rowCount: number }).rowCount
+      : 0;
+  const kpiN =
+    typeof (kpiUpdated as { rowCount?: number }).rowCount === "number"
+      ? (kpiUpdated as { rowCount: number }).rowCount
+      : 0;
+  const total = metricN + kpiN;
+  if (total > 0) {
+    log.info("renamed Monthly Customer Churn → Monthly Account Churn", { metricN, kpiN });
+  }
+  return total;
+}
+
+/**
+ * Stamp User Memory, Achieved Goals, Active Users, NNAU, company Meetings,
+ * NPS, Activation Rate, and Monthly Account Churn as product rows.
+ * ensure is idempotent on (account, vault, slug).
  */
 export async function ensureProductCatalogDefinitions(): Promise<void> {
   const { ensurePlatformBusinessMetrics } = await import("../metrics-storage");
   const { USER_MEMORY_PLATFORM_DEFINITION } = await import("../user-memory-metric");
+  await renameMonthlyCustomerChurnToAccountChurn();
   await ensurePlatformBusinessMetrics([
     USER_MEMORY_PLATFORM_DEFINITION,
     PLATFORM_ACHIEVED_GOALS_DEFINITION,
     PLATFORM_ACTIVE_USERS_DEFINITION,
     PLATFORM_NET_NEW_ACTIVE_USERS_DEFINITION,
     PLATFORM_MANTRA_MEETINGS_DEFINITION,
+    PLATFORM_NPS_DEFINITION,
+    PLATFORM_ACTIVATION_RATE_DEFINITION,
+    PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION,
   ]);
+  // Stamp existing fixed-id NPS / Activation Rate catalog rows onto product producers.
+  await db.execute(sql`
+    UPDATE metrics
+    SET name = ${PLATFORM_NPS_DEFINITION.name},
+        description = ${PLATFORM_NPS_DEFINITION.description},
+        adapter_kind = 'internal',
+        status = 'active',
+        owner_kind = 'platform',
+        owner_id = NULL,
+        adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify({
+          adapterKey: "product",
+          key: "net-promoter-score",
+          equation: "net-promoter-score",
+          plan: { type: "producer", key: "net-promoter-score" },
+          producerKey: "net-promoter-score",
+        })}::jsonb,
+        updated_at = NOW()
+    WHERE id = 'metric_ee71f6d2e2e3130a15952f80'
+       OR slug = 'net-promoter-score'
+  `);
+  await db.execute(sql`
+    UPDATE metrics
+    SET name = ${PLATFORM_ACTIVATION_RATE_DEFINITION.name},
+        description = ${PLATFORM_ACTIVATION_RATE_DEFINITION.description},
+        adapter_kind = 'internal',
+        status = 'active',
+        owner_kind = 'platform',
+        owner_id = NULL,
+        adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify({
+          adapterKey: "product",
+          key: "activation-rate",
+          equation: "activation-rate",
+          plan: { type: "producer", key: "activation-rate" },
+          producerKey: "activation-rate",
+        })}::jsonb,
+        updated_at = NOW()
+    WHERE id = 'metric_aa254f4fa3cb2955d22e30a6'
+       OR slug = 'activation-rate'
+  `);
   await ensureHoursUsedPerUserMetric();
 }
 
 export async function stampPlatformOwnerOnProductMetrics(): Promise<number> {
   const { sql } = await import("drizzle-orm");
-  const slugs = [...PRODUCT_METRIC_SLUGS];
+  // Rename before stamp so legacy monthly-customer-churn does not get a stale equation.
+  await renameMonthlyCustomerChurnToAccountChurn();
+  const slugs = [...PRODUCT_METRIC_SLUGS].filter((slug) => slug !== "monthly-customer-churn");
   if (slugs.length === 0) return 0;
   // Stamp platform owner + producer equation atom + internal/active for each product slug.
   // Existing catalog rows (e.g. scorecard Achieved Goals / mantra-meetings) keep their ids.
