@@ -27,6 +27,7 @@ import {
   getPostgresErrorCode,
   isPoolAcquireTimeoutError,
   isRecoverablePostgresConnectionError,
+  resolveQueryContractTelemetryCode,
 } from "./postgres-errors";
 
 const log = createLogger("DB");
@@ -283,7 +284,11 @@ function logQueryFailure(opts: {
   const errorType = err instanceof Error ? "Error" : typeof err;
   const counts = poolCounts(targetPool);
   const kind = acquireTimeout ? "pool acquire timeout" : "query contract failed";
-  const code = acquireTimeout ? "POOL_ACQUIRE_TIMEOUT" : "QUERY_CONTRACT_FAILED";
+  // Split ERRORS identity by SQLSTATE class so timeouts/FK/syntax do not share
+  // one immortal QUERY_CONTRACT_FAILED fingerprint across unrelated producers.
+  const code = acquireTimeout
+    ? "POOL_ACQUIRE_TIMEOUT"
+    : resolveQueryContractTelemetryCode(err);
   const message =
     `${kind} after ${elapsedMs}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} ` +
     `pool=${counts}${sqlDiag} phase=${phase} attempt=${attempt} errorType=${errorType}` +
