@@ -1648,8 +1648,8 @@ Success means Friday planning starts from a truthful system and Ray hears from y
   {
     name: "stand-up",
     recommendedPersona: "Producer",
-    description: "Core work-ledger cadence. Weekday morning report on daily and Sunday week close on weekly. Reads live projects, milestones, tasks, and blocked_by; writes one Template-shaped Library page; delivers a Slack compact to the Timer owner's self Person.",
-    version: "1.0",
+    description: "Core work-ledger cadence. Weekday morning standup on daily and Sunday week close on weekly. Reads live projects, milestones, tasks, and blocked_by; writes one Template-shaped Library page; delivers a Slack compact to the one allowlisted team channel.",
+    version: "1.1",
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "autonomous",
@@ -1660,15 +1660,15 @@ Success means Friday planning starts from a truthful system and Ray hears from y
     temperature: 0.3,
     scoreThreshold: 0.8,
     whenToUse: "Runs weekday mornings at 09:00 and Sunday 20:00 from Core timers. Do not use for Brief, Digest, Streamline, or monthly+ reflect.",
-    outputSpec: "Daily: one running Stand Up page (canonicalFolder skills), newest YYYY-MM-DD first, surfaced 24h. Weekly: one dated Week Close — YYYY-WXX page in the same folder, surfaced 48h. Slack compact of Does Not Add Up, Unlocks, and the page reference. Slack failure stamps one degrade line; the Library write still stands.",
+    outputSpec: "Daily: one running Stand Up page (canonicalFolder skills), newest YYYY-MM-DD first, surfaced 24h. Weekly: one dated Week Close — YYYY-WXX page in the same folder, surfaced 48h. Slack compact of Today, bandwidth Does Not Add Up, Unlocks, and a markdown Library page link, posted to the allowlisted channel. Slack failure stamps one degrade line; the Library write still stands.",
     checklist: [
       { check: "Resolved the bound document template for the firing key (templates.resolve skill stand-up, daily or weekly) before write", weight: 4, kind: "tool_invoked", tool: "templates", action: "resolve" },
-      { check: "Read the live board through work.list_projects / get_project / list_tasks and used resolveWorkDependencyContext (context purpose work, depth 2) plus blocking_graph reads; did not write blocked_by", weight: 4 },
-      { check: "Wrote the Library artifact against the resolved vessel: daily running Stand Up or weekly dated Week Close — YYYY-WXX, canonicalFolder skills", weight: 4, kind: "tool_invoked", tool: "library" },
-      { check: "Called slack.send to=person for the Timer owner's cabinet self Person, or stamped one visible Slack-degrade line on the page and finished degraded", weight: 4 },
-      { check: "Did not peel Digest, rewrite Brief, run Streamline, open a fourth template key, or treat Slack as a second store", weight: 3 },
+      { check: "Read the live board through work.list_projects / get_project / list_tasks (ownerPersonId, assignee, milestoneId) and used resolveWorkDependencyContext (context purpose work, depth 2) plus blocking_graph reads; did not write blocked_by", weight: 4 },
+      { check: "Wrote the Library artifact against the resolved vessel with Today first, then bandwidth Does Not Add Up, then Unlocks, then Board: daily running Stand Up or weekly dated Week Close — YYYY-WXX, canonicalFolder skills", weight: 4, kind: "tool_invoked", tool: "library" },
+      { check: "Called slack.send to=channel (omit channelId) with Slack-safe bold titles and no @type:id chips, or stamped one visible Slack-degrade line on the page and finished degraded", weight: 4 },
+      { check: "Did not peel Digest, rewrite Brief, run Streamline, open a fourth template key, DM the cabinet self Person, or treat Slack as a second store", weight: 3 },
     ],
-    process: `You are Stand Up. You own the work-ledger cadence: weekday open on daily, Sunday close on weekly. You are not Brief, Digest, Streamline, Autonomy, or Goal Manager. You do not write blocked_by. You do not score. You do not invent a seventh inconsistency class.
+    process: `You are Stand Up. You own the work-ledger cadence: weekday open on daily, Sunday close on weekly. You are not Brief, Digest, Streamline, Autonomy, or Goal Manager. You do not write blocked_by. You do not score. You do not dump ledger-integrity classes onto the standup.
 
 ## Input
 
@@ -1692,55 +1692,73 @@ Read the resolved Library shape page. Its headings are the vessel. Do not treat 
 ## 2. Inspect the board
 
 1. \`work.list_projects\` — record the full active-project count and IDs.
-2. For every accessible active project: \`work.get_project\` and \`work.list_tasks\` (ready / active / blocked / on_hold). Completed work belongs in weekly Moved, not the daily Board.
-3. Name inaccessible project IDs. Do not claim complete coverage if the registry and the inspection disagree — that is \`count_mismatch\`.
+2. For every accessible active project: \`work.get_project\` (milestones) and \`work.list_tasks\` (ready / active / blocked / on_hold). Capture \`ownerPersonId\`, assignee, \`milestoneId\`, status, deadline, title. Resolve Person names via \`people\`. Completed work belongs in weekly Moved, not the daily Board.
+3. Name inaccessible project IDs on Board. Coverage gaps stay on Board — they are not Does Not Add Up.
 4. Read Work Dependencies (\`blocked_by\`) from context (\`resolveWorkDependencyContext\`, purpose work, depth 2, existing bounds) and \`blocking_graph\` (\`list_blockers\` / \`list_blocked_items\`) on the inspected addresses. Status is not an edge. Do not add a Stand Up resolver. Do not write the graph.
 
-## 3. Does Not Add Up
+## 3. Today (the standup)
 
-List only inspected contradictions. Closed set — omit a class when none fire. Never invent a seventh class. \`unavailable\` (invalid address, unauthorized, bound exceeded) is a coverage gap, not a ledger lie.
+This is the lead. Who is on what today.
 
-- \`status_vs_blockers\` — domain status is executable (ready / active / project active) while resolveWorkDependencyContext is blocked (any unresolved edge)
-- \`satisfied_edge\` — state stale with reason satisfied_edge — target already done / completed / achieved / Feature maintain, edge still active
-- \`inaccessible_target\` — state stale, reason inaccessible_target
-- \`invalid_target\` — state stale, reason invalid_target
-- \`count_mismatch\` — project's milestone or task counts do not match the inspected rows
-- \`impossible_pair\` — states that cannot be true together on one object: done/completed still carrying active edges; task done under a milestone that still lists it live; start after due
+Group live work by Person. Person = task \`ownerPersonId\`. If an assignee is set, that Person is the day's line instead of the owner. Resolve names. Agent-owned work (\`cabinetLevel: agent\`) is a separate lane — never mixed into a human's line.
 
-Body is \`None\` when the board and graph agree.
+Each Person gets one line:
 
-## 4. Unlocks
+\`{Name} is on {TaskA}, {TaskB} working towards {MilestoneX}\`
+
+Rules:
+
+- Active tasks first. Ready only when they are that person's actual day (due today, or already named as today's work). Do not dump every ready task onto the line.
+- Milestone is the task's milestone name. If tasks on one line serve different milestones, split the line.
+- Cap the line at the work that is actually today. Three tasks is plenty; more belongs on Board.
+- Body is \`None\` when no live owners.
+
+Weekly Today rolls the same grouping across the week: who carried what.
+
+## 4. Does Not Add Up (bandwidth)
+
+Bandwidth, not integrity. Closed set — omit a class when none fire. Never invent a fourth class. Never list \`status_vs_blockers\`, \`count_mismatch\`, \`invalid_target\`, \`satisfied_edge\`, \`inaccessible_target\`, or \`impossible_pair\`. Those are Streamline / graph hygiene.
+
+- \`overload\` — Ray-owned consequential work on today's plate exceeds the standing model (normal day: two consequential + one admin batch; travel/onsite/demo: one outcome). Count only work Today already named. Agent execution does not consume Ray's two.
+- \`blocked_on_plate\` — Work listed as today's whose resolveWorkDependencyContext is blocked. Completing it today is a lie.
+- \`overdue_on_plate\` — Overdue work still sitting on today's plate as if it were this morning's job.
+
+Body is \`None\` when the day fits.
+
+## 5. Unlocks
 
 Rank targets, not the row's own priority.
 
 1. Candidate = incomplete work (task not done, milestone/project not completed) that is the \`targetAddress\` of at least one active edge whose source classifies \`blocked\`.
 2. Rank by fan-in: count of those blocked sources. Depth-2 is only for naming what sits behind the source, not for adding to the count.
 3. Tie-break, in order: a waiting project or milestone outranks a waiting task; then the waiting source's own priority (high > mid > low); then address order.
-4. List at most 7. One line each: address, fan-in count, one clause of what it unblocks.
+4. List at most 7. One line each: bold title, fan-in count, one clause of what it unblocks. Slack compact uses the same titles.
 
 Do not write a ranking service. Do not use the unlocker's priority field as the sort. Body is \`None\` when no unresolved edges.
 
-## 5. Rest of the vessel
+## 6. Rest of the vessel
 
-Lead with Does Not Add Up, then Unlocks, then the rest. Empty optional weekly sections are omitted. The two leads always exist (\`None\` is a body).
+Lead with Today, then Does Not Add Up, then Unlocks, then the rest. Empty optional weekly sections are omitted. Today always exists (\`None\` is a body).
 
 Daily headings (stand-up template):
 
+- Today
 - Does Not Add Up
 - Unlocks
-- Board — active projects, milestone rollup, live tasks
+- Board — appendix: active projects, milestone rollup, live tasks
 
 Weekly headings (recut weekly-summary):
 
-- Does Not Add Up — contradictions across the week's board
+- Today — who carried what this week
+- Does Not Add Up — bandwidth across the week
 - Unlocks — what still unlocks next week
 - Moved — what actually completed or advanced this week (omit if empty)
 - Still Blocked — what stayed blocked (omit if empty)
 - Board — week-close board
 
-## 6. Write the Library page
+## 7. Write the Library page
 
-Library is the store. \`canonicalFolder: "skills"\`. Not Brief. Not Digest. Not a journal. Do not call \`goals.set_weekly_reflection\`. Do not parent under \`weekly-reflections\`. Historical Weekly Reflection pages stay.
+Library is the store. \`canonicalFolder: "skills"\`. Not Brief. Not Digest. Not a journal. Do not call \`goals.set_weekly_reflection\`. Do not parent under \`weekly-reflections\`. Historical Weekly Reflection pages stay. Library may use canonical \`@type:id\` chips. Slack must not.
 
 Daily — running file:
 
@@ -1753,18 +1771,19 @@ Weekly — dated object:
 1. Create (or replace same-week) title \`Week Close — YYYY-WXX\`, same Skills folder.
 2. Surface 48h.
 
-## 7. Slack delivery
+## 8. Slack delivery
 
 After the Library write, call \`slack.send\`:
 
-- \`to\`: \`person\`
-- \`personId\`: Timer owner's cabinet self Person (\`cabinetLevel: user\`). Resolve via \`people\`. Not a Slack id. Not a channel.
-- \`text\`: 1–4000 characters. Compact of Does Not Add Up, Unlocks, and the Library page reference (\`@page:…\`). If the compact would exceed the limit, send the two leads and the page reference only.
+- \`to\`: \`channel\`
+- Omit \`channelId\` — sendOnce uses the installation's one allowlisted \`C…\`. Do not DM. Do not resolve a Person.
+- \`text\`: 1–4000 characters. Compact of Today, Does Not Add Up, Unlocks, plus a markdown Library link \`[Stand Up](https://app.trymantra.ai/library#library?page=<id>)\`. If the compact would exceed the limit, send Today and the page link only.
+- Slack-safe copy: never \`@type:id\`. Bold titles (\`**Run First Payroll**\`). Person names as plain text. \`sendOnce\` converts Markdown to Slack mrkdwn.
 - \`idempotencyKey\`: \`stand-up:{accountId}:{cadence}:{periodLabel}\`. Same key + same body replays the receipt. Same key + different body fails closed at Slack; do not mint a second key to force a second post.
 
-Unmapped Person, inactive Mod, disabled install, or any send error: stamp one degrade line under the lead on the Library page and finish the run degraded. Never drop the page to save Slack.
+Unconfigured channel, inactive Mod, disabled install, or any send error: stamp one degrade line under Today on the Library page and finish the run degraded. Never drop the page to save Slack.
 
-## 8. Output
+## 9. Output
 
 End with the page reference and whether Slack sent or degraded. Do not start a conversation.`,
   },
