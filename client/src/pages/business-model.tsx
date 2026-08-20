@@ -48,7 +48,7 @@ const PERIOD_MODES: { key: PeriodMode; label: string }[] = [
 const ASSUMPTIONS_DISCLOSURE_KEY = "mantra.forecast.assumptions-open.v1";
 const FORECAST_TREE_KEY = "mantra.forecast.tree-open.v1";
 const MAX_ASSUMPTION_PREFERENCES = 64;
-const FORECAST_TREE_ROWS = ["utilization", "accounts", "newAccounts", "accountTypes", "users", "userTypes", "expandedUsers", "meetings", "grossProfit", "revenue", "cogs", "support", "opex", "staff"] as const;
+const FORECAST_TREE_ROWS = ["utilization", "accounts", "newAccounts", "fromSales", "accountTypes", "users", "userTypes", "expandedUsers", "meetings", "grossProfit", "revenue", "cogs", "support", "opex", "staff"] as const;
 type ForecastTreeRow = (typeof FORECAST_TREE_ROWS)[number];
 type ForecastTreeState = Record<ForecastTreeRow, boolean>;
 
@@ -390,8 +390,14 @@ export default function BusinessModelPage() {
             <AssumptionDriver assumptionKey="startingUsers" label="Starting users" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
               <NumericInput ariaLabel="Starting users" value={liveAssumptions.startingUsers} min={0} step={1} disabled={sampled("startingUsers")} onChange={(startingUsers) => updateGlobal({ startingUsers })} />
             </AssumptionDriver>
-            <AssumptionDriver assumptionKey="quarterOneNewAccounts" label="Q1 new accounts" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
-              <NumericInput ariaLabel="Quarter one new accounts" value={liveAssumptions.quarterOneNewAccounts} min={0} step={1} disabled={sampled("quarterOneNewAccounts")} onChange={(quarterOneNewAccounts) => updateGlobal({ quarterOneNewAccounts })} />
+            <AssumptionDriver assumptionKey="costPerMql" label="$/MQL" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="Dollars per MQL" value={liveAssumptions.costPerMql} min={0} step={10} prefix="$" disabled={sampled("costPerMql")} onChange={(costPerMql) => updateGlobal({ costPerMql })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="mqlToSqlPct" label="MQL→SQL %" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="MQL to SQL conversion percent" value={liveAssumptions.mqlToSqlPct} min={0} step={1} suffix="%" disabled={sampled("mqlToSqlPct")} onChange={(mqlToSqlPct) => updateGlobal({ mqlToSqlPct })} />
+            </AssumptionDriver>
+            <AssumptionDriver assumptionKey="sqlToClosedWonPct" label="SQL→closed-won %" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
+              <NumericInput ariaLabel="SQL to closed-won conversion percent" value={liveAssumptions.sqlToClosedWonPct} min={0} step={1} suffix="%" disabled={sampled("sqlToClosedWonPct")} onChange={(sqlToClosedWonPct) => updateGlobal({ sqlToClosedWonPct })} />
             </AssumptionDriver>
             <AssumptionDriver assumptionKey="maxEntrySharePct" label="New Accounts Max" draft={draft} kpiById={kpiById} onLink={linkAssumption}>
               <NumericInput ariaLabel="Max share of new accounts" value={liveAssumptions.maxEntrySharePct} min={0} step={5} suffix="%" disabled={sampled("maxEntrySharePct")} onChange={(maxEntrySharePct) => updateGlobal({ maxEntrySharePct })} />
@@ -477,7 +483,10 @@ export default function BusinessModelPage() {
               {tree.utilization && <DataRow label="Accounts" indent periods={periods} render={(row) => Math.round(row.activeAccounts).toLocaleString()} onToggle={() => toggleTree("accounts")} open={tree.accounts} />}
               {tree.utilization && tree.accounts && <DataRow label="New Accounts" indent={2} periods={periods} render={(row) => row.newAccounts >= 0.05 ? `+${trimNum(row.newAccounts)}` : "—"} onToggle={() => toggleTree("newAccounts")} open={tree.newAccounts} />}
               {tree.utilization && tree.accounts && tree.newAccounts && <DataRow label="From Referrals" indent={3} periods={periods} render={(row) => row.newAccountsFromMeetings >= 0.05 ? `+${trimNum(row.newAccountsFromMeetings)}` : "—"} />}
-              {tree.utilization && tree.accounts && tree.newAccounts && <DataRow label="From Sales" indent={3} periods={periods} render={(row) => row.newAccountsFromSales >= 0.05 ? `+${trimNum(row.newAccountsFromSales)}` : "—"} />}
+              {tree.utilization && tree.accounts && tree.newAccounts && <DataRow label="From Sales" indent={3} periods={periods} render={(row) => row.newAccountsFromSales >= 0.05 ? `+${trimNum(row.newAccountsFromSales)}` : "—"} onToggle={() => toggleTree("fromSales")} open={tree.fromSales} />}
+              {tree.utilization && tree.accounts && tree.newAccounts && tree.fromSales && <DataRow label="MQL" indent={4} periods={periods} render={(row) => row.salesMqls >= 0.05 ? trimNum(row.salesMqls) : "—"} />}
+              {tree.utilization && tree.accounts && tree.newAccounts && tree.fromSales && <DataRow label="SQL" indent={4} periods={periods} render={(row) => row.salesSqls >= 0.05 ? trimNum(row.salesSqls) : "—"} />}
+              {tree.utilization && tree.accounts && tree.newAccounts && tree.fromSales && <DataRow label="Sales CAC" indent={4} periods={periods} render={(row) => row.newAccountsFromSales > 0 && row.acquisitionSpend > 0 ? fmtCurrency(row.acquisitionSpend / row.newAccountsFromSales) : "—"} tone={() => "text-muted-foreground"} />}
               {tree.utilization && tree.accounts && <DataRow label="Churned Accounts" indent={2} periods={periods} render={(row) => row.churnedAccounts >= 0.05 ? `-${trimNum(row.churnedAccounts)}` : "—"} tone={() => "text-muted-foreground"} />}
               {tree.utilization && tree.accounts && <DataRow label="Types" indent={2} periods={periods} render={() => ""} onToggle={() => toggleTree("accountTypes")} open={tree.accountTypes} />}
               {tree.utilization && tree.accounts && tree.accountTypes && <DataRow label="Max" indent={3} periods={periods} render={(row) => Math.round(row.maxAccounts).toLocaleString()} />}

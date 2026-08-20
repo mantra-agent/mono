@@ -161,7 +161,7 @@ Memory UI should distinguish memory entries from session mirrors and archive/raw
 
 ## Business Model UI
 
-`/business/model` consumes Pricing; it does not reprint catalog Year 1 / Year 2 / includes / extras. Mix and volume stay on Assumptions. Forecast Accounts → Types shows period-end Max / Max+ / Factory+ counts only.
+`/business/model` consumes Pricing; it does not reprint catalog Year 1 / Year 2 / includes / extras. Mix and volume stay on Assumptions. Paid sales is `$/MQL`, `MQL→SQL %`, and `SQL→closed-won %` under Assumptions; spend is Budget **Acquisition Spending** only (no Model spend box, no Q1 new-accounts control). Forecast New Accounts → From Sales expands to MQL / SQL / closed-won parent / Sales CAC readout. Forecast Accounts → Types shows period-end Max / Max+ / Factory+ counts only.
 
 ## Page Architecture
 
