@@ -8,6 +8,8 @@ import type { Permission } from "@shared/permissions-vocabulary";
 
 const MAX_IDENTITY_LENGTH = 160;
 const MAX_SOURCE_LENGTH = 240;
+/** Issues Errors and Self Heal share this list; older undismissed rows stay stored. */
+const ACTIVE_ERROR_WINDOW = "7 days";
 const SECRET_LIKE =
   /(?:bearer\s+\S+|api[_-]?key|authorization|cookie|password|secret|token|session|email|https?:\/\/|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,})/i;
 
@@ -180,8 +182,10 @@ export function captureApplicationError(error: unknown, logger = "ExpressFallbac
 /**
  * Platform-health projection. The aggregate is intentionally global and keyed
  * only by privacy-safe fingerprint, so one defect recurring for many users is
- * one operational error with a platform-wide occurrence count. Callers must
- * establish their own authority; admin wrappers below add named permissions.
+ * one operational error with a platform-wide occurrence count. The Issues
+ * Errors tab and Self Heal both consume this list, so recency is a query
+ * contract here — not a UI filter or skill prompt. Callers must establish
+ * their own authority; admin wrappers below add named permissions.
  */
 export async function listRecentApplicationErrors(
   limit = 25,
@@ -193,9 +197,10 @@ export async function listRecentApplicationErrors(
             first_seen_at, last_seen_at, occurrence_count
      FROM application_error_aggregates
      WHERE dismissed_at IS NULL
+       AND last_seen_at >= now() - $3::interval
      ORDER BY occurrence_count DESC, last_seen_at DESC, fingerprint ASC
      LIMIT $1 OFFSET $2`,
-    [Math.min(100, Math.max(1, limit)), Math.max(0, offset)],
+    [Math.min(100, Math.max(1, limit)), Math.max(0, offset), ACTIVE_ERROR_WINDOW],
   );
   return result.rows.map((row) => ({
     fingerprint: row.fingerprint,
