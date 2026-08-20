@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
-import { requireAuth } from "../auth";
+import { BILLING_PRICE_KEYS } from "@shared/billing";
+import { requireAuth, requireAdmin } from "../auth";
 import { requirePermission } from "../permissions";
 import {
   StripeCollectorError,
@@ -10,9 +11,11 @@ import {
 } from "../integrations/stripe/client";
 import {
   attachAccountBilling,
+  listBillingPriceMap,
   processStripeEvent,
   receiveAccountMeterEvent,
   recordCancelNotice,
+  upsertBillingPriceMapEntry,
 } from "../billing-service";
 import { createLogger } from "../log";
 
@@ -30,6 +33,13 @@ const receiveSchema = z.object({
   occurredAt: z.string().min(1).optional(),
 }).strict();
 
+const priceMapUpsertSchema = z.object({
+  key: z.enum(BILLING_PRICE_KEYS),
+  stripePriceId: z.string().min(1),
+  stripeProductId: z.string().nullable().optional(),
+  amountCents: z.number().int().min(0).nullable().optional(),
+}).strict();
+
 function sendCollectorError(res: Response, error: unknown): void {
   if (error instanceof StripeCollectorError) {
     res.status(error.status).json({ error: error.message, code: error.code });
@@ -40,6 +50,48 @@ function sendCollectorError(res: Response, error: unknown): void {
 }
 
 export function registerBillingRoutes(app: Express): void {
+  app.get(
+    "/api/admin/billing/prices",
+    requireAuth,
+    requireAdmin,
+    async (_req: Request, res: Response) => {
+      try {
+        const prices = await listBillingPriceMap();
+        res.json({
+          prices,
+          requiredForTive: ["tive_custom", "token_overage"] as const,
+          completeForTive: prices
+            .filter((row) => row.key === "tive_custom" || row.key === "token_overage")
+            .every((row) => row.mapped),
+        });
+      } catch (error) {
+        sendCollectorError(res, error);
+      }
+    },
+  );
+
+  app.put(
+    "/api/admin/billing/prices/:key",
+    requireAuth,
+    requireAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const parsed = priceMapUpsertSchema.safeParse({
+          ...(req.body ?? {}),
+          key: String(req.params.key),
+        });
+        if (!parsed.success) {
+          res.status(400).json({ error: "Invalid price map payload", code: "billing_price_map_invalid" });
+          return;
+        }
+        const price = await upsertBillingPriceMapEntry(parsed.data);
+        res.json({ price });
+      } catch (error) {
+        sendCollectorError(res, error);
+      }
+    },
+  );
+
   app.post(
     "/api/admin/accounts/:id/billing/attach",
     requireAuth,

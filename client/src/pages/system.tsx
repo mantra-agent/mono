@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useLocation, useSearch } from "wouter";
-import { ScrollText, DollarSign, Loader2, Wrench, ClipboardCheck, Brain, Zap, GitBranch, Cpu, Users, FileText, KeyRound, Building2, Bot, Route } from "lucide-react";
+import { ScrollText, DollarSign, Loader2, Wrench, ClipboardCheck, Brain, Zap, GitBranch, Cpu, Users, FileText, KeyRound, Building2, Bot, Route, CreditCard } from "lucide-react";
 import { ProcessesCard } from "@/components/processes-card";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useAuth } from "@/hooks/use-auth";
@@ -16,6 +16,7 @@ const AccountsContent = lazyWithRetry(() => import("@/pages/accounts-admin"));
 const AgentsContent = lazyWithRetry(() => import("@/pages/agents-admin"));
 const RoutersContent = lazyWithRetry(() => import("@/pages/routers-admin"));
 const SecretsContent = lazyWithRetry(() => import("@/pages/secrets-admin"));
+const BillingContent = lazyWithRetry(() => import("@/pages/billing-admin"));
 
 const InferenceContent = lazyWithRetry(() => import("@/pages/inference"));
 const EventsContent = lazyWithRetry(() => import("@/pages/events"));
@@ -44,6 +45,7 @@ const systemTabs = [
   { value: "accounts", label: "Accounts", icon: <Building2 className="h-3.5 w-3.5" />, testId: "tab-system-accounts" },
   { value: "agents", label: "Agents", icon: <Bot className="h-3.5 w-3.5" />, testId: "tab-system-agents" },
   { value: "users", label: "Users", icon: <Users className="h-3.5 w-3.5" />, testId: "tab-system-users" },
+  { value: "billing", label: "Billing", icon: <CreditCard className="h-3.5 w-3.5" />, testId: "tab-system-billing" },
   { value: "secrets", label: "Secrets", icon: <KeyRound className="h-3.5 w-3.5" />, testId: "tab-system-secrets" },
 ];
 
@@ -56,6 +58,7 @@ export default function SystemPage() {
   const { hasPermission } = useAuth();
   const canReadUsers = hasPermission("users:read");
   const canReadPrompts = hasPermission("build:read");
+  const canReadBilling = hasPermission("system:read") || hasPermission("system:write");
 
   const readUrlParams = useCallback(() => {
     const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
@@ -70,14 +73,18 @@ export default function SystemPage() {
 
   const tabs = useMemo(() =>
     systemTabs
-      .filter((t) => (!identityTabs.has(t.value) || canReadUsers) && (t.value !== "prompts" || canReadPrompts))
+      .filter((t) =>
+        (!identityTabs.has(t.value) || canReadUsers)
+        && (t.value !== "prompts" || canReadPrompts)
+        && (t.value !== "billing" || canReadBilling)
+      )
       .map(t => {
       if (t.value === "logs" && hasUnseenLogErrors) {
         return { ...t, indicatorLevel: "error" as const, tooltip: "Unseen log errors" };
       }
       return t;
     }),
-    [canReadUsers, canReadPrompts, hasUnseenLogErrors]
+    [canReadUsers, canReadPrompts, canReadBilling, hasUnseenLogErrors]
   );
 
   const handleTabChange = useCallback((tab: string) => {
@@ -120,7 +127,10 @@ export default function SystemPage() {
     if (activeTab === "prompts" && !canReadPrompts) {
       handleTabChange("logs");
     }
-  }, [activeTab, canReadUsers, canReadPrompts, handleTabChange]);
+    if (activeTab === "billing" && !canReadBilling) {
+      handleTabChange("logs");
+    }
+  }, [activeTab, canReadUsers, canReadPrompts, canReadBilling, handleTabChange]);
 
   usePageHeader({
     title:
@@ -130,7 +140,8 @@ export default function SystemPage() {
             : activeTab === "agents" ? "Agents"
               : activeTab === "users" ? "Users"
                 : activeTab === "routers" ? "Routers"
-                  : "System",
+                  : activeTab === "billing" ? "Billing"
+                    : "System",
     tabs,
     activeTab,
     onTabChange: handleTabChange,
@@ -143,6 +154,11 @@ export default function SystemPage() {
         {activeTab === "agents" && <AgentsContent />}
         {activeTab === "users" && <UsersContent />}
         {activeTab === "routers" && <RoutersContent />}
+        {activeTab === "billing" && (
+          <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin">
+            <BillingContent />
+          </div>
+        )}
         {activeTab === "secrets" && (
           <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin">
             <SecretsContent />
