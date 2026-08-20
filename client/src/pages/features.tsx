@@ -87,6 +87,7 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { emitSessionChanged } from "@/hooks/use-data-sync";
 import {
+  claimAutoReviewRoom,
   clearFeatureFastForwardRuntime,
   fastForwardLastLaunchByFeature,
   fastForwardLaunchInFlight,
@@ -881,6 +882,11 @@ const FeatureRow = memo(function FeatureRow({
 
   const runPipelineLaunch = (job: "produce" | "review") => {
     if (launch.isPending) return;
+    // Same room claim the shell auto-review host uses — row/FF launch must
+    // fence auto-review from starting a second Review for this needs_review.
+    if (job === "review") {
+      claimAutoReviewRoom(feature.id, feature.stage);
+    }
     const contract = getFeatureJobContract(feature.stage, job);
     const pendingKey = `feature-${feature.id}-${feature.stage}-${job}`;
     // Shell host + row share settle memory so walk continues after leave /features.
