@@ -133,7 +133,7 @@ export function groupSessions(sessions: ChatSession[], opts?: { liveVoiceConvers
   const review: ChatSession[] = [];
   const live: ChatSession[] = [];
   const active: ChatSession[] = [];
-  const recentUrgent: ChatSession[] = []; // "Recent" — unread or < 1h old
+  const recentUrgent: ChatSession[] = []; // "Recent" — last activity < 1h (or page-load sticky)
   const today: ChatSession[] = [];
   const thisWeek: ChatSession[] = [];
   const past: ChatSession[] = [];
@@ -173,11 +173,11 @@ export function groupSessions(sessions: ChatSession[], opts?: { liveVoiceConvers
       continue;
     }
 
-    // "Recent" group: unread messages OR created < 1 hour ago, OR sticky from prior qualification
+    // "Recent" group: last activity < 1 hour, OR sticky from prior recency qualification.
+    // Unread is row emphasis only — it must not force section membership.
     const updatedMs = new Date(conv.updatedAt || conv.createdAt).getTime();
-    const hasUnread = !!conv.hasUnreadResult;
     const isNew = updatedMs > oneHourAgo;
-    if (hasUnread || isNew || stickyIds.has(conv.id)) {
+    if (isNew || stickyIds.has(conv.id)) {
       recentUrgent.push(conv);
       continue;
     }
@@ -1179,14 +1179,14 @@ export function ConversationSidebar({
   }, [isSearching, sessionsWithChildCounts]);
 
   // Sticky set: sessions that qualified for "Recent" on initial load stay there
-  // until the next page refresh (not removed mid-session when unread clears / age > 1h).
+  // until the next page refresh (not removed mid-session when age crosses 1h).
   const recentStickyIds = useRef(new Set<string>());
   useMemo(() => {
     const now = Date.now();
     const oneHourAgo = now - 60 * 60 * 1000;
     for (const c of filteredConversations) {
       const updatedMs = new Date(c.updatedAt || c.createdAt).getTime();
-      if (c.hasUnreadResult || updatedMs > oneHourAgo) {
+      if (updatedMs > oneHourAgo) {
         recentStickyIds.current.add(c.id);
       }
     }
