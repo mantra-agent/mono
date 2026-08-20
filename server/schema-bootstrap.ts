@@ -5070,18 +5070,10 @@ export async function runSchemaBootstrap(
     if (existing.rows[0].cnt > 0) return;
     for (const a of DEFAULT_WELLNESS_ACTIVITIES) {
       await pool.query(
-        `INSERT INTO wellness_activities (name, benefit, risk, estimated_minutes, estimated_cost, interval_days, category, is_default)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+        `INSERT INTO wellness_activities (name, benefit, interval_days, category, is_default)
+         VALUES ($1, $2, $3, $4, true)
          ON CONFLICT (name) DO NOTHING`,
-        [
-          a.name,
-          a.benefit,
-          a.risk,
-          a.estimated_minutes,
-          a.estimated_cost,
-          a.interval_days,
-          a.category,
-        ],
+        [a.name, a.benefit, a.interval_days, a.category],
       );
     }
   });

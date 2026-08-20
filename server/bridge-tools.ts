@@ -11613,7 +11613,6 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           intervalDays,
           category,
           benefit: (args.benefit as string) || null,
-          risk: (args.risk as string) || null,
           linkedMetricType: (args.linkedMetricType as string) || null,
           greatThreshold: (args.greatThreshold as number) ?? null,
           goodThreshold: (args.goodThreshold as number) ?? null,
@@ -11640,7 +11639,6 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         const updates: Record<string, any> = {};
         if (args.newName !== undefined) updates.name = args.newName as string;
         if (args.benefit !== undefined) updates.benefit = args.benefit as string;
-        if (args.risk !== undefined) updates.risk = args.risk as string;
         if (args.intervalDays !== undefined) updates.intervalDays = args.intervalDays as number;
         if (args.category !== undefined) updates.category = args.category as string;
         if (args.linkedMetricType !== undefined) updates.linkedMetricType = args.linkedMetricType as string | null;
@@ -11649,7 +11647,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         if (args.windowStart !== undefined) updates.windowStart = args.windowStart as number | null;
         if (args.windowEnd !== undefined) updates.windowEnd = args.windowEnd as number | null;
         if (Object.keys(updates).length === 0) {
-          return { result: "No fields to update. Provide at least one of: newName, benefit, risk, intervalDays, category, linkedMetricType, greatThreshold, goodThreshold, windowStart, windowEnd", error: true };
+          return { result: "No fields to update. Provide at least one of: newName, benefit, intervalDays, category, linkedMetricType, greatThreshold, goodThreshold, windowStart, windowEnd", error: true };
         }
         const result = await updateWellnessActivity(resolvedId!, updates);
         if (!result) return { result: `Activity ${resolvedId} not found`, error: true };

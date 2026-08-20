@@ -44,6 +44,11 @@ import {
   SET_DAILY_GOALS_TITLE,
 } from "@shared/set-daily-goals";
 import { cn } from "@/lib/utils";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import {
+  HIERARCHY_PRIMARY_ACTION_CLASS,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
 
 function formatLocalDate(d: Date, timezone?: string): string {
   if (timezone) {
@@ -358,7 +363,6 @@ interface ActivityWithStatus {
   id: number;
   name: string;
   benefit: string | null;
-  risk: string | null;
   estimatedMinutes: number | null;
   estimatedCost: number | null;
   intervalDays: number;
@@ -1115,13 +1119,12 @@ function AddActivityDialog({ open, onOpenChange }: { open: boolean; onOpenChange
   const [formData, setFormData] = useState({
     name: "",
     benefit: "",
-    risk: "",
     intervalDays: 1,
     category: "daily_practice",
   });
 
   const resetForm = () => setFormData({
-    name: "", benefit: "", risk: "", intervalDays: 1, category: "daily_practice",
+    name: "", benefit: "", intervalDays: 1, category: "daily_practice",
   });
 
   const createMutation = useMutation({
@@ -1196,17 +1199,6 @@ function AddActivityDialog({ open, onOpenChange }: { open: boolean; onOpenChange
               placeholder="Why this matters"
             />
           </div>
-          <div>
-            <Label htmlFor="activity-risk">Risk if skipped</Label>
-            <Input
-              id="activity-risk"
-              data-testid="input-activity-risk"
-              value={formData.risk}
-              onChange={(e) => setFormData({ ...formData, risk: e.target.value })}
-              placeholder="What happens if you skip this"
-            />
-          </div>
-
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => { resetForm(); onOpenChange(false); }} data-testid="button-cancel-activity">
@@ -1232,8 +1224,8 @@ export function CalendarContent() {
   const [showCreate, setShowCreate] = useState(false);
   const [selectedHeatmapDate, setSelectedHeatmapDate] = useState<string | null>(null);
   const [detailActivity, setDetailActivity] = useState<ActivityWithStatus | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const { toast } = useToast();
   const { timezone, isLoaded: tzLoaded } = useTimezone();
 
   const { data: activities, isLoading } = useQuery<ActivityWithStatus[]>({
@@ -1273,25 +1265,21 @@ export function CalendarContent() {
     return map;
   }, [allLogs]);
 
-  const loadDefaultsMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("POST", "/api/wellness/load-defaults");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/wellness/status"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/wellness/pulse-buckets"] });
-      toast({ title: "Default activities loaded" });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
-  });
+  const filteredActivities = useMemo(() => {
+    if (!activities) return [];
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return activities;
+    return activities.filter((a) => {
+      const name = a.name.toLowerCase();
+      const benefit = (a.benefit ?? "").toLowerCase();
+      return name.includes(q) || benefit.includes(q);
+    });
+  }, [activities, searchQuery]);
 
   const grouped = useMemo(() => {
-    if (!activities) return {};
     const g: Record<string, ActivityWithStatus[]> = {};
     for (const cat of CATEGORY_ORDER) g[cat] = [];
-    for (const a of activities) {
+    for (const a of filteredActivities) {
       if (!g[a.category]) g[a.category] = [];
       g[a.category].push(a);
     }
@@ -1306,13 +1294,7 @@ export function CalendarContent() {
       });
     }
     return g;
-  }, [activities]);
-
-
-
-
-
-
+  }, [filteredActivities]);
 
   if (isLoading) {
     return (
@@ -1328,12 +1310,10 @@ export function CalendarContent() {
     );
   }
 
-  const isEmpty = !activities || activities.length === 0;
-
   return (
     <TimezoneContext.Provider value={timezone}>
       <div className="flex flex-col h-full overflow-hidden">
-        {/* Heatmap stays full-width above the list */}
+        {/* Heatmap stays full-width above the tree when logs exist */}
         {tzLoaded && allLogs && allLogs.length > 0 && (
           <div className="px-3 pt-4 @sm:px-4 @sm:pt-5 shrink-0">
             <GlobalCompletionCalendar
@@ -1349,26 +1329,25 @@ export function CalendarContent() {
           onClose={() => setSelectedHeatmapDate(null)}
         />
 
-        {/* Activity hierarchy list — session-menu density (space-y-0, py-1.5 rows) */}
-        <div className="flex-1 overflow-y-auto px-3 @sm:px-4 py-3">
-          {isEmpty ? (
-            <div className="mb-2 flex flex-wrap gap-2 px-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => loadDefaultsMutation.mutate()}
-                disabled={loadDefaultsMutation.isPending}
-                data-testid="button-load-defaults"
-              >
-                {loadDefaultsMutation.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-                Load Defaults
-              </Button>
-              <Button size="sm" onClick={() => setShowCreate(true)} data-testid="button-add-first-activity">
-                <Plus className="mr-1 h-4 w-4" /> New Activity
-              </Button>
-            </div>
-          ) : null}
-          <div className="space-y-0">
+        {/* Hierarchy Tree object-index: search → + New Activity → sections */}
+        <div className="flex-1 overflow-y-auto">
+          <div className={HIERARCHY_TREE_STACK_CLASS}>
+            <HierarchySearchInput
+              value={searchQuery}
+              onChange={setSearchQuery}
+              inputTestId="input-search-habits"
+              clearTestId="button-clear-habits-search"
+              ariaLabel="Search habits"
+            />
+            <button
+              type="button"
+              onClick={() => setShowCreate(true)}
+              className={HIERARCHY_PRIMARY_ACTION_CLASS}
+              data-testid="button-new-activity"
+            >
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+              <span>New Activity</span>
+            </button>
             {CATEGORY_ORDER.map((cat) => (
               <CategorySection
                 key={cat}
@@ -1380,20 +1359,6 @@ export function CalendarContent() {
               />
             ))}
           </div>
-          {isEmpty ? null : (
-            <div className="mt-3 px-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowCreate(true)}
-                className="w-full"
-                data-testid="button-add-activity-bottom"
-              >
-                <Plus className="h-3 w-3 mr-1.5" />
-                New Activity
-              </Button>
-            </div>
-          )}
         </div>
 
         <Dialog open={!!detailActivity} onOpenChange={(open) => { if (!open) setDetailActivity(null); }}>
