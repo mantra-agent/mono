@@ -423,6 +423,42 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
 
+  monday: {
+    description:
+      "Read-only eyes on a vault-bound Monday.com account. Actions: status (works without credentials), list_boards, get_board, list_columns, list_items (items_page cursor pagination on a named board), get_item. Never writes to Monday. Never accepts raw GraphQL. Import into Mantra work is a separate Skill after the path Decision closes.",
+    category: "system",
+    connectorKey: "monday",
+    advertiseWhenUnready: true,
+    sideEffectDefault: 0,
+    sideEffectActions: {
+      status: 0,
+      list_boards: 0,
+      get_board: 0,
+      list_columns: 0,
+      list_items: 0,
+      get_item: 0,
+    },
+    parameters: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["status", "list_boards", "get_board", "list_columns", "list_items", "get_item"],
+          description:
+            "Action. status is provider-free readiness. All other actions require a healthy vault-bound Monday connected account.",
+        },
+        boardId: { type: "string", description: "Monday board id (required for get_board, list_columns, list_items)" },
+        itemId: { type: "string", description: "Monday item id (required for get_item)" },
+        cursor: { type: "string", description: "items_page cursor from a prior list_items response" },
+        limit: {
+          type: "number",
+          description: "Page size for list_boards (default 50, max 100) or list_items (default 50, max 500)",
+        },
+      },
+      required: ["action"],
+    },
+  },
+
   sentry: {
     description: "Query the existing Sentry integration for crash reports and external uptime evidence. Actions: status, issues, issue, events, latest_event, uptime (completed-day availability readiness), sync_availability (project a ready completed day into Metrics), resolve, unresolve, ignore.",
     category: "system",

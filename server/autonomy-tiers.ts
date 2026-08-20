@@ -140,6 +140,17 @@ const SIDE_EFFECT_TIERS: Record<string, ToolSideEffectEntry> = {
     status: 0, issues: 0, issue: 0, events: 0, latest_event: 0, uptime: 0,
     sync_availability: 2,
   }},
+  monday: {
+    default: 2,
+    actions: {
+      status: 0,
+      list_boards: 0,
+      get_board: 0,
+      list_columns: 0,
+      list_items: 0,
+      get_item: 0,
+    },
+  },
   platforms: { default: 2, actions: {
     list_connections: 0, get_connection: 0, test_connection: 0,
     list_environments: 0, get_environment: 0, get_environment_status: 0,

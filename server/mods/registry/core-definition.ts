@@ -220,6 +220,17 @@ export const coreDefinition: CoreDefinition = {
         statusFields: ["box"],
         audience: "primary",
       }),
+      integration("core.integration.monday", "monday", "available", ["work"], {
+        label: "Monday.com",
+        iconKey: "ClipboardList",
+        route: "monday",
+        detailSurface: "monday",
+        statusFields: ["monday"],
+        healthField: "mondayHealthy",
+        audience: "primary",
+        readinessKind: "oauth-account",
+        oauthProvider: "monday",
+      }),
       integration("core.integration.elevenlabs", "elevenlabs", "available", ["voice"], {
         label: "ElevenLabs",
         iconKey: "Volume2",

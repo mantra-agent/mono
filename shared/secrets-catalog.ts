@@ -11,6 +11,7 @@ export type SecretSection =
   | "quickbooks"
   | "google"
   | "box"
+  | "monday"
   | "github"
   | "oura"
   | "railway"
@@ -63,6 +64,25 @@ export const SECRET_CATALOG: SecretSpec[] = [
     section: "box",
     label: "Box OAuth Redirect URI",
     description: "Optional exact callback override. Leave blank to use https://{host}/api/box/oauth/callback for the current host.",
+  },
+  {
+    name: "MONDAY_CLIENT_ID",
+    section: "monday",
+    label: "Monday OAuth Client ID",
+    description: "Client ID from the monday.com Developer Center OAuth app. Use OAuth 2.1 (expiring tokens + refresh).",
+  },
+  {
+    name: "MONDAY_CLIENT_SECRET",
+    section: "monday",
+    label: "Monday OAuth Client Secret",
+    description: "Client secret from the monday.com Developer Center. Store here — not in Railway.",
+  },
+  {
+    name: "MONDAY_REDIRECT_URI",
+    section: "monday",
+    label: "Monday OAuth Redirect URI",
+    description:
+      "Optional exact callback override. Leave blank to use https://{host}/api/monday/oauth/callback for the current host. Must match a redirect URL configured on the Monday app.",
   },
   { name: "EXPO_ACCESS_TOKEN", section: "expo", label: "Expo Access Token", description: "Personal access token from expo.dev/accounts/[account]/settings/access-tokens. Enables EAS builds, project linking, and deployment status." },
   { name: "SENTRY_DSN", section: "sentry", label: "Sentry DSN", description: "Client-safe project DSN. One value arms web, mobile, and server crash capture. EXPO_PUBLIC_SENTRY_DSN remains a mobile build-time alias." },

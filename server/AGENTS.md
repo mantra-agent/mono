@@ -22,7 +22,11 @@ Outbound send is a Slack-Mod tool (`slack.status` / `slack.send`) over the exist
 
 ## Integration diagnostic readiness
 
-Secret-backed integration tools are normally withheld from the advertised registry when configuration is provably absent. A tool may opt into `advertiseWhenUnready` only when it owns a bounded, provider-free status action that returns a successful explicit readiness discriminant; every provider-dependent action must still fail closed through its ordinary credential, permission, side-effect, and origin gates. Sentry uses this exception so Reliability Sentinel can record `not_configured` as a coverage gap without converting missing optional telemetry into tool-authority failure.
+Secret-backed integration tools are normally withheld from the advertised registry when configuration is provably absent. A tool may opt into `advertiseWhenUnready` only when it owns a bounded, provider-free status action that returns a successful explicit readiness discriminant; every provider-dependent action must still fail closed through its ordinary credential, permission, side-effect, and origin gates. Sentry and Monday use this exception so readiness gaps stay visible without converting missing optional connectors into tool-authority failure.
+
+## Monday.com read eyes
+
+Monday is Core work infrastructure, not a Mod and not a WorkApi. `server/integrations/monday/` owns OAuth 2.1 (PKCE + refresh) and GraphQL transport through `provider-http.ts`. Credentials encrypt only in `connected_accounts.provider = "monday"`. Day-one scopes are read-only (`me:read`, `account:read`, `boards:read`, `workspaces:read`, `users:read`). The Agent `monday` tool is status + board/item/column reads only — never raw GraphQL, never write scopes, never native work mutation. Import is a later Skill after `@decision:c88ce35c` closes on `import`. UI is `/integrations/monday` only; `/work` does not grow a Monday browser.
 
 ## Sentry one-setup coverage
 

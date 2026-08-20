@@ -7,13 +7,15 @@ import type { Principal } from "./principal";
 const TTL_MS = 10 * 60 * 1000;
 const hash = (token: string) => crypto.createHash("sha256").update(token).digest("hex");
 
-export type OAuthTransactionProvider = "google" | "quickbooks" | "box";
+export type OAuthTransactionProvider = "google" | "quickbooks" | "box" | "monday";
 
 interface CreateOAuthTransactionInput {
   vaultId: string;
   label?: string;
   redirectOrigin?: string;
   provider?: OAuthTransactionProvider;
+  /** PKCE code_verifier for OAuth 2.1 (Monday). Never log. */
+  codeVerifier?: string;
 }
 
 export async function createGoogleOAuthTransaction(
@@ -44,6 +46,7 @@ export async function createGoogleOAuthTransaction(
     provider: input.provider || "google",
     label: input.label || null,
     redirectOrigin: input.redirectOrigin || null,
+    codeVerifier: input.codeVerifier || null,
     expiresAt: new Date(Date.now() + TTL_MS),
   });
   return token;

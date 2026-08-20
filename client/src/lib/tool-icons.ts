@@ -229,6 +229,7 @@ export const TOOL_ICON_MAP: Record<string, string> = {
   memory: "Brain",
   railway: "TrainFront",
   sentry: "Bug",
+  monday: "ClipboardList",
   meta: "Glasses",
   expo: "Smartphone",
   settings: "SlidersHorizontal",

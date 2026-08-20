@@ -122,6 +122,15 @@ export const TOOL_DOMAIN_ADAPTERS: readonly ToolDomainAdapter[] = [
     providerBoundaries: ["GitHub", "Railway", "Sentry", "Expo", "bounded untrusted URL"],
   },
   {
+    id: "monday-work",
+    owner: "core-operations",
+    tools: ["monday"],
+    authorizationDependencies: ["principal-context", "connected-account scope", "vault-bound Monday account"],
+    normalizationExtensions: ["bounded items_page cursor", "named board ids only"],
+    artifactKinds: [],
+    providerBoundaries: ["Monday GraphQL via provider-http"],
+  },
+  {
     id: "strategy-career",
     owner: "strategy",
     tools: ["scenarios", "exec"],
@@ -181,10 +190,18 @@ const nativeSlackHandlers: ToolHandlerSource = {
   },
 };
 
+const nativeMondayHandlers: ToolHandlerSource = {
+  async monday(args) {
+    const { mondayToolHandler } = await import("../integrations/monday/tool");
+    return mondayToolHandler(args);
+  },
+};
+
 const NATIVE_HANDLER_SOURCES: readonly ToolHandlerSource[] = [
   nativeInteractionHandlers,
   nativePlanningHandlers,
   nativeSlackHandlers,
+  nativeMondayHandlers,
 ];
 
 export function composeToolDomainHandlers(

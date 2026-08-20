@@ -1638,6 +1638,8 @@ export const googleOAuthTransactions = pgTable("google_oauth_transactions", {
   provider: text("provider").notNull().default("google"),
   label: text("label"),
   redirectOrigin: text("redirect_origin"),
+  /** PKCE verifier for OAuth 2.1 providers (Monday). Null for legacy Google/Box/QuickBooks. */
+  codeVerifier: text("code_verifier"),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
