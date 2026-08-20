@@ -49,14 +49,78 @@ export function monthOffset(start: string, target: string): number {
   const [sy, sm] = start.split("-").map(Number); const [ty, tm] = target.split("-").map(Number);
   return (ty - sy) * 12 + tm - sm;
 }
-export function loadedMonthlyForRole(role: JobRole, multiplier: number): number {
-  return ((role.annualSalaryMin + role.annualSalaryMax) / 2) * (1 + role.targetBonusPercent / 100) * multiplier / 12;
+export function baseMonthlyForRole(role: JobRole): number {
+  return ((role.annualSalaryMin + role.annualSalaryMax) / 2) * (1 + role.targetBonusPercent / 100) / 12;
+}
+
+/** Staff load assumptions used to expand base cash wages into all-in staff opex. */
+export interface StaffLoadAssumptions {
+  matchRatePct: number;
+  healthcareCoverageRatePct: number;
+  employerTaxRatePct: number;
+  monthlyHdvPremiumPerEmployee: number;
+}
+
+export const STAFF_COST_COMPONENT_KEYS = ["salary", "match", "hdv", "taxes"] as const;
+export type StaffCostComponentKey = (typeof STAFF_COST_COMPONENT_KEYS)[number];
+export type StaffCostComponents = Record<StaffCostComponentKey, number>;
+
+export const EMPTY_STAFF_COST_COMPONENTS: StaffCostComponents = {
+  salary: 0,
+  match: 0,
+  hdv: 0,
+  taxes: 0,
+};
+
+export function staffCostComponentsForBase(
+  baseMonthly: number,
+  headcount: number,
+  load: StaffLoadAssumptions,
+): StaffCostComponents {
+  const salary = Math.max(0, baseMonthly);
+  const people = Math.max(0, headcount);
+  const match = salary * Math.max(0, load.matchRatePct) / 100;
+  const hdv = people * Math.max(0, load.monthlyHdvPremiumPerEmployee) * Math.max(0, load.healthcareCoverageRatePct) / 100;
+  const taxes = salary * Math.max(0, load.employerTaxRatePct) / 100;
+  return { salary, match, hdv, taxes };
+}
+
+export function totalStaffCostComponents(components: StaffCostComponents): number {
+  return components.salary + components.match + components.hdv + components.taxes;
+}
+
+export function addStaffCostComponents(left: StaffCostComponents, right: StaffCostComponents): StaffCostComponents {
+  return {
+    salary: left.salary + right.salary,
+    match: left.match + right.match,
+    hdv: left.hdv + right.hdv,
+    taxes: left.taxes + right.taxes,
+  };
+}
+
+/** Compatibility helper: all-in monthly cash for one role under the current staff-load assumptions. */
+export function loadedMonthlyForRole(role: JobRole, load: StaffLoadAssumptions | number): number {
+  const assumptions: StaffLoadAssumptions = typeof load === "number"
+    ? {
+      matchRatePct: 0,
+      healthcareCoverageRatePct: 0,
+      employerTaxRatePct: Math.max(0, (load - 1) * 100),
+      monthlyHdvPremiumPerEmployee: 0,
+    }
+    : load;
+  return totalStaffCostComponents(staffCostComponentsForBase(baseMonthlyForRole(role), 1, assumptions));
 }
 
 /** Hiring page/projection window. Independent of the financial model's Phase 1 horizon. */
 export const HIRING_HORIZON_MONTHS = 60;
 
-export function projectHiringSlots(startCalendarMonth: string, count: number, slots: BusinessHiringSlot[], roles: JobRole[], multiplier: number): HiringMonthProjection[] {
+export function projectHiringSlots(
+  startCalendarMonth: string,
+  count: number,
+  slots: BusinessHiringSlot[],
+  roles: JobRole[],
+  load: StaffLoadAssumptions | number,
+): HiringMonthProjection[] {
   const roleById = new Map(roles.map((role) => [role.id, role]));
   return Array.from({ length: count }, (_, index) => {
     const calendarMonth = calendarMonthAt(startCalendarMonth, index);
@@ -67,7 +131,7 @@ export function projectHiringSlots(startCalendarMonth: string, count: number, sl
       quarterLabel: `Q${Math.floor((month - 1) / 3) + 1} ${year}`,
       approvedSlots: slots.filter((slot) => slot.status === "approved" && slot.approvalMonth <= calendarMonth).length,
       headcount: active.length,
-      staffOpex: active.reduce((sum, slot) => sum + loadedMonthlyForRole(roleById.get(slot.roleId)!, multiplier), 0),
+      staffOpex: active.reduce((sum, slot) => sum + loadedMonthlyForRole(roleById.get(slot.roleId)!, load), 0),
     };
   });
 }

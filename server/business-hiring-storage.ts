@@ -60,7 +60,18 @@ export class BusinessHiringStorage {
     const assumptions = normalizeAssumptions(model.assumptions);
     const roleIds = new Set(roles.map((role) => role.id));
     const unresolvedLegacyRoleIds = [...new Set(assumptions.phases.flatMap((phase) => phase.keyHires.map((hire) => hire.roleId)).filter((id) => !roleIds.has(id)))];
-    return { businessId, roles, slots, months: projectHiringSlots(currentCalendarMonth(), HIRING_HORIZON_MONTHS, slots, roles, assumptions.loadedCostMultiplier), unresolvedLegacyRoleIds };
+    return {
+      businessId,
+      roles,
+      slots,
+      months: projectHiringSlots(currentCalendarMonth(), HIRING_HORIZON_MONTHS, slots, roles, {
+        matchRatePct: assumptions.matchRatePct,
+        healthcareCoverageRatePct: assumptions.healthcareCoverageRatePct,
+        employerTaxRatePct: assumptions.employerTaxRatePct,
+        monthlyHdvPremiumPerEmployee: assumptions.monthlyHdvPremiumPerEmployee,
+      }),
+      unresolvedLegacyRoleIds,
+    };
   }
   async create(input: HiringSlotCreate): Promise<BusinessHiringProjection> {
     const parsed = hiringSlotCreateSchema.parse(input); await this.assertBusiness(parsed.businessId, true); await jobRoleStorage.get(parsed.roleId);
