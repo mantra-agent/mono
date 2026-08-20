@@ -749,10 +749,21 @@ export class HybridStorage implements IStorage {
     if (!principal?.userId || !principal.accountId) {
       throw new Error("Skill creation requires an explicit user principal");
     }
+    const { mintSkillMachineName } = await import("./skill-seed");
     const normalized = insertSkillSchema.parse(data);
     const { references: refs, scope: _scope, ownerUserId: _ownerUserId, accountId: _accountId, vaultId: _vaultId, ...skillData } = normalized;
+    const displayName =
+      typeof skillData.displayName === "string" && skillData.displayName.trim()
+        ? skillData.displayName.trim()
+        : null;
+    const machineName =
+      typeof skillData.name === "string" && skillData.name.trim()
+        ? skillData.name.trim()
+        : mintSkillMachineName(displayName || "skill");
     const [created] = await db.insert(skills).values({
       ...skillData,
+      name: machineName,
+      displayName: displayName || machineName,
       whenToUse: "",
       outputSpec: "",
       addToMemory: true,
@@ -772,7 +783,8 @@ export class HybridStorage implements IStorage {
     if (!principal?.userId || !principal.accountId) {
       throw new Error("Skill updates require an explicit user principal");
     }
-    const { references: refs, scope: _scope, ownerUserId: _ownerUserId, accountId: _accountId, vaultId: _vaultId, ...skillData } = data;
+    // Machine `name` is durable identity — never rewrite from free rename UI.
+    const { name: _ignoreName, references: refs, scope: _scope, ownerUserId: _ownerUserId, accountId: _accountId, vaultId: _vaultId, ...skillData } = data;
     const updated = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`skill-override:${principal.accountId}:${principal.userId}`}))`);
       const [visible] = await tx.select().from(skills).where(this.skillVisible(eq(skills.id, id)));
@@ -925,7 +937,16 @@ export class HybridStorage implements IStorage {
   ): Promise<SkillRevisionPayload | null> {
     if (!revisionId) return null;
     const [rev] = await tx.select().from(skillRevisions).where(eq(skillRevisions.id, revisionId)).limit(1);
-    return rev ? (rev.payload as SkillRevisionPayload) : null;
+    if (!rev) return null;
+    const payload = rev.payload as Partial<SkillRevisionPayload> & { name?: string };
+    // Legacy revisions predate free displayName — fall back to machine name.
+    return {
+      ...payload,
+      displayName:
+        typeof payload.displayName === "string" && payload.displayName.trim()
+          ? payload.displayName
+          : payload.name ?? null,
+    } as SkillRevisionPayload;
   }
 
   /** Insert an immutable skill revision and return its id. */
@@ -1004,6 +1025,7 @@ export class HybridStorage implements IStorage {
   ): Promise<void> {
     await tx.update(skills).set({
       name: payload.name,
+      displayName: payload.displayName,
       description: payload.description,
       whenToUse: payload.whenToUse,
       process: payload.process,

@@ -113,17 +113,13 @@ async function buildSessionTranscript(sessionId: string): Promise<{ transcript: 
 
 const log = createLogger("SkillScoring");
 
-const DEFAULT_CHECKLIST: ChecklistItem[] = [
-  { check: "Skill produced meaningful output relevant to its purpose", weight: 1 },
-  { check: "No error indicators in output", weight: 1 },
-];
-
 /**
- * Single quality-evaluation home. The checklist is the only specification of
- * run quality: deterministic items (kind "tool_invoked") are evaluated here in
- * code, judgment items by the LLM evaluator below. The runner invokes these
- * same deterministic functions at run terminal, so early gating and async
- * scoring can never disagree on an objective check.
+ * Quality evaluation home.
+ *
+ * Product quality is process-text review: the Skill's `process` is the sole
+ * judgment specification. Leftover checklist rows with kind tool_invoked /
+ * child_skill_invoked remain structural gates only (seeded automation), never
+ * a separate product checklist the operator authors in the UI.
  */
 export function extractSuccessfulToolInvocations(messages: FileMessage[]): Set<string> {
   const invoked = new Set<string>();
@@ -260,12 +256,9 @@ async function scoreSkillRun(
   const skill = await storage.getSkillByName(skillId);
   if (!skill) return;
 
-  const skillChecklist: ChecklistItem[] = Array.isArray(skill.checklist) ? skill.checklist as ChecklistItem[] : [];
-  const checklist: ChecklistItem[] = skillChecklist.length > 0 ? skillChecklist : DEFAULT_CHECKLIST;
-
-  if (skillChecklist.length === 0) {
-    log.log(`${skillId}: no custom checklist defined, using default checklist`);
-  }
+  const leftoverChecklist: ChecklistItem[] = Array.isArray(skill.checklist)
+    ? (skill.checklist as ChecklistItem[])
+    : [];
 
   const { transcript, hasActivity, messages } = await buildSessionTranscript(sessionId);
 
@@ -274,40 +267,34 @@ async function scoreSkillRun(
     return;
   }
 
-  // One checklist, two evaluator kinds: deterministic items are computed in
-  // code from persisted tool calls; only judgment items go to the LLM. Results
-  // merge back in checklist order into a single passRate.
+  // Structural leftover gates (tool/child skill) still fail closed when present
+  // on the seed. Judgment is always process-text review — never a separate list.
   const structuralEvidence = await buildStructuralRunEvidence(sessionId, messages);
-  const deterministicByIndex = new Map<number, CheckResult>();
-  checklist.forEach((item, i) => {
+  const structuralResults: CheckResult[] = [];
+  for (const item of leftoverChecklist) {
     const result = evaluateStructuralItem(item, structuralEvidence);
-    if (result) deterministicByIndex.set(i, result);
-  });
-  const judgmentIndexes = checklist.map((_, i) => i).filter((i) => !deterministicByIndex.has(i));
-  const judgmentResults = judgmentIndexes.length > 0
-    ? await evaluateChecklist(skillId, judgmentIndexes.map((i) => checklist[i]), transcript)
-    : [];
+    if (result) structuralResults.push(result);
+  }
 
-  const allParseErrors = judgmentResults.length > 0 && judgmentResults.every((r) => r.evidence === "Evaluation parse error");
+  const processText = typeof skill.process === "string" ? skill.process.trim() : "";
+  const processResults = processText.length > 0
+    ? await evaluateAgainstProcess(skillId, processText, transcript)
+    : [{
+        check: "Process",
+        passed: false,
+        evidence: "Skill has no process text to review against",
+      }];
+
+  const allParseErrors = processResults.every((r) => r.evidence === "Evaluation parse error");
   if (allParseErrors) {
-    log.warn(`${skillId}: all judgment checklist items returned parse errors for ${sessionId}, skipping score recording`);
+    log.warn(`${skillId}: process review returned parse errors for ${sessionId}, skipping score recording`);
     return;
   }
 
-  const checkResults: CheckResult[] = checklist.map((item, i) => {
-    const deterministic = deterministicByIndex.get(i);
-    if (deterministic) return deterministic;
-    const j = judgmentIndexes.indexOf(i);
-    return judgmentResults[j] ?? { check: item.check, passed: false, evidence: "No evaluation result" };
-  });
-
+  const checkResults: CheckResult[] = [...structuralResults, ...processResults];
   const passed = checkResults.filter((r) => r.passed).length;
   const total = checkResults.length;
-  const totalWeight = checklist.reduce((sum, item) => sum + (typeof item.weight === "number" && item.weight > 0 ? item.weight : 1), 0);
-  const passedWeight = checklist.reduce((sum, item, i) => (
-    sum + (checkResults[i]?.passed ? (typeof item.weight === "number" && item.weight > 0 ? item.weight : 1) : 0)
-  ), 0);
-  const passRate = totalWeight > 0 ? passedWeight / totalWeight : 0;
+  const passRate = total > 0 ? passed / total : 0;
 
   let comparativeVsId: number | null = null;
   let comparativeWinner: ComparativeResult["winner"] | null = null;
@@ -412,36 +399,38 @@ async function reconcileBelowThreshold(
   }
 }
 
-async function evaluateChecklist(
+/** Review run output against the Skill process text — sole product quality spec. */
+async function evaluateAgainstProcess(
   skillId: string,
-  checklist: ChecklistItem[],
+  processText: string,
   transcript: string,
 ): Promise<CheckResult[]> {
-  const checklistText = checklist.map((c, i) => `${i + 1}. ${c.check}`).join("\n");
-
   const prompt = `You are evaluating a complete session transcript from an AI skill called "${skillId}".
+
+The skill's Process is the sole quality specification. There is no separate checklist. Judge whether the run's output and actions followed that Process.
 
 The transcript contains:
 - A system prompt (the INPUT data and instructions the skill received)
-- Assistant messages and thinking (the skill's REASONING and process)
+- Assistant messages and thinking (the skill's REASONING)
 - Tool calls with arguments and results (actions the skill took)
-- <session_artifacts> blocks, if present (the skill's PRIMARY OUTPUT — Library pages, files, documents, etc. that the skill produced as durable deliverables)
+- <session_artifacts> blocks, if present (the skill's PRIMARY OUTPUT — Library pages, files, documents)
 
-EVALUATION PRIORITY: If <session_artifacts> blocks are present, these are the skill's actual deliverables. Evaluate checklist items against artifact content first. Use the assistant messages and tool calls as supporting evidence for process-oriented checks (e.g., did the skill cross-reference sources, did it archive correctly). Consider everything in totality — artifacts, reasoning, and tool actions — but artifacts represent what the skill actually produced.
+EVALUATION PRIORITY: If <session_artifacts> blocks are present, these are the skill's actual deliverables. Judge them against the Process first. Use assistant messages and tool calls as supporting evidence for process steps.
 
-If no <session_artifacts> blocks are present, fall back to evaluating the assistant's direct output and tool call results as the skill's output.
+If no <session_artifacts> blocks are present, fall back to the assistant's direct output and tool results.
+
+<process>
+${truncateForBudget(processText, 12_000)}
+</process>
 
 <transcript>
 ${truncateForBudget(transcript)}
 </transcript>
 
-Evaluate each of these quality checks against the session transcript. For each check, determine if it PASSES (true) or FAILS (false), and provide brief evidence (one sentence) citing the relevant message or tool call when possible.
+Return one overall judgment: did the run substantially follow the Process and produce output that matches it?
 
-Checks:
-${checklistText}
-
-Respond with a JSON object containing a "results" array:
-{"results": [{"check": "...", "passed": true/false, "evidence": "..."}]}
+Respond with a JSON object:
+{"results": [{"check": "Followed skill process", "passed": true/false, "evidence": "one sentence citing artifacts or actions"}]}
 
 Return ONLY the JSON object, no other text.`;
 
@@ -451,32 +440,24 @@ Return ONLY the JSON object, no other text.`;
     maxTokens: 2000,
     messages: [{ role: "user", content: prompt }],
     jsonMode: true,
-    metadata: { source: "skill-scoring-checklist", skillId, activity: "e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d" },
+    metadata: { source: "skill-scoring-process", skillId, activity: "e9c3a5d6-7f4b-4c01-d8a2-3b0e1f4a5c6d" },
   });
 
   try {
     const raw = JSON.parse(extractJson(response.content));
     const parsed = Array.isArray(raw) ? raw : Array.isArray(raw?.results) ? raw.results : null;
-    if (!parsed) {
-      return checklist.map((c) => ({ check: c.check, passed: false, evidence: "Evaluation returned unexpected format" }));
+    if (!parsed || parsed.length === 0) {
+      return [{ check: "Followed skill process", passed: false, evidence: "Evaluation returned unexpected format" }];
     }
-    const resultMap = new Map<number, CheckResult>();
-    for (let i = 0; i < parsed.length && i < checklist.length; i++) {
-      const item = parsed[i];
-      if (item && typeof item === "object") {
-        resultMap.set(i, {
-          check: typeof item.check === "string" ? item.check : checklist[i].check,
-          passed: item.passed === true,
-          evidence: typeof item.evidence === "string" ? item.evidence : "",
-        });
-      }
-    }
-    return checklist.map((c, i) =>
-      resultMap.get(i) ?? { check: c.check, passed: false, evidence: "No evaluation result" },
-    );
+    const item = parsed[0];
+    return [{
+      check: typeof item?.check === "string" ? item.check : "Followed skill process",
+      passed: item?.passed === true,
+      evidence: typeof item?.evidence === "string" ? item.evidence : "",
+    }];
   } catch {
-    log.warn(`${skillId}: failed to parse checklist eval response; content: ${response.content.slice(0, 500)}`);
-    return checklist.map((c) => ({ check: c.check, passed: false, evidence: "Evaluation parse error" }));
+    log.warn(`${skillId}: failed to parse process eval response; content: ${response.content.slice(0, 500)}`);
+    return [{ check: "Followed skill process", passed: false, evidence: "Evaluation parse error" }];
   }
 }
 
