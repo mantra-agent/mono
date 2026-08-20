@@ -21,12 +21,35 @@ export const fastForwardLastLaunchByFeature = new Map<string, FeatureFastForward
 export const fastForwardLaunchedSessionByFeature = new Map<string, string>();
 
 /**
- * Auto AI Review (no Fast Forward mode) remembers the last settled Review
- * attempt per Feature so a Review-fail stays operator-owned until status leaves
- * needs_review. Keyed by featureId → `${stage}:${launchedAt}`.
+ * Auto AI Review claim for the current needs_review room.
+ *
+ * Claimed at the moment any path launches Review (auto walker, Fast Forward,
+ * or the Features row). Stays until Feature status leaves needs_review so a
+ * second auto launch cannot fire while a session is humming, after Review-fail,
+ * or after Fast Forward clears settle memory. Value is `${stage}:${claimedAt}`.
  */
-export const autoReviewAttemptByFeature = new Map<string, string>();
+export const autoReviewClaimByFeature = new Map<string, string>();
+
+/** @deprecated Use autoReviewClaimByFeature — kept as alias during one deploy. */
+export const autoReviewAttemptByFeature = autoReviewClaimByFeature;
 export const autoReviewLaunchInFlight = new Set<string>();
+
+/** Claim this Feature's needs_review room so auto-review will not launch again. */
+export function claimAutoReviewRoom(featureId: string, stage: FeatureStage): void {
+  autoReviewClaimByFeature.set(featureId, `${stage}:${Date.now()}`);
+  autoReviewLaunchInFlight.add(featureId);
+}
+
+/** Drop the room claim (only when status leaves needs_review, or launch hard-failed). */
+export function clearAutoReviewRoom(featureId: string): void {
+  autoReviewClaimByFeature.delete(featureId);
+  autoReviewLaunchInFlight.delete(featureId);
+}
+
+/** True when this tab already launched Review for the current needs_review room. */
+export function hasAutoReviewClaim(featureId: string): boolean {
+  return autoReviewClaimByFeature.has(featureId) || autoReviewLaunchInFlight.has(featureId);
+}
 
 export function featureFastForwardStorageKey(featureId: string): string {
   return `${FEATURE_FAST_FORWARD_KEY_PREFIX}${featureId}`;

@@ -11,12 +11,13 @@ import { isDurablyActiveSession } from "@shared/models/chat";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSessionLaunch } from "@/hooks/use-session-launch";
 import {
-  autoReviewAttemptByFeature,
-  autoReviewLaunchInFlight,
+  claimAutoReviewRoom,
+  clearAutoReviewRoom,
   clearFeatureFastForwardRuntime,
   fastForwardLastLaunchByFeature,
   fastForwardLaunchInFlight,
   fastForwardLaunchedSessionByFeature,
+  hasAutoReviewClaim,
   listFeatureFastForwardIdsFromStorage,
   parseClock,
   playIsGated,
@@ -101,6 +102,11 @@ function usePipelineLaunch(
   const runPipelineLaunch = useCallback(
     (job: "produce" | "review") => {
       if (launch.isPending) return;
+      // Review claim is room-scoped: once any path starts Review for this
+      // needs_review stay, auto-review must not fire a second session.
+      if (job === "review") {
+        claimAutoReviewRoom(feature.id, feature.stage);
+      }
       const contract = getFeatureJobContract(feature.stage, job);
       const pendingKey = `feature-${feature.id}-${feature.stage}-${job}`;
       fastForwardLastLaunchByFeature.set(feature.id, {
@@ -251,7 +257,8 @@ function FeatureFastForwardWalker({
 /**
  * Always-on AI Review: when a Feature reaches needs_review and Fast Forward is
  * off, launch Review once through the same path the AI Review button uses.
- * Does not advance stage, answer Questions, or re-fire after Review-fail.
+ * Room claim is the fence — not session settle, not lastLaunch. Does not
+ * advance stage, answer Questions, or re-fire after Review-fail / FF clear.
  */
 function FeatureAutoReviewWalker({
   feature,
@@ -266,25 +273,21 @@ function FeatureAutoReviewWalker({
   const ownedSession = useOwnedPipelineSession(feature.id, launchedSessionId, sessionsById);
   const isSessionInProgress = Boolean(ownedSession && isActivePipelineSession(ownedSession));
 
+  // Hard launch failure is the only path that releases the claim while still
+  // needs_review — operator can retry via the AI Review button.
   const onAutoReviewLaunchError = useCallback(() => {
-    autoReviewLaunchInFlight.delete(feature.id);
-    const last = fastForwardLastLaunchByFeature.get(feature.id);
-    // Fence this attempt so a launch error does not spin forever.
-    if (last?.job === "review") {
-      autoReviewAttemptByFeature.set(feature.id, `${last.stage}:${last.launchedAt}`);
-    }
+    clearAutoReviewRoom(feature.id);
   }, [feature.id]);
 
   const { launch, runPipelineLaunch } = usePipelineLaunch(feature, products, onAutoReviewLaunchError);
   const runPipelineLaunchRef = useRef(runPipelineLaunch);
   runPipelineLaunchRef.current = runPipelineLaunch;
 
-  // Leaving needs_review (pass, human edit, or stage move) clears the attempt
-  // fence so the next Produce→needs_review cycle can auto-fire again.
+  // Leaving needs_review (pass, human edit, or stage move) clears the claim so
+  // the next Produce→needs_review cycle can auto-fire once.
   useEffect(() => {
     if (feature.status !== "needs_review") {
-      autoReviewAttemptByFeature.delete(feature.id);
-      autoReviewLaunchInFlight.delete(feature.id);
+      clearAutoReviewRoom(feature.id);
     }
   }, [feature.id, feature.status]);
 
@@ -292,29 +295,22 @@ function FeatureAutoReviewWalker({
     if (feature.status !== "needs_review") return;
     // Fast Forward walker owns the walk when mode is on.
     if (readFeatureFastForward(feature.id)) return;
+    // Already claimed this room (auto, FF, or row) — never double-launch.
+    if (hasAutoReviewClaim(feature.id)) return;
     if (sessionHasQuestion(ownedSession) || sessionHasError(ownedSession)) return;
-    if (isSessionInProgress) {
-      autoReviewLaunchInFlight.delete(feature.id);
-      return;
-    }
+    if (isSessionInProgress) return;
     if (launch.isPending) return;
 
     const last = fastForwardLastLaunchByFeature.get(feature.id) ?? null;
     // Still waiting for the session we just launched to appear in the index.
     if (last?.job === "review" && !ownedSession && launchedSessionId) return;
-
-    // Review-fail: Review settled, stage unchanged, still needs_review.
-    // Stamp the attempt so we do not re-launch until status leaves this room.
+    // Review already settled for this stage (fail or pass not yet written).
     if (last?.job === "review" && last.stage === feature.stage) {
-      const attemptKey = `${last.stage}:${last.launchedAt}`;
-      autoReviewAttemptByFeature.set(feature.id, attemptKey);
+      claimAutoReviewRoom(feature.id, feature.stage);
       return;
     }
 
-    if (autoReviewLaunchInFlight.has(feature.id)) return;
-    if (autoReviewAttemptByFeature.has(feature.id)) return;
-
-    autoReviewLaunchInFlight.add(feature.id);
+    // claimAutoReviewRoom runs inside runPipelineLaunch("review").
     runPipelineLaunchRef.current("review");
   }, [
     feature.id,

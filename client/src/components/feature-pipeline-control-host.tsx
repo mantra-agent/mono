@@ -20,6 +20,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 import { createLogger } from "@/lib/logger";
 import {
+  claimAutoReviewRoom,
   clearFeatureFastForwardRuntime,
   fastForwardLastLaunchByFeature,
   fastForwardLaunchInFlight,
@@ -128,6 +129,10 @@ async function launchPipelineJob(
   products: ProductContext[],
   job: "produce" | "review",
 ): Promise<{ sessionId: string } | { error: FeatureControlReason }> {
+  // Room claim shared with auto AI Review — agent/remote launch must fence too.
+  if (job === "review") {
+    claimAutoReviewRoom(feature.id, feature.stage as FeatureStage);
+  }
   const contract = getFeatureJobContract(feature.stage as FeatureStage, job);
   const product = products.find((row) => row.id === feature.product_id);
   const pendingKey = `feature-${feature.id}-${feature.stage}-${job}`;
