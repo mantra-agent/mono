@@ -1,6 +1,6 @@
 import { randomBytes } from "crypto";
-import { asc, eq, ilike, inArray, or } from "drizzle-orm";
-import { jobRoles, libraryPages } from "@shared/schema";
+import { asc, count, eq, ilike, inArray, or } from "drizzle-orm";
+import { businessHiringSlots, jobRoles, libraryPages } from "@shared/schema";
 import {
   jobRoleCreateSchema,
   jobRoleUpdateSchema,
@@ -212,11 +212,42 @@ export class JobRoleStorage {
 
   async delete(id: string): Promise<JobRole> {
     const principal = currentPrincipal();
-    const [row] = await db
-      .delete(jobRoles)
-      .where(combineWithWritableScope(principal, roleScope, eq(jobRoles.id, id)))
-      .returning();
-    return mapRole(assertWritable(principal, row, "Job role"), null);
+    // Resolve visibility first so missing/foreign roles stay 404, not dependency 409.
+    await this.get(id);
+
+    const [usage] = await db
+      .select({ total: count() })
+      .from(businessHiringSlots)
+      .where(eq(businessHiringSlots.roleId, id));
+    const slotCount = Number(usage?.total ?? 0);
+    if (slotCount > 0) {
+      throw Object.assign(
+        new Error(
+          slotCount === 1
+            ? "Cannot delete job role while 1 hiring slot still references it"
+            : `Cannot delete job role while ${slotCount} hiring slots still reference it`,
+        ),
+        { status: 409, code: "JOB_ROLE_IN_USE", slotCount },
+      );
+    }
+
+    try {
+      const [row] = await db
+        .delete(jobRoles)
+        .where(combineWithWritableScope(principal, roleScope, eq(jobRoles.id, id)))
+        .returning();
+      return mapRole(assertWritable(principal, row, "Job role"), null);
+    } catch (error) {
+      // Race: a hiring slot can land between the count and DELETE (RESTRICT FK).
+      const code = (error as { code?: string })?.code;
+      if (code === "23503") {
+        throw Object.assign(
+          new Error("Cannot delete job role while hiring slots still reference it"),
+          { status: 409, code: "JOB_ROLE_IN_USE", cause: error },
+        );
+      }
+      throw error;
+    }
   }
 }
 
