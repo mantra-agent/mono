@@ -4,7 +4,19 @@ import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { ACTIVITY_FRAMING, ACTIVITY_CHAT, ACTIVITY_MEDIA, type ActivityId } from "./job-profiles";
 import { resolveModelCandidates, appendFailedAttempt, type ModelRoutingDecision } from "./model-routing";
-import { getMaxOutputTokens, getModel, supportsSelectableEffort, supportsGrokReasoningEffort } from "./model-registry";
+import {
+  getContextWindow,
+  getMaxOutputTokens,
+  getModel,
+  supportsSelectableEffort,
+  supportsGrokReasoningEffort,
+} from "./model-registry";
+import {
+  applyTokenEstimateCalibration,
+  estimateMessagesInputTokens,
+  estimateToolDefinitionTokens,
+  getContextRequestBudget,
+} from "./context-budget";
 import type { OpenAITierModelConfig, GrokSubscriptionTierModelConfig } from "@shared/model-connectors";
 import {
   buildReasoningAudit,
@@ -604,6 +616,104 @@ export function isModelContextOverflow(error: unknown): boolean {
     : false;
 }
 
+/**
+ * Provider bodies vary: OpenAI uses context_length_exceeded; Grok subscription
+ * often returns plain HTTP 400 with "max prompt …" / token counts and no code.
+ * Classify from structured code first, then bounded message/body signals only.
+ */
+function isContextOverflowProviderSignal(params: {
+  providerCode?: string | null;
+  providerMessage?: string | null;
+  bodySnippet?: string | null;
+}): boolean {
+  if (params.providerCode === "context_length_exceeded") return true;
+  const haystack = [
+    params.providerCode,
+    params.providerMessage,
+    params.bodySnippet,
+  ]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join(" ");
+  if (!haystack) return false;
+  return /context[_\s-]?length|prompt[_\s-]?too[_\s-]?long|maximum[_\s-]?context|max(?:imum)?\s+prompt|prompt\s+length|token[_\s-]?limit|exceeds.*(?:max|maximum).*token|request too large|context window|input too long|tokens?\s*>\s*\d+/i
+    .test(haystack);
+}
+
+/**
+ * Fail closed before provider fetch when calibrated assembled input exceeds the
+ * model hard input envelope. Prevents permanent 400 spam (e.g. Grok 500k max
+ * prompt) without silently truncating user truth.
+ */
+async function assertDispatchWithinModelBudget(params: {
+  model: string;
+  messages: Array<{ content: unknown }>;
+  tools?: readonly unknown[];
+  maxTokens?: number;
+  provider: ModelProviderFailure["provider"];
+  metadata?: InferenceMetadata;
+}): Promise<void> {
+  const rawEstimateTokens = estimateMessagesInputTokens(params.messages)
+    + estimateToolDefinitionTokens(params.tools);
+  if (rawEstimateTokens <= 0) return;
+
+  const estimatedInputTokens = await applyTokenEstimateCalibration(
+    params.model,
+    rawEstimateTokens,
+  );
+  const explicitReserve = typeof params.maxTokens === "number" && params.maxTokens > 0;
+  const outputReserve = explicitReserve
+    ? params.maxTokens!
+    : getMaxOutputTokens(params.model);
+  const budget = getContextRequestBudget(
+    getContextWindow(params.model),
+    outputReserve,
+    explicitReserve,
+  );
+  if (estimatedInputTokens <= budget.hardInputLimit) return;
+
+  log.warn("model.context_budget_preflight", {
+    operation: "context_budget_preflight",
+    provider: params.provider,
+    model: params.model,
+    estimatedInputTokens,
+    rawEstimateTokens,
+    hardInputLimit: budget.hardInputLimit,
+    contextWindow: budget.contextWindow,
+    outputReserve: budget.outputReserve,
+    sessionId: params.metadata?.sessionId ?? null,
+    runId: params.metadata?.runId ?? null,
+  });
+
+  throw modelProviderErrorFromAttempt(
+    new ModelProviderAttemptError({
+      kind: "context_overflow",
+      retryable: false,
+      status: 400,
+      message:
+        `Assembled request estimated at ${estimatedInputTokens.toLocaleString()} tokens ` +
+        `exceeds hard input limit ${budget.hardInputLimit.toLocaleString()} for ${params.model}`,
+      bodySnippet:
+        `context_budget_preflight estimated=${estimatedInputTokens} ` +
+        `hardInputLimit=${budget.hardInputLimit} contextWindow=${budget.contextWindow}`,
+      clientRequestId: randomUUID(),
+      phase: "fetch",
+      diagnostics: {
+        providerCode: "context_length_exceeded",
+        providerType: "invalid_request_error",
+        providerMessage:
+          `max prompt ${budget.contextWindow}; estimated request ${estimatedInputTokens}`,
+        eventType: "context_budget_preflight",
+      },
+    }),
+    1,
+    {
+      provider: params.provider,
+      model: params.model,
+      metadata: params.metadata,
+    },
+  );
+}
+
 function matchesExpectedAbortReason(signal: AbortSignal | undefined, expectedReason: string | undefined): boolean {
   if (!signal?.aborted || !expectedReason) return false;
   const actualReason = signal.reason instanceof Error
@@ -888,6 +998,14 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
   log.debug(`chatCompletion provider=${provider} model=${model} activity=${routing.activity} tier=${routing.tier} source=${routing.source} configHash=${routing.configHash} messages=${msgCount} maxTokens=${options.maxTokens ?? "default"} jsonMode=${!!options.jsonMode}`);
 
   try {
+    await assertDispatchWithinModelBudget({
+      model,
+      messages: options.messages,
+      tools: options.tools,
+      maxTokens: options.maxTokens,
+      provider: provider as ModelProviderFailure["provider"],
+      metadata: options.metadata,
+    });
     result = provider === "anthropic"
       ? await anthropicCompletion(model, { ...attemptOptions, routingDecision: routing })
       : provider === "claude-cli"
@@ -919,6 +1037,16 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
       `${expectedAbort ? ` expectedAbortReason=${options.expectedAbortReason}` : ""}: ${modelError.message}`;
     if (expectedAbort) {
       log.debug(completionFailureMessage);
+    } else if (isModelContextOverflow(modelError)) {
+      // Request-local budget/context pressure — controlled input failure, not
+      // provider outage. Keep ERRORS free of permanent-400 spam.
+      log.warn(completionFailureMessage, {
+        operation: "chat_completion_context_overflow",
+        provider,
+        model,
+        kind: modelError instanceof ModelProviderError ? modelError.kind : undefined,
+        code: modelError instanceof ModelProviderError ? modelError.code : undefined,
+      });
     } else {
       log.error(completionFailureMessage, modelError);
     }
@@ -1410,7 +1538,10 @@ function buildProviderUserMessage(failure: Omit<ModelProviderFailure, "userMessa
   if (failure.providerCode === "permission_error" || failure.status === 403) {
     return `${providerName} rejected this request for insufficient permission.${reportedSuffix}${referenceSuffix}`;
   }
-  if (failure.providerCode === "context_length_exceeded") {
+  if (
+    failure.kind === "context_overflow"
+    || failure.providerCode === "context_length_exceeded"
+  ) {
     return `${providerName} rejected the request because it exceeded the model context window.${reportedSuffix}${referenceSuffix}`;
   }
   if (failure.providerCode === "model_not_found") {
@@ -1658,7 +1789,11 @@ function parseProviderErrorBody(body: string): {
 
 function codexHttpAttemptError(response: Response, bodySnippet: string, scope: CodexAttemptScope): ModelProviderAttemptError {
   const detail = parseProviderErrorBody(bodySnippet);
-  const contextOverflow = detail.providerCode === "context_length_exceeded";
+  const contextOverflow = isContextOverflowProviderSignal({
+    providerCode: detail.providerCode,
+    providerMessage: detail.providerMessage,
+    bodySnippet,
+  });
   const retryable = isRetryableCodexStatus(response.status)
     || isRetryableCodexProviderCode(detail.providerCode);
   return new ModelProviderAttemptError({
@@ -1684,6 +1819,9 @@ function codexHttpAttemptError(response: Response, bodySnippet: string, scope: C
         response,
       ),
       ...detail,
+      providerCode: contextOverflow
+        ? (detail.providerCode || "context_length_exceeded")
+        : detail.providerCode,
       eventType: "http_response",
     },
   });
@@ -1708,14 +1846,18 @@ function responsesProviderFailure(
   const permanentCodes = new Set(["invalid_request_error", "authentication_error", "permission_error", "context_length_exceeded", "model_not_found"]);
   const usageData = chunk.usage || chunk.response?.usage;
   const providerParam = sanitizeProviderDiagnostic(chunk.param ?? undefined);
+  const contextOverflow = isContextOverflowProviderSignal({
+    providerCode,
+    providerMessage,
+  });
 
   return new ModelProviderAttemptError({
-    kind: providerCode === "context_length_exceeded"
+    kind: contextOverflow
       ? "context_overflow"
       : providerCode === "rate_limit_exceeded"
         ? "rate_limited"
         : "provider_failed",
-    retryable: !providerCode || !permanentCodes.has(providerCode),
+    retryable: contextOverflow ? false : (!providerCode || !permanentCodes.has(providerCode)),
     status: context.status ?? 0,
     message: providerMessage,
     bodySnippet: providerCode ? `${providerCode}: ${providerMessage}` : providerMessage,
@@ -1724,7 +1866,9 @@ function responsesProviderFailure(
     phase: "protocol",
     diagnostics: {
       ...context.diagnostics,
-      providerCode,
+      providerCode: contextOverflow
+        ? (providerCode || "context_length_exceeded")
+        : providerCode,
       providerType,
       providerMessage,
       providerParam: chunk.param === null ? null : providerParam,
@@ -1875,11 +2019,15 @@ function openaiSdkAttemptError(err: unknown, clientRequestId: string): ModelProv
     ? null
     : sanitizeProviderDiagnostic(detail?.param || sdkError?.param || undefined);
   const retryable = status > 0 ? isRetryableCodexStatus(status) : true;
-  const contextOverflow = providerCode === "context_length_exceeded";
   const bodySnippet = safeStringify(sdkError?.error || { message: sdkError?.message }, {
     maxBytes: MAX_PROVIDER_DIAGNOSTIC_CHARS,
     maxStrLen: MAX_PROVIDER_DIAGNOSTIC_CHARS,
     label: "model-client.openaiSdkError",
+  });
+  const contextOverflow = isContextOverflowProviderSignal({
+    providerCode,
+    providerMessage,
+    bodySnippet,
   });
 
   return new ModelProviderAttemptError({
@@ -1898,7 +2046,9 @@ function openaiSdkAttemptError(err: unknown, clientRequestId: string): ModelProv
     providerRequestId: sanitizeProviderDiagnostic(sdkError?.requestID || undefined),
     phase: status > 0 ? "fetch" : "stream",
     diagnostics: {
-      providerCode,
+      providerCode: contextOverflow
+        ? (providerCode || "context_length_exceeded")
+        : providerCode,
       providerType,
       providerMessage,
       providerParam,
@@ -2528,6 +2678,15 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
     `tier=${options.routingTier ?? routing.tier} activity=${routing.activity} configHash=${routing.configHash}`,
   );
 
+  await assertDispatchWithinModelBudget({
+    model,
+    messages: options.messages,
+    tools: options.tools,
+    maxTokens: options.maxTokens,
+    provider: provider as ModelProviderFailure["provider"],
+    metadata: options.metadata,
+  });
+
   const t0 = Date.now();
   const { content: requestContent, chars: requestChars } = buildRequestContent(options.messages);
   let responseContent = "";
@@ -2702,6 +2861,14 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
     if (status === "aborted") {
       // Caller-owned stream cancellation is expected; keep aggregates free of abort noise.
       log.debug(streamFailureMessage);
+    } else if (isModelContextOverflow(modelError)) {
+      log.warn(streamFailureMessage, {
+        operation: "chat_completion_stream_context_overflow",
+        provider,
+        model,
+        kind: modelError instanceof ModelProviderError ? modelError.kind : undefined,
+        code: modelError instanceof ModelProviderError ? modelError.code : undefined,
+      });
     } else {
       // Terminal stream failures must log the enriched Error (code + stack), not a string.
       log.error(streamFailureMessage, modelError);
