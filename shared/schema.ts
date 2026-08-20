@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, bigint, real, boolean, timestamp, jsonb, unique, index, uniqueIndex, primaryKey, uuid, check } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, bigint, real, doublePrecision, boolean, timestamp, jsonb, unique, index, uniqueIndex, primaryKey, uuid, check } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { libraryPages } from "./models/info";
@@ -126,7 +126,17 @@ export const users = pgTable("users", {
     .default(sql`'{}'::text[]`),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   passwordSignupAt: timestamp("password_signup_at", { withTimezone: true }),
-});
+  /**
+   * Latest NPS response (0–10). Nullable until survey collection writes it.
+   * Scorecard NPS reads this column; empty stays unmeasured.
+   */
+  npsScore: doublePrecision("nps_score"),
+}, (table) => ({
+  npsScoreCheck: check(
+    "users_nps_score_check",
+    sql`${table.npsScore} IS NULL OR (${table.npsScore} >= 0 AND ${table.npsScore} <= 10)`,
+  ),
+}));
 
 // Global pre-account security subjects. These rows carry no credentials,
 // profile, account, Vault, or private relationship data.
@@ -150,6 +160,20 @@ export type InsertInvitedSubject = typeof invitedSubjects.$inferInsert;
 
 export const ACCOUNT_STATUSES = ["active", "suspended", "archived"] as const;
 export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
+
+/**
+ * Commercial activation seat on Account — not onboarding REGISTERED vs ACTIVATED
+ * (`user_profiles.onboarding_status === "completed"`). Nullable until a collection
+ * path writes it; Activation Rate reads this column and stays dark without events.
+ */
+export const ACCOUNT_ACTIVATION_LEVELS = [
+  "none",
+  "invited",
+  "registered",
+  "activated",
+  "retained",
+] as const;
+export type AccountActivationLevel = (typeof ACCOUNT_ACTIVATION_LEVELS)[number];
 
 export const INSTANCE_STATUSES = ["active", "paused", "archived", "quarantined"] as const;
 export type InstanceStatus = (typeof INSTANCE_STATUSES)[number];
@@ -178,6 +202,11 @@ export const accounts = pgTable("accounts", {
   periodTokens: bigint("period_tokens", { mode: "number" }).notNull().default(0),
   emittedOverageTokens: bigint("emitted_overage_tokens", { mode: "number" }).notNull().default(0),
   usageStatus: text("usage_status"),
+  /**
+   * Commercial activation level seat. Distinct from onboarding completed.
+   * Nullable until written; never inferred from goals/sessions in producers.
+   */
+  activationLevel: text("activation_level"),
   metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -190,6 +219,10 @@ export const accounts = pgTable("accounts", {
   usageStatusCheck: check(
     "accounts_usage_status_check",
     sql`${table.usageStatus} IS NULL OR ${table.usageStatus} IN ('ok', 'bar', 'warn', 'pause')`,
+  ),
+  activationLevelCheck: check(
+    "accounts_activation_level_check",
+    sql`${table.activationLevel} IS NULL OR ${table.activationLevel} IN ('none', 'invited', 'registered', 'activated', 'retained')`,
   ),
 }));
 

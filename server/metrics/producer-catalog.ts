@@ -55,6 +55,42 @@ const PRODUCT_PRODUCERS: MetricProducerDefinition[] = [
     adapterKind: "internal",
     binding: { key: "mantra-meetings" },
   },
+  /**
+   * NPS over users.nps_score. Dark until survey collection fills the column.
+   * No collection writer in the producer — empty cohort is unavailable.
+   */
+  {
+    key: "net-promoter-score",
+    label: "Net Promoter Score",
+    family: "product",
+    adapterKey: "product",
+    adapterKind: "internal",
+    binding: { key: "net-promoter-score" },
+  },
+  /**
+   * Activation Rate over accounts.activation_level.
+   * Not onboarding REGISTERED/ACTIVATED. Dark until levels are written.
+   */
+  {
+    key: "activation-rate",
+    label: "Activation Rate",
+    family: "product",
+    adapterKey: "product",
+    adapterKind: "internal",
+    binding: { key: "activation-rate" },
+  },
+  /**
+   * Paying-account churn. Paying = included_tokens IS NOT NULL.
+   * Dark until cancel/non-paying lifecycle events exist — never invent from status noise.
+   */
+  {
+    key: "monthly-account-churn",
+    label: "Monthly Account Churn",
+    family: "product",
+    adapterKey: "product",
+    adapterKind: "internal",
+    binding: { key: "monthly-account-churn" },
+  },
 ];
 
 const ENGAGEMENT_PRODUCERS: MetricProducerDefinition[] = [
