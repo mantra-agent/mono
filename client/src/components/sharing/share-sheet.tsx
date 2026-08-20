@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, X } from "lucide-react";
 import {
@@ -24,6 +24,14 @@ interface GrantRow {
   createdAt: string;
   label: string;
   email: string | null;
+}
+
+interface RecentPerson {
+  subjectType: "user" | "invited_subject";
+  subjectId: string;
+  label: string;
+  email: string | null;
+  lastGrantedAt: string;
 }
 
 interface TeamOption {
@@ -57,6 +65,7 @@ export function ShareSheet({ objectType, objectId, title, projectId, open, onOpe
   const [email, setEmail] = useState("");
   const [capability, setCapability] = useState<ShareCapability>("read");
   const [error, setError] = useState<string | null>(null);
+  const [peopleFocused, setPeopleFocused] = useState(false);
 
   const queryKey = [grantsUrl(objectType, objectId)] as const;
   const { data, isLoading } = useQuery<{ grants: GrantRow[] }>({
@@ -67,6 +76,17 @@ export function ShareSheet({ objectType, objectId, title, projectId, open, onOpe
     },
     enabled: open,
   });
+
+  const { data: recentData, isLoading: recentLoading } = useQuery<{ people: RecentPerson[] }>({
+    queryKey: ["/api/objects/grants/recent-people"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/objects/grants/recent-people");
+      return res.json();
+    },
+    enabled: open,
+    staleTime: 30_000,
+  });
+  const recentPeople = recentData?.people ?? [];
 
   // Teams the caller's account owns — offered as grant subjects alongside people.
   const { data: teamsData } = useQuery<{ teams: TeamOption[] }>({
@@ -90,7 +110,10 @@ export function ShareSheet({ objectType, objectId, title, projectId, open, onOpe
   });
   const organizations = orgsData?.organizations ?? [];
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey });
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey });
+    queryClient.invalidateQueries({ queryKey: ["/api/objects/grants/recent-people"] });
+  };
 
   const addMutation = useMutation<unknown, Error, { email: string; capability: ShareCapability }>({
     mutationFn: async ({ email, capability }) => {
@@ -103,6 +126,27 @@ export function ShareSheet({ objectType, objectId, title, projectId, open, onOpe
     },
     onSuccess: () => {
       setEmail("");
+      setError(null);
+      invalidate();
+    },
+    onError: (err) => setError(err.message || "Failed to share"),
+  });
+
+  const addRecentMutation = useMutation<
+    unknown,
+    Error,
+    { subjectType: "user" | "invited_subject"; subjectId: string; capability: ShareCapability }
+  >({
+    mutationFn: async ({ subjectType, subjectId, capability }) => {
+      const res = await apiRequest("POST", grantsUrl(objectType, objectId), {
+        subjectType,
+        subjectId,
+        capability,
+        ...(projectId != null ? { projectId } : {}),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
       setError(null);
       invalidate();
     },
@@ -157,6 +201,18 @@ export function ShareSheet({ objectType, objectId, title, projectId, open, onOpe
 
   const grants = data?.grants ?? [];
 
+  const filteredRecent = useMemo(() => {
+    const q = email.trim().toLowerCase();
+    if (!q) return recentPeople;
+    return recentPeople.filter((person) => {
+      const label = person.label?.toLowerCase() ?? "";
+      const personEmail = person.email?.toLowerCase() ?? "";
+      return label.includes(q) || personEmail.includes(q);
+    });
+  }, [email, recentPeople]);
+
+  const showRecent = peopleFocused || email.trim().length > 0;
+
   const submitAdd = () => {
     const trimmed = email.trim();
     if (!trimmed) return;
@@ -171,40 +227,89 @@ export function ShareSheet({ objectType, objectId, title, projectId, open, onOpe
           <DialogDescription className="truncate">{title || "Who has access"}</DialogDescription>
         </DialogHeader>
 
-        {/* Add by email */}
-        <div className="flex items-center gap-2">
-          <Input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                submitAdd();
-              }
-            }}
-            placeholder="Add people by email"
-            type="email"
-            className="flex-1 h-8"
-            data-testid="input-share-email"
-          />
-          <select
-            value={capability}
-            onChange={(e) => setCapability(e.target.value as ShareCapability)}
-            className="h-8 rounded-md border border-input bg-background px-2 text-sm"
-            data-testid="select-share-capability"
-          >
-            <option value="read">Read</option>
-            <option value="write">Write</option>
-          </select>
-          <Button
-            size="sm"
-            className="h-8"
-            onClick={submitAdd}
-            disabled={addMutation.isPending || !email.trim()}
-            data-testid="button-share-add"
-          >
-            {addMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Share"}
-          </Button>
+        {/* Add by email + recent people */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <Input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onFocus={() => setPeopleFocused(true)}
+              onBlur={() => {
+                // Delay so a mousedown on a recent row still fires.
+                window.setTimeout(() => setPeopleFocused(false), 150);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  submitAdd();
+                }
+              }}
+              placeholder="Add people by email"
+              type="email"
+              className="flex-1 h-8"
+              data-testid="input-share-email"
+            />
+            <select
+              value={capability}
+              onChange={(e) => setCapability(e.target.value as ShareCapability)}
+              className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+              data-testid="select-share-capability"
+            >
+              <option value="read">Read</option>
+              <option value="write">Write</option>
+            </select>
+            <Button
+              size="sm"
+              className="h-8"
+              onClick={submitAdd}
+              disabled={addMutation.isPending || !email.trim()}
+              data-testid="button-share-add"
+            >
+              {addMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Share"}
+            </Button>
+          </div>
+
+          {showRecent && (
+            <div className="rounded-md border border-border" data-testid="list-share-recent">
+              {recentLoading ? (
+                <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+                </div>
+              ) : filteredRecent.length === 0 ? (
+                <p className="px-2 py-1.5 text-sm text-muted-foreground">
+                  {recentPeople.length === 0 ? "No recent people yet." : "No matches."}
+                </p>
+              ) : (
+                <ul className="flex max-h-40 flex-col overflow-y-auto">
+                  {filteredRecent.map((person) => (
+                    <li key={`${person.subjectType}:${person.subjectId}`}>
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-accent"
+                        disabled={addRecentMutation.isPending}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          addRecentMutation.mutate({
+                            subjectType: person.subjectType,
+                            subjectId: person.subjectId,
+                            capability,
+                          });
+                        }}
+                        data-testid={`button-share-recent-${person.subjectId}`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm text-foreground">{person.label}</p>
+                          {person.email && person.email !== person.label && (
+                            <p className="truncate text-xs text-muted-foreground">{person.email}</p>
+                          )}
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Add a team */}

@@ -36,7 +36,12 @@ export function isEventVisibleToPrincipal(event: BusEvent, principal: Principal)
   if (event.audience.scope === "system") {
     return principal.actorType === "system" || principal.permissions.includes("system:read");
   }
-  return principal.actorType === "user" && principal.accountId === event.audience.accountId;
+  // User-scoped events are recipient-private: same account is not enough.
+  return (
+    principal.actorType === "user"
+    && principal.userId === event.audience.ownerUserId
+    && principal.accountId === event.audience.accountId
+  );
 }
 
 const MAX_BUFFER_SIZE = 2000;

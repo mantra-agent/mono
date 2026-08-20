@@ -13,6 +13,7 @@ import { goalsService } from "../goals-service";
 import { dismissPeopleSurface, snoozePeopleSurface } from "../simple/people-surface-state";
 import { dismissBuildDeploymentHomeItem } from "../mods/build-deployment-home";
 import { dismissReportedIssueHomeItem } from "../mods/reported-issue-home";
+import { dismissObjectShareHomeItem } from "../object-share-home";
 import { chatFileStorage } from "../chat-file-storage";
 import { emailDraftStorage } from "../email-draft-storage";
 import { updatePlanStatus } from "../plan-service";
@@ -159,6 +160,30 @@ async function completeReportedIssue(
     return { ok: true, type: "reported_issue", issueId, alreadyGone: true };
   }
   return { ok: true, type: "reported_issue", issueId };
+}
+
+async function completeObjectShare(
+  principal: Principal,
+  homeItemId: string | null,
+  payload: Record<string, unknown>,
+) {
+  const grantId = numberValue(payload.grantId);
+  const reasonKey = stringValue(payload.reasonKey);
+  if (!grantId || !reasonKey) {
+    const err = new Error("grantId and reasonKey are required");
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  if (homeItemId && homeItemId !== `object-share-${grantId}`) {
+    const err = new Error("Home item identity does not match object share");
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  const dismissed = await dismissObjectShareHomeItem(principal, grantId, reasonKey);
+  if (!dismissed) {
+    return { ok: true, type: "object_share", grantId, alreadyGone: true };
+  }
+  return { ok: true, type: "object_share", grantId };
 }
 
 /**
@@ -335,6 +360,12 @@ export function registerHomeRoutes(app: Express) {
           return res.status(400).json({ error: "Home item identity does not match reported Issue" });
         }
       }
+      if (payload.kind === "object_share") {
+        const grantId = numberValue(payload.grantId);
+        if (!homeItemId || !grantId || homeItemId !== `object-share-${grantId}`) {
+          return res.status(400).json({ error: "Home item identity does not match object share" });
+        }
+      }
       const isBuildDeploymentComplete =
         (sourceType === "build" || sourceType === "artifact")
         && payload.kind === "build_deployment"
@@ -346,6 +377,10 @@ export function registerHomeRoutes(app: Express) {
       const isReportedIssueComplete =
         sourceType === "issue"
         && payload.kind === "reported_issue"
+        && Boolean(req.principal);
+      const isObjectShareComplete =
+        sourceType === "artifact"
+        && payload.kind === "object_share"
         && Boolean(req.principal);
       const result = sourceType === "wellness"
         ? await completeWellness(payload)
@@ -359,7 +394,9 @@ export function registerHomeRoutes(app: Express) {
                 ? await completeSessionReview(req.principal!, homeItemId, payload)
                 : isReportedIssueComplete
                   ? await completeReportedIssue(req.principal!, homeItemId, payload)
-                  : null;
+                  : isObjectShareComplete
+                    ? await completeObjectShare(req.principal!, homeItemId, payload)
+                    : null;
 
       if (!result) return res.status(400).json({ error: "Unsupported Home completion source" });
       // Complete mutates Home producers (dismissals, task/goal/wellness status,

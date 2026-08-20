@@ -136,7 +136,9 @@ When adding real-time sync for new data types, follow this pattern:
 
 **suppressDataSyncEvent**: Utility to temporarily ignore specific events (used by goals page). Avoid for new code — prefer event-carried state which eliminates the race structurally.
 
-**Live toasts only.** `useDataSync` may toast page surface / build completion / goal-change events only from live WS envelopes (`replay !== true`). WS `events.resume` catch-up still invalidates React Query so Home Inbox and other projections rebuild, but must never fire toasts. Do not store toast delivery in `localStorage` or any durable client store — durable attention catch-up is Home Inbox. `useDataSync` mounts only under the authenticated app shell.
+**Live toasts only.** `useDataSync` may toast page surface / build completion / goal-change / object_share events only from live WS envelopes (`replay !== true`). WS `events.resume` catch-up still invalidates React Query so Home Inbox and other projections rebuild, but must never fire toasts. Do not store toast delivery in `localStorage` or any durable client store — durable attention catch-up is Home Inbox (including `object_share` rows). `useDataSync` mounts only under the authenticated app shell.
+
+**Share sheet.** `ShareSheet` is the one grant modal. Recent people come from caller-scoped `GET /api/objects/grants/recent-people` (ledger projection, not People search). Explicit `subjectType` + `subjectId` grants known rows; typed email remains the path for new addresses.
 
 
 ## Skills vs Internal Prompts UI

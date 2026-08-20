@@ -34,6 +34,7 @@ const INVALIDATION_MAP: Record<string, string[][]> = {
   "data:library_changed": [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library/unread"], ["/api/library/index"]],
   "data:product_composition_changed": [["/api/mods"], ["/api/product-composition?modality=web"], ["/api/home/feed"]],
   "data:home_changed": [["/api/home/feed"]],
+  "data:object_share": [["/api/home/feed"]],
   // Feature stage/status mutations (HTTP + Agent tools) so the Features tree
   // flips unread/review chrome without a manual reload.
   "data:features_changed": [["/api/features"]],
@@ -265,6 +266,24 @@ function maybeToastBuildCompletion(payload: Record<string, unknown> | undefined)
   }
 }
 
+/** Live-only Share toast — one key per grant id; Home is durable catch-up. */
+function maybeToastObjectShare(payload: Record<string, unknown> | undefined): void {
+  if (payload?.kind !== "object_share") return;
+  const grantId = typeof payload.grantId === "number"
+    ? payload.grantId
+    : typeof payload.grantId === "string"
+      ? Number(payload.grantId)
+      : NaN;
+  if (!Number.isInteger(grantId) || grantId <= 0) return;
+  const sentence = typeof payload.sentence === "string" ? payload.sentence.trim() : "";
+  if (!sentence) return;
+  const dedupKey = `object-share:${grantId}`;
+  if (recentNotifications.has(dedupKey)) return;
+  recentNotifications.add(dedupKey);
+  window.setTimeout(() => recentNotifications.delete(dedupKey), NOTIFICATION_DEDUP_WINDOW_MS);
+  toast({ title: sentence });
+}
+
 export function onAutonomousStarted(cb: AutonomousStartedCallback | null) {
   autonomousStartedCallback = cb;
 }
@@ -403,6 +422,10 @@ export function useDataSync() {
 
         if (eventName === "data:goals_changed") {
           maybeToastGoalChange(event.payload as Record<string, unknown> | undefined);
+        }
+
+        if (eventName === "data:object_share") {
+          maybeToastObjectShare(event.payload as Record<string, unknown> | undefined);
         }
       }
 
