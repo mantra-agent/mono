@@ -60,8 +60,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { EditableReferenceInput } from "@/components/references/editable-reference-input";
-import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
-import { serializeReference } from "@shared/references";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
@@ -236,21 +234,15 @@ function ProducersCatalogDialog({
 function MetricEquationEditor({
   equation,
   onEquationChange,
-  operands,
-  onOperandsChange,
-  excludeMetricId,
 }: {
   equation: string;
   onEquationChange: (next: string) => void;
-  operands: ReferencePickerValue[];
-  onOperandsChange: (next: ReferencePickerValue[]) => void;
-  excludeMetricId?: string;
 }) {
   const [producersOpen, setProducersOpen] = useState(false);
 
   return (
     <div className="space-y-1.5">
-      <div className="flex items-start gap-1">
+      <div className="group/equation flex items-start gap-1">
         <div className="min-w-0 flex-1" data-testid="metric-equation">
           <EditableReferenceInput
             value={equation}
@@ -264,14 +256,17 @@ function MetricEquationEditor({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className={cn(
+                "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                "opacity-0 group-hover/equation:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100",
+              )}
               aria-label="Equation actions"
               data-testid="metric-equation-menu"
             >
               <MoreHorizontal className="h-3.5 w-3.5" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align="end" onCloseAutoFocus={(e) => e.preventDefault()}>
             <DropdownMenuItem
               onSelect={(event) => {
                 event.preventDefault();
@@ -284,25 +279,6 @@ function MetricEquationEditor({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <ReferencePicker
-        value={operands}
-        onChange={(next) => {
-          const added = next.find((item) => !operands.some((existing) => existing.id === item.id));
-          onOperandsChange(next);
-          if (!added) return;
-          if (excludeMetricId && added.id === excludeMetricId) return;
-          const token = serializeReference({ type: "metric", id: added.id });
-          onEquationChange(appendEquationToken(equation, token));
-        }}
-        types={["metric"]}
-        mode="multi"
-        variant="inline"
-        dense
-        placeholder="Add metric"
-        className="text-xs"
-        testId="metric-equation-operand"
-        excludeIds={excludeMetricId ? [excludeMetricId] : undefined}
-      />
       <ProducersCatalogDialog
         open={producersOpen}
         onOpenChange={setProducersOpen}
@@ -420,7 +396,6 @@ function MetricDefinitionEditor({ metric }: { metric: Metric }) {
   const { toast } = useToast();
   const [description, setDescription] = useState(metric.description ?? "");
   const [equation, setEquation] = useState(equationOf(metric));
-  const [operands, setOperands] = useState<ReferencePickerValue[]>([]);
   const isManual = metric.adapterKind === "manual" || equationOf(metric) === "manual";
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef({
@@ -502,9 +477,6 @@ function MetricDefinitionEditor({ metric }: { metric: Metric }) {
           setEquation(next);
           queueSave();
         }}
-        operands={operands}
-        onOperandsChange={setOperands}
-        excludeMetricId={metric.id}
       />
       {isManual ? <RecordSampleForm metric={metric} /> : null}
     </div>
@@ -527,7 +499,7 @@ function MetricTreeRow({
 
   return (
     <ProfileTreeRow
-      label={metric.name}
+      label={<span className="text-foreground">{metric.name}</span>}
       icon={<AdapterIcon className="h-3.5 w-3.5" />}
       hasValue
       showEmpty
@@ -567,7 +539,6 @@ function CreateMetricDialog() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [equation, setEquation] = useState("");
-  const [operands, setOperands] = useState<ReferencePickerValue[]>([]);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -586,7 +557,6 @@ function CreateMetricDialog() {
       setName("");
       setDescription("");
       setEquation("");
-      setOperands([]);
     },
     onError: (error: unknown) => {
       toast({ title: "Failed to create metric", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
@@ -621,12 +591,7 @@ function CreateMetricDialog() {
             data-testid="metric-description"
             className="min-h-[2.5rem] resize-none text-xs leading-relaxed text-muted-foreground"
           />
-          <MetricEquationEditor
-            equation={equation}
-            onEquationChange={setEquation}
-            operands={operands}
-            onOperandsChange={setOperands}
-          />
+          <MetricEquationEditor equation={equation} onEquationChange={setEquation} />
         </div>
         <DialogFooter>
           <Button
