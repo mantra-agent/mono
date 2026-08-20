@@ -53,6 +53,8 @@ const PRODUCT_CATALOG_SLUGS = new Set([
   "shipped-prs",
   "user-memory",
   "achieved-goals",
+  "net-new-active-users",
+  "mantra-meetings",
 ]);
 
 const ENGAGEMENT_ADAPTER_KEYS = new Set(["tasks", "interactions", "wellness", "meetings", "goals"]);

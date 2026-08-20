@@ -35,6 +35,26 @@ const PRODUCT_PRODUCERS: MetricProducerDefinition[] = [
   { key: "shipped-prs", label: "Shipped PRs", family: "product", adapterKey: "product", adapterKind: "internal", binding: { key: "shipped-prs" } },
   { key: "user-memory", label: "User Memory", family: "product", adapterKey: "product", adapterKind: "internal", binding: { key: "user-memory" } },
   { key: "achieved-goals", label: "Achieved Goals (platform)", family: "product", adapterKey: "product", adapterKind: "internal", binding: { key: "achieved-goals" } },
+  {
+    key: "net-new-active-users",
+    label: "Net New Active Users",
+    family: "product",
+    adapterKey: "product",
+    adapterKind: "internal",
+    binding: { key: "net-new-active-users" },
+  },
+  /**
+   * Company scorecard Meetings — recap-ready work-metrics count.
+   * Distinct from engagement producer `meetings` (principal-scoped meeting index).
+   */
+  {
+    key: "mantra-meetings",
+    label: "Meetings (company)",
+    family: "product",
+    adapterKey: "product",
+    adapterKind: "internal",
+    binding: { key: "mantra-meetings" },
+  },
 ];
 
 const ENGAGEMENT_PRODUCERS: MetricProducerDefinition[] = [

@@ -35,6 +35,8 @@ export const METRIC_PRODUCER_PICKER_ITEMS: readonly MetricProducerPickerItem[] =
   { key: "shipped-prs", label: "Shipped PRs", family: "product" },
   { key: "user-memory", label: "User Memory", family: "product" },
   { key: "achieved-goals", label: "Achieved Goals (platform)", family: "product" },
+  { key: "net-new-active-users", label: "Net New Active Users", family: "product" },
+  { key: "mantra-meetings", label: "Meetings (company)", family: "product" },
   { key: "tasks", label: "Completed Tasks", family: "engagement" },
   { key: "interactions", label: "Opportunity Interactions", family: "engagement" },
   { key: "wellness", label: "Wellness Completions", family: "engagement" },

@@ -564,29 +564,48 @@ export async function ensurePlatformBusinessMetrics(
             plan: { type: "producer", key: definition.key },
             producerKey: definition.key,
           };
+      // Stamp by slug so pre-existing catalog rows (different synthetic ids) converge.
       if (product) {
         await db.execute(sql`
           UPDATE metrics
           SET owner_kind = 'platform',
               owner_id = NULL,
+              adapter_kind = 'internal',
+              status = 'active',
               adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify(stampConfig)}::jsonb,
+              description = CASE
+                WHEN ${definition.description} <> '' THEN ${definition.description}
+                ELSE description
+              END,
               updated_at = NOW()
-          WHERE id = ${id}
+          WHERE slug = ${definition.key}
+            AND account_id = ${owner.account_id}
             AND (
               owner_kind IS DISTINCT FROM 'platform'
+              OR adapter_kind IS DISTINCT FROM 'internal'
+              OR status IS DISTINCT FROM 'active'
               OR COALESCE(adapter_config->>'equation', '') IS DISTINCT FROM ${definition.key}
               OR COALESCE(adapter_config->>'adapterKey', '') IS DISTINCT FROM ${producer?.adapterKey ?? "product"}
               OR adapter_config->'plan' IS NULL
+              OR (
+                ${definition.description} <> ''
+                AND description IS DISTINCT FROM ${definition.description}
+              )
             )
         `);
       } else {
         await db.execute(sql`
           UPDATE metrics
-          SET adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify(stampConfig)}::jsonb,
+          SET adapter_kind = 'internal',
+              status = 'active',
+              adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify(stampConfig)}::jsonb,
               updated_at = NOW()
-          WHERE id = ${id}
+          WHERE slug = ${definition.key}
+            AND account_id = ${owner.account_id}
             AND (
-              COALESCE(adapter_config->>'equation', '') IS DISTINCT FROM ${definition.key}
+              adapter_kind IS DISTINCT FROM 'internal'
+              OR status IS DISTINCT FROM 'active'
+              OR COALESCE(adapter_config->>'equation', '') IS DISTINCT FROM ${definition.key}
               OR COALESCE(adapter_config->>'adapterKey', '') IS DISTINCT FROM ${producer?.adapterKey ?? "product"}
               OR adapter_config->'plan' IS NULL
             )
@@ -684,7 +703,7 @@ export const metricsStorage = {
       // Engine gate: never advertise Product without users:read or System without system:read.
       allowPlatform
         ? undefined
-        : sql`(${metrics.ownerKind} IS DISTINCT FROM 'platform' AND ${metrics.slug} NOT IN ('hours-used','active-users','current-users','new-users','accounts','registered-users','shipped-prs','user-memory','achieved-goals','hours-used-per-user'))`,
+        : sql`(${metrics.ownerKind} IS DISTINCT FROM 'platform' AND ${metrics.slug} NOT IN ('hours-used','active-users','current-users','new-users','accounts','registered-users','shipped-prs','user-memory','achieved-goals','net-new-active-users','mantra-meetings','hours-used-per-user'))`,
       allowSystem
         ? undefined
         : sql`(${metrics.ownerKind} IS DISTINCT FROM 'performance' AND COALESCE(${metrics.adapterConfig}->>'adapterKey', '') IS DISTINCT FROM 'performance')`,
