@@ -358,6 +358,13 @@
 - Residual/rollback: residual risk remains high until normal Live promotion and one backup-only validation; isolated restore remains the human acceptance gate. Revert backup-completeness, brain-export-map, fate gate, brain routes wiring, AGENTS/SECURITY docs, and this finding together; no schema or data mutation is involved.
 -->
 
+<!-- 2026-08-20 Brain archive transport size-match complete gate:
+- Assets/data: A05/A07/A08 Brain logical archives in private object storage and backup_jobs completion status (S2/S3 recoverability evidence).
+- Threat/failure: whole-archive Buffer materialization dies above ~2 GiB (Live job 09c94b6d: File size greater than 2 GiB), and stamping complete from local Buffer.length / stat.size without verifying stored object size can report a durable backup that never landed or landed short (STRIDE tampering/repudiation/availability; DATA-01/OBS-01/REC-02; B17).
+- Deterministic control/owner: Core Recovery put-and-verify is the sole archive durability mutation. putBrainArchiveAndVerify streams createReadStream with ContentLength into storageBackend.putObject, then headObject; backup_jobs.status=complete and compressed_size are written only when stored contentLength equals local size. Mismatch or missing metadata fails the job. restoreFromBackup streams getObjectStream to disk and never getObjectBuffer on Brain archives. Schema-as-membership and SECURITY_DENYLIST are unchanged. Owner: Core Recovery / Security Program Owner. Severity: high recoverability. SLA: release-gate. Status: repaired in source pending production build, merge, promotion, and human backup/restore gates.
+- Residual/rollback: residual risk remains until a >2 GiB Live backup reaches complete with matching size and isolated restore is human-proven. Revert backup-storage put/get paths, putObject ContentLength option, and this finding together; no schema or production data mutation.
+-->
+
 <!-- 2026-08-13 Backup fate build-time invariant (superseded by schema-is-membership above; retained for history):
 - Assets/data: A05/A07/A08 PostgreSQL recovery completeness across the application database -> logical Brain exporter -> private object storage -> human-controlled restore (S2/S3).
 - Threat/failure: the disposition manifest was reconciled against Live `pg_catalog` only at backup time, so every new durable relation first surfaced as an unexplained relation in a Live preflight — Live had become the discovery surface, and repeated backups failed closed one table at a time (`products`, `business_hiring_slots`, ...). A table could ship with no recovery decision, and false recoverability was discovered only after promotion (STRIDE tampering/repudiation/availability; DATA-01/OBS-01).
