@@ -17,6 +17,11 @@ function statusOf(error: unknown): number {
 function messageOf(error: unknown): string {
   const code = (error as { code?: string })?.code;
   if (code === "23505") return "A role with this title already exists";
+  if (code === "JOB_ROLE_IN_USE" || code === "23503") {
+    return error instanceof Error && error.message
+      ? error.message
+      : "Cannot delete job role while hiring slots still reference it";
+  }
   return error instanceof Error ? error.message : "Job role operation failed";
 }
 
