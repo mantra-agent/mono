@@ -361,7 +361,7 @@ export const coreDefinition: CoreDefinition = {
         requiredPermissions: ["system:read"],
         readinessKind: "secret",
         requiredSecrets: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
-        audience: "primary",
+        audience: "diagnostic",
       }),
     ],
   },

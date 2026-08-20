@@ -3,7 +3,6 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { CreditCard, Loader2 } from "lucide-react";
 import { IntegrationTreeSection } from "@/components/integrations/integration-tree-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
-import { SecretsForSection } from "@/components/SecretControl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
@@ -99,7 +98,7 @@ function PriceRow({
   );
 }
 
-/** Integrations → Stripe detail: credentials + closed Price map for every paying Account. */
+/** Integrations → Systems → Stripe: closed Price map for every paying Account. */
 export function StripeDetail() {
   const { hasPermission } = useAuth();
   const canRead = hasPermission("system:read") || hasPermission("system:write");
@@ -131,12 +130,6 @@ export function StripeDetail() {
 
   return (
     <div className="min-w-0 space-y-2" data-testid="stripe-detail">
-      <IntegrationTreeSection label="Credentials" initialOpen testIdPrefix="stripe-credentials">
-        <div className="min-w-0 px-2 py-1.5">
-          <SecretsForSection section="stripe" />
-        </div>
-      </IntegrationTreeSection>
-
       <IntegrationTreeSection
         label="Price map"
         initialOpen
