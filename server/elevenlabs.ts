@@ -17,29 +17,8 @@ let cachedVoiceId: string | null = null;
 onSecretChange((name) => {
   if (name === "ELEVENLABS_API_KEY") cachedApiKey = null;
 });
-const LEGAL_CASCADE_TIMEOUT_SECONDS = 15;
-const EL_DEFAULT_CASCADE_TIMEOUT_SECONDS = 4;
-const DISABLED_SOFT_TIMEOUT_SECONDS = -1;
-const DISABLED_SOFT_TIMEOUT_MESSAGE = ".";
-const CUSTOM_LLM_BACKUP_ORDER = ["custom-llm"] as const;
-let verifiedCascadeTimeoutSeconds: number = EL_DEFAULT_CASCADE_TIMEOUT_SECONDS;
-let verifiedSoftTimeoutSeconds: number = 0;
-
-type BackupLlmPreference = "default" | "override";
-
-interface BackupLlmConfig {
-  preference: "override";
-  order: typeof CUSTOM_LLM_BACKUP_ORDER;
-  cascade_timeout_seconds: number;
-}
-
-function legalBackupLlmConfig(): BackupLlmConfig {
-  return {
-    preference: "override",
-    order: CUSTOM_LLM_BACKUP_ORDER,
-    cascade_timeout_seconds: LEGAL_CASCADE_TIMEOUT_SECONDS,
-  };
-}
+let verifiedCascadeTimeoutSeconds: number = 8;
+let verifiedSoftTimeoutSeconds: number = 5;
 
 export function getVerifiedCascadeTimeoutSeconds(): number {
   return verifiedCascadeTimeoutSeconds;
@@ -55,8 +34,8 @@ export interface AgentPromptConfig {
   custom_llm?: {
     url: string;
     model_id: string;
+    cascade_timeout_seconds?: number;
   };
-  backup_llm_config?: BackupLlmConfig;
   tool_ids?: string[];
   tools?: Array<{
     type: "system";
@@ -95,6 +74,7 @@ export interface AgentConversationConfig {
   turn?: {
     mode: string;
     turn_timeout: number;
+    cascade_timeout_seconds?: number;
     end_of_speech_silence_ms?: number;
     interruption_sensitivity?: number;
     soft_timeout_config?: {
@@ -125,17 +105,14 @@ interface AgentPatchResponse {
       mode?: string;
       end_of_speech_silence_ms?: number;
       interruption_sensitivity?: number;
+      cascade_timeout_seconds?: number;
     };
     agent?: {
       prompt?: {
         custom_llm?: {
           url?: string;
           api_type?: string;
-        };
-        backup_llm_config?: {
-          preference?: BackupLlmPreference;
           cascade_timeout_seconds?: number;
-          order?: string[];
         };
       };
       first_message?: string;
@@ -250,6 +227,14 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
   const isDevUrl = /localhost|127\.0\.0\.1/.test(baseUrl);
   if (isDev && isDevUrl && !overridden) {
     log.warn(`setupAgentCallbackUrl: SKIPPING PATCH in dev mode — dev URL (${baseUrl}) would overwrite production callback URL. Set the Voice Webhook Base URL override in voice settings, or set VOICE_LLM_BASE_URL.`);
+    const envCascadeDevOverride = process.env.VOICE_CASCADE_TIMEOUT_SECONDS;
+    if (envCascadeDevOverride) {
+      const parsed = Number(envCascadeDevOverride);
+      if (!isNaN(parsed) && parsed > 0) {
+        verifiedCascadeTimeoutSeconds = parsed;
+        log.debug(`setupAgentCallbackUrl: CASCADE TIMEOUT ENV OVERRIDE (dev mode) — VOICE_CASCADE_TIMEOUT_SECONDS=${parsed}s`);
+      }
+    }
     return;
   }
 
@@ -304,11 +289,8 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
           custom_llm: {
             url: callbackUrl,
             model_id: "xyz-voice",
+            cascade_timeout_seconds: 15,
           },
-          // Official owner (changelog 2026-01-12). Tagged union: preference is
-          // required. Override + custom-llm + 15 is the write. GET may omit the
-          // clock; start fails closed only on soft-timeout -1 / ".". Never default. Never disabled.
-          backup_llm_config: legalBackupLlmConfig(),
           tool_ids: [],
           tools: [{
             type: "system",
@@ -328,13 +310,29 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
       turn: {
         mode: "turn",
         turn_timeout: 60,
+        cascade_timeout_seconds: 15,
         end_of_speech_silence_ms: 1000,
         interruption_sensitivity: 0.5,
-        // Official disable is -1. Message is still required 1–200 chars; empty 400s.
-        // "." is schema tax, not speech. Spoken dummies are unrepresentable.
+        // Division of labor between EL's soft_timeout_config and our custom
+        // cascade keepalive (server/voice-llm.ts: sendCascadeKeepalive /
+        // startKeepaliveTimer):
+        //   - EL native soft_timeout_config = UX FILLER. When the custom-LLM
+        //     SSE has been silent for `timeout_seconds`, EL plays `message`
+        //     ("One second. ") server-side so the user doesn't sit in dead
+        //     air. EL keeps waiting for the LLM. We do not write anything
+        //     for this to fire.
+        //   - Custom keepalive = CASCADE LIVENESS only. It writes "... " as
+        //     a real `delta.content` SSE chunk to reset EL's
+        //     `cascade_timeout_seconds` clock so long single LLM callbacks
+        //     don't drop with closeCode=1002. Because EL counts any content
+        //     chunk as "LLM is producing", the keepalive ALSO resets EL's
+        //     soft-timeout silence clock — therefore the keepalive's
+        //     first-fire threshold MUST land comfortably AFTER
+        //     `soft_timeout_config.timeout_seconds`, or it will suppress
+        //     the native filler. See getSoftTimeoutBufferMs() in voice-llm.ts.
         soft_timeout_config: {
-          timeout_seconds: DISABLED_SOFT_TIMEOUT_SECONDS,
-          message: DISABLED_SOFT_TIMEOUT_MESSAGE,
+          timeout_seconds: 5,
+          message: "One second. ",
           use_llm_generated_message: false,
         },
       },
@@ -383,8 +381,8 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
   }
   log.debug(`setupAgentCallbackUrl: step 5/6 — PATCH full response body (${responseText.length} bytes): ${responseText.slice(0, 3000)}`);
   const effectiveLlm = responseData?.conversation_config?.agent?.prompt?.custom_llm;
-  const patchCascade = responseData?.conversation_config?.agent?.prompt?.backup_llm_config?.cascade_timeout_seconds;
-  log.debug(`setupAgentCallbackUrl: step 5/6 — PATCH success elapsed=${patchElapsed}ms custom_llm.configured=${Boolean(effectiveLlm?.url)} backup_llm_config.cascade=${patchCascade ?? "(not in response)"} (total=${Date.now() - setupStart}ms)`);
+  const patchCascade = effectiveLlm?.cascade_timeout_seconds;
+  log.debug(`setupAgentCallbackUrl: step 5/6 — PATCH success elapsed=${patchElapsed}ms custom_llm.configured=${Boolean(effectiveLlm?.url)} cascade_timeout_seconds=${patchCascade ?? "(not in response)"} (total=${Date.now() - setupStart}ms)`);
 
   if (effectiveLlm?.url && effectiveLlm.url !== callbackUrl) {
     log.warn("setupAgentCallbackUrl MISMATCH: provider callback URL differs from the configured capability URL");
@@ -400,90 +398,117 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
   }
 
   log.debug(`setupAgentCallbackUrl: step 6/6 — GET verification`);
-  const getStart = Date.now();
-  const getRes = await providerFetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
-    headers: { "xi-api-key": apiKey },
-  });
-  const getElapsed = Date.now() - getStart;
-
-  if (!getRes.ok) {
-    const error = await readBoundedProviderBody(getRes);
-    log.error(`setupAgentCallbackUrl: step 6/6 — GET verification failed status=${getRes.status} elapsed=${getElapsed}ms body: ${error}`);
-    throw new Error(`Failed to verify agent config: ${getRes.status} ${error}`);
-  }
-
-  const rawGetBody = await getRes.text();
-  let agentData: Record<string, unknown>;
   try {
-    agentData = JSON.parse(rawGetBody) as Record<string, unknown>;
-  } catch {
-    log.error(`setupAgentCallbackUrl: step 6/6 — GET response not valid JSON body=${rawGetBody.slice(0, 500)}`);
-    throw new Error("Failed to verify agent config: GET response not valid JSON");
-  }
-  log.debug(`setupAgentCallbackUrl: step 6/6 — GET full response body (${rawGetBody.length} bytes): ${rawGetBody.slice(0, 3000)}`);
-  const convConfig = agentData.conversation_config as Record<string, unknown> | undefined;
-  const agentConf = convConfig?.agent as Record<string, unknown> | undefined;
-  const promptConf = agentConf?.prompt as Record<string, unknown> | undefined;
-  const customLlm = promptConf?.custom_llm as Record<string, unknown> | undefined;
-  const turnConf = convConfig?.turn as Record<string, unknown> | undefined;
-  const languagePresets = convConfig?.language_presets as Record<string, unknown> | undefined;
-  const promptTools = Array.isArray(promptConf?.tools) ? promptConf.tools as Array<Record<string, unknown>> : [];
-  const hasLanguageDetection = promptTools.some((tool) => tool.type === "system" && tool.name === "language_detection");
-  const configuredLanguageCount = ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.filter((code) => languagePresets?.[code]).length;
+    const getStart = Date.now();
+    const getRes = await providerFetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
+      headers: { "xi-api-key": apiKey },
+    });
+    const getElapsed = Date.now() - getStart;
 
-  const backupLlmConfig = promptConf?.backup_llm_config as Record<string, unknown> | undefined;
-  const cascadeInBackup = backupLlmConfig?.cascade_timeout_seconds;
-  const backupPreference = backupLlmConfig?.preference;
-  const backupKeys = backupLlmConfig ? Object.keys(backupLlmConfig).sort().join(",") : "(absent)";
-  const effectiveUrl = customLlm?.url;
-  const softTimeoutConfig = turnConf?.soft_timeout_config as Record<string, unknown> | undefined;
-  const storedSoftTimeout = softTimeoutConfig?.timeout_seconds != null ? Number(softTimeoutConfig.timeout_seconds) : undefined;
-  const storedSoftTimeoutMessage = typeof softTimeoutConfig?.message === "string" ? softTimeoutConfig.message : undefined;
-  const storedCascade = cascadeInBackup != null ? Number(cascadeInBackup) : undefined;
+    if (!getRes.ok) {
+      log.warn(`setupAgentCallbackUrl: step 6/6 — GET verification failed status=${getRes.status} elapsed=${getElapsed}ms`);
+    } else {
+      const rawGetBody = await getRes.text();
+      let agentData: Record<string, unknown>;
+      try {
+        agentData = JSON.parse(rawGetBody) as Record<string, unknown>;
+      } catch {
+        log.warn(`setupAgentCallbackUrl: step 6/6 — GET response not valid JSON body=${rawGetBody.slice(0, 500)}`);
+        agentData = {};
+      }
+      log.debug(`setupAgentCallbackUrl: step 6/6 — GET full response body (${rawGetBody.length} bytes): ${rawGetBody.slice(0, 3000)}`);
+      const convConfig = agentData.conversation_config as Record<string, unknown> | undefined;
+      const agentConf = convConfig?.agent as Record<string, unknown> | undefined;
+      const promptConf = agentConf?.prompt as Record<string, unknown> | undefined;
+      const customLlm = promptConf?.custom_llm as Record<string, unknown> | undefined;
+      const turnConf = convConfig?.turn as Record<string, unknown> | undefined;
+      const languagePresets = convConfig?.language_presets as Record<string, unknown> | undefined;
+      const promptTools = Array.isArray(promptConf?.tools) ? promptConf.tools as Array<Record<string, unknown>> : [];
+      const hasLanguageDetection = promptTools.some((tool) => tool.type === "system" && tool.name === "language_detection");
+      const configuredLanguageCount = ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.filter((code) => languagePresets?.[code]).length;
 
-  log.debug(`setupAgentCallbackUrl: step 6/6 — GET verification done elapsed=${getElapsed}ms custom_llm.configured=${Boolean(effectiveUrl)} backup_llm_config.preference=${backupPreference ?? "(absent)"} backup_llm_config.keys=${backupKeys} backup_llm_config.cascade_timeout_seconds=${cascadeInBackup ?? "(absent)"} soft_timeout_config.timeout_seconds=${softTimeoutConfig?.timeout_seconds ?? "(absent)"} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length} language_detection=${hasLanguageDetection} (total=${Date.now() - setupStart}ms)`);
+      const cascadeInCustomLlm = customLlm?.cascade_timeout_seconds;
+      const cascadeInTurn = turnConf?.cascade_timeout_seconds;
+      const effectiveUrl = customLlm?.url;
+      const softTimeoutConfig = turnConf?.soft_timeout_config as Record<string, unknown> | undefined;
 
-  if (!hasLanguageDetection || configuredLanguageCount !== ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length) {
-    log.error(`setupAgentCallbackUrl: MULTILINGUAL CONFIG MISMATCH — language_detection=${hasLanguageDetection} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length}`);
-  }
+      let cascadeInBackupLlms: unknown = undefined;
+      const backupLlms = promptConf?.backup_llms as Array<Record<string, unknown>> | undefined;
+      if (Array.isArray(backupLlms)) {
+        for (const bl of backupLlms) {
+          if (bl.cascade_timeout_seconds != null) {
+            cascadeInBackupLlms = bl.cascade_timeout_seconds;
+            break;
+          }
+        }
+      }
 
-  if (storedSoftTimeout !== DISABLED_SOFT_TIMEOUT_SECONDS) {
-    log.error(`setupAgentCallbackUrl: SOFT TIMEOUT NOT DISABLED — stored=${storedSoftTimeout ?? "(absent)"} requested=${DISABLED_SOFT_TIMEOUT_SECONDS}`);
-    throw new Error(`Agent soft_timeout_config.timeout_seconds is ${storedSoftTimeout ?? "absent"}, expected ${DISABLED_SOFT_TIMEOUT_SECONDS}`);
-  }
-  if (storedSoftTimeoutMessage !== DISABLED_SOFT_TIMEOUT_MESSAGE) {
-    log.error(`setupAgentCallbackUrl: SOFT TIMEOUT MESSAGE NOT SCHEMA TAX — stored=${storedSoftTimeoutMessage ?? "(absent)"} requested=${DISABLED_SOFT_TIMEOUT_MESSAGE}`);
-    throw new Error(`Agent soft_timeout_config.message is ${storedSoftTimeoutMessage ?? "absent"}, expected ${DISABLED_SOFT_TIMEOUT_MESSAGE}`);
-  }
-  verifiedSoftTimeoutSeconds = 0;
-  if (storedCascade === LEGAL_CASCADE_TIMEOUT_SECONDS) {
-    verifiedCascadeTimeoutSeconds = LEGAL_CASCADE_TIMEOUT_SECONDS;
-    log.debug(`setupAgentCallbackUrl: CASCADE TIMEOUT VERIFIED at ${verifiedCascadeTimeoutSeconds}s from backup_llm_config preference=${backupPreference ?? "(absent)"} keys=${backupKeys}`);
-  } else {
-    verifiedCascadeTimeoutSeconds = EL_DEFAULT_CASCADE_TIMEOUT_SECONDS;
-    log.warn(
-      `setupAgentCallbackUrl: CASCADE TIMEOUT ABSENT — backup_llm_config.preference=${backupPreference ?? "(absent)"} keys=${backupKeys} cascade=${cascadeInBackup ?? "(absent)"} requested=${LEGAL_CASCADE_TIMEOUT_SECONDS}; treating official clock as EL default ${EL_DEFAULT_CASCADE_TIMEOUT_SECONDS}s`,
-    );
-  }
-  log.debug(`setupAgentCallbackUrl: SOFT TIMEOUT DISABLED — agent reports ${storedSoftTimeout}`);
+      log.debug(`setupAgentCallbackUrl: step 6/6 — GET verification done elapsed=${getElapsed}ms custom_llm.configured=${Boolean(effectiveUrl)} custom_llm.cascade_timeout_seconds=${cascadeInCustomLlm ?? "(absent)"} turn.cascade_timeout_seconds=${cascadeInTurn ?? "(absent)"} backup_llms.cascade_timeout_seconds=${cascadeInBackupLlms ?? "(absent)"} soft_timeout_config.timeout_seconds=${softTimeoutConfig?.timeout_seconds ?? "(absent)"} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length} language_detection=${hasLanguageDetection} (total=${Date.now() - setupStart}ms)`);
 
-  try {
-    const { computeSoftTimeoutBufferMs } = await import("./voice-keepalive-buffer");
-    const bootBuffer = computeSoftTimeoutBufferMs(
-      verifiedSoftTimeoutSeconds,
-      verifiedCascadeTimeoutSeconds,
-      undefined,
-      (msg) => log.warn(msg),
-    );
-    log.debug(`setupAgentCallbackUrl: KEEPALIVE_BUFFER_BOOT firstFireMs=${bootBuffer} softTimeoutSeconds=${verifiedSoftTimeoutSeconds} cascadeTimeoutSeconds=${verifiedCascadeTimeoutSeconds}`);
-  } catch (bufErr) {
-    const msg = bufErr instanceof Error ? bufErr.message : String(bufErr);
-    log.warn(`setupAgentCallbackUrl: keepalive buffer boot check failed: ${msg}`);
-  }
+      if (!hasLanguageDetection || configuredLanguageCount !== ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length) {
+        log.error(`setupAgentCallbackUrl: MULTILINGUAL CONFIG MISMATCH — language_detection=${hasLanguageDetection} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length}`);
+      }
 
-  if (effectiveUrl && effectiveUrl !== callbackUrl) {
-    log.error(`setupAgentCallbackUrl: CALLBACK URL MISMATCH after verification — expected=${callbackUrl} got=${effectiveUrl}`);
-    throw new Error("Agent callback URL mismatch after GET verification");
+      const rawCascade = cascadeInCustomLlm ?? cascadeInTurn ?? cascadeInBackupLlms;
+      const effectiveCascade = rawCascade != null ? Number(rawCascade) : undefined;
+      const cascadeSource = cascadeInCustomLlm != null ? "custom_llm" : cascadeInTurn != null ? "turn" : cascadeInBackupLlms != null ? "backup_llms" : null;
+      if (cascadeSource == null) {
+        verifiedCascadeTimeoutSeconds = 15;
+        log.warn(`setupAgentCallbackUrl: CASCADE TIMEOUT ABSENT — not found in custom_llm, turn, or backup_llms config. The API may not accept this field via PATCH. Using requested value of 15s for internal calibration. Set it manually via the ElevenLabs dashboard or set VOICE_CASCADE_TIMEOUT_SECONDS env var if different. Code timing constants calibrated to ${verifiedCascadeTimeoutSeconds}s.`);
+      } else if (effectiveCascade != null && effectiveCascade > 0) {
+        verifiedCascadeTimeoutSeconds = effectiveCascade;
+        log.debug(`setupAgentCallbackUrl: CASCADE TIMEOUT VERIFIED at ${verifiedCascadeTimeoutSeconds}s from ${cascadeSource} in API response`);
+      } else {
+        verifiedCascadeTimeoutSeconds = 15;
+        log.warn(`setupAgentCallbackUrl: CASCADE TIMEOUT INVALID — got ${rawCascade ?? "(not set)"} from ${cascadeSource} (parsed=${effectiveCascade}). Using requested value of 15s. Set it manually via the ElevenLabs dashboard or set VOICE_CASCADE_TIMEOUT_SECONDS env var if different.`);
+      }
+
+      const envCascadeOverride = process.env.VOICE_CASCADE_TIMEOUT_SECONDS;
+      if (envCascadeOverride) {
+        const parsed = Number(envCascadeOverride);
+        if (!isNaN(parsed) && parsed > 0) {
+          log.debug(`setupAgentCallbackUrl: CASCADE TIMEOUT ENV OVERRIDE — VOICE_CASCADE_TIMEOUT_SECONDS=${parsed}s overrides API value of ${verifiedCascadeTimeoutSeconds}s`);
+          verifiedCascadeTimeoutSeconds = parsed;
+        } else {
+          log.warn(`setupAgentCallbackUrl: VOICE_CASCADE_TIMEOUT_SECONDS="${envCascadeOverride}" is not a valid positive number — ignoring env override`);
+        }
+      }
+
+      log.debug(`setupAgentCallbackUrl: EFFECTIVE_CASCADE_TIMEOUT=${verifiedCascadeTimeoutSeconds}s — all timing constants will calibrate against this value`);
+
+      const rawSoftTimeout = softTimeoutConfig?.timeout_seconds;
+      const effectiveSoftTimeout = rawSoftTimeout != null ? Number(rawSoftTimeout) : undefined;
+      if (effectiveSoftTimeout == null || effectiveSoftTimeout <= 0) {
+        log.error(`setupAgentCallbackUrl: SOFT TIMEOUT MISMATCH — expected positive timeout_seconds (e.g. 5) but agent reports ${rawSoftTimeout ?? "(not set)"} (parsed=${effectiveSoftTimeout}). Soft timeout may not be enabled. Set it manually via the ElevenLabs dashboard. Keeping verifiedSoftTimeoutSeconds=${verifiedSoftTimeoutSeconds}s for keepalive calibration.`);
+      } else {
+        verifiedSoftTimeoutSeconds = effectiveSoftTimeout;
+        log.debug(`setupAgentCallbackUrl: SOFT TIMEOUT VERIFIED at ${verifiedSoftTimeoutSeconds}s — keepalive first-fire threshold will sit between this and cascade timeout (${verifiedCascadeTimeoutSeconds}s)`);
+      }
+
+      // Compute keepalive buffer at boot so the KEEPALIVE_BUFFER_NO_ROOM
+      // warning surfaces immediately on startup (instead of lazily on the
+      // first voice turn). Result is logged for operator visibility.
+      try {
+        const { computeSoftTimeoutBufferMs } = await import("./voice-keepalive-buffer");
+        const bootBuffer = computeSoftTimeoutBufferMs(
+          verifiedSoftTimeoutSeconds,
+          verifiedCascadeTimeoutSeconds,
+          undefined,
+          (msg) => log.warn(msg),
+        );
+        log.debug(`setupAgentCallbackUrl: KEEPALIVE_BUFFER_BOOT firstFireMs=${bootBuffer} softTimeoutSeconds=${verifiedSoftTimeoutSeconds} cascadeTimeoutSeconds=${verifiedCascadeTimeoutSeconds}`);
+      } catch (bufErr) {
+        const msg = bufErr instanceof Error ? bufErr.message : String(bufErr);
+        log.warn(`setupAgentCallbackUrl: keepalive buffer boot check failed: ${msg}`);
+      }
+
+      if (effectiveUrl && effectiveUrl !== callbackUrl) {
+        log.error(`setupAgentCallbackUrl: CALLBACK URL MISMATCH after verification — expected=${callbackUrl} got=${effectiveUrl}`);
+      }
+    }
+  } catch (verifyErr) {
+    const msg = verifyErr instanceof Error ? verifyErr.message : String(verifyErr);
+    log.warn(`setupAgentCallbackUrl: step 6/6 — GET verification error: ${msg} (total=${Date.now() - setupStart}ms)`);
   }
 
   log.debug(`setupAgentCallbackUrl: END total=${Date.now() - setupStart}ms`);

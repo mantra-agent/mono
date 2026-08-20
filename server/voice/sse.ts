@@ -86,61 +86,6 @@ export function sendSSEComment(res: Response, label: string, sessionId?: string)
   }
 }
 
-/** Official custom-LLM first-content buffer. Not speech, not transcript, not a drip. */
-const WRITE_PORT_HANDSHAKE = "... ";
-
-/** One handshake per Response. A second unflushed "... " on the same socket is unrepresentable. */
-const handshakeSent = new WeakSet<Response>();
-
-/**
- * Cascade first-content handshake — one unflushed "... " per write-port.
- * Not speakable, not presence, not coalesce/transcript. After this, comments only.
- */
-export function writeFirstContentHandshake(
-  res: Response,
-  chatId: string,
-  created: number,
-  sessionId?: string,
-): boolean {
-  if (handshakeSent.has(res)) {
-    log.debug(`FIRST_CONTENT_HANDSHAKE skipped=already_sent session=${sessionId || "unknown"}`);
-    return false;
-  }
-  if (!isResponseAlive(res)) {
-    log.warn(`WRITE_PORT_DEAD location=writeFirstContentHandshake session=${sessionId || "unknown"}`);
-    return false;
-  }
-  try {
-    res.write(buildSSEChunk(chatId, created, WRITE_PORT_HANDSHAKE, null, false));
-    handshakeSent.add(res);
-    log.info(`FIRST_CONTENT_HANDSHAKE session=${sessionId || "unknown"}`);
-    return true;
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.warn(`FIRST_CONTENT_HANDSHAKE_FAILED session=${sessionId || "unknown"} err=${msg}`);
-    return false;
-  }
-}
-
-/** Headers if needed, then the once-per-port handshake. Safe to call again on the same Response. */
-export function openWritePort(
-  res: Response,
-  chatId: string,
-  created: number,
-  sessionId?: string,
-): void {
-  if (!res.headersSent) {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
-  }
-  if (res.socket) res.socket.setNoDelay(true);
-  writeFirstContentHandshake(res, chatId, created, sessionId);
-}
-
 // ── SSE Stream Initialization ────────────────────────────────────────────
 
 export function initSSEStream(
@@ -162,8 +107,14 @@ export function initSSEStream(
   if (res.socket) res.socket.setNoDelay(true);
   ctx.pipelineStagesEmitted.add("writehead_sent");
   log.log(`turn ${currentTurn} TURN_PIPELINE stage=writehead_sent elapsed=${Date.now() - pipelineStart}ms session=${sessionId}`);
-  sendSSEComment(res, "writehead", sessionId);
-  writeFirstContentHandshake(res, ctx.chatId, ctx.created, sessionId);
+
+  if (!ctx.firstChunk.sentAt) {
+    const roleChunk = {
+      id: ctx.chatId, object: "chat.completion.chunk", created: ctx.created, model: "xyz-voice",
+      choices: [{ index: 0, delta: { role: "assistant", content: " " }, finish_reason: null }],
+    };
+    trackedWrite(`data: ${JSON.stringify(roleChunk)}\n\n`, "role_chunk");
+  }
 }
 
 // ── Brief Ack ────────────────────────────────────────────────────────────
@@ -182,10 +133,11 @@ export function sendBriefAck(
       "X-Accel-Buffering": "no",
     });
   }
-  // No spoken filler. Comments keep the socket; [DONE] only when this ack owns the response.
+  const bufferWord = "... ";
+  const contentChunk = buildSSEChunk(chatId, created, bufferWord);
   let ok = true;
   try {
-    sendSSEComment(res, `brief_ack:${opts.reason}`, chatId);
+    res.write(contentChunk);
     if (opts.closeResponse) {
       res.write(buildSSEChunk(chatId, created, "", "stop"));
       res.write("data: [DONE]\n\n");
@@ -210,11 +162,10 @@ export function closeSSEWithError(
 ): void {
   const chatId = `chatcmpl-${session.id}-${currentTurn}`;
   const created = Math.floor(Date.now() / 1000);
+  const errChunk = buildSSEChunk(chatId, created, ` ${errorMsg}`);
   const finish = buildSSEChunk(chatId, created, "", "stop");
   try {
-    if (errorMsg) {
-      log.warn(`closeSSEWithError turn=${currentTurn} session=${session.id} spoken=false reasonBytes=${errorMsg.length}`);
-    }
+    res.write(errChunk);
     res.write(finish);
     res.write("data: [DONE]\n\n");
   } catch (e: unknown) {
@@ -242,7 +193,7 @@ export function sendErrorResponse(
       object: "chat.completion.chunk",
       created: Math.floor(Date.now() / 1000),
       model: "xyz-voice",
-      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      choices: [{ index: 0, delta: { content: "... " }, finish_reason: "stop" }],
     };
     trackedWrite(`data: ${JSON.stringify(errorChunk)}\n\n`, "error_chunk");
     trackedWrite("data: [DONE]\n\n", "done_error");
@@ -256,7 +207,7 @@ export function sendErrorResponse(
 // ── Tracked Write Factory ────────────────────────────────────────────────
 
 export function createTrackedWrite(
-  getRes: () => Response,
+  res: Response,
   lastWrite: SSEWriteState,
   bp: BackpressureState,
   sessionId: string,
@@ -266,7 +217,6 @@ export function createTrackedWrite(
   return (data: string, label: string): boolean => {
     lastWrite.index++;
     const preview = data.slice(0, 200).replace(/\n/g, "\\n");
-    const res = getRes();
     try {
       const ok = res.write(data);
       lastWrite.ts = Date.now();
@@ -369,8 +319,9 @@ export function setupSSELifecycle(
   });
 
   req.on("close", () => {
-    if (session.activeWriteRes && session.activeWriteRes !== res) return;
     if (!res.writableEnded) {
+      ctx.turnEndCause = "req_close";
+      stopFillerTimer("req_close");
       log.warn(`REQ_CLOSE turn=${ctx.currentTurn} elapsed=${Date.now() - ctx.turnStart}ms chunks=${ctx.chunkCounter.count} session=${session.id}`);
       publishVoiceDiagnostic(session, "req_close", `Request closed before response finished (turn ${ctx.currentTurn})`, { turn: ctx.currentTurn, status: "error", elapsedMs: Date.now() - ctx.turnStart }, ctx);
       const { logTurnForensics } = require("./pipeline-log");
@@ -397,8 +348,11 @@ export function setupSSELifecycle(
     log.log(`RES_CLOSE turn=${ctx.currentTurn} premature=${premature} elapsed=${elapsed}ms keepalivesSent=${ctx.keepalivesSent} audibleDeltas=${ctx.audibleDeltaCount} sinceAudibleAtCloseMs=${sinceAudible} cascadeBudgetRemainingMs=${cascadeBudgetRemaining} pipelineStages=[${stagesEmitted}] missingStages=[${missingStages.join(",") || "none"}] session=${session.id}`);
     if (premature) {
       publishVoiceDiagnostic(session, "res_close_premature", `Response closed (premature)`, { turn: ctx.currentTurn, status: "error", elapsedMs: elapsed }, ctx);
-      if (session.activeWriteRes === res) session.activeWriteRes = null;
-      log.warn(`RES_CLOSE turn=${ctx.currentTurn} write_port_dead keeping generator elapsed=${elapsed}ms session=${session.id}`);
+      if (!turnAbort.signal.aborted) {
+        log.warn(`RES_CLOSE turn=${ctx.currentTurn} aborting LLM — connection closed while inflight elapsed=${elapsed}ms session=${session.id}`);
+        turnAbort.abort();
+        publishVoiceDiagnostic(session, "response_closed_abort", `LLM aborted — HTTP connection closed (turn ${ctx.currentTurn}, ${elapsed}ms)`, { turn: ctx.currentTurn, status: "error", elapsedMs: elapsed });
+      }
     }
   });
 }

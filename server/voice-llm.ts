@@ -66,7 +66,6 @@ import {
   buildSSEChunk,
   isResponseAlive,
   sendSSEComment,
-  openWritePort,
   initSSEStream,
   sendBriefAck,
   closeSSEWithError,
@@ -122,57 +121,9 @@ export {
 
 const log = createLogger("VoiceLlm");
 
-function replaySpentUtteranceSpeakable(
-  session: VoiceSession,
-  res: Response,
-  userOrdinal: number,
-  lastUserHash: string,
-  transcriptChanged: boolean,
-): void {
-  session.pendingAttach = null;
-  session.prefixContinuation = false;
-  const sameOrdinal = session.lastSpeakableUserOrdinal === userOrdinal;
-  const unflushed = sameOrdinal ? session.unflushedSpeakable.trim() : "";
-  const flushed = sameOrdinal ? session.lastFlushedSpeakable.trim() : "";
-  const replay = unflushed || flushed;
-  const source = unflushed ? "unflushed" : flushed ? "last_flushed" : "none";
-  const chatId = `chatcmpl-terminal-retry-${session.id}`;
-  const created = Math.floor(Date.now() / 1000);
-
-  if (!replay) {
-    log.warn(`[CascadeRetry] TERMINAL_UTTERANCE_RETRY_EMPTY session=${session.id} userOrdinal=${userOrdinal} transcriptChanged=${transcriptChanged} userHash=${lastUserHash} — spent generator has no speakable to replay`);
-    publishVoiceDiagnostic(session, "cascade_retry_discarded", "ElevenLabs retried a terminal utterance — no speakable to replay", { turn: session.turnCount, status: "done" });
-    try {
-      openWritePort(res, chatId, created, session.id);
-      res.write(buildSSEChunk(chatId, created, "", "stop"));
-      res.write("data: [DONE]\n\n");
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      log.warn(`SSE_WRITE_FAILED location=terminal_utterance_retry_empty session=${session.id} error=${msg}`);
-    }
-    res.end();
-    return;
-  }
-
-  log.warn(`[CascadeRetry] TERMINAL_UTTERANCE_RETRY_REPLAY session=${session.id} userOrdinal=${userOrdinal} source=${source} chars=${replay.length} transcriptChanged=${transcriptChanged} userHash=${lastUserHash} — replaying spent speakable, not generating again`);
-  publishVoiceDiagnostic(session, "cascade_retry_replay", `ElevenLabs retried a terminal utterance — replaying ${source} speakable`, { turn: session.turnCount, status: "done" });
-  try {
-    openWritePort(res, chatId, created, session.id);
-    res.write(buildSSEChunk(chatId, created, replay, null, true));
-    res.write(buildSSEChunk(chatId, created, "", "stop"));
-    res.write("data: [DONE]\n\n");
-    if (unflushed) {
-      session.lastFlushedSpeakable = replay;
-      session.unflushedSpeakable = "";
-    }
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    log.warn(`SSE_WRITE_FAILED location=terminal_utterance_retry_replay session=${session.id} error=${msg}`);
-  }
-  res.end();
-}
-
 // ── Constants ─────────────────────────────────────────────────────
+const PRE_CONTEXT_KEEPALIVE_INTERVAL_MS = 5_000;
+
 // ══════════════════════════════════════════════════════════════════
 // ORCHESTRATION
 // ══════════════════════════════════════════════════════════════════
@@ -238,9 +189,6 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
     session.activeVoiceUserOrdinal = userOrdinal;
     session.activeVoiceTurnId = `${session.id}-voice-user-${userOrdinal}`;
     session.activeTranscriptRevision = 1;
-    session.lastFlushedSpeakable = "";
-    session.unflushedSpeakable = "";
-    session.lastSpeakableUserOrdinal = null;
   } else if (transcriptChanged) {
     session.activeTranscriptRevision += 1;
   }
@@ -326,51 +274,58 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
     session.prefixContinuation = false;
   }
 
-  const isTerminalUtteranceRetry = samePhysicalUtterance
-    && session.inflightAbort === null
-    && session.inflightTurn === 0
-    && session.turnCount > 0;
-
-  if (isTerminalUtteranceRetry) {
-    replaySpentUtteranceSpeakable(session, res, userOrdinal, lastUserHash, transcriptChanged);
-    return;
-  }
-
   const isCascadeRetry = samePhysicalUtterance
     && !transcriptChanged
     && lastUserContent === prevFired
     && lastUserContent.length > 0
     && session.inflightAbort !== null
-    && session.inflightTurn > 0;
+    && session.inflightTurn > 0
+    && !session.inflightAbort.signal.aborted;
 
   if (isCascadeRetry) {
-    const generatorAlive = !session.inflightAbort.signal.aborted;
-    log.warn(`[CascadeRetry] CASCADE_RETRY_DETECTED session=${sessionId} inflightTurn=${session.inflightTurn} generatorAlive=${generatorAlive} userHash=${lastUserHash} — attaching write port, not minting a turn`);
-    publishVoiceDiagnostic(session, "cascade_retry", `ElevenLabs cascade retry — attaching write port to inflight turn ${session.inflightTurn}`, { turn: session.turnCount, status: "done" });
+    log.warn(`[CascadeRetry] CASCADE_RETRY_DETECTED session=${sessionId} inflightTurn=${session.inflightTurn} userHash=${lastUserHash} content="${lastUserContent.slice(0, 80)}" — NOT aborting in-flight turn, serving keepalive until real turn completes`);
+    publishVoiceDiagnostic(session, "cascade_retry", `ElevenLabs cascade retry detected — waiting for inflight turn ${session.inflightTurn}`, { turn: session.turnCount, status: "done" });
     session.lastFiredUserContent = prevFired;
 
-    if (!generatorAlive) {
-      session.pendingAttach = null;
-      log.warn(`[CascadeRetry] generator already aborted — cannot attach; closing retry socket session=${sessionId}`);
-      try {
-        res.write(buildSSEChunk(`chatcmpl-cascade-retry-${sessionId}`, Math.floor(Date.now() / 1000), "", "stop"));
-        res.write("data: [DONE]\n\n");
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        log.warn(`SSE_WRITE_FAILED location=cascade_retry_dead_generator session=${sessionId} error=${msg}`);
-      }
-      res.end();
-      return;
-    }
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    if (res.socket) res.socket.setNoDelay(true);
+    sendSSEComment(res, "keepalive", sessionId);
 
-    if (session.attachWritePort) {
-      session.pendingAttach = null;
-      session.attachWritePort(req, res);
-    } else {
-      openWritePort(res, `chatcmpl-cascade-retry-${sessionId}`, Math.floor(Date.now() / 1000), sessionId);
-      sendSSEComment(res, "write_port_pending", sessionId);
-      session.pendingAttach = { req, res };
-    }
+    const retryKeepaliveTimer = setInterval(() => {
+      if (!isResponseAlive(res)) {
+        clearInterval(retryKeepaliveTimer);
+        log.warn(`[CascadeRetry] KEEPALIVE_STOPPED response_dead session=${sessionId}`);
+        return;
+      }
+      sendSSEComment(res, "keepalive", sessionId);
+    }, PRE_CONTEXT_KEEPALIVE_INTERVAL_MS);
+
+    const inflightDone = session.inflightDone;
+    const maxRetryWaitMs = getCascadeTimeoutMs() * 3;
+    const retryTimeout = new Promise<void>(resolve => setTimeout(resolve, maxRetryWaitMs));
+
+    (inflightDone ? Promise.race([inflightDone, retryTimeout]) : retryTimeout).then(() => {
+      clearInterval(retryKeepaliveTimer);
+      if (isResponseAlive(res)) {
+        const chatId = `chatcmpl-cascade-retry-${sessionId}`;
+        const created = Math.floor(Date.now() / 1000);
+        try {
+          res.write(buildSSEChunk(chatId, created, "", "stop"));
+          res.write("data: [DONE]\n\n");
+        } catch (e: any) { log.warn(`SSE_WRITE_FAILED location=cascade_retry_close session=${sessionId} error=${e?.message}`); }
+        res.end();
+      }
+      log.debug(`[CascadeRetry] CASCADE_RETRY_CLOSED session=${sessionId} — retry response terminated`);
+    }).catch((err: any) => {
+      clearInterval(retryKeepaliveTimer);
+      log.warn(`[CascadeRetry] CASCADE_RETRY_ERROR session=${sessionId}: ${err?.message || String(err)}`);
+      try { if (isResponseAlive(res)) res.end(); } catch (e: any) { log.warn(`SSE_WRITE_FAILED location=cascade_retry_cleanup session=${sessionId} error=${e?.message}`); }
+    });
     return;
   }
 
@@ -522,7 +477,7 @@ async function executeVoiceTurn(
           if (!cleared) {
             log.error(`turn ${currentTurn} ZOMBIE_BLOCKED — recovery failed session=${session.id}`);
             publishVoiceDiagnostic(session, "zombie_failed", `Zombie blocked — recovery failed`, { turn: currentTurn, status: "error" });
-            closeSSEWithError(res, session, currentTurn, "");
+            closeSSEWithError(res, session, currentTurn, "I'm having trouble processing right now. Could you try again?");
             persistVoiceErrorMessage(session, "Voice processing was blocked by a stuck operation. Please try again.").catch((e: unknown) => log.debug(`persistVoiceErrorMessage failed session=${session.id}: ${e instanceof Error ? e.message : String(e)}`));
             writeVoiceJournal(session, "error", { error: `voice_circuit_breaker: turn=${currentTurn} reason=zombie_blocked — recovery failed after ${CB_MAX_RETRIES} retries` });
             return;
@@ -560,7 +515,7 @@ async function executeVoiceTurn(
       const cleared = await waitForBlockerToClear(session, currentTurn, "circuit_breaker");
       if (!cleared) {
         publishVoiceDiagnostic(session, "circuit_breaker", `Circuit breaker recovery failed`, { turn: currentTurn, status: "error" });
-        closeSSEWithError(res, session, currentTurn, "");
+        closeSSEWithError(res, session, currentTurn, "I need a moment. Could you say that again?");
         persistVoiceErrorMessage(session, "Voice processing was throttled by the circuit breaker. Please try again.").catch((e: unknown) => log.debug(`persistVoiceErrorMessage failed session=${session.id}: ${e instanceof Error ? e.message : String(e)}`));
         writeVoiceJournal(session, "error", { error: `voice_circuit_breaker: turn=${currentTurn} reason=circuit_breaker — recovery failed` });
         return;
@@ -616,7 +571,6 @@ async function executeVoiceTurn(
           "register_lock_acquired",
         ]) ctx.pipelineStagesEmitted.add(s);
         logPipelineStage(ctx, session, "inflight_registered", pipelineStart);
-        openWritePort(res, ctx.chatId, ctx.created, session.id);
       } finally {
         releaseLock();
       }
@@ -735,8 +689,7 @@ async function executeVoiceTurnBody(
     thinkingFilter.finalize();
     await handleSuccessfulTurn(session, ctx, result, conversationMessages, currentTurn, systemPromptBytes, thinkingFilter, trackedWrite, flushCoalesceBuffer);
     sendChunk.close("completed");
-    const port = session.activeWriteRes ?? res;
-    if (!port.writableEnded) port.end();
+    res.end();
 
   } catch (err: unknown) {
     sendChunk.close(turnAbort.signal.aborted ? "cancelled" : "transport_failed");
@@ -757,16 +710,8 @@ async function executeVoiceTurnBody(
     });
     resolveDone();
     if (session.inflightTurn === currentTurn) {
-      const remainder = ctx.coalesceBuf.value.trim();
-      if (remainder) {
-        session.unflushedSpeakable = remainder;
-        session.lastSpeakableUserOrdinal = session.activeVoiceUserOrdinal;
-      }
       session.inflightAbort = null;
       session.inflightTurn = 0;
-      session.activeWriteRes = null;
-      session.attachWritePort = null;
-      session.pendingAttach = null;
     }
     try {
       const { storage } = await import("./storage");

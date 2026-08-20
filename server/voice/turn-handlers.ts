@@ -101,8 +101,7 @@ export async function handleAbortedTurn(
 
   await persistOrphanedTurnData(session, currentTurn, "ABORTED", ctx);
   trackedWrite("data: [DONE]\n\n", "done_aborted");
-  const port = session.activeWriteRes ?? res;
-  if (!port.writableEnded) port.end();
+  res.end();
 }
 
 // ── handleTurnError ──────────────────────────────────────────────────────
@@ -127,9 +126,8 @@ export async function handleTurnError(
     });
 
     await persistOrphanedTurnData(session, currentTurn, "CANCELLED", ctx);
-    const port = session.activeWriteRes ?? res;
-    if (port.headersSent) { trackedWrite("data: [DONE]\n\n", "done_cancelled"); if (!port.writableEnded) port.end(); }
-    else { port.status(200).end(); }
+    if (res.headersSent) { trackedWrite("data: [DONE]\n\n", "done_cancelled"); res.end(); }
+    else { res.status(200).end(); }
     traceInflightDoneResolved(session, "executeVoiceTurnBody.cancelledSuperseded", currentTurn);
     resolveDone();
     return;
@@ -143,7 +141,7 @@ export async function handleTurnError(
   // Note: the "error" journal entry above also drives SessionManager.applyEvent
   // which handles the terminal event. No separate "done" needed here.
   persistVoiceErrorMessage(session, "I ran into a problem processing that. Could you try again?").catch((e: any) => log.debug(`persistVoiceErrorMessage failed session=${session.id}: ${e?.message}`));
-  sendErrorResponse(session.activeWriteRes ?? res, trackedWrite, err, currentTurn, session.id, ctx.lastWrite, ctx.currentToolName);
+  sendErrorResponse(res, trackedWrite, err, currentTurn, session.id, ctx.lastWrite, ctx.currentToolName);
 }
 
 // ── runExecutorPhase ─────────────────────────────────────────────────────
@@ -172,10 +170,12 @@ export async function runExecutorPhase(
     ? createThinkingFilter(sendChunk)
     : createPassthroughThinkingFilter(sendChunk);
 
-  const livePort = (): Response => session.activeWriteRes ?? res;
   let coalesceTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
-    if (!isResponseAlive(livePort())) {
-      log.debug(`TIMER_HOLD_DEAD_PORT location=coalesceTimer turn=${currentTurn} session=${session.id}`);
+    if (!isResponseAlive(res)) {
+      const elapsed = Date.now() - ctx.turnStart;
+      log.warn(`TIMER_STOPPED_DEAD_RESPONSE location=coalesceTimer turn=${currentTurn} session=${session.id}`);
+      publishVoiceDiagnostic(session, "coalesce_timer_dead", `Coalesce timer stopped — response dead (turn ${currentTurn}, ${elapsed}ms)`, { turn: currentTurn, status: "error", elapsedMs: elapsed });
+      if (coalesceTimer) { clearInterval(coalesceTimer); coalesceTimer = null; }
       return;
     }
     if (ctx.bp.active) {
@@ -196,12 +196,14 @@ export async function runExecutorPhase(
   }, COALESCE_INTERVAL_MS);
 
   let keepaliveTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
-    const port = livePort();
-    if (!isResponseAlive(port)) {
-      log.debug(`TIMER_HOLD_DEAD_PORT location=sseKeepaliveTimer turn=${currentTurn} session=${session.id}`);
+    if (!isResponseAlive(res)) {
+      const elapsed = Date.now() - ctx.turnStart;
+      log.warn(`TIMER_STOPPED_DEAD_RESPONSE location=sseKeepaliveTimer turn=${currentTurn} session=${session.id}`);
+      publishVoiceDiagnostic(session, "sse_keepalive_dead", `SSE keepalive stopped — response dead (turn ${currentTurn}, ${elapsed}ms)`, { turn: currentTurn, status: "error", elapsedMs: elapsed });
+      if (keepaliveTimer) { clearInterval(keepaliveTimer); keepaliveTimer = null; }
       return;
     }
-    sendSSEComment(port, "keepalive", session.id);
+    sendSSEComment(res, "keepalive", session.id);
   }, SSE_KEEPALIVE_INTERVAL_MS);
 
   log.debug(`turn ${currentTurn} VOICE_DIAG systemPromptBytes=${systemPromptBytes} voiceRuns=${getActiveVoiceRunCount()} session=${session.id}`);
@@ -321,10 +323,11 @@ export async function runExecutorPhase(
         }
         if (event.type === "tool_call") {
           const toolName = event.toolName || "?";
-          // Spec: tool start must not invent a period or force-chop an unfinished clause.
-          // Soft flush completed speakables only; remainder survives across the tool.
           if (ctx.coalesceBuf.value) {
-            flushCoalesceBuffer("pre_tool_call", false);
+            const endsClean = /[.!?]\s*$/.test(ctx.coalesceBuf.value);
+            if (!endsClean && ctx.coalesceBuf.value.trim().length > 0) ctx.coalesceBuf.value += ". ";
+            else if (endsClean && !/\s$/.test(ctx.coalesceBuf.value)) ctx.coalesceBuf.value += " ";
+            flushCoalesceBuffer("pre_tool_call", true);
           }
           ctx.toolCallActive = true;
           toolStartAt = Date.now();

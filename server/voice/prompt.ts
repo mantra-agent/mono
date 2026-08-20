@@ -5,7 +5,7 @@
 import type { Response } from "express";
 import type { VoiceSession, VoiceMessage, TurnContext } from "./types";
 import { writeVoiceJournal, publishVoiceDiagnostic } from "./session";
-import { isResponseAlive, sendSSEComment } from "./sse";
+import { buildSSEChunk, isResponseAlive, sendSSEComment } from "./sse";
 import { logPipelineStage } from "./pipeline-log";
 import { persistUserMessage } from "./persistence";
 import { accessVoiceChat, voiceChatAccessError } from "./chat-owner";
@@ -120,8 +120,7 @@ export async function buildSystemPrompt(
   log.debug(`context spine resolved in ${spineElapsed}ms promptLen=${assembled.systemPrompt.length} TRANSCRIPT_LOADED path=spine_assembled focusMsgs=${contextHistory.length} keptAfterBudget=${keptAfterBudget} droppedReason=${droppedReason} sysPromptTokens=${assembled.tokenUsage.systemPrompt} convTokens=${assembled.tokenUsage.conversation} budgetRemaining=${assembled.tokenUsage.remaining} session=${session.id}`);
 
   const chatContinuation = await buildChatContinuationSection(session);
-  const voiceSpeechContract = "\n\n## Voice speech\nDo not say \"One second.\", \"One moment.\", \"Still on it.\", or \"Working.\" Those are stall fillers. If work takes time, stay silent until you have a real sentence.";
-  const fullPrompt = assembled.systemPrompt + chatContinuation + voiceSpeechContract;
+  const fullPrompt = assembled.systemPrompt + chatContinuation;
 
   session.cachedSystemPrompt = fullPrompt;
   session.cachedSystemPromptFocusKey = conversationFocusKey(contextHistory);
@@ -284,9 +283,8 @@ export async function resolvePromptAndMessages(
     if (res.socket) res.socket.setNoDelay(true);
     log.debug(`turn ${currentTurn} EARLY_SSE_HEADERS sent before context assembly session=${session.id}`);
   }
+  let preemptiveCascadeTimer: ReturnType<typeof setTimeout> | null = null;
   if (res) {
-    // Handshake already fired on this port. Pre-context liveness is SSE comments only.
-    // Soft-timeout is disabled (-1); do not rely on EL speaking a filler.
     sendSSEComment(res, "keepalive", session.id);
     preContextKeepaliveTimer = setInterval(() => {
       if (!isResponseAlive(res) || turnAbort?.signal.aborted) {
@@ -295,8 +293,22 @@ export async function resolvePromptAndMessages(
       }
       sendSSEComment(res, "keepalive", session.id);
     }, PRE_CONTEXT_KEEPALIVE_INTERVAL_MS);
+    preemptiveCascadeTimer = setTimeout(() => {
+      preemptiveCascadeTimer = null;
+      if (!isResponseAlive(res) || turnAbort?.signal.aborted) return;
+      try {
+        const chunk = buildSSEChunk(ctx.chatId, ctx.created, "... ");
+        res.write(chunk);
+        if (!ctx.firstChunk.sentAt) ctx.firstChunk.sentAt = Date.now();
+        log.debug(`turn ${currentTurn} PRE_CONTEXT_CASCADE_KEEPALIVE sent session=${session.id}`);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        log.warn(`turn ${currentTurn} PRE_CONTEXT_CASCADE_KEEPALIVE failed: ${msg} session=${session.id}`);
+      }
+    }, 1500);
   }
   const systemPrompt = await getSystemPrompt(session, ctx, conversationMessages);
+  if (preemptiveCascadeTimer) { clearTimeout(preemptiveCascadeTimer); preemptiveCascadeTimer = null; }
   if (preContextKeepaliveTimer) { clearInterval(preContextKeepaliveTimer); preContextKeepaliveTimer = null; }
   if (res) log.debug(`turn ${currentTurn} PRE_CONTEXT_KEEPALIVE stopped — context assembly complete session=${session.id}`);
   const systemPromptBytes = Buffer.byteLength(systemPrompt, "utf-8");
