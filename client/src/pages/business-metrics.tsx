@@ -25,6 +25,8 @@ import {
   METRIC_PRODUCER_PICKER_ITEMS,
   type MetricProducerFamily,
 } from "@shared/metric-producers";
+import { METRIC_SAMPLE_SPAN_OPTIONS, type MetricSampleSpanId } from "@shared/kpi-sample";
+import { HOME_EMBEDDED_PAGE_BODY_TEXT_CLASS } from "@/components/home/simple-text-frame";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -76,25 +78,37 @@ interface MetricsResponse {
   metrics: Metric[];
 }
 
-const SAMPLE_SPANS = [
-  { key: "today", label: "Today", days: 0 },
-  { key: "7d", label: "Last 7 days", days: 7 },
-  { key: "30d", label: "Last 30 days", days: 30 },
-  { key: "90d", label: "Last 90 days", days: 90 },
-] as const;
-
-type SampleSpan = (typeof SAMPLE_SPANS)[number]["key"];
-
-function rangeStart(span: SampleSpan, end: Date): Date {
+function rangeStart(span: MetricSampleSpanId, end: Date): Date {
   if (span === "today") {
     return new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
   }
-  const days = SAMPLE_SPANS.find((option) => option.key === span)?.days ?? 7;
-  return new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  const option = METRIC_SAMPLE_SPAN_OPTIONS.find((item) => item.id === span);
+  const hours = option && "rangeHours" in option ? option.rangeHours : 24 * 7;
+  return new Date(end.getTime() - hours * 60 * 60 * 1000);
 }
 
-function SamplingMenu({ value, onChange }: { value: SampleSpan; onChange: (value: SampleSpan) => void }) {
+interface SamplingMenuProps {
+  value: MetricSampleSpanId | "custom";
+  onChange: (value: MetricSampleSpanId) => void;
+  onCustomRange: (start: Date, end: Date) => void;
+}
+
+function localDateTimeValue(date: Date): string {
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function SamplingMenu({ value, onChange, onCustomRange }: SamplingMenuProps) {
+  const now = new Date();
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customStart, setCustomStart] = useState(localDateTimeValue(new Date(now.getTime() - 24 * 60 * 60 * 1000)));
+  const [customEnd, setCustomEnd] = useState(localDateTimeValue(now));
+  const start = new Date(customStart);
+  const end = new Date(customEnd);
+  const customValid = Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()) && start < end;
+
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
@@ -113,17 +127,43 @@ function SamplingMenu({ value, onChange }: { value: SampleSpan; onChange: (value
             Sampling span
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
-            <DropdownMenuRadioGroup value={value} onValueChange={(next) => onChange(next as SampleSpan)}>
-              {SAMPLE_SPANS.map((option) => (
-                <DropdownMenuRadioItem key={option.key} value={option.key}>
+            <DropdownMenuRadioGroup value={value} onValueChange={(next) => onChange(next as MetricSampleSpanId)}>
+              {METRIC_SAMPLE_SPAN_OPTIONS.map((option) => (
+                <DropdownMenuRadioItem key={option.id} value={option.id}>
                   {option.label}
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
+            <DropdownMenuItem onSelect={() => setCustomOpen(true)}>Custom range…</DropdownMenuItem>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
       </DropdownMenuContent>
     </DropdownMenu>
+    <Dialog open={customOpen} onOpenChange={setCustomOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Custom sampling range</DialogTitle>
+          <DialogDescription>Choose the start and exclusive end of the range.</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <Input type="datetime-local" value={customStart} onChange={(event) => setCustomStart(event.target.value)} data-testid="metrics-custom-start" />
+          <Input type="datetime-local" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} data-testid="metrics-custom-end" />
+        </div>
+        <DialogFooter>
+          <Button
+            disabled={!customValid}
+            onClick={() => {
+              onCustomRange(start, end);
+              setCustomOpen(false);
+            }}
+            data-testid="metrics-custom-apply"
+          >
+            Apply
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
@@ -469,7 +509,7 @@ function MetricDefinitionEditor({ metric }: { metric: Metric }) {
         }}
         onBlur={queueSave}
         data-testid={`metric-description-${metric.slug}`}
-        className="min-h-[2.5rem] resize-none border-0 bg-transparent px-0 py-0 text-xs leading-relaxed text-muted-foreground shadow-none focus-visible:ring-0"
+        className={cn("min-h-[2.5rem] resize-none border-0 bg-transparent px-0 py-0 shadow-none focus-visible:ring-0", HOME_EMBEDDED_PAGE_BODY_TEXT_CLASS)}
       />
       <MetricEquationEditor
         equation={equation}
@@ -612,7 +652,8 @@ export default function BusinessMetricsPage() {
   const { toast } = useToast();
   usePageHeader({ title: "Metrics" });
   const [query, setQuery] = useState("");
-  const [sampleSpan, setSampleSpan] = useState<SampleSpan>("today");
+  const [sampleSpan, setSampleSpan] = useState<MetricSampleSpanId | "custom">("today");
+  const [customRange, setCustomRange] = useState<{ start: Date; end: Date } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Metric | null>(null);
   const [collapsedFamilies, setCollapsedFamilies] = useState<Set<MetricCatalogFamily>>(loadCollapsedFamilies);
 
@@ -630,11 +671,12 @@ export default function BusinessMetricsPage() {
   }
 
   const samplingRange = useMemo(() => {
+    if (sampleSpan === "custom" && customRange) return customRange;
     const end = new Date();
-    return { start: rangeStart(sampleSpan, end), end };
-  }, [sampleSpan]);
+    return { start: rangeStart(sampleSpan === "custom" ? "today" : sampleSpan, end), end };
+  }, [sampleSpan, customRange]);
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<MetricsResponse>({
-    queryKey: ["/api/metrics", sampleSpan],
+    queryKey: ["/api/metrics", sampleSpan, samplingRange.start.toISOString(), samplingRange.end.toISOString()],
     queryFn: async () => {
       const url = `/api/metrics?start=${encodeURIComponent(samplingRange.start.toISOString())}&end=${encodeURIComponent(samplingRange.end.toISOString())}`;
       const response = await apiRequest("GET", url);
@@ -714,7 +756,17 @@ export default function BusinessMetricsPage() {
             ariaLabel="Search metrics"
           />
         </div>
-        <SamplingMenu value={sampleSpan} onChange={setSampleSpan} />
+        <SamplingMenu
+          value={sampleSpan}
+          onChange={(next) => {
+            setSampleSpan(next);
+            setCustomRange(null);
+          }}
+          onCustomRange={(start, end) => {
+            setCustomRange({ start, end });
+            setSampleSpan("custom");
+          }}
+        />
       </div>
       <CreateMetricDialog />
 

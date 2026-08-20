@@ -32,13 +32,19 @@ export const KPI_PERIOD_LABEL: Record<KpiPeriod, string> = {
   annually: "Annually",
 };
 
-export const KPI_SAMPLE_PRESETS = [
-  { id: "last-24-hours", label: "Last 24 Hours", period: "hourly" as const, samples: 24 },
-  { id: "last-7-days", label: "Last 7 Days", period: "daily" as const, samples: 7 },
-  { id: "last-30-days", label: "Last 30 Days", period: "daily" as const, samples: 30 },
-  { id: "last-3-months", label: "Last 3 Months", period: "monthly" as const, samples: 3 },
-  { id: "last-4-quarters", label: "Last 4 Quarters", period: "quarterly" as const, samples: 4 },
+export const METRIC_SAMPLE_SPAN_OPTIONS = [
+  { id: "today", label: "Today", period: "daily" as const, samples: 1, range: "today" as const },
+  { id: "last-24-hours", label: "Last 24 Hours", period: "hourly" as const, samples: 24, rangeHours: 24 },
+  { id: "last-7-days", label: "Last 7 Days", period: "daily" as const, samples: 7, rangeHours: 24 * 7 },
+  { id: "last-30-days", label: "Last 30 Days", period: "daily" as const, samples: 30, rangeHours: 24 * 30 },
+  { id: "last-90-days", label: "Last 90 Days", period: "daily" as const, samples: 90, rangeHours: 24 * 90 },
+  { id: "last-3-months", label: "Last 3 Months", period: "monthly" as const, samples: 3, rangeHours: 24 * 90 },
+  { id: "last-4-quarters", label: "Last 4 Quarters", period: "quarterly" as const, samples: 4, rangeHours: 24 * 365 },
 ] as const;
+
+export type MetricSampleSpanId = (typeof METRIC_SAMPLE_SPAN_OPTIONS)[number]["id"];
+
+export const KPI_SAMPLE_PRESETS = METRIC_SAMPLE_SPAN_OPTIONS;
 
 const CADENCE_TO_PERIOD: Record<string, KpiPeriod> = {
   live: "live",
