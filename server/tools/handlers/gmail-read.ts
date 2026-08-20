@@ -1,5 +1,5 @@
 import type { ToolHandlerResult } from "../contracts";
-import { checkGmailPermission, resolveGmailAccountId } from "./gmail-boundary";
+import { checkGmailPermission, gmailInput, resolveGmailAccountId } from "./gmail-boundary";
 
 interface GmailMessagePayload {
   mimeType?: string;
@@ -53,13 +53,13 @@ export function createGmailReadHandlers(dependencies: GmailReadDependencies) {
     const permission = await checkGmailPermission(args.account, "gmailRead", "read emails");
     if (permission.denied) return permission.result;
     const { getMessage, listGmailAccounts } = await import("../../gmail");
-    if (!args.query) return { result: "Missing search query", error: true };
+    if (!args.query) return gmailInput("Missing search query", "missing_query");
     const maxResults = args.maxResults || 10;
     const accounts = await listGmailAccounts();
-    if (accounts.length === 0) return { result: "No Gmail accounts connected. Add a Gmail account in Settings → Connections.", error: true };
+    if (accounts.length === 0) return gmailInput("No Gmail accounts connected. Add a Gmail account in Settings → Connections.", "no_accounts");
     const resolvedAccountId = permission.resolvedAccountId || await resolveGmailAccountId(args.account);
     const targets = dependencies.resolveTargetAccounts(resolvedAccountId, accounts);
-    if (targets.length === 0) return { result: `Gmail account "${args.account}" not found in connected accounts.`, error: true };
+    if (targets.length === 0) return gmailInput(`Gmail account "${args.account}" not found in connected accounts.`, "account_not_found");
     const { stubs, errors } = await dependencies.listMessagesMultiAccount(args.query, maxResults, targets, "search");
     if (stubs.length === 0) return dependencies.formatListErrors(errors, `No emails found for "${args.query}" across all accounts`);
     const lines: string[] = [];
@@ -78,7 +78,7 @@ export function createGmailReadHandlers(dependencies: GmailReadDependencies) {
     const permission = await checkGmailPermission(args.account, "gmailRead", "read emails");
     if (permission.denied) return permission.result;
     const { getMessage, listGmailAccounts } = await import("../../gmail");
-    if (!args.id) return { result: "Missing message id", error: true };
+    if (!args.id) return gmailInput("Missing message id", "missing_message_id");
     const accountId = permission.resolvedAccountId || await resolveGmailAccountId(args.account);
     let message: any = null;
     if (accountId) {
@@ -92,7 +92,7 @@ export function createGmailReadHandlers(dependencies: GmailReadDependencies) {
           dependencies.logReadFallback(account.id, error);
         }
       }
-      if (!message) return { result: `Message ${args.id} not found in any connected account`, error: true };
+      if (!message) return gmailInput(`Message ${args.id} not found in any connected account`, "message_not_found");
     }
     const { from, subject, date } = dependencies.extractHeaders(message);
     let body = dependencies.findTextBody(message.payload);
@@ -114,10 +114,10 @@ export function createGmailReadHandlers(dependencies: GmailReadDependencies) {
     if (permission.denied) return permission.result;
     const { getMessage, listGmailAccounts } = await import("../../gmail");
     const accounts = await listGmailAccounts();
-    if (accounts.length === 0) return { result: "No Gmail accounts connected. Add a Gmail account in Settings → Connections.", error: true };
+    if (accounts.length === 0) return gmailInput("No Gmail accounts connected. Add a Gmail account in Settings → Connections.", "no_accounts");
     const resolvedAccountId = permission.resolvedAccountId || await resolveGmailAccountId(args.account);
     const targets = dependencies.resolveTargetAccounts(resolvedAccountId, accounts);
-    if (targets.length === 0) return { result: `Gmail account "${args.account}" not found in connected accounts.`, error: true };
+    if (targets.length === 0) return gmailInput(`Gmail account "${args.account}" not found in connected accounts.`, "account_not_found");
     const { stubs, errors } = await dependencies.listMessagesMultiAccount(undefined, args.maxResults || 5, targets, "recent");
     if (stubs.length === 0) return dependencies.formatListErrors(errors, "No recent emails found across any account");
     const lines: string[] = [];

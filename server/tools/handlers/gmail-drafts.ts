@@ -1,11 +1,13 @@
 import type { ToolHandlerResult } from "../contracts";
 import {
   checkGmailPermission,
+  gmailInput,
   parseCachedEmailMessageId,
   rejectInvalidCachedEmailMessageId,
   resolveGmailAccountId,
 } from "./gmail-boundary";
 import { createLogger } from "../../log";
+import { internalFailure } from "../../tool-failure";
 
 const toolExec = createLogger("ToolExec");
 
@@ -64,7 +66,7 @@ function deriveReplyAllRecipients(
 export async function handleGmailReply(args: Record<string, any>): Promise<ToolHandlerResult> {
   const ref = optionalDraftText(args.ref);
   const body = optionalDraftText(args.body);
-  if (!ref || !body) return { result: "Missing ref or body", error: true };
+  if (!ref || !body) return gmailInput("Missing ref or body", "missing_ref_or_body");
 
   const withoutAt = ref.startsWith("@") ? ref.slice(1) : ref;
   const firstColon = withoutAt.indexOf(":");
@@ -88,7 +90,7 @@ export async function handleGmailReply(args: Record<string, any>): Promise<ToolH
       .from(emailMessages)
       .where(combineWithVisibleScope(principal, emailScope, eqOp(emailMessages.id, messageId)))
       .limit(1);
-    if (!message) return { result: `Email message ${messageId} not found.`, error: true };
+    if (!message) return gmailInput(`Email message ${messageId} not found.`, "message_not_found");
     accountId = message.accountId;
     providerThreadId = message.providerThreadId || message.providerMessageId;
   } else if (refType === "email_thread") {
@@ -100,9 +102,9 @@ export async function handleGmailReply(args: Record<string, any>): Promise<ToolH
       providerThreadId = refId;
     }
   } else {
-    return { result: `Unsupported reply ref: ${ref}`, error: true };
+    return gmailInput(`Unsupported reply ref: ${ref}`, "unsupported_reply_ref");
   }
-  if (!providerThreadId) return { result: `Invalid email thread ref: ${ref}`, error: true };
+  if (!providerThreadId) return gmailInput(`Invalid email thread ref: ${ref}`, "invalid_thread_ref");
 
   const conditions = [eqOp(emailMessages.providerThreadId, providerThreadId)];
   if (accountId) conditions.push(eqOp(emailMessages.accountId, accountId));
@@ -116,19 +118,19 @@ export async function handleGmailReply(args: Record<string, any>): Promise<ToolH
     .where(combineWithVisibleScope(principal, emailScope, andOp(...conditions)))
     .orderBy(descOp(emailMessages.date))
     .limit(1);
-  if (!latest) return { result: `Email thread ${providerThreadId} not found.`, error: true };
+  if (!latest) return gmailInput(`Email thread ${providerThreadId} not found.`, "thread_not_found");
 
   const { assertAvailableGmailSenderAccount } = await import("../../gmail");
   let senderAccount: Awaited<ReturnType<typeof assertAvailableGmailSenderAccount>>;
   try {
     senderAccount = await assertAvailableGmailSenderAccount(accountId || latest.accountId);
   } catch (error: any) {
-    return { result: error?.message || "Selected Gmail sender account is unavailable.", error: true };
+    return gmailInput(error?.message || "Selected Gmail sender account is unavailable.", "sender_unavailable");
   }
 
   const recipients = deriveReplyAllRecipients(latest, senderAccount.email);
   if (recipients.to.length === 0) {
-    return { result: "Could not derive an external reply recipient from the latest message", error: true };
+    return gmailInput("Could not derive an external reply recipient from the latest message", "no_reply_recipient");
   }
   const subject = latest.subject?.toLowerCase().startsWith("re:") ? latest.subject : `Re: ${latest.subject || ""}`;
   return handleGmailDraft({
@@ -147,7 +149,7 @@ export async function handleGmailDraft(args: Record<string, any>): Promise<ToolH
   if (permission.denied) return permission.result;
 
   const { to, cc, subject, body } = args;
-  if (!to || !subject || !body) return { result: "Missing to, subject, or body", error: true };
+  if (!to || !subject || !body) return gmailInput("Missing to, subject, or body", "missing_draft_fields");
   const draftAccountId = permission.resolvedAccountId || await resolveGmailAccountId(args.account);
 
   try {
@@ -166,7 +168,11 @@ export async function handleGmailDraft(args: Record<string, any>): Promise<ToolH
     return { result: `Email draft created. @email_draft:${draft.id}` };
   } catch (error: any) {
     toolExec.error(`handleGmailDraft: Failed to create draft: ${error.message}`);
-    return { result: `Failed to create email draft: ${error.message}`, error: true };
+    return {
+      result: `Failed to create email draft: ${error.message}`,
+      error: true,
+      failure: internalFailure("gmail_internal", error.message?.slice?.(0, 160) || "draft_create_failed"),
+    };
   }
 }
 
@@ -230,9 +236,9 @@ function describeDraftBodyMutationFailure(
 
 export async function handleGmailDraftUpdate(args: Record<string, any>): Promise<ToolHandlerResult> {
   const draftId = optionalDraftText(args.draft_id);
-  if (!draftId) return { result: "Missing draft_id", error: true };
+  if (!draftId) return gmailInput("Missing draft_id", "missing_draft_id");
   const parsedBodyMutation = parseDraftBodyMutation(args);
-  if ("error" in parsedBodyMutation) return { result: parsedBodyMutation.error, error: true };
+  if ("error" in parsedBodyMutation) return gmailInput(parsedBodyMutation.error, "body_mutation_invalid");
 
   try {
     const { emailDraftStorage } = await import("../../email-draft-storage");
@@ -253,19 +259,27 @@ export async function handleGmailDraftUpdate(args: Record<string, any>): Promise
       subject: optionalDraftText(args.subject),
     };
     const hasNonBodyPatch = Object.values(patch).some((value) => value !== undefined);
-    if (!hasNonBodyPatch && !parsedBodyMutation.mutation) return { result: "No non-empty editable fields or body operation provided", error: true };
+    if (!hasNonBodyPatch && !parsedBodyMutation.mutation) {
+      return gmailInput("No non-empty editable fields or body operation provided", "empty_update");
+    }
 
     let draft = hasNonBodyPatch ? await emailDraftStorage.update(principal, draftId, patch) : null;
-    if (hasNonBodyPatch && !draft) return { result: `Email draft ${draftId} not found`, error: true };
+    if (hasNonBodyPatch && !draft) return gmailInput(`Email draft ${draftId} not found`, "draft_not_found");
     if (parsedBodyMutation.mutation) {
       const bodyResult = await emailDraftStorage.mutateBody(principal, draftId, parsedBodyMutation.mutation);
-      if (bodyResult.status !== "updated") return { result: describeDraftBodyMutationFailure(draftId, bodyResult), error: true };
+      if (bodyResult.status !== "updated") {
+        return gmailInput(describeDraftBodyMutationFailure(draftId, bodyResult), bodyResult.status);
+      }
       draft = bodyResult.draft;
     }
     return { result: `Email draft updated. @email_draft:${draft!.id}` };
   } catch (error: any) {
     toolExec.error(`handleGmailDraftUpdate: Failed to update draft: ${error.message}`);
-    return { result: `Failed to update email draft: ${error.message}`, error: true };
+    return {
+      result: `Failed to update email draft: ${error.message}`,
+      error: true,
+      failure: internalFailure("gmail_internal", error.message?.slice?.(0, 160) || "draft_update_failed"),
+    };
   }
 }
 

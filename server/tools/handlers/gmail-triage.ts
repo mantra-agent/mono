@@ -1,5 +1,6 @@
 import type { ToolHandlerResult } from "../contracts";
 import { TRIAGE_LOOKBACK_HOURS } from "../../skill-defaults";
+import { gmailInput } from "./gmail-boundary";
 
 export async function handleGmailTriageLog(args: Record<string, any>): Promise<ToolHandlerResult> {
   const { storage } = await import("../../storage");
@@ -16,14 +17,14 @@ export async function handleGmailTriageLog(args: Record<string, any>): Promise<T
     const tierNormalize: Record<string, string> = { respond_now: "🔴", respond_today: "🟡", acknowledge: "🟢", fyi: "📋", noise: "🗑️" };
     const entries: Array<{ gmailMessageId: string; accountId: string; tier: string; senderEmail?: string; subject?: string; cachedMessageId?: number }> = args.entries;
     if (!entries || !Array.isArray(entries) || entries.length === 0) {
-      return { result: "Missing or empty 'entries' array. Each entry needs: gmailMessageId, accountId, tier.", error: true };
+      return gmailInput("Missing or empty 'entries' array. Each entry needs: gmailMessageId, accountId, tier.", "missing_entries");
     }
     for (const entry of entries) {
       if (!entry.gmailMessageId || !entry.accountId || !entry.tier) {
-        return { result: `Invalid entry — each needs gmailMessageId, accountId, and tier. Got: ${JSON.stringify(entry)}`, error: true };
+        return gmailInput(`Invalid entry — each needs gmailMessageId, accountId, and tier. Got: ${JSON.stringify(entry)}`, "invalid_entry");
       }
       if (!validTiers.has(entry.tier)) {
-        return { result: `Invalid tier "${entry.tier}". Valid: 🔴, 🟡, 🟢, 📋, 🗑️ (or respond_now, respond_today, acknowledge, fyi, noise)`, error: true };
+        return gmailInput(`Invalid tier "${entry.tier}". Valid: 🔴, 🟡, 🟢, 📋, 🗑️ (or respond_now, respond_today, acknowledge, fyi, noise)`, "invalid_tier");
       }
       entry.tier = tierNormalize[entry.tier] || entry.tier;
     }
@@ -38,5 +39,5 @@ export async function handleGmailTriageLog(args: Record<string, any>): Promise<T
     return { result: `Recorded ${entries.length} triaged email(s) in triage log.` };
   }
 
-  return { result: `Unknown triage_action "${subAction}". Use "get_triaged_ids" or "record".`, error: true };
+  return gmailInput(`Unknown triage_action "${subAction}". Use "get_triaged_ids" or "record".`, String(subAction));
 }

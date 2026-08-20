@@ -29,6 +29,8 @@ export type ToolFailureCode =
   | "library_input_invalid"
   // Gmail / email_cache contract rejects (caller-correctable input)
   | "gmail_input_invalid"
+  // Gmail unexpected producer defects
+  | "gmail_internal"
   | "tool_authority_denied"
   | "build_mod_inactive"
   | "hook_name_conflict"
