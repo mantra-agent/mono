@@ -1,4 +1,11 @@
-import { Activity, Clock3, Pause } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { Activity, ChevronRight, Clock3, Pause } from "lucide-react";
+import { HierarchyTreeRow } from "@/components/hierarchy-tree";
+import {
+  HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_SESSION_ROW_CLASS,
+} from "@/components/hierarchy-section-header";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { cn } from "@/lib/utils";
 
@@ -120,8 +127,18 @@ const loops = [
   { ownership: "strategic" as const, icon: Pause, name: "Strategic", interval: "10s+", status: "Idle · no speak admitted" },
 ];
 
-function SectionLabel({ children }: { children: string }) {
-  return <h2 className="text-[9px] font-semibold uppercase leading-none tracking-[0.14em] text-muted-foreground sm:text-[10px]">{children}</h2>;
+function DiagnosticSection({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="border-b border-border/30 last:border-b-0">
+      <CollapsibleTrigger className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}>
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+        {label}
+      </CollapsibleTrigger>
+      <CollapsibleContent>{children}</CollapsibleContent>
+    </Collapsible>
+  );
 }
 
 function Timeline() {
@@ -162,37 +179,37 @@ function Timeline() {
   );
 }
 
-function CurrentAct() {
+function Action() {
   return (
-    <section className="grid grid-cols-[83px_1fr] items-center border-b border-border/30 py-2.5">
-      <SectionLabel>Current Act</SectionLabel>
-      <div className="flex items-baseline gap-2.5 text-active">
-        <span className="text-[13px] font-semibold leading-none">Silence</span>
-        <span className="text-[9px] leading-none">Mantra is listening to Ray</span>
+    <DiagnosticSection label="Action">
+      <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default text-active hover:bg-accent/70")}>
+        <span className="font-medium">Silence</span>
+        <span className="min-w-0 flex-1 truncate text-xs">Mantra is listening to Ray</span>
       </div>
-    </section>
+    </DiagnosticSection>
   );
 }
 
-function PersonaLayers() {
+function Personas() {
   const layers = [
     ["Architect", "hold the whole system"],
     ["Companion", "stay with Ray’s thought"],
     ["Investigator", "separate evidence from inference"],
   ];
   return (
-    <section className="grid grid-cols-[83px_1fr] border-b border-border/30 py-2.5">
-      <SectionLabel>Persona Layers</SectionLabel>
-      <div className="space-y-1">
+    <DiagnosticSection label="Personas">
+      <div className="space-y-0">
         {layers.map(([name, intention], index) => (
-          <div key={name} className="grid grid-cols-[14px_71px_1fr] gap-1 text-[9px] leading-[12px]">
-            <span className="text-muted-foreground">{index + 1}</span>
-            <span className="font-medium text-foreground">{name}</span>
-            <span className="truncate text-chart-3">{intention}</span>
-          </div>
+          <HierarchyTreeRow key={name} continues={index < layers.length - 1} connectorAnchor="first-row-center">
+            <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "cursor-default hover:bg-accent/70")}>
+              <span className="w-4 shrink-0 text-xs text-muted-foreground">{index + 1}</span>
+              <span className="font-medium text-foreground">{name}</span>
+              <span className="min-w-0 flex-1 truncate text-xs text-chart-3">{intention}</span>
+            </div>
+          </HierarchyTreeRow>
         ))}
       </div>
-    </section>
+    </DiagnosticSection>
   );
 }
 
@@ -224,18 +241,16 @@ function Person({ person }: { person: PersonState }) {
 
 function People() {
   return (
-    <section className="border-b border-border/30 py-2.5">
-      <SectionLabel>People</SectionLabel>
-      <div className="mt-1.5">{people.map((person) => <Person key={person.name} person={person} />)}</div>
-    </section>
+    <DiagnosticSection label="People">
+      <div>{people.map((person) => <Person key={person.name} person={person} />)}</div>
+    </DiagnosticSection>
   );
 }
 
-function BrainLoops() {
+function Loops() {
   return (
-    <section className="py-2.5">
-      <SectionLabel>Brain Loops</SectionLabel>
-      <div className="mt-1.5 grid gap-0.5">
+    <DiagnosticSection label="Loops">
+      <div className="grid gap-0.5">
         {loops.map((loop) => {
           const Icon = loop.icon;
           return (
@@ -247,7 +262,7 @@ function BrainLoops() {
           );
         })}
       </div>
-    </section>
+    </DiagnosticSection>
   );
 }
 
@@ -258,10 +273,10 @@ export default function SosPage() {
     <div className="h-full min-w-0 overflow-hidden bg-background">
       <div className="w-full px-2.5 py-1.5 sm:px-4">
         <Timeline />
-        <CurrentAct />
-        <PersonaLayers />
+        <Action />
+        <Personas />
         <People />
-        <BrainLoops />
+        <Loops />
       </div>
     </div>
   );
