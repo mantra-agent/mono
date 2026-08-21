@@ -3,7 +3,7 @@ import { createContext, useContext, useState, useRef, useCallback, useEffect, us
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { emitSessionListChanged, emitSessionChanged } from "@/hooks/use-data-sync";
-import { beginVoiceVisibilitySession, endVoiceVisibilitySession } from "@/hooks/use-visibility-layer";
+import { setVisibilityLayer } from "@/hooks/use-visibility-layer";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 
 import { stripExpressionTags } from "@/components/chat-shared";
@@ -964,7 +964,6 @@ export function VoiceSessionProvider({
     setPhasePersisted(false);
     resetEphemeralVoiceState();
     setStatus("idle");
-    endVoiceVisibilitySession();
     // Tear down native bridge listener if active
     if (nativeListenerCleanupRef.current) {
       nativeListenerCleanupRef.current();
@@ -1236,7 +1235,6 @@ export function VoiceSessionProvider({
         void finalizeSession(cid, sid, `Voice error: ${errorMsg || "An error occurred in the voice session."}`);
       }
       setStatus("idle");
-      endVoiceVisibilitySession();
     }
   }, [toast, phoneDiag, stopUIRefresh, attemptReconnect, finalizeSession]);
 
@@ -2135,7 +2133,7 @@ export function VoiceSessionProvider({
 
     resetEphemeralVoiceState({ clearTranscript: true });
     setStatus("connecting");
-    beginVoiceVisibilitySession();
+    void setVisibilityLayer(0);
     // Arm the one-shot black voice entrance at the real start. Both browser and
     // native voice flow through startSession, so this is the single canonical
     // place the entrance is armed; reconnects never pass here.
@@ -2161,7 +2159,6 @@ export function VoiceSessionProvider({
     } catch (err: unknown) {
       if ((err instanceof Error && err.name === "AbortError") || intentionalEndRef.current) {
         log.info("VOICE:START_SESSION:CANCELLED", { reason: "intentional_or_abort" });
-        endVoiceVisibilitySession();
         return;
       }
       const rawMsg = getErrorMessage(err);
@@ -2182,7 +2179,6 @@ export function VoiceSessionProvider({
       }
       resetEphemeralVoiceState();
       setStatus("idle");
-      endVoiceVisibilitySession();
       setConnectionPhases([]);
       setConnectionStartTime(null);
     } finally {
@@ -2207,7 +2203,6 @@ export function VoiceSessionProvider({
         intentionalEndRef.current = true;
         setConnectionStartTime(null);
         setStatus("idle");
-        endVoiceVisibilitySession();
         return;
       }
     }
