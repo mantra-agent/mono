@@ -190,8 +190,7 @@ export async function runExecutorPhase(
       }
       return;
     }
-    // Soft flush: only completed sentences leave the buffer, each with delta.flush
-    // so ElevenLabs voices progress during long tool work instead of one end block.
+    if (ctx.currentToolName && ctx.coalesceBuf.value && /[.!?]$/.test(ctx.coalesceBuf.value)) ctx.coalesceBuf.value += " ";
     flushCoalesceBuffer("timer");
   }, COALESCE_INTERVAL_MS);
 
@@ -295,12 +294,6 @@ export async function runExecutorPhase(
       activity: ACTIVITY_VOICE,
       thinking: voiceThinking,
       signal: turnAbort.signal,
-      personaSwitchRefresh: session.chatSessionId
-        ? {
-            origin: "voice",
-            profile: "voice",
-          }
-        : undefined,
       onEvent: (event) => {
         if (event.type === "ttft_breakdown") {
           const breakdown = (event as unknown as { breakdown: Record<string, unknown> }).breakdown;
