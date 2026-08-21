@@ -14,9 +14,8 @@ import { requirePermission } from "../permissions";
 const log = createLogger("voice-engine-routes");
 
 export function registerVoiceEngineRoutes(app: Express): void {
-  // Webhook base URL override — lets the user pin the public URL used for
-  // ElevenLabs custom-LLM callbacks so they can test voice in dev without
-  // env var changes.
+  // Development webhook override — lets the user pin a tunnel URL while
+  // developing. Deployed callbacks remain owned by the hosting-bound runtime.
   void loadVoiceWebhookBaseUrlOverride();
 
   app.get("/api/voice/webhook-base-url", requireAuth, requirePermission("system:read"), (_req, res) => {
