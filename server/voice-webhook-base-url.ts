@@ -2,9 +2,9 @@
  * Voice Webhook Base URL Override
  *
  * Lets the user pin the public base URL used for ElevenLabs callbacks
- * for the single ElevenLabs custom-LLM engine. Useful for testing voice in
- * development against a known-reachable URL — or for forcing production URLs
- * during dev iteration.
+ * for the single ElevenLabs custom-LLM engine in development. Deployed
+ * environments always use their hosting-bound runtime identity: a persisted
+ * override cannot safely move a callback across deployment secret boundaries.
  *
  * When set, the dev-mode "skip PATCH" guard in setupAgentCallbackUrl is
  * bypassed: the override signals the user has explicitly chosen this URL.

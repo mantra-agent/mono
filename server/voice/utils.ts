@@ -56,11 +56,29 @@ function warnIfNonPublicUrl(url: string, source: string): void {
 }
 
 export function getPublicBaseUrl(): string {
+  // A deployed callback belongs to the process serving it. A persisted override
+  // may point at another deployment (for example, an old preview or production
+  // host), whose callback capability is signed with a different SESSION_SECRET.
+  // In production the hosting binding is therefore authoritative; overrides are
+  // a development tunnel mechanism only.
+  if (process.env.NODE_ENV !== "development") {
+    try {
+      const { getRuntimePublicBaseUrlSync } = require("../runtime-identity");
+      const runtimeUrl = getRuntimePublicBaseUrlSync();
+      if (runtimeUrl) {
+        warnIfNonPublicUrl(runtimeUrl, "runtime-identity");
+        log.log(`getPublicBaseUrl resolved from production runtime identity: ${runtimeUrl}`);
+        return runtimeUrl;
+      }
+    } catch {
+      // Runtime identity unavailable — continue through explicit fallbacks.
+    }
+  }
   try {
     const { getVoiceWebhookBaseUrlOverrideSync } = require("../voice-webhook-base-url");
     const override = getVoiceWebhookBaseUrlOverrideSync();
     if (override) {
-      log.log(`getPublicBaseUrl using settings override: ${override}`);
+      log.log(`getPublicBaseUrl using development settings override: ${override}`);
       return override;
     }
   } catch {
