@@ -1193,7 +1193,7 @@ export async function ensureProductCatalogDefinitions(): Promise<void> {
 /**
  * Company scorecard KPI wrappers — one Metric each, no standingObjectiveKey.
  * Retunes existing fixed-id KPIs and mints missing wrappers by metric slug.
- * Hours Used bands are monotonic for higher_is_better (bear under bull).
+ * Under / Over bands are monotonic for both directions (bear under bull).
  * Dark Metrics stay unmeasured KPIs (no fabricated samples).
  */
 type ScorecardKpiSpec = {
@@ -1227,15 +1227,14 @@ const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
     metricSlug: "hours-used",
     metricId: "metric_hours_used_1d52cbc6-d922-4afd-b5e8-0eeeb5babd47",
     description:
-      "Lagging engagement KPI: authenticated connected hours (unioned per user). Bands are monotonic higher_is_better — bear is the floor, bull the stretch.",
-    targetLabel: "Sustain at least 8 authenticated hours used per day",
+      "Lagging engagement KPI: authenticated connected hours (unioned per user), scored over a completed week.",
+    targetLabel: "At least 8 authenticated hours used per day (56/week)",
     cadence: "Weekly",
     period: "weekly",
     ownerLabel: "Product",
     direction: "higher_is_better",
-    // Was inverted (bear 250 > on-track 8). Scorer uses bear=under, bull=over only.
     bullThreshold: 300,
-    bearThreshold: 8,
+    bearThreshold: 56,
     staleAfterHours: 48,
     status: "active",
   },
@@ -1248,7 +1247,7 @@ const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
     metricId: "metric_a6f0ae8469109539b853fb22",
     description:
       "Platform goals marked achieved in the period (documentType=goal + status=achieved + completedAt in range). Not a customer-only filter.",
-    targetLabel: "Platform goals reach achieved each month",
+    targetLabel: "At least 20 goals achieved per month",
     cadence: "Monthly",
     period: "monthly",
     ownerLabel: "Product",
@@ -1266,14 +1265,14 @@ const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
     metricSlug: "activation-rate",
     metricId: "metric_aa254f4fa3cb2955d22e30a6",
     description:
-      "Share of measured Accounts at commercial activation_level activated|retained. Not onboarding completed. Unmeasured until activation_level is written.",
-    targetLabel: "Activate at least 60% of measured accounts",
+      "Eligible new accounts completing three meaningful goal-to-execution loops across at least two sessions within 14 days. Not onboarding completed. Unmeasured until commercial activation evidence is written.",
+    targetLabel: "At least 80% activate within 14 days",
     cadence: "Monthly",
     period: "monthly",
     ownerLabel: "Product",
     direction: "higher_is_better",
-    bullThreshold: 75,
-    bearThreshold: 30,
+    bullThreshold: 80,
+    bearThreshold: 60,
     staleAfterHours: 1080,
     status: "active",
   },
@@ -1286,14 +1285,13 @@ const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
     metricId: "metric_89a6d21438755204c41091be",
     description:
       "Paying-account loss (included_tokens IS NOT NULL at window start that cancel or become non-paying). lower_is_better. Dark until lifecycle events exist.",
-    targetLabel: "Keep monthly paying-account churn at or below 5%",
+    targetLabel: "Keep monthly logo churn ≤0.9% (≈90% annual GLR)",
     cadence: "Monthly",
     period: "monthly",
     ownerLabel: "Customer Success",
     direction: "lower_is_better",
-    // lower_is_better: bull when value <= bull (under), bear when value > bear (over)
-    bullThreshold: 2,
-    bearThreshold: 10,
+    bullThreshold: 1,
+    bearThreshold: 0.5,
     staleAfterHours: 1080,
     status: "active",
   },
@@ -1305,12 +1303,12 @@ const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
     metricId: "metric_0fabe2a49667c865bedc3cf7",
     description:
       "Company scorecard: recap-ready completed sessions with notes in the period. Product Meetings — not principal engagement meetings.",
-    targetLabel: "Grow recap-ready meetings week over week",
+    targetLabel: "At least 5 recap-ready meetings per week",
     cadence: "Weekly",
     period: "weekly",
     ownerLabel: "Product",
     direction: "higher_is_better",
-    bullThreshold: 15,
+    bullThreshold: 10,
     bearThreshold: 3,
     staleAfterHours: 168,
     status: "active",
@@ -1322,7 +1320,7 @@ const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
     metricSlug: "net-new-active-users",
     description:
       "Δ Active Users across adjacent equal-length windows. Not Δ of Users/Accounts stock. Unequal windows stay unavailable.",
-    targetLabel: "Net new active users positive each month",
+    targetLabel: "Positive monthly net new active users",
     cadence: "Monthly",
     period: "monthly",
     ownerLabel: "Growth",
@@ -1339,7 +1337,7 @@ const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
     metricSlug: "user-memory",
     description:
       "Active canonical and linked vNext memory claims held across Mantra (platform stock).",
-    targetLabel: "Grow durable user memory claims",
+    targetLabel: "Grow durable active memory beyond 2,000 claims",
     cadence: "Weekly",
     period: "weekly",
     ownerLabel: "Product",
@@ -1357,13 +1355,13 @@ const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
     metricId: "metric_e81c001644039d637eca4550",
     description:
       "Ending recurring revenue from the opening cohort divided by opening cohort revenue. Unmeasured until cohort snapshots exist.",
-    targetLabel: "Same-cohort NRR at or above 100%",
+    targetLabel: "Retain 100% monthly; expand ≥3.5% (≈150% annualized)",
     cadence: "Monthly",
     period: "monthly",
     ownerLabel: "Finance",
     direction: "higher_is_better",
-    bullThreshold: 120,
-    bearThreshold: 90,
+    bullThreshold: 103.5,
+    bearThreshold: 100,
     staleAfterHours: 1080,
     status: "active",
   },
@@ -1452,6 +1450,8 @@ export async function ensureScorecardKpiWrappers(): Promise<number> {
               OR target_label IS DISTINCT FROM ${spec.targetLabel}
               OR cadence IS DISTINCT FROM ${spec.cadence}
               OR period IS DISTINCT FROM ${spec.period}
+              OR samples IS DISTINCT FROM 1
+              OR style IS DISTINCT FROM 'line'
               OR owner_label IS DISTINCT FROM ${spec.ownerLabel}
               OR direction IS DISTINCT FROM ${spec.direction}
               OR bull_threshold IS DISTINCT FROM ${spec.bullThreshold}
