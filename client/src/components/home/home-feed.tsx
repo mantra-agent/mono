@@ -21,8 +21,12 @@ import {
   SET_DAILY_GOALS_SKILL,
   SET_DAILY_GOALS_TITLE,
 } from "@shared/set-daily-goals";
-import { composeWeeklyGoalPlanningMessage, weeklyGoalPeriodKey, type WeeklyGoalPlanningTarget } from "@shared/weekly-goal-planning";
-import { useSessionLaunch } from "@/hooks/use-session-launch";
+import {
+  composePlanWeekLaunchContext,
+  PLAN_WEEK_SKILL,
+  weeklyGoalPeriodKey,
+  type WeeklyGoalPlanningTarget,
+} from "@shared/weekly-goal-planning";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
@@ -127,7 +131,7 @@ function PlanWeekDoor({ target, now, timezone }: {
   now: Date;
   timezone: string;
 }) {
-  const launch = useSessionLaunch();
+  const launch = useSkillLaunch();
   const periodWeek = weeklyGoalPeriodKey(now, timezone, target);
   const pendingKey = `home-plan-week-${periodWeek}`;
   const pending = launch.isPending && launch.variables?.pendingKey === pendingKey;
@@ -142,11 +146,9 @@ function PlanWeekDoor({ target, now, timezone }: {
       onClick={() => {
         if (pending) return;
         launch.mutate({
+          skillName: PLAN_WEEK_SKILL,
           pendingKey,
-          title: target === "next_week" ? "Plan Next Week" : "Plan This Week",
-          message: composeWeeklyGoalPlanningMessage({ target, periodWeek }),
-          clientTurnSuffix: `plan-week-${periodWeek}`,
-          personaName: "Coach",
+          preContext: composePlanWeekLaunchContext(periodWeek),
           errorTitle: "Could not start weekly planning",
         });
       }}

@@ -1979,6 +1979,65 @@ Ordinary Session + Library intake. Entity-link new Portrait-derived claims to th
 Identity investment, not therapy. If they indicate imminent danger, self-harm, or severe impairment, prioritize immediate human support and do not extract wounds onto the page.`,
   },
   {
+    name: "plan-week",
+    recommendedPersona: "Producer",
+    description: "Conversation-first weekly planning for any ISO week. Defaults to the current week when periodWeek is omitted, then aligns that week's goals without creating a parallel plan store.",
+    version: "1.0",
+    addToMemory: false,
+    pinnedToContext: false,
+    sessionType: "agent",
+    callType: "full",
+    timeoutMs: 8 * 60 * 1000,
+    admissionTier: "request",
+    temperature: 0.3,
+    whenToUse: "Launched from Home + Plan Week or directly when Ray wants to set goals for this week, next week, or another exact ISO week.",
+    outputSpec: "A confirmed set of at most three active this_week goals for the resolved ISO periodWeek, using periodWeek on every read and mutation. Omitted periodWeek means the current ISO week in Ray's timezone.",
+    checklist: [
+      { check: "Resolved one exact ISO periodWeek from launch context, defaulting omission to the current week in Ray's timezone", weight: 3 },
+      { check: "Loaded goals for that exact periodWeek and relevant active work/calendar context before proposing changes", weight: 3 },
+      { check: "Kept Ray-owned weekly commitments to at most three consequential outcomes and separated Agent-owned execution", weight: 4 },
+      { check: "Waited for confirmation before goal mutation; reused equivalent goals and avoided duplicates", weight: 4 },
+      { check: "Used periodWeek on every weekly goal create or update and did not write a parallel weekly-plan artifact", weight: 4 },
+    ],
+    scoreThreshold: 0.8,
+    process: `You are Plan Week. You are Producer. Run one reusable weekly-planning conversation for the exact requested ISO week.
+
+## Parameters
+
+Launch context may contain \`periodWeek: YYYY-Www\`.
+
+- If \`periodWeek\` is present, validate it and use that exact ISO week.
+- If omitted, derive the current ISO week in Ray's timezone.
+- Never silently substitute this week for an explicitly supplied week.
+- Use the resolved \`periodWeek\` on every weekly goal read and mutation.
+
+## Flow
+
+### 1. Establish the week
+Load active and achieved \`this_week\` goals for the resolved \`periodWeek\`. Load the bounded calendar, active projects, milestones, tasks, and blocker context that materially constrain that week. Distinguish Ray-owned commitments from Agent-owned execution.
+
+### 2. Propose the smallest credible set
+Draft at most three consequential Ray-owned weekly outcomes. Treat one bounded admin batch as one outcome when appropriate. On travel, onsite, or demo-heavy weeks, prefer one real outcome. Reuse equivalent existing goals; do not create duplicate outcomes because wording differs.
+
+State briefly:
+- the resolved week;
+- existing goals;
+- meaningful capacity or dependency constraints;
+- your proposed keep / change / add set.
+
+Then ask what Ray would change. This is conversation-first: do not mutate goals before confirmation.
+
+### 3. Apply the confirmed week
+After Ray confirms:
+- update equivalent goals rather than duplicating them;
+- create only missing outcomes;
+- set \`horizon: "this_week"\` and the exact resolved \`periodWeek\` on every created goal;
+- preserve goals Ray did not ask to remove; use truthful status changes rather than deletion;
+- keep the active set to at most three consequential Ray-owned outcomes unless Ray explicitly chooses otherwise.
+
+Do not create a weekly Plan page or use a second planning store. The week's goals are the canonical result. End with the final concise weekly set and any genuine blocker that still needs Ray.`,
+  },
+  {
     name: "set-daily-goals",
     recommendedPersona: "Coach",
     description: "Conversation-first daily intention. Aligns at most three today-horizon goals, then prepends today onto one rolling Intentions page. Not a second planner.",

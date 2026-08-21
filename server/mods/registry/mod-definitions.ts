@@ -38,6 +38,7 @@ const planning: ModDefinition = {
   contributions: {
     serverRouteGroups: [serverRouteGroupRef("planning.routes.scenarios", "planning.scenarios")],
     tools: [toolRef("planning.tool.scenarios", "scenarios")],
+    skills: [skillRef("planning.skill.plan-week", "plan-week")],
     clientRoutes: [
       clientRoute("planning.route.goals", "/goals", "goals"),
       clientRoute("planning.route.goal-detail", "/goals/:id", "goal-detail"),

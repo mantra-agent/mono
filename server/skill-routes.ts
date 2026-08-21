@@ -165,9 +165,14 @@ export function registerSkillRoutes(app: Express): void {
         const { requirePinnedInstanceManager } = await import("./user-portrait");
         await requirePinnedInstanceManager(principal);
       }
+      const rawPreContext = req.body?.preContext;
+      if (rawPreContext !== undefined && (typeof rawPreContext !== "string" || !rawPreContext.trim() || rawPreContext.trim().length > 40_000)) {
+        return res.status(400).json({ error: "preContext must be a non-empty string of at most 40000 characters" });
+      }
       const launchKey = `ui/${skill.id}/${crypto.randomUUID()}`;
       const launched = await enqueueSkillExecutionRuntimeRun(principal, {
         skillId: skill.id,
+        ...(typeof rawPreContext === "string" ? { preContext: rawPreContext.trim() } : {}),
         launchKey,
         spawnerTool: "skills.ui.run",
       });
