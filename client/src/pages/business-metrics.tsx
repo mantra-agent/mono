@@ -26,7 +26,7 @@ import {
   type MetricProducerFamily,
 } from "@shared/metric-producers";
 import { METRIC_SAMPLE_SPAN_OPTIONS, type MetricSampleSpanId } from "@shared/kpi-sample";
-import { HOME_EMBEDDED_PAGE_BODY_TEXT_CLASS } from "@/components/home/simple-text-frame";
+import { SIMPLE_TEXT_FRAME_CLASS } from "@/components/home/simple-text-frame";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -60,12 +60,12 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { EditableReferenceInput } from "@/components/references/editable-reference-input";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_SESSION_ROW_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -509,7 +509,10 @@ function MetricDefinitionEditor({ metric }: { metric: Metric }) {
         }}
         onBlur={queueSave}
         data-testid={`metric-description-${metric.slug}`}
-        className={cn("min-h-[2.5rem] resize-none border-0 bg-transparent px-0 py-0 shadow-none focus-visible:ring-0", HOME_EMBEDDED_PAGE_BODY_TEXT_CLASS)}
+        className={cn(
+          SIMPLE_TEXT_FRAME_CLASS,
+          "h-auto min-h-[2.5rem] w-full resize-none overflow-hidden shadow-none focus-visible:ring-0",
+        )}
       />
       <MetricEquationEditor
         equation={equation}
@@ -537,39 +540,64 @@ function MetricTreeRow({
   const unavailable = coverage === "unavailable" || coverage === "unbound";
   const isManual = metric.adapterKind === "manual";
 
+  const [open, setOpen] = useState(false);
+
   return (
-    <ProfileTreeRow
-      label={<span className="text-foreground">{metric.name}</span>}
-      icon={<AdapterIcon className="h-3.5 w-3.5" />}
-      hasValue
-      showEmpty
-      mobileLayout="inline"
-      valueLayout="compact"
-      menuVisibility="hover"
-      testId={`metric-row-${metric.slug}`}
-      expandedContent={<MetricDefinitionEditor metric={metric} />}
-      menuContent={
-        isManual ? (
-          <DropdownMenuItem
-            className="text-destructive focus:text-destructive"
-            onSelect={(event) => {
-              event.preventDefault();
-              onRequestDelete(metric);
-            }}
-            data-testid={`metric-menu-delete-${metric.slug}`}
-          >
-            <Trash2 className="mr-2 h-3.5 w-3.5" />
-            Delete
-          </DropdownMenuItem>
-        ) : (
-          <span data-testid={`metric-menu-empty-${metric.slug}`} />
-        )
-      }
-    >
-      <span className={cn("whitespace-nowrap font-mono", (!sample || unavailable) && "text-muted-foreground")}>
-        {unavailable ? (coverage === "unbound" ? "unbound" : "unavailable") : sample ? formatValue(sample.value, sample.unit) : "—"}
-      </span>
-    </ProfileTreeRow>
+    <Collapsible open={open} onOpenChange={setOpen} data-testid={`metric-row-${metric.slug}`}>
+      <div className="group">
+        <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")}>
+          <AdapterIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <CollapsibleTrigger asChild>
+            <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left">
+              <span className="min-w-0 flex-1 truncate text-foreground">{metric.name}</span>
+              <span className={cn("shrink-0 whitespace-nowrap font-mono text-xs", (!sample || unavailable) && "text-muted-foreground")}>
+                {unavailable ? (coverage === "unbound" ? "unbound" : "unavailable") : sample ? formatValue(sample.value, sample.unit) : "—"}
+              </span>
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+              aria-label={`${open ? "Collapse" : "Expand"} ${metric.name}`}
+            >
+              <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
+            </button>
+          </CollapsibleTrigger>
+          {isManual ? (
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
+                  aria-label="More actions"
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    onRequestDelete(metric);
+                  }}
+                  data-testid={`metric-menu-delete-${metric.slug}`}
+                >
+                  <Trash2 className="mr-2 h-3.5 w-3.5" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+        </div>
+        <CollapsibleContent>
+          <div className="px-2 pb-2 pl-8">
+            <MetricDefinitionEditor metric={metric} />
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
   );
 }
 
