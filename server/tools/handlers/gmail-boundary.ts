@@ -41,10 +41,47 @@ export function parseCachedEmailMessageId(value: unknown): number | null {
   return null;
 }
 
-export function rejectInvalidCachedEmailMessageId(raw: unknown): ToolHandlerResult {
+export type CachedEmailMessageIdResolution =
+  | { outcome: "resolved"; id: number }
+  | { outcome: "missing" }
+  | { outcome: "ambiguous" };
+
+/** Resolve canonical cache IDs or Gmail provider locators within visible email scope. */
+export async function resolveCachedEmailMessageId(
+  value: unknown,
+  accountId?: string,
+): Promise<CachedEmailMessageIdResolution> {
+  const cacheId = parseCachedEmailMessageId(value);
+  if (cacheId != null) return { outcome: "resolved", id: cacheId };
+  if (typeof value !== "string" || value.trim().length === 0) return { outcome: "missing" };
+
+  const { db } = await import("../../db");
+  const { emailMessages } = await import("@shared/schema");
+  const { requireCurrentPrincipal } = await import("../../principal-context");
+  const { combineWithVisibleScope } = await import("../../scoped-storage");
+  const { and: andOp, eq: eqOp } = await import("drizzle-orm");
+  const principal = requireCurrentPrincipal();
+  const emailScope = { ownerUserId: emailMessages.ownerUserId, accountId: emailMessages.principalAccountId, vaultId: emailMessages.vaultId };
+  const conditions = [eqOp(emailMessages.providerMessageId, value.trim())];
+  if (accountId) conditions.push(eqOp(emailMessages.accountId, accountId));
+  const rows = await db.select({ id: emailMessages.id }).from(emailMessages)
+    .where(combineWithVisibleScope(principal, emailScope, andOp(...conditions)))
+    .limit(2);
+  if (rows.length === 0) return { outcome: "missing" };
+  if (rows.length > 1) return { outcome: "ambiguous" };
+  return { outcome: "resolved", id: rows[0].id };
+}
+
+export function rejectUnresolvedEmailMessageId(raw: unknown, outcome: "missing" | "ambiguous"): ToolHandlerResult {
+  if (outcome === "ambiguous") {
+    return gmailInput(
+      `Email provider message id ${JSON.stringify(raw)} matches more than one visible Gmail account. Include account_id or use the canonical @email_message:<cache-id> reference.`,
+      "message_id_ambiguous",
+    );
+  }
   return gmailInput(
-    `Invalid message_id: expected a positive integer cache id (email_messages.id), got ${JSON.stringify(raw)}. Use the Cache ID from email_cache listings, not a Gmail provider hex id.`,
-    "message_id_not_integer",
+    `Email message ${JSON.stringify(raw)} was not found by cache id or Gmail provider message id.`,
+    "message_id_not_found",
   );
 }
 

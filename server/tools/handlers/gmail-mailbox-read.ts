@@ -1,7 +1,7 @@
 import type { ToolHandlerResult } from "../contracts";
 import { createLogger } from "../../log";
 import { safeStringify } from "../../utils/safe-stringify";
-import { gmailInput, parseCachedEmailMessageId, rejectInvalidCachedEmailMessageId } from "./gmail-boundary";
+import { gmailInput, rejectUnresolvedEmailMessageId, resolveCachedEmailMessageId } from "./gmail-boundary";
 
 const log = createLogger("EmailCache");
 
@@ -112,8 +112,9 @@ async function resolveThread(args: Record<string, any>): Promise<ToolHandlerResu
   let accountId = explicitAccountId;
   let providerThreadId: string | null = null;
   if (refType === "email_message") {
-    const messageId = parseCachedEmailMessageId(refId);
-    if (messageId == null) return rejectInvalidCachedEmailMessageId(refId);
+    const resolution = await resolveCachedEmailMessageId(refId, accountId || undefined);
+    if (resolution.outcome !== "resolved") return rejectUnresolvedEmailMessageId(refId, resolution.outcome);
+    const messageId = resolution.id;
     const [message] = await db.select({ accountId: emailMessages.accountId, providerThreadId: emailMessages.providerThreadId, providerMessageId: emailMessages.providerMessageId })
       .from(emailMessages)
       .where(combineWithVisibleScope(principal, emailScope, eqOp(emailMessages.id, messageId)))
@@ -176,8 +177,9 @@ async function getMessage(args: Record<string, any>): Promise<ToolHandlerResult>
   if (args.message_id == null || args.message_id === "") {
     return gmailInput("Missing 'message_id' parameter.", "missing_message_id");
   }
-  const messageId = parseCachedEmailMessageId(args.message_id);
-  if (messageId == null) return rejectInvalidCachedEmailMessageId(args.message_id);
+  const resolution = await resolveCachedEmailMessageId(args.message_id, typeof args.account_id === "string" ? args.account_id : undefined);
+  if (resolution.outcome !== "resolved") return rejectUnresolvedEmailMessageId(args.message_id, resolution.outcome);
+  const messageId = resolution.id;
   const { db } = await import("../../db");
   const { emailMessages, emailEnrichments } = await import("@shared/schema");
   const { and: andOp, eq: eqOp } = await import("drizzle-orm");

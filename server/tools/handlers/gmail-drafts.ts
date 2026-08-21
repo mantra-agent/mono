@@ -2,8 +2,8 @@ import type { ToolHandlerResult } from "../contracts";
 import {
   checkGmailPermission,
   gmailInput,
-  parseCachedEmailMessageId,
-  rejectInvalidCachedEmailMessageId,
+  rejectUnresolvedEmailMessageId,
+  resolveCachedEmailMessageId,
   resolveGmailAccountId,
 } from "./gmail-boundary";
 import { createLogger } from "../../log";
@@ -84,8 +84,9 @@ export async function handleGmailReply(args: Record<string, any>): Promise<ToolH
   let accountId: string | undefined;
   let providerThreadId: string | null = null;
   if (refType === "email_message") {
-    const messageId = parseCachedEmailMessageId(refId);
-    if (messageId == null) return rejectInvalidCachedEmailMessageId(refId);
+    const resolution = await resolveCachedEmailMessageId(refId);
+    if (resolution.outcome !== "resolved") return rejectUnresolvedEmailMessageId(refId, resolution.outcome);
+    const messageId = resolution.id;
     const [message] = await db.select({ accountId: emailMessages.accountId, providerThreadId: emailMessages.providerThreadId, providerMessageId: emailMessages.providerMessageId })
       .from(emailMessages)
       .where(combineWithVisibleScope(principal, emailScope, eqOp(emailMessages.id, messageId)))

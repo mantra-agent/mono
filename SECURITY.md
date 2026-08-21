@@ -232,6 +232,13 @@ Assets/data: principal-owned wellness activity rows and platform-wide Wellness d
 - Residual/rollback: app login is not Cloudflare Access. A stolen Stage session can still read source modules. Disable by unsetting STAGE_WARM_ENABLED or Full Rebuild back to immutable artifact. Revert this Enable path and finding together.
 -->
 
+<!-- 2026-08-21 Gmail provider message locator compatibility:
+- Assets/data: principal/Vault-scoped cached Gmail envelope metadata (S2), provider message identifiers, connected-account identity, and persisted reply drafts.
+- Flow/threat: model-visible Gmail search/read output -> `email_cache.get_message`, `email_cache.store_enrichment`, or `gmail.reply` -> cached message resolution. Accepting a provider ID without scope or uniqueness could select another principal's or another connected account's message (STRIDE spoofing/information disclosure/tampering; DATA-01/IAM-02).
+- Deterministic controls/owner: `resolveCachedEmailMessageId` keeps canonical positive integer cache IDs as the fast path, resolves provider IDs only through principal/account/Vault-scoped `email_messages`, binds the account when supplied, and rejects ambiguous cross-account matches rather than guessing. Reply and enrichment retain their independent thread/account identity checks and canonical draft mutation boundary. Owner: Core Comms / Gmail Tooling. Severity: high confidentiality/integrity. SLA: immediate. Status: repaired in source pending production build and merge.
+- Residual/rollback: provider IDs are locators, not canonical references; durable `@email_message:<integer>` grammar remains unchanged. Revert this compatibility resolver and its consumers to restore integer-only input.
+-->
+
 <!-- 2026-08-12 Email pipeline health scoping:
 - Assets/data: A01 principal-owned `email_sync_cursors` and connected Google account identity; account IDs and last-sync recency are S1 operational metadata that can identify another user's mailbox.
 - Flow/threat: authenticated Email page / `/api/email/sync-status` / `/api/email/pipeline-status` / `getEmailPipelineHealth()` previously selected every `email_sync_cursors` row, then unioned those IDs with already-scoped sync-health logs. A new account with no linked Gmail therefore rendered other users' Google account IDs as "Gmail sync stale" (STRIDE information disclosure; DATA-01/IAM-01).
