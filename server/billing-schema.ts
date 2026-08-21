@@ -78,17 +78,28 @@ export async function ensureBillingSchema(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS billing_prices (
       key TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
       stripe_price_id TEXT NOT NULL,
       stripe_product_id TEXT,
       amount_cents INTEGER,
       currency TEXT NOT NULL DEFAULT 'usd',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT billing_prices_key_check CHECK (
-        key IN ('max', 'max_plus', 'factory_plus', 'extra_principal', 'extra_agent', 'extra_participant', 'token_overage', 'tive_custom')
-      ),
       CONSTRAINT billing_prices_price_prefix_check CHECK (stripe_price_id ~ '^price_')
     )
   `);
+  await pool.query(`ALTER TABLE billing_prices ADD COLUMN IF NOT EXISTS label TEXT`);
+  await pool.query(`ALTER TABLE billing_prices DROP CONSTRAINT IF EXISTS billing_prices_key_check`);
+  await pool.query(`
+    DELETE FROM billing_prices
+    WHERE key NOT IN ('max', 'max_plus', 'factory_plus', 'extra_principal', 'extra_agent', 'extra_participant', 'token_overage', 'custom')
+      AND EXISTS (SELECT 1 FROM billing_prices WHERE key = 'custom')
+  `);
+  await pool.query(`
+    UPDATE billing_prices SET key = 'custom'
+    WHERE key NOT IN ('max', 'max_plus', 'factory_plus', 'extra_principal', 'extra_agent', 'extra_participant', 'token_overage', 'custom')
+  `);
+  await pool.query(`UPDATE billing_prices SET label = initcap(replace(key, '_', ' ')) WHERE label IS NULL OR btrim(label) = ''`);
+  await pool.query(`ALTER TABLE billing_prices ALTER COLUMN label SET NOT NULL`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS billing_meter_deliveries (

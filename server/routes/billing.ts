@@ -35,9 +35,11 @@ const receiveSchema = z.object({
 
 const priceMapUpsertSchema = z.object({
   key: z.enum(BILLING_PRICE_KEYS),
+  label: z.string().min(1),
   stripePriceId: z.string().min(1),
   stripeProductId: z.string().nullable().optional(),
   amountCents: z.number().int().min(0).nullable().optional(),
+  currency: z.string().min(3).max(3),
 }).strict();
 
 function sendCollectorError(res: Response, error: unknown): void {
