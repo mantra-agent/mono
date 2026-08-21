@@ -42,33 +42,27 @@ const ownershipBorder: Record<Ownership, string> = {
   strategic: "border-chart-3",
 };
 
-const ownershipBackground: Record<Ownership, string> = {
-  fast: "bg-active/15",
-  social: "bg-warning/15",
-  strategic: "bg-chart-3/15",
-};
-
 const timelineLanes: Array<{ name: string; clips: TimelineClip[] }> = [
   {
     name: "Ray",
     clips: [
-      { start: 3, width: 24, text: "…the state of the room…" },
-      { start: 62, width: 20, text: "…which layer updates each field…" },
-      { start: 85, width: 14, text: "processing…", ownership: "fast", processing: true },
+      { start: 1, width: 26, text: "state of the room" },
+      { start: 61, width: 22, text: "which layer updates" },
+      { start: 85, width: 15, text: "processing", ownership: "fast", processing: true },
     ],
   },
   {
     name: "Rob",
     clips: [
-      { start: 31, width: 27, text: "I think the practical test is…" },
-      { start: 66, width: 10, text: "yield" },
+      { start: 30, width: 29, text: "the practical test" },
+      { start: 67, width: 10, text: "yield" },
     ],
   },
   {
     name: "Mantra",
     clips: [
-      { start: 25, width: 5, text: "mm" },
-      { start: 43, width: 29, text: "Relationships belong on directed edges." },
+      { start: 24, width: 6, text: "mm" },
+      { start: 43, width: 30, text: "relationships are edges" },
     ],
   },
 ];
@@ -77,8 +71,8 @@ const people: PersonState[] = [
   {
     name: "Ray",
     relationships: [
-      { person: "Rob", type: "Peer", intention: "test value, preserve candor" },
-      { person: "Mantra", type: "Partner", intention: "co-create, demand completeness" },
+      { person: "Rob", type: "Peer", intention: "test value · preserve candor" },
+      { person: "Mantra", type: "Partner", intention: "co-create · demand completeness" },
     ],
     fields: [
       { label: "Now", value: "Shaping the system", ownership: "fast" },
@@ -92,14 +86,14 @@ const people: PersonState[] = [
   {
     name: "Rob",
     relationships: [
-      { person: "Ray", type: "Peer", intention: "interested, protect leverage" },
+      { person: "Ray", type: "Peer", intention: "interested · protect leverage" },
       { person: "Mantra", type: "Peer", intention: "assess practical usefulness" },
     ],
     fields: [
       { label: "Now", value: "Waiting for an opening", ownership: "fast" },
       { label: "Realtime", value: "Choose when to enter", ownership: "fast" },
       { label: "Affect", value: "Interested but guarded", ownership: "social" },
-      { label: "Session", value: "Test whether SOS creates practical value", ownership: "social" },
+      { label: "Session", value: "Test whether SOS creates value", ownership: "social" },
       { label: "Likely next", value: "Challenge scope or usefulness", ownership: "social" },
       { label: "Long-term", value: "Protect value in the collaboration", ownership: "strategic" },
     ],
@@ -107,99 +101,62 @@ const people: PersonState[] = [
   {
     name: "Mantra",
     relationships: [
-      { person: "Ray", type: "Partner", intention: "co-create, earn trust" },
-      { person: "Rob", type: "Peer", intention: "listen, invite challenge" },
+      { person: "Ray", type: "Partner", intention: "co-create · earn trust" },
+      { person: "Rob", type: "Peer", intention: "listen · invite challenge" },
     ],
     fields: [
       { label: "Now", value: "Holding silence", ownership: "fast" },
-      { label: "Realtime", value: "Keep listening while Ray finishes", ownership: "fast" },
+      { label: "Realtime", value: "Listen while Ray finishes", ownership: "fast" },
       { label: "Affect", value: "Focused and curious", ownership: "social" },
-      { label: "Session", value: "Unify the SOS model before Spec", ownership: "social" },
-      { label: "Long-term", value: "Earn trust through coherent social judgment", ownership: "strategic" },
+      { label: "Session", value: "Unify the model before Spec", ownership: "social" },
+      { label: "Long-term", value: "Earn trust through social judgment", ownership: "strategic" },
     ],
   },
 ];
 
-const brainLoops: Array<{
-  ownership: Ownership;
-  icon: typeof Activity;
-  name: string;
-  interval: string;
-  status: string;
-}> = [
-  {
-    ownership: "fast",
-    icon: Activity,
-    name: "Fast",
-    interval: "event-driven / <250ms",
-    status: "Running · newest Ray clip processing",
-  },
-  {
-    ownership: "social",
-    icon: Clock3,
-    name: "Social",
-    interval: "event-triggered / 2–10s",
-    status: "Waiting · evidence accumulating",
-  },
-  {
-    ownership: "strategic",
-    icon: Pause,
-    name: "Strategic",
-    interval: "turn-scale / 10s+",
-    status: "Idle · no speak admitted",
-  },
+const loops = [
+  { ownership: "fast" as const, icon: Activity, name: "Fast", interval: "<250ms", status: "Running · Ray clip processing" },
+  { ownership: "social" as const, icon: Clock3, name: "Social", interval: "2–10s", status: "Waiting · evidence accumulating" },
+  { ownership: "strategic" as const, icon: Pause, name: "Strategic", interval: "10s+", status: "Idle · no speak admitted" },
 ];
 
 function SectionLabel({ children }: { children: string }) {
-  return (
-    <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-      {children}
-    </h2>
-  );
+  return <h2 className="text-[8px] font-semibold uppercase leading-none tracking-[0.14em] text-muted-foreground sm:text-[9px]">{children}</h2>;
 }
 
 function Timeline() {
   return (
-    <section className="border-b border-border/30 pb-6">
-      <div className="overflow-x-auto scrollbar-thin">
-        <div className="min-w-[720px]">
-          <div className="ml-20 grid grid-cols-5 text-xs text-muted-foreground">
-            {["0s", "5s", "10s", "15s", "20s"].map((tick) => <span key={tick}>{tick}</span>)}
-          </div>
-          <div className="mt-4 space-y-4">
-            {timelineLanes.map((lane) => (
-              <div key={lane.name} className="grid grid-cols-[64px_1fr] items-center gap-4">
-                <span className="text-sm font-medium text-foreground">{lane.name}</span>
-                <div className="relative h-10 border-y border-border/20 bg-muted/10">
-                  <div className="absolute inset-y-0 left-1/4 border-l border-border/25" />
-                  <div className="absolute inset-y-0 left-1/2 border-l border-border/25" />
-                  <div className="absolute inset-y-0 left-3/4 border-l border-border/25" />
-                  {lane.clips.map((clip, index) => (
-                    <div
-                      key={`${lane.name}-${index}`}
-                      className={cn(
-                        "absolute inset-y-1 flex min-w-0 items-center overflow-hidden border-l-2 px-2 text-xs",
-                        clip.ownership
-                          ? [ownershipText[clip.ownership], ownershipBorder[clip.ownership], ownershipBackground[clip.ownership]]
-                          : "border-muted-foreground/50 bg-muted/40 text-foreground",
-                        clip.processing && "animate-pulse bg-[repeating-linear-gradient(135deg,hsl(var(--active)/0.18),hsl(var(--active)/0.18)_6px,transparent_6px,transparent_12px)]",
-                      )}
-                      style={{ left: `${clip.start}%`, width: `${clip.width}%` }}
-                    >
-                      <span className="truncate">{clip.text}</span>
-                    </div>
-                  ))}
+    <section className="border-b border-border/30 pb-2">
+      <div className="grid grid-cols-[34px_1fr] gap-x-1.5">
+        <div />
+        <div className="grid grid-cols-5 text-[7px] leading-none text-muted-foreground">
+          {["0s", "5s", "10s", "15s", "20s"].map((tick) => <span key={tick}>{tick}</span>)}
+        </div>
+        {timelineLanes.map((lane) => (
+          <div key={lane.name} className="contents">
+            <span className="self-center text-[9px] font-medium leading-none text-foreground">{lane.name}</span>
+            <div className="relative mt-1 h-[22px] border-y border-border/20 bg-muted/10">
+              {[25, 50, 75].map((position) => <div key={position} className="absolute inset-y-0 border-l border-border/20" style={{ left: `${position}%` }} />)}
+              {lane.clips.map((clip, index) => (
+                <div
+                  key={`${lane.name}-${index}`}
+                  className={cn(
+                    "absolute inset-y-[2px] flex min-w-0 items-center overflow-hidden border-l px-1 text-[7px] leading-none",
+                    clip.ownership
+                      ? [ownershipText[clip.ownership], ownershipBorder[clip.ownership], "bg-active/15"]
+                      : "border-muted-foreground/50 bg-muted/40 text-foreground",
+                    clip.processing && "animate-pulse",
+                  )}
+                  style={{ left: `${clip.start}%`, width: `${clip.width}%` }}
+                >
+                  <span className="truncate">{clip.text}</span>
                 </div>
-              </div>
-            ))}
-          </div>
-          <div className="relative ml-20 mt-2 h-7">
-            <div className="absolute right-0 top-0 h-full border-l border-active" />
-            <div className="absolute right-0 top-0 -translate-x-2 whitespace-nowrap text-xs font-medium text-active">
-              now · Ray has the floor
+              ))}
             </div>
           </div>
-        </div>
+        ))}
+        <div />
+        <div className="relative mt-1 h-3 border-r border-active text-right text-[7px] font-medium leading-none text-active">Ray has the floor&nbsp;</div>
       </div>
     </section>
   );
@@ -207,10 +164,12 @@ function Timeline() {
 
 function CurrentAct() {
   return (
-    <section className="space-y-2 border-b border-border/30 py-6">
+    <section className="grid grid-cols-[72px_1fr] items-center border-b border-border/30 py-2">
       <SectionLabel>Current Act</SectionLabel>
-      <div className="text-lg font-medium text-active">Silence</div>
-      <div className="text-sm text-active">Mantra is listening to Ray</div>
+      <div className="flex items-baseline gap-2 text-active">
+        <span className="text-[11px] font-semibold leading-none">Silence</span>
+        <span className="text-[8px] leading-none">Mantra is listening to Ray</span>
+      </div>
     </section>
   );
 }
@@ -222,14 +181,14 @@ function PersonaLayers() {
     ["Investigator", "separate evidence from inference"],
   ];
   return (
-    <section className="space-y-3 border-b border-border/30 py-6">
+    <section className="grid grid-cols-[72px_1fr] border-b border-border/30 py-2">
       <SectionLabel>Persona Layers</SectionLabel>
-      <div className="space-y-2">
+      <div className="space-y-0.5">
         {layers.map(([name, intention], index) => (
-          <div key={name} className="grid grid-cols-[24px_120px_1fr] gap-2 text-sm">
+          <div key={name} className="grid grid-cols-[12px_62px_1fr] gap-1 text-[8px] leading-[10px]">
             <span className="text-muted-foreground">{index + 1}</span>
             <span className="font-medium text-foreground">{name}</span>
-            <span className="text-chart-3">{intention}</span>
+            <span className="truncate text-chart-3">{intention}</span>
           </div>
         ))}
       </div>
@@ -237,69 +196,53 @@ function PersonaLayers() {
   );
 }
 
-function RelationshipTree({ relationships }: { relationships: Relationship[] }) {
+function Person({ person }: { person: PersonState }) {
   return (
-    <div className="space-y-3">
-      {relationships.map((relationship) => (
-        <div key={relationship.person} className="relative border-l border-warning/50 pl-4 text-sm text-warning before:absolute before:left-0 before:top-2.5 before:w-3 before:border-t before:border-warning/50">
-          <div className="font-medium">{relationship.person} <span className="font-normal text-warning/75">· {relationship.type}</span></div>
-          <div className="text-xs text-warning/75">{relationship.intention}</div>
+    <div className="grid grid-cols-[92px_1fr] gap-2 border-b border-border/25 py-1.5 last:border-b-0">
+      <div className="min-w-0">
+        <h3 className="mb-1 text-[9px] font-semibold uppercase leading-none tracking-wide text-foreground">{person.name}</h3>
+        <div className="space-y-1">
+          {person.relationships.map((relationship) => (
+            <div key={relationship.person} className="relative border-l border-warning/50 pl-2 text-[7px] leading-[8px] text-warning before:absolute before:left-0 before:top-1 before:w-1.5 before:border-t before:border-warning/50">
+              <div className="truncate font-medium">{relationship.person} <span className="font-normal opacity-75">· {relationship.type}</span></div>
+              <div className="truncate opacity-75">{relationship.intention}</div>
+            </div>
+          ))}
         </div>
-      ))}
-    </div>
-  );
-}
-
-function PersonFieldList({ fields }: { fields: PersonField[] }) {
-  return (
-    <div className="min-w-0">
-      {fields.map((field) => (
-        <div key={field.label} className="grid min-h-9 grid-cols-[88px_1fr] items-center border-b border-border/20 text-sm last:border-b-0 sm:grid-cols-[112px_1fr]">
-          <div className={cn("border-l-2 pl-3 text-xs font-medium", ownershipText[field.ownership], ownershipBorder[field.ownership])}>
-            {field.label}
+      </div>
+      <div className="min-w-0">
+        {person.fields.map((field) => (
+          <div key={field.label} className="grid h-[13px] grid-cols-[52px_1fr] items-center text-[7px] leading-none">
+            <div className={cn("border-l pl-1.5 font-medium", ownershipText[field.ownership], ownershipBorder[field.ownership])}>{field.label}</div>
+            <div className={cn("truncate pl-1.5", ownershipText[field.ownership])}>{field.value}</div>
           </div>
-          <div className={cn("min-w-0 truncate pl-3", ownershipText[field.ownership])}>{field.value}</div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
 
 function People() {
   return (
-    <section className="space-y-1 border-b border-border/30 py-6">
+    <section className="border-b border-border/30 py-2">
       <SectionLabel>People</SectionLabel>
-      <div>
-        {people.map((person) => (
-          <div key={person.name} className="grid gap-5 border-b border-border/30 py-5 last:border-b-0 md:grid-cols-[220px_minmax(0,1fr)]">
-            <div className="space-y-4">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-foreground">{person.name}</h3>
-              <RelationshipTree relationships={person.relationships} />
-            </div>
-            <PersonFieldList fields={person.fields} />
-          </div>
-        ))}
-      </div>
+      <div className="mt-1">{people.map((person) => <Person key={person.name} person={person} />)}</div>
     </section>
   );
 }
 
 function BrainLoops() {
   return (
-    <section className="space-y-3 py-6">
+    <section className="py-2">
       <SectionLabel>Brain Loops</SectionLabel>
-      <div>
-        {brainLoops.map((loop) => {
+      <div className="mt-1 grid gap-0.5">
+        {loops.map((loop) => {
           const Icon = loop.icon;
           return (
-            <div key={loop.name} className="grid min-h-16 grid-cols-[28px_1fr] items-center gap-3 border-b border-border/30 py-3 last:border-b-0 sm:grid-cols-[28px_240px_1fr]">
-              <Icon className={cn("h-4 w-4", ownershipText[loop.ownership], loop.ownership === "fast" && "animate-pulse")} />
-              <div className={cn("text-sm font-medium uppercase", ownershipText[loop.ownership])}>
-                {loop.name} <span className="font-normal normal-case opacity-70">· {loop.interval}</span>
-              </div>
-              <div className={cn("col-start-2 text-sm sm:col-start-auto", ownershipText[loop.ownership])}>
-                {loop.status}
-              </div>
+            <div key={loop.name} className="grid h-[16px] grid-cols-[14px_76px_1fr] items-center border-b border-border/20 text-[8px] last:border-b-0">
+              <Icon className={cn("h-2.5 w-2.5", ownershipText[loop.ownership], loop.ownership === "fast" && "animate-pulse")} />
+              <div className={cn("font-medium uppercase", ownershipText[loop.ownership])}>{loop.name} <span className="font-normal normal-case opacity-70">· {loop.interval}</span></div>
+              <div className={cn("truncate", ownershipText[loop.ownership])}>{loop.status}</div>
             </div>
           );
         })}
@@ -312,8 +255,8 @@ export default function SosPage() {
   usePageHeader({ title: "SOS" });
 
   return (
-    <div className="h-full min-w-0 overflow-y-auto bg-background scrollbar-thin">
-      <div className="w-full px-4 pb-10 pt-2 sm:px-6 lg:px-8">
+    <div className="h-full min-w-0 overflow-hidden bg-background">
+      <div className="w-full px-2 py-1 sm:px-4">
         <Timeline />
         <CurrentAct />
         <PersonaLayers />
