@@ -1,6 +1,6 @@
 import type { ToolHandlerResult } from "../contracts";
 import { createLogger } from "../../log";
-import { gmailInput, parseCachedEmailMessageId, rejectInvalidCachedEmailMessageId } from "./gmail-boundary";
+import { gmailInput, rejectUnresolvedEmailMessageId, resolveCachedEmailMessageId } from "./gmail-boundary";
 
 const log = createLogger("EmailCache");
 const VALID_TIERS = new Set(["🔴", "🟡", "🟢", "📋", "🗑️", "respond_now", "respond_today", "acknowledge", "fyi", "noise"]);
@@ -75,8 +75,9 @@ async function storeEnrichment(args: Record<string, any>): Promise<ToolHandlerRe
   if (!thread_id || !account_id || message_id == null || message_id === "") {
     return gmailInput("Missing required thread_id, account_id, or message_id.", "missing_enrichment_ids");
   }
-  const cachedMessageId = parseCachedEmailMessageId(message_id);
-  if (cachedMessageId == null) return rejectInvalidCachedEmailMessageId(message_id);
+  const resolution = await resolveCachedEmailMessageId(message_id, account_id);
+  if (resolution.outcome !== "resolved") return rejectUnresolvedEmailMessageId(message_id, resolution.outcome);
+  const cachedMessageId = resolution.id;
   const sourceEmail = await storage.getCachedEmailById(cachedMessageId);
   if (!sourceEmail) return gmailInput(`Email message ${cachedMessageId} not found.`, "message_not_found");
   const sourceThreadId = sourceEmail.providerThreadId || sourceEmail.providerMessageId;

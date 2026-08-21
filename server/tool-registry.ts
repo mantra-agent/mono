@@ -1241,7 +1241,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         thread_id: { type: "string", description: "Provider thread ID (store_enrichment or email_cache get_thread/resolve)" },
 
         account_id: { type: "string", description: "Account ID (store_enrichment)" },
-        message_id: { type: "number", description: "Cached message ID (store_enrichment)" },
+        message_id: { description: "Cached email_messages ID or Gmail provider message ID (get_message/store_enrichment)" },
         summary: { type: "string", description: "Enrichment summary of the thread (store_enrichment)" },
         decisions: { type: "array", items: { type: "string" }, description: "Key decisions identified in the thread (store_enrichment)" },
         actions: { type: "array", items: { type: "string" }, description: "Action items identified in the thread (store_enrichment)" },
