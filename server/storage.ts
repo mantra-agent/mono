@@ -10,7 +10,7 @@ import {
   type ApiCall, type InsertApiCall,
 
   type Issue, type InsertIssue,
-  type Skill, type SkillReference, type InsertSkill, type SkillWithReferences,
+  type Skill, type SkillReference, type SkillRevision, type InsertSkill, type SkillWithReferences,
   type CheckResult,
   type SkillRun, type SkillRunStatus,
   type PromptModule, type PromptModuleVersion, type InsertPromptModule, type UpdatePromptModule,
@@ -29,6 +29,7 @@ import {
   skillRevisionPayload,
   skillPayloadHash,
   changedSkillFields,
+  mergeSkillPayloads,
   compareSkillVersions,
   codeCatalogSkillInputs,
   SKILL_PAYLOAD_FIELDS,
@@ -139,11 +140,18 @@ export interface IStorage {
   getSkillByName(name: string): Promise<SkillWithReferences | undefined>;
   createSkill(data: InsertSkill): Promise<SkillWithReferences>;
   updateSkill(id: string, data: Partial<InsertSkill>): Promise<SkillWithReferences | undefined>;
+  getSkillRevisionHistory(id: string): Promise<SkillRevision[]>;
+  compareSkillRevisions(leftId: string, rightId: string): Promise<{
+    left: SkillRevision;
+    right: SkillRevision;
+    changedFields: Array<{ field: string; before: unknown; after: unknown }>;
+  } | null>;
+  restoreSkillRevision(id: string, revisionId: string): Promise<SkillWithReferences | undefined>;
   deleteSkill(id: string): Promise<boolean>;
   // Skill Default Lattice mutations (Persona morphogenic layer mirror).
   ensureOwnedSkillCopy(id: string): Promise<SkillWithReferences | undefined>;
   revertSkillOverride(id: string): Promise<SkillWithReferences | undefined>;
-  useUpdatedSkillDefault(id: string): Promise<SkillWithReferences | undefined>;
+  useUpdatedSkillDefault(id: string, conflictResolution?: "merge" | "theirs"): Promise<SkillWithReferences | undefined>;
   acknowledgeSkillUpdate(id: string): Promise<SkillWithReferences | undefined>;
   previewPlatformSkillPublication(
     id: string,
@@ -949,6 +957,64 @@ export class HybridStorage implements IStorage {
     } as SkillRevisionPayload;
   }
 
+  private skillRevisionVisible(identityPredicate: SQL): SQL {
+    const principal = requireCurrentPrincipal();
+    return and(
+      identityPredicate,
+      or(
+        eq(skillRevisions.scope, "platform"),
+        and(
+          eq(skillRevisions.scope, "user"),
+          eq(skillRevisions.ownerUserId, principal.userId ?? ""),
+          eq(skillRevisions.accountId, principal.accountId ?? ""),
+        ),
+      ),
+    )!;
+  }
+
+  async getSkillRevisionHistory(id: string): Promise<SkillRevision[]> {
+    const skill = await this.getSkill(id);
+    if (!skill) return [];
+    return db.select().from(skillRevisions).where(
+      this.skillRevisionVisible(eq(skillRevisions.skillIdentityId, skill.id)),
+    ).orderBy(desc(skillRevisions.createdAt)).limit(100);
+  }
+
+  async compareSkillRevisions(leftId: string, rightId: string) {
+    const [left] = await db.select().from(skillRevisions).where(
+      this.skillRevisionVisible(eq(skillRevisions.id, leftId)),
+    ).limit(1);
+    const [right] = await db.select().from(skillRevisions).where(
+      this.skillRevisionVisible(eq(skillRevisions.id, rightId)),
+    ).limit(1);
+    if (!left || !right) return null;
+    const before = left.payload as SkillRevisionPayload;
+    const after = right.payload as SkillRevisionPayload;
+    return {
+      left,
+      right,
+      changedFields: changedSkillFields(before, after).map((field) => ({
+        field,
+        before: before[field as keyof SkillRevisionPayload],
+        after: after[field as keyof SkillRevisionPayload],
+      })),
+    };
+  }
+
+  async restoreSkillRevision(id: string, revisionId: string): Promise<SkillWithReferences | undefined> {
+    const skill = await this.getSkill(id);
+    if (!skill || skill.scope !== "user") return undefined;
+    const [revision] = await db.select().from(skillRevisions).where(
+      this.skillRevisionVisible(and(
+        eq(skillRevisions.id, revisionId),
+        eq(skillRevisions.skillIdentityId, skill.id),
+        eq(skillRevisions.scope, "user"),
+      )!),
+    ).limit(1);
+    if (!revision) return undefined;
+    return this.updateSkill(skill.id, revision.payload as Partial<InsertSkill>);
+  }
+
   /** Insert an immutable skill revision and return its id. */
   private async insertSkillRevisionTx(
     tx: DbTransaction,
@@ -1139,8 +1205,11 @@ export class HybridStorage implements IStorage {
     return this.enrichSkillWithReferences(reverted);
   }
 
-  /** Accept the inbound platform default onto a customized copy (Use updated default). */
-  async useUpdatedSkillDefault(id: string): Promise<SkillWithReferences | undefined> {
+  /** Accept an inbound platform revision with Persona-parity three-way merge. */
+  async useUpdatedSkillDefault(
+    id: string,
+    conflictResolution: "merge" | "theirs" = "merge",
+  ): Promise<SkillWithReferences | undefined> {
     const principal = getCurrentPrincipal();
     if (!principal?.userId || !principal.accountId) {
       throw new Error("Skill update acceptance requires an explicit user principal");
@@ -1152,16 +1221,44 @@ export class HybridStorage implements IStorage {
       const [template] = await tx.select().from(skills).where(eq(skills.id, shadow.templateSkillId)).limit(1);
       if (!template?.currentRevisionId) return undefined;
       const platformPayload = await this.readSkillRevisionPayloadTx(tx, template.currentRevisionId);
-      if (!platformPayload) return undefined;
-      await this.applySkillPayloadTx(tx, shadow.id, platformPayload, {
-        baseRevisionId: template.currentRevisionId,
-        currentRevisionId: template.currentRevisionId,
-        updateState: "following",
-      });
-      log.info("Skill accepted updated default", {
-        skillId: shadow.id,
-        platformRevisionId: template.currentRevisionId,
-      });
+      const basePayload = await this.readSkillRevisionPayloadTx(tx, shadow.baseRevisionId);
+      const userPayload = await this.buildSkillPayloadTx(tx, shadow);
+      if (!platformPayload || !basePayload) return undefined;
+      const merged = mergeSkillPayloads(basePayload, platformPayload, userPayload);
+      if (merged.conflicts.length > 0 && conflictResolution === "merge") {
+        await tx.update(skills).set({
+          updateState: "conflict",
+          customized: true,
+          updatedAt: new Date(),
+        }).where(eq(skills.id, shadow.id));
+        log.info("Skill default merge requires conflict resolution", {
+          skillId: shadow.id,
+          platformRevisionId: template.currentRevisionId,
+          conflictFields: merged.conflicts,
+        });
+      } else {
+        const acceptedPayload = conflictResolution === "theirs" ? platformPayload : merged.payload;
+        const remainsCustomized = changedSkillFields(platformPayload, acceptedPayload).length > 0;
+        const revisionId = remainsCustomized
+          ? await this.insertSkillRevisionTx(tx, shadow, acceptedPayload, {
+              scope: "user",
+              parentRevisionId: shadow.currentRevisionId,
+              platformBaseRevisionId: template.currentRevisionId,
+              changeSummary: "Merged updated default",
+              createdByUserId: principal.userId,
+            })
+          : template.currentRevisionId;
+        await this.applySkillPayloadTx(tx, shadow.id, acceptedPayload, {
+          baseRevisionId: template.currentRevisionId,
+          currentRevisionId: revisionId,
+          updateState: remainsCustomized ? "customized" : "following",
+        });
+        log.info("Skill accepted updated default", {
+          skillId: shadow.id,
+          platformRevisionId: template.currentRevisionId,
+          outcome: remainsCustomized ? "merged_customized" : "following",
+        });
+      }
       const [row] = await tx.select().from(skills).where(eq(skills.id, shadow.id)).limit(1);
       return row ?? shadow;
     });

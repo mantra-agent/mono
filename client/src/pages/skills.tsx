@@ -89,6 +89,7 @@ import { useSkillFailures } from "@/components/skill-failure-indicator";
 import { useAuth } from "@/hooks/use-auth";
 import type {
   SkillWithReferences,
+  SkillRevision,
   SkillScore,
   SkillRun,
   CheckResult,
@@ -320,8 +321,22 @@ function buildSkillApplyAll(skill: SkillWithReferences, templateId: string): Pen
     description: `Publish ${label}'s current values as the platform default for everyone. Skills following the default update automatically; customized copies get an "Update available".`,
     rows: buildDiffRows(skill.platformBaseline, changes, skillLabelFor),
     run: async () => {
+      const [configResponse, personasResponse] = await Promise.all([
+        apiRequest("GET", "/api/skills/persona-config"),
+        apiRequest("GET", "/api/personas"),
+      ]);
+      const config = await configResponse.json() as { preferences: Record<string, number> };
+      const personas = await personasResponse.json() as Array<{ id: number; templatePersonaId: number | null; source: "seed" | "user" }>;
+      const preferenceId = config.preferences[skill.id];
+      const preference = personas.find((persona) => persona.id === preferenceId);
+      const publishChanges = {
+        ...changes,
+        recommendedPersonaTemplateId: preference
+          ? (preference.source === "seed" ? preference.id : preference.templatePersonaId)
+          : skill.recommendedPersonaTemplateId ?? null,
+      };
       await apiRequest("POST", `/api/skills/platform/${templateId}/publish`, {
-        changes,
+        changes: publishChanges,
         changeSummary: `Apply ${skillLabel(skill)} to default`,
         confirmed: true,
       });
@@ -1092,6 +1107,50 @@ function RunHistorySection({ skillName }: { skillName: string }) {
 }
 
 
+function SkillRevisionHistory({ skill }: { skill: SkillWithReferences }) {
+  const { toast } = useToast();
+  const { data: revisions = [] } = useQuery<SkillRevision[]>({
+    queryKey: ["/api/skills", skill.id, "history"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", `/api/skills/${skill.id}/history`);
+      return response.json();
+    },
+  });
+  const restore = useMutation({
+    mutationFn: async (revisionId: string) => {
+      await apiRequest("POST", `/api/skills/${skill.id}/restore`, { revisionId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/skills", skill.id, "history"] });
+      toast({ title: "Skill restored" });
+    },
+    onError: (error: Error) => toast({ title: "Couldn't restore skill", description: error.message, variant: "destructive" }),
+  });
+  if (revisions.length === 0) return null;
+  return (
+    <ProfileDetailSection label="History" defaultOpen={false} testId="section-skill-history">
+      {revisions.map((revision) => (
+        <ProfileTreeRow
+          key={revision.id}
+          label={revision.changeSummary}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          menuContent={revision.scope === "user" && revision.id !== skill.currentRevisionId ? (
+            <DropdownMenuItem onSelect={() => restore.mutate(revision.id)}>Restore</DropdownMenuItem>
+          ) : undefined}
+          menuVisibility="hover"
+        >
+          <span className="text-xs text-muted-foreground">
+            {formatDistanceToNow(new Date(revision.createdAt), { addSuffix: true })}
+          </span>
+        </ProfileTreeRow>
+      ))}
+    </ProfileDetailSection>
+  );
+}
+
 function SkillEditor({
   skill,
   lattice,
@@ -1108,12 +1167,8 @@ function SkillEditor({
   const [description, setDescription] = useState(skill?.description ?? "");
   const [process, setProcess] = useState(skill?.process ?? "");
   const [sessionType, setSessionType] = useState<string>(skill?.sessionType || "agent");
-  /** Selected global persona template id, or "recommended" for product default. */
-  const [personaChoice, setPersonaChoice] = useState<number | "recommended">(
-    typeof skill?.recommendedPersonaTemplateId === "number"
-      ? skill.recommendedPersonaTemplateId
-      : "recommended",
-  );
+  /** Personal runtime choice, or "recommended" to follow the product default. */
+  const [personaChoice, setPersonaChoice] = useState<number | "recommended">("recommended");
   const [version, setVersion] = useState(skill?.version ?? "1.0");
 
   useEffect(() => {
@@ -1123,11 +1178,7 @@ function SkillEditor({
     setProcess(skill.process);
     setSessionType(skill.sessionType || "agent");
     setVersion(skill.version);
-    setPersonaChoice(
-      typeof skill.recommendedPersonaTemplateId === "number"
-        ? skill.recommendedPersonaTemplateId
-        : "recommended",
-    );
+    setPersonaChoice("recommended");
   }, [skill]);
 
   const { data: personas = [] } = useQuery<{
@@ -1140,16 +1191,31 @@ function SkillEditor({
     queryKey: ["/api/personas"],
   });
 
-  // Global selectable templates only — product recommendation is platform-owned.
-  const personaTemplates = useMemo(
-    () => personas.filter((p) => p.source === "seed" && !p.isSystem),
+  // The runtime choice may use the caller's visible persona copy. Seeds are
+  // hidden when their user copies exist, so filtering to seeds erases the real catalog.
+  const personaChoices = useMemo(
+    () => personas.filter((p) => !p.isSystem),
     [personas],
   );
+
+  const { data: personaConfig } = useQuery<{
+    preferences: Record<string, number>;
+    recommendations: Record<string, { templateId: number; name: string }>;
+  }>({
+    queryKey: ["/api/skills/persona-config"],
+    enabled: Boolean(skill),
+  });
+
+  useEffect(() => {
+    if (!skill) return;
+    const preference = personaConfig?.preferences[skill.id];
+    setPersonaChoice(typeof preference === "number" ? preference : "recommended");
+  }, [skill, personaConfig]);
 
   const recommendedTemplateId = skill?.recommendedPersonaTemplateId ?? null;
   const recommendedName =
     (recommendedTemplateId != null
-      ? personaTemplates.find((p) => p.id === recommendedTemplateId)?.name
+      ? personaConfig?.recommendations[skill?.id ?? ""]?.name
       : null) ?? null;
 
   // /api/timers returns { timers, globalPaused } — same envelope as the Timers page.
@@ -1267,8 +1333,6 @@ function SkillEditor({
         showEmpty
         mobileLayout="inline"
         testId="row-skill-persona"
-        menuContent={fieldMenu("recommendedPersonaTemplateId")}
-        menuVisibility="hover"
       >
         <Select
           value={personaChoice === "recommended" ? "recommended" : String(personaChoice)}
@@ -1276,8 +1340,14 @@ function SkillEditor({
             const next = value === "recommended" ? "recommended" : Number(value);
             setPersonaChoice(next);
             if (skill) {
-              void commitField({
-                recommendedPersonaTemplateId: next === "recommended" ? null : next,
+              void apiRequest("PUT", `/api/skills/${skill.id}/persona-preference`, {
+                personaId: next === "recommended" ? null : next,
+              }).then(() => queryClient.invalidateQueries({ queryKey: ["/api/skills/persona-config"] })).catch((err) => {
+                toast({
+                  title: "Couldn't update persona",
+                  description: err instanceof Error ? err.message : "Update failed",
+                  variant: "destructive",
+                });
               });
             }
           }}
@@ -1289,12 +1359,13 @@ function SkillEditor({
             <SelectItem value="recommended">
               {recommendedName ? `Recommended · ${recommendedName}` : "Default persona"}
             </SelectItem>
-            {personaTemplates.map((persona) => (
+            {personaChoices.map((persona) => (
               <SelectItem key={persona.id} value={String(persona.id)}>{persona.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>
       </ProfileTreeRow>
+      {skill ? <SkillRevisionHistory skill={skill} /> : null}
       <ProfileTreeRow
         label="System"
         hasValue
