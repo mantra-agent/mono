@@ -198,7 +198,7 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
             <SimpleCheckCircle pending={markDone.isPending} disabled={pending || messageIds.length === 0} label={`Dismiss ${item.title} from inbox`} onClick={dismiss} />
           </span>
           <div className="relative min-w-0 flex-1 pl-2">
-            <span className="inline-flex max-w-full items-center gap-1 text-sm">
+            <span className="inline-flex max-w-full items-center gap-1 text-xs">
               {actionReference ? (
                 <span className="inline-flex min-w-0 items-center" onClick={(e) => e.stopPropagation()}>
                   <ReferenceRenderer refValue={actionReference} surface="simple-row" className="mx-0" />
