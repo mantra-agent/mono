@@ -71,6 +71,7 @@ export const SCREEN_REGISTRY = {
   integrations: { label: "Integrations", path: "/integrations" },
   mods: { label: "Mods", path: "/mods" },
   account: { label: "Account", path: "/account" },
+  sos: { label: "SOS", path: "/sos" },
   build: { label: "Build", path: "/build", aliases: ["/dev"] },
   vision: { label: "Vision", path: "/vision" },
   observations: { label: "Observations", path: "/brain?tab=observations" },
