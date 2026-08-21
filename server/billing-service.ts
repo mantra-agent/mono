@@ -1,9 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   BILLING_METER_EVENT_NAME,
-  BILLING_PRICE_AMOUNT_CENTS,
   BILLING_PRICE_KEYS,
-  BILLING_PRICE_LABELS,
   LADDER_INCLUDE_TOKENS,
   PACKAGE_LICENSED_PRICE,
   type AccountBillingSummary,
@@ -86,28 +84,25 @@ async function requirePriceMap(): Promise<Map<BillingPriceKey, string>> {
 
 export async function listBillingPriceMap(): Promise<BillingPriceMapRow[]> {
   const rows = await db.select().from(billingPrices);
-  const byKey = new Map(rows.map((row) => [row.key as BillingPriceKey, row]));
-  return BILLING_PRICE_KEYS.map((key) => {
-    const row = byKey.get(key);
-    return {
-      key,
-      label: BILLING_PRICE_LABELS[key],
-      stripePriceId: row?.stripePriceId ?? null,
-      stripeProductId: row?.stripeProductId ?? null,
-      amountCents: row?.amountCents ?? null,
-      currency: row?.currency ?? "usd",
-      expectedAmountCents: BILLING_PRICE_AMOUNT_CENTS[key],
-      mapped: Boolean(row?.stripePriceId),
-      updatedAt: row?.updatedAt ? row.updatedAt.toISOString() : null,
-    };
-  });
+  return rows.map((row) => ({
+    key: row.key as BillingPriceKey,
+    label: row.label,
+    stripePriceId: row.stripePriceId,
+    stripeProductId: row.stripeProductId,
+    amountCents: row.amountCents,
+    currency: row.currency,
+    mapped: Boolean(row.stripePriceId),
+    updatedAt: row.updatedAt.toISOString(),
+  }));
 }
 
 export async function upsertBillingPriceMapEntry(input: {
   key: string;
+  label: string;
   stripePriceId: string;
   stripeProductId?: string | null;
   amountCents?: number | null;
+  currency: string;
 }): Promise<BillingPriceMapRow> {
   if (!isBillingPriceKey(input.key)) {
     throw new StripeCollectorError("Unknown billing price key", "billing_price_key_unknown");
@@ -116,12 +111,17 @@ export async function upsertBillingPriceMapEntry(input: {
   if (!/^price_[A-Za-z0-9]+$/.test(stripePriceId)) {
     throw new StripeCollectorError("stripePriceId must look like price_…", "billing_price_id_invalid");
   }
-  const amountCents =
-    input.amountCents === undefined
-      ? BILLING_PRICE_AMOUNT_CENTS[input.key]
-      : input.amountCents;
+  const label = input.label.trim();
+  if (!label) {
+    throw new StripeCollectorError("label is required", "billing_price_label_invalid");
+  }
+  const amountCents = input.amountCents ?? null;
   if (amountCents != null && (!Number.isInteger(amountCents) || amountCents < 0)) {
     throw new StripeCollectorError("amountCents must be a non-negative integer or null", "billing_price_amount_invalid");
+  }
+  const currency = input.currency.trim().toLowerCase();
+  if (!/^[a-z]{3}$/.test(currency)) {
+    throw new StripeCollectorError("currency must be a three-letter code", "billing_price_currency_invalid");
   }
   const stripeProductId =
     input.stripeProductId === undefined || input.stripeProductId === null || input.stripeProductId.trim() === ""
@@ -133,10 +133,11 @@ export async function upsertBillingPriceMapEntry(input: {
 
   const values = {
     key: input.key,
+    label,
     stripePriceId,
     stripeProductId,
     amountCents,
-    currency: "usd",
+    currency,
     updatedAt: new Date(),
   };
   await db
@@ -145,6 +146,7 @@ export async function upsertBillingPriceMapEntry(input: {
     .onConflictDoUpdate({
       target: billingPrices.key,
       set: {
+        label: values.label,
         stripePriceId: values.stripePriceId,
         stripeProductId: values.stripeProductId,
         amountCents: values.amountCents,

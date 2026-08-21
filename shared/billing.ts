@@ -9,7 +9,7 @@ export const BILLING_PRICE_KEYS = [
   "extra_agent",
   "extra_participant",
   "token_overage",
-  "tive_custom",
+  "custom",
 ] as const;
 export type BillingPriceKey = (typeof BILLING_PRICE_KEYS)[number];
 
@@ -37,30 +37,7 @@ export const PACKAGE_LICENSED_PRICE: Record<BillingPackageKey, BillingPriceKey> 
   max: "max",
   max_plus: "max_plus",
   factory_plus: "factory_plus",
-  custom: "tive_custom",
-};
-
-/** Display amounts for operator Price map UI. Stripe Dashboard remains catalog authority. */
-export const BILLING_PRICE_AMOUNT_CENTS: Record<BillingPriceKey, number | null> = {
-  max: 50_000,
-  max_plus: 100_000,
-  factory_plus: 500_000,
-  extra_principal: 50_000,
-  extra_agent: 100_000,
-  extra_participant: 20_000,
-  token_overage: null,
-  tive_custom: 500_000,
-};
-
-export const BILLING_PRICE_LABELS: Record<BillingPriceKey, string> = {
-  max: "Max licensed monthly",
-  max_plus: "Max+ licensed monthly",
-  factory_plus: "Factory+ licensed monthly (no onboard)",
-  extra_principal: "Extra Principal",
-  extra_agent: "Extra Agent",
-  extra_participant: "Extra Participant",
-  token_overage: "Token overage meter ($3 / M past include)",
-  tive_custom: "Custom licensed monthly",
+  custom: "custom",
 };
 
 export function isBillingPackageKey(value: string): value is BillingPackageKey {
@@ -78,7 +55,6 @@ export interface BillingPriceMapRow {
   stripeProductId: string | null;
   amountCents: number | null;
   currency: string;
-  expectedAmountCents: number | null;
   mapped: boolean;
   updatedAt: string | null;
 }

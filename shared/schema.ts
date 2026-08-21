@@ -195,7 +195,7 @@ export const accounts = pgTable("accounts", {
   ownerUserId: varchar("owner_user_id").references(() => users.id, { onDelete: "set null" }),
   /** Required named Router. Boot/migration backfills Default before NOT NULL. */
   routerId: uuid("router_id").notNull(),
-  /** NULL = no envelope (not a paying Account). Never default TIVE to Factory+ 1B. */
+  /** NULL = no envelope (not a paying Account). Custom agreements never inherit a standard package include. */
   includedTokens: bigint("included_tokens", { mode: "number" }),
   grantedTokens: bigint("granted_tokens", { mode: "number" }).notNull().default(0),
   usagePeriod: text("usage_period"),
@@ -363,16 +363,13 @@ export const accountBilling = pgTable("account_billing", {
 
 export const billingPrices = pgTable("billing_prices", {
   key: text("key").primaryKey(),
+  label: text("label").notNull(),
   stripePriceId: text("stripe_price_id").notNull(),
   stripeProductId: text("stripe_product_id"),
   amountCents: integer("amount_cents"),
   currency: text("currency").notNull().default("usd"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => ({
-  keyCheck: check(
-    "billing_prices_key_check",
-    sql`${table.key} IN ('max', 'max_plus', 'factory_plus', 'extra_principal', 'extra_agent', 'extra_participant', 'token_overage', 'tive_custom')`,
-  ),
   pricePrefixCheck: check(
     "billing_prices_price_prefix_check",
     sql`${table.stripePriceId} ~ '^price_'`,
