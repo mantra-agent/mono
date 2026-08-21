@@ -4,12 +4,12 @@ import { useQuery } from "@tanstack/react-query";
  * Client registry fallbacks are either the raw id or `${Type} ${id}`.
  * Those are unresolved identifiers, not display names — fetch the server label.
  */
-export function isUnresolvedFallbackLabel(id: string, staticLabel: string): boolean {
+export function isUnresolvedFallbackLabel(type: string, id: string, staticLabel: string): boolean {
   if (!staticLabel || staticLabel === id) return true;
   if (/^\d+$/.test(staticLabel)) return true;
   if (staticLabel.endsWith(` ${id}`)) return true;
-  // Type shell with no instance identity (Spec: Business Plan fallback drops the hex).
-  if (staticLabel === "Business Plan") return true;
+  const typeLabel = type.replaceAll("_", " ").trim().toLocaleLowerCase();
+  if (staticLabel.trim().toLocaleLowerCase() === typeLabel) return true;
   return false;
 }
 
@@ -23,7 +23,7 @@ export function useReferenceLabel(
   id: string,
   staticLabel: string,
 ): string {
-  const looksUnresolved = isUnresolvedFallbackLabel(id, staticLabel);
+  const looksUnresolved = isUnresolvedFallbackLabel(type, id, staticLabel);
 
   const { data } = useQuery<string>({
     queryKey: ["reference-label", type, id],
