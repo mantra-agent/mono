@@ -1223,6 +1223,7 @@ function meetingSection(event: CalendarEvent, today: string, tomorrow: string, w
   }
   if (startDate === tomorrow) return "tomorrow";
   if (startDate <= weekEnd) return "this_week";
+  if (startDate <= addDays(weekEnd, 7)) return "next_week";
   return "this_month";
 }
 
@@ -1442,12 +1443,14 @@ function itemFromStandaloneMilestone(milestone: Milestone, project: Project, tod
 
 // ─── Projects ───
 
-function projectSection(project: Project, today: string, monthEnd: string, quarterEnd: string, yearEnd: string, nextYearEnd: string): SimpleSection {
+function projectSection(project: Project, today: string, weekEnd: string, monthEnd: string, quarterEnd: string, yearEnd: string, nextYearEnd: string): SimpleSection {
   if (!project.dueDate) {
     // No deadline: active projects flagged, default to this_month
     return "this_month";
   }
   if (project.dueDate <= today) return "today";
+  if (project.dueDate <= weekEnd) return "this_week";
+  if (project.dueDate <= addDays(weekEnd, 7)) return "next_week";
   if (project.dueDate <= monthEnd) return "this_month";
   if (project.dueDate <= quarterEnd) return "this_quarter";
   if (project.dueDate <= yearEnd) return "this_year";
@@ -2273,11 +2276,11 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     errors.push({ source: "email", message });
   }
 
-  // Meetings (calendar events for today through this week)
+  // Meetings (calendar events through the end of next week)
   try {
     const todayStart = `${today}T00:00:00-05:00`;
-    const lookAhead = addDays(today, 7);
-    const lookAheadEnd = `${lookAhead}T23:59:59-05:00`;
+    const nextWeekEnd = addDays(weekEnd, 7);
+    const lookAheadEnd = `${nextWeekEnd}T23:59:59-05:00`;
     const { events, errors: calErrors } = await listAllEvents({
       timeMin: todayStart,
       timeMax: lookAheadEnd,
@@ -2324,7 +2327,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   // Projects (owner-managed active/planning only — not grant-shared bulk)
   try {
     homeProjects.forEach((project, index) => {
-      const section = projectSection(project, today, monthEnd, quarterEnd, yearEnd, nextYearEnd);
+      const section = projectSection(project, today, weekEnd, monthEnd, quarterEnd, yearEnd, nextYearEnd);
       items.push(itemFromProject(project, section, index));
     });
     // Projects completed today land in DONE until the next calendar day.
