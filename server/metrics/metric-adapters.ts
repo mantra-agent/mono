@@ -990,6 +990,58 @@ const PRODUCT_DESCRIPTION_BY_SLUG: Record<string, string> = {
 
 const HOURS_USED_PER_USER_SLUG = "hours-used-per-user";
 
+type PlatformRatioMetricSpec = {
+  slug: string; name: string; description: string; unit: string;
+  numeratorKey: string; numeratorName: string; numeratorUnit: string; numeratorDescription: string;
+  denominatorKey: "active-users" | "registered-users";
+};
+
+const SCORECARD_RATIO_METRICS: PlatformRatioMetricSpec[] = [
+  { slug: "achieved-goals-per-active-user", name: "Achieved Goals Per Active User", description: "Platform achieved goals in the exact asked range divided by distinct Active Users in that same range.", unit: "goals/user", numeratorKey: "achieved-goals", numeratorName: "Achieved Goals", numeratorUnit: "goals", numeratorDescription: "Platform goals marked achieved in the period.", denominatorKey: "active-users" },
+  { slug: "hours-used-per-active-user", name: "Hours Used Per Active User", description: "Authenticated unioned hours in the exact asked range divided by distinct Active Users in that same range.", unit: "hours/user", numeratorKey: "hours-used", numeratorName: "Hours Used", numeratorUnit: "hours", numeratorDescription: "Connected time unioned per authenticated user across tabs and devices.", denominatorKey: "active-users" },
+  { slug: "meetings-per-active-user", name: "Meetings Per Active User", description: "Recap-ready completed product meetings in the exact asked range divided by distinct Active Users in that same range.", unit: "meetings/user", numeratorKey: "mantra-meetings", numeratorName: "Meetings", numeratorUnit: "meetings", numeratorDescription: PLATFORM_MANTRA_MEETINGS_DEFINITION.description, denominatorKey: "active-users" },
+  { slug: "memory-per-user", name: "Memory Per User", description: "Active canonical and linked memory stock as of range.end divided by registered Users stock as of that same range.end.", unit: "claims/user", numeratorKey: "user-memory", numeratorName: "User Memory", numeratorUnit: "claims", numeratorDescription: "Active canonical and linked vNext memory claims held across Mantra.", denominatorKey: "registered-users" },
+];
+
+async function ensurePlatformRatioMetric(spec: PlatformRatioMetricSpec): Promise<void> {
+  const { ensurePlatformBusinessMetrics } = await import("../metrics-storage");
+  const activeDenominator = spec.denominatorKey === "active-users";
+  const refs = await ensurePlatformBusinessMetrics([
+    { key: spec.numeratorKey, name: spec.numeratorName, unit: spec.numeratorUnit, description: spec.numeratorDescription },
+    { key: spec.denominatorKey, name: activeDenominator ? "Active Users" : "Users", unit: "users", description: activeDenominator ? PLATFORM_ACTIVE_USERS_DEFINITION.description : "Distinct users with a membership on an active account." },
+  ]);
+  const numerator = refs.get(spec.numeratorKey);
+  const denominator = refs.get(spec.denominatorKey);
+  if (!numerator || !denominator) return;
+  const equation = `@metric:${numerator.id} / @metric:${denominator.id}`;
+  const adapterConfig = { adapterKey: "expression", equation, plan: { type: "op" as const, op: "/" as const, left: { type: "metric" as const, metricId: numerator.id }, right: { type: "metric" as const, metricId: denominator.id } }, operandIds: [numerator.id, denominator.id] };
+  const id = `metric_${spec.slug.replace(/-/g, "_")}_${numerator.businessId}`;
+  await db.execute(sql`
+    INSERT INTO metrics (id, business_id, name, slug, description, unit, direction, sample_period, adapter_kind,
+      adapter_config, status, scope, owner_user_id, account_id, vault_id, created_by_user_id, owner_kind, owner_id)
+    VALUES (${id}, ${numerator.businessId}, ${spec.name}, ${spec.slug}, ${spec.description}, ${spec.unit},
+      ${"higher_is_better"}, ${"custom"}, ${"expression"}, ${JSON.stringify(adapterConfig)}::jsonb,
+      ${"active"}, ${"user"}, ${numerator.ownerUserId}, ${numerator.accountId}, ${numerator.vaultId ?? null},
+      ${numerator.ownerUserId}, ${"platform"}, NULL)
+    ON CONFLICT DO NOTHING
+  `);
+  await db.execute(sql`
+    UPDATE metrics
+    SET name = ${spec.name}, description = ${spec.description}, unit = ${spec.unit}, sample_period = 'custom',
+        adapter_kind = 'expression', adapter_config = ${JSON.stringify(adapterConfig)}::jsonb,
+        owner_kind = 'platform', owner_id = NULL, status = 'active', updated_at = NOW()
+    WHERE slug = ${spec.slug} AND account_id = ${numerator.accountId}
+      AND (name IS DISTINCT FROM ${spec.name} OR description IS DISTINCT FROM ${spec.description}
+        OR unit IS DISTINCT FROM ${spec.unit} OR sample_period IS DISTINCT FROM 'custom'
+        OR adapter_kind IS DISTINCT FROM 'expression' OR adapter_config IS DISTINCT FROM ${JSON.stringify(adapterConfig)}::jsonb
+        OR owner_kind IS DISTINCT FROM 'platform' OR owner_id IS NOT NULL OR status IS DISTINCT FROM 'active')
+  `);
+}
+
+async function ensureScorecardRatioMetrics(): Promise<void> {
+  for (const spec of SCORECARD_RATIO_METRICS) await ensurePlatformRatioMetric(spec);
+}
+
 async function ensureHoursUsedPerUserMetric(): Promise<void> {
   const { ensurePlatformBusinessMetrics } = await import("../metrics-storage");
   const refs = await ensurePlatformBusinessMetrics([
@@ -1187,6 +1239,7 @@ export async function ensureProductCatalogDefinitions(): Promise<void> {
        OR slug = 'activation-rate'
   `);
   await ensureHoursUsedPerUserMetric();
+  await ensureScorecardRatioMetrics();
   await ensureScorecardKpiWrappers();
 }
 
@@ -1223,18 +1276,16 @@ const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
     id: "kpi_1ebe9dee0b2927af71d6e905",
     matchSlugs: ["hours-used-kpi"],
     slug: "hours-used-kpi",
-    name: "Hours Used",
-    metricSlug: "hours-used",
-    metricId: "metric_hours_used_1d52cbc6-d922-4afd-b5e8-0eeeb5babd47",
-    description:
-      "Lagging engagement KPI: authenticated connected hours (unioned per user), scored over a completed week.",
-    targetLabel: "At least 8 authenticated hours used per day (56/week)",
+    name: "Hours Used Per Active User",
+    metricSlug: "hours-used-per-active-user",
+    description: "Authenticated unioned hours divided by distinct Active Users over the exact completed week.",
+    targetLabel: "",
     cadence: "Weekly",
     period: "weekly",
     ownerLabel: "Product",
     direction: "higher_is_better",
-    bullThreshold: 300,
-    bearThreshold: 56,
+    bullThreshold: null,
+    bearThreshold: null,
     staleAfterHours: 48,
     status: "active",
   },
@@ -1242,18 +1293,16 @@ const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
     id: "kpi_3de012b5b3b39b4eb6dde7a6",
     matchSlugs: ["achieved-goals-kpi"],
     slug: "achieved-goals-kpi",
-    name: "Achieved Goals",
-    metricSlug: "achieved-goals",
-    metricId: "metric_a6f0ae8469109539b853fb22",
-    description:
-      "Platform goals marked achieved in the period (documentType=goal + status=achieved + completedAt in range). Not a customer-only filter.",
-    targetLabel: "At least 20 goals achieved per month",
+    name: "Achieved Goals Per Active User",
+    metricSlug: "achieved-goals-per-active-user",
+    description: "Platform achieved goals divided by distinct Active Users over the exact completed month.",
+    targetLabel: "",
     cadence: "Monthly",
     period: "monthly",
     ownerLabel: "Product",
     direction: "higher_is_better",
-    bullThreshold: 40,
-    bearThreshold: 5,
+    bullThreshold: null,
+    bearThreshold: null,
     staleAfterHours: 1080,
     status: "active",
   },
@@ -1298,18 +1347,16 @@ const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
   {
     matchSlugs: ["mantra-meetings-kpi", "meetings-kpi"],
     slug: "meetings-kpi",
-    name: "Meetings",
-    metricSlug: "mantra-meetings",
-    metricId: "metric_0fabe2a49667c865bedc3cf7",
-    description:
-      "Company scorecard: recap-ready completed sessions with notes in the period. Product Meetings — not principal engagement meetings.",
-    targetLabel: "At least 5 recap-ready meetings per week",
+    name: "Meetings Per Active User",
+    metricSlug: "meetings-per-active-user",
+    description: "Recap-ready completed product meetings divided by distinct Active Users over the exact completed week.",
+    targetLabel: "",
     cadence: "Weekly",
     period: "weekly",
     ownerLabel: "Product",
     direction: "higher_is_better",
-    bullThreshold: 10,
-    bearThreshold: 3,
+    bullThreshold: null,
+    bearThreshold: null,
     staleAfterHours: 168,
     status: "active",
   },
@@ -1333,17 +1380,16 @@ const SCORECARD_KPI_SPECS: ScorecardKpiSpec[] = [
   {
     matchSlugs: ["user-memory-kpi"],
     slug: "user-memory-kpi",
-    name: "User Memory",
-    metricSlug: "user-memory",
-    description:
-      "Active canonical and linked vNext memory claims held across Mantra (platform stock).",
-    targetLabel: "Grow durable active memory beyond 2,000 claims",
+    name: "Memory Per User",
+    metricSlug: "memory-per-user",
+    description: "Active canonical and linked memory stock divided by registered Users stock at the same range.end.",
+    targetLabel: "",
     cadence: "Weekly",
     period: "weekly",
     ownerLabel: "Product",
     direction: "higher_is_better",
-    bullThreshold: 2000,
-    bearThreshold: 500,
+    bullThreshold: null,
+    bearThreshold: null,
     staleAfterHours: 168,
     status: "active",
   },
