@@ -1,3 +1,10 @@
+<!-- 2026-08-20 SOS static diagnostic prototype:
+- Assets/data: A04 mocked conversation/social-state copy embedded in client source; no live transcript, Person, Session, inference, or provider data. Surface is S1 product prototype content.
+- Flow/threat: authenticated browser → DEBUG navigation or direct `/sos` route. Credible abuse is exposing a privileged diagnostic surface to ordinary users by hiding only the sidebar item while leaving the route open (STRIDE information disclosure; IAM-01).
+- Deterministic controls/owner: the canonical `navigation.sos.open` target requires `system:read`, so sidebar composition filters it; the `/sos` route independently crosses `RequirePermission("system:read")`. The page performs no reads or writes. Owner: Core diagnostics. Severity: low confidentiality. SLA: same PR.
+- Residual/rollback: any principal with `system:read` can see the mocked prototype, as intended; no live data is exposed. Revert the screen/target registration, route, sidebar section, page, and this finding together.
+-->
+
 <!-- 2026-08-20 Wellness default lattice:
 Assets/data: principal-owned wellness activity rows and platform-wide Wellness default definitions. Boundaries: authenticated HTTP/health-tool local mutations; principal activation reconciliation; privileged platform catalog publication. Threats: IDOR/cross-account mutation and an ordinary user publishing or retiring defaults for every account (STRIDE elevation/tampering). Controls: all local reads/writes use the canonical sensitive principal scope; reconciliation runs only for the current authenticated user/account and never fans out under an ambient system principal; platform publish/retire requires actorType=user plus build:write at the service boundary; catalog revisions are content hashes and writes are replay-safe upserts; retirement retains local rows and logs. Outcome: mitigated. Residual: build:write holders can intentionally publish broad defaults, which is the named product authority and remains observable through published_by_user_id/revision.
 -->

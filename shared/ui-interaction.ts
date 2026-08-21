@@ -86,6 +86,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.integrations.open": { screen: "integrations", description: "Connect your tools and accounts." },
   "navigation.mods.open": { screen: "mods", permission: "mods:read", description: "Install and manage mods." },
   "navigation.account.open": { screen: "account", description: "Manage your account settings." },
+  "navigation.sos.open": { screen: "sos", permission: "system:read", description: "Inspect the live social operating state." },
 } as const satisfies Record<string, UiInteractionRoute>;
 
 export type UiInteractionTarget = keyof typeof UI_INTERACTION_TARGET_ROUTES;

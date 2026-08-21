@@ -377,6 +377,13 @@ const navSections: NavSection[] = [
       navItem("Account", "navigation.account.open", Settings),
     ],
   },
+  {
+    label: "Debug",
+    defaultOpen: false,
+    items: [
+      navItem("SOS", "navigation.sos.open", Activity),
+    ],
+  },
 ];
 
 // Build a flat navTree for legacy consumers

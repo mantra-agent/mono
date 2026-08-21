@@ -124,6 +124,7 @@ const InterfacePreviewPage = lazyWithRetry(() => import("@/pages/interface-previ
 const AudiencesPage = lazyWithRetry(() => import("@/pages/audiences"));
 const CampaignsPage = lazyWithRetry(() => import("@/pages/campaigns"));
 const DevOrbPage = lazyWithRetry(() => import("@/pages/dev-orb"));
+const SosPage = lazyWithRetry(() => import("@/pages/sos"));
 
 function serializeCaughtValue(value: unknown): unknown {
   if (value instanceof Error) {
@@ -410,6 +411,7 @@ function Router() {
         <Route path="/zero" component={ZeroPage} />
         <Route path="/interface-preview" component={InterfacePreviewPage} />
         <Route path="/dev/orb">{() => <RequirePermission permission="system:read"><DevOrbPage /></RequirePermission>}</Route>
+        <Route path="/sos">{() => <RequirePermission permission="system:read"><SosPage /></RequirePermission>}</Route>
         <Route path="/library2">{() => <Redirect to={preserveCurrentLocation("/library")} />}</Route>
         <Route path="/library" component={LibraryPage} />
         <Route path="/info">{() => <Redirect to={preserveCurrentLocation("/library")} />}</Route>
