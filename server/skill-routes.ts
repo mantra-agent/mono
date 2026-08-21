@@ -385,6 +385,37 @@ export function registerSkillRoutes(app: Express): void {
     }
   });
 
+  app.get("/api/skills/:id/history", async (req, res) => {
+    try {
+      res.json(await storage.getSkillRevisionHistory(req.params.id));
+    } catch (err: any) {
+      log.error("GET /api/skills/:id/history error:", err.message);
+      res.status(500).json({ error: "Failed to fetch skill history" });
+    }
+  });
+
+  app.get("/api/skills/revisions/compare", async (req, res) => {
+    try {
+      const result = await storage.compareSkillRevisions(String(req.query.left || ""), String(req.query.right || ""));
+      if (!result) return res.status(404).json({ error: "Revision not found" });
+      res.json(result);
+    } catch (err: any) {
+      log.error("GET /api/skills/revisions/compare error:", err.message);
+      res.status(500).json({ error: "Failed to compare skill revisions" });
+    }
+  });
+
+  app.post("/api/skills/:id/restore", async (req, res) => {
+    try {
+      const restored = await storage.restoreSkillRevision(req.params.id, String(req.body?.revisionId || ""));
+      if (!restored) return res.status(404).json({ error: "Skill revision not found" });
+      res.json(restored);
+    } catch (err: any) {
+      log.error("POST /api/skills/:id/restore error:", err.message);
+      res.status(500).json({ error: "Failed to restore skill revision" });
+    }
+  });
+
   // Keep mine — acknowledge an inbound default and stay customized.
   app.post("/api/skills/:id/keep-mine", async (req, res) => {
     try {
@@ -400,7 +431,8 @@ export function registerSkillRoutes(app: Express): void {
   // Use updated default — accept the inbound platform default onto this copy.
   app.post("/api/skills/:id/use-updated-default", async (req, res) => {
     try {
-      const result = await storage.useUpdatedSkillDefault(req.params.id);
+      const resolution = req.body?.conflictResolution === "theirs" ? "theirs" : "merge";
+      const result = await storage.useUpdatedSkillDefault(req.params.id, resolution);
       if (!result) return res.status(404).json({ error: "Updated default not found" });
       res.json(result);
     } catch (err: any) {

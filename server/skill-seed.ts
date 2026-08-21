@@ -87,6 +87,31 @@ export function changedSkillFields(
   ) as string[];
 }
 
+/** Persona-parity three-way merge. Independently changed fields merge while
+ * divergent same-field edits remain explicit conflicts. */
+export function mergeSkillPayloads(
+  base: SkillRevisionPayload,
+  platform: SkillRevisionPayload,
+  user: SkillRevisionPayload,
+): { payload: SkillRevisionPayload; conflicts: string[] } {
+  const merged: SkillRevisionPayload = { ...base };
+  const platformChanges = new Set(changedSkillFields(base, platform));
+  const userChanges = new Set(changedSkillFields(base, user));
+  const conflicts: string[] = [];
+  for (const field of SKILL_PAYLOAD_FIELDS) {
+    const platformChanged = platformChanges.has(field);
+    const userChanged = userChanges.has(field);
+    if (platformChanged && userChanged && JSON.stringify(stableValue(platform[field])) !== JSON.stringify(stableValue(user[field]))) {
+      conflicts.push(field);
+    } else if (userChanged) {
+      (merged as Record<string, unknown>)[field] = user[field];
+    } else if (platformChanged) {
+      (merged as Record<string, unknown>)[field] = platform[field];
+    }
+  }
+  return { payload: merged, conflicts };
+}
+
 /**
  * Structural source for a revision payload. Full skill rows and enriched
  * `SkillWithReferences` (which omits `allowedTools`) both satisfy it, so read
