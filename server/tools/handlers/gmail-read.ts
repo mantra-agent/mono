@@ -1,4 +1,6 @@
 import type { ToolHandlerResult } from "../contracts";
+import { createHash } from "node:crypto";
+import { isValidReferenceIdentifier } from "@shared/references";
 import { checkGmailPermission, gmailInput, resolveGmailAccountId } from "./gmail-boundary";
 
 interface GmailMessagePayload {
@@ -75,6 +77,30 @@ export function createGmailReadHandlers(dependencies: GmailReadDependencies) {
   }
 
   async function handleRead(args: Record<string, any>): Promise<ToolHandlerResult> {
+    if (isValidReferenceIdentifier("email_draft", args.id)) {
+      const { emailDraftStorage } = await import("../../email-draft-storage");
+      const { requireCurrentPrincipal } = await import("../../principal-context");
+      const draft = await emailDraftStorage.getById(requireCurrentPrincipal(), args.id);
+      if (!draft) return gmailInput(`Email draft ${args.id} not found`, "draft_not_found");
+      return {
+        result: JSON.stringify({
+          id: draft.id,
+          type: "email_draft",
+          status: draft.status,
+          accountId: draft.gmailAccountId,
+          to: draft.to,
+          cc: draft.cc,
+          bcc: draft.bcc,
+          subject: draft.subject,
+          body: draft.body,
+          bodyFormat: draft.bodyFormat,
+          bodyHash: createHash("sha256").update(draft.body, "utf8").digest("hex"),
+          threadId: draft.threadId,
+          inReplyTo: draft.inReplyTo,
+          updatedAt: draft.updatedAt,
+        }),
+      };
+    }
     const permission = await checkGmailPermission(args.account, "gmailRead", "read emails");
     if (permission.denied) return permission.result;
     const { getMessage, listGmailAccounts } = await import("../../gmail");
