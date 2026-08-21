@@ -488,6 +488,7 @@ interface EmailReviewThread {
   subject: string | null;
   fromAddress: string | null;
   snippet: string | null;
+  bodyText: string | null;
   date: string | null;
   triageTier: string | null;
   triageReason: string | null;
@@ -567,6 +568,7 @@ async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
           em.subject,
           em.from_address,
           em.snippet,
+          em.body_text,
           em.date,
           em.triage_tier,
           em.triage_reason,
@@ -621,6 +623,7 @@ async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
         rt.subject,
         rt.from_address,
         rt.snippet,
+        rt.body_text,
         rt.date::text,
         rt.triage_tier,
         rt.triage_reason,
@@ -658,6 +661,7 @@ async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
       subject: row.subject,
       fromAddress: row.from_address,
       snippet: row.snippet,
+      bodyText: row.body_text,
       date: row.date,
       triageTier: row.triage_tier,
       triageReason: row.triage_reason,
@@ -848,6 +852,7 @@ function itemFromEmailReview(
       senderPersonId: senderPerson?.id ?? null,
       fromAddress: thread.fromAddress,
       snippet: thread.snippet?.slice(0, 200) || null,
+      fullMessage: thread.bodyText || thread.snippet || null,
       reason: thread.enrichmentSummary || thread.triageReason || null,
       triageTier: thread.triageTier,
       messageIds: thread.messageIds,
