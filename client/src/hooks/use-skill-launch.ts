@@ -18,6 +18,8 @@ export interface SkillLaunch {
   skillName: string;
   /** Stable key identifying the originating row, for per-row pending state. */
   pendingKey: string;
+  /** Optional bounded launch context interpreted by the Skill process. */
+  preContext?: string;
   /** Toast title on failure. */
   errorTitle?: string;
   /**
@@ -83,6 +85,7 @@ export function useSkillLaunch() {
   return useMutation({
     mutationFn: async ({
       skillName,
+      preContext,
       openFocus = true,
     }: SkillLaunch) => {
       const skills =
@@ -110,7 +113,11 @@ export function useSkillLaunch() {
         };
       });
 
-      const response = await apiRequest("POST", `/api/skills/${skill.id}/run`);
+      const response = await apiRequest(
+        "POST",
+        `/api/skills/${skill.id}/run`,
+        preContext ? { preContext } : undefined,
+      );
       const accepted: SkillRunAccepted = await response.json();
       if (!accepted?.accepted) {
         const pending = pendingLaunchRef.current;
