@@ -369,6 +369,8 @@ interface ActivityWithStatus {
   requirements: string | null;
   category: string;
   isDefault: boolean;
+  defaultTemplateId?: number | null;
+  defaultUpdateState?: "following" | "customized" | "update_available" | null;
   linkedMetricType: string | null;
   greatThreshold: number | null;
   goodThreshold: number | null;

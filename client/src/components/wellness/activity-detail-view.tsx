@@ -33,6 +33,8 @@ interface ActivityWithStatus {
   intervalDays: number;
   category: string;
   isDefault: boolean;
+  defaultTemplateId?: number | null;
+  defaultUpdateState?: "following" | "customized" | "update_available" | null;
   linkedMetricType: string | null;
   greatThreshold: number | null;
   goodThreshold: number | null;
@@ -231,6 +233,30 @@ function DetailEditableNumber({
   );
 }
 
+function DefaultActivityControl({ activity }: { activity: ActivityWithStatus }) {
+  const { toast } = useToast();
+  const mutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const response = await apiRequest("PUT", `/api/wellness/activities/${activity.id}/default`, { enabled });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wellness/status"] });
+      toast({ title: activity.defaultTemplateId ? "Default retired" : "Default published" });
+    },
+    onError: (error: Error) => toast({ title: "Default activity unchanged", description: error.message, variant: "destructive" }),
+  });
+  const isDefault = Boolean(activity.defaultTemplateId);
+  return (
+    <div className="flex items-center justify-end gap-2">
+      {activity.defaultUpdateState === "update_available" && <Badge variant="outline">Update available</Badge>}
+      <Button type="button" variant="ghost" size="sm" disabled={mutation.isPending} onClick={() => mutation.mutate(!isDefault)}>
+        {mutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : isDefault ? "Yes" : "No"}
+      </Button>
+    </div>
+  );
+}
+
 // --- Main detail view ---
 
 export function ActivityDetailView({
@@ -277,6 +303,9 @@ export function ActivityDetailView({
           <div className="overflow-hidden rounded-md border border-border/20">
             <ProfileTreeRow label="Name" hasValue={Boolean(activity.name)} showEmpty mobileLayout="inline" testId="row-wellness-name">
               <DetailEditableText value={activity.name} activityId={activity.id} field="name" placeholder="Activity name" />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Default activity" hasValue showEmpty mobileLayout="inline" testId="row-wellness-default">
+              <DefaultActivityControl activity={activity} />
             </ProfileTreeRow>
             <ProfileTreeRow label="Benefit" hasValue={Boolean(activity.benefit)} showEmpty mobileLayout="inline" testId="row-wellness-benefit">
               <DetailEditableText value={activity.benefit ?? ""} activityId={activity.id} field="benefit" placeholder="Why this matters" multiline />
