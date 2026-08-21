@@ -21,6 +21,8 @@ import {
   SET_DAILY_GOALS_SKILL,
   SET_DAILY_GOALS_TITLE,
 } from "@shared/set-daily-goals";
+import { composeWeeklyGoalPlanningMessage, weeklyGoalPeriodKey, type WeeklyGoalPlanningTarget } from "@shared/weekly-goal-planning";
+import { useSessionLaunch } from "@/hooks/use-session-launch";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
@@ -120,6 +122,41 @@ function DailyGoalsDoor() {
   );
 }
 
+function PlanWeekDoor({ target, now, timezone }: {
+  target: WeeklyGoalPlanningTarget;
+  now: Date;
+  timezone: string;
+}) {
+  const launch = useSessionLaunch();
+  const periodWeek = weeklyGoalPeriodKey(now, timezone, target);
+  const pendingKey = `home-plan-week-${periodWeek}`;
+  const pending = launch.isPending && launch.variables?.pendingKey === pendingKey;
+
+  return (
+    <button
+      type="button"
+      className="mb-1 ml-6 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent/70 hover:text-foreground/90 disabled:cursor-not-allowed disabled:opacity-50"
+      data-testid={`button-plan-${target.replace("_", "-")}`}
+      aria-label={`Plan goals for ${target === "next_week" ? "next week" : "this week"}`}
+      disabled={pending}
+      onClick={() => {
+        if (pending) return;
+        launch.mutate({
+          pendingKey,
+          title: target === "next_week" ? "Plan Next Week" : "Plan This Week",
+          message: composeWeeklyGoalPlanningMessage({ target, periodWeek }),
+          clientTurnSuffix: `plan-week-${periodWeek}`,
+          personaName: "Coach",
+          errorTitle: "Could not start weekly planning",
+        });
+      }}
+    >
+      {pending ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : <Plus className="h-3.5 w-3.5 shrink-0" />}
+      <span>{pending ? "Starting…" : "Plan Week"}</span>
+    </button>
+  );
+}
+
 export function SimpleFeedView({ feed }: { feed: SimpleFeed }) {
   const now = useMemo(() => new Date(feed.generatedAt), [feed.generatedAt]);
   const peopleInboxItems = useMemo(() => feed.sections.find(s => s.section === "inbox")?.items.filter(item => item.widgetType === "person") ?? [], [feed.sections]);
@@ -210,6 +247,9 @@ function SimpleSectionGroup({
         <CollapsibleContent>
           <div className="mt-0">
             {sectionKey === "now" && <DailyGoalsDoor />}
+            {(sectionKey === "this_week" || sectionKey === "next_week") && planArtifact === null && (
+              <PlanWeekDoor target={sectionKey} now={now} timezone={timezone} />
+            )}
             {hasPlanRow && planArtifact && (
               <PlanArtifactRow artifact={planArtifact} />
             )}
