@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
+import { SIMPLE_TEXT_FRAME_CLASS } from "@/components/home/simple-text-frame";
 import { apiRequest } from "@/lib/queryClient";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { useToast } from "@/hooks/use-toast";
@@ -73,6 +74,8 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
   const senderReference = item.references?.find(ref => ref.type === "person") ?? null;
   const reason = payloadString(item, "reason");
   const snippet = payloadString(item, "snippet");
+  const summary = reason ?? snippet;
+  const fullMessage = payloadString(item, "fullMessage");
   // Kept for dismiss metadata only — no longer rendered as a traffic-light icon.
   const triageTier = payloadString(item, "triageTier");
   const messageIds = useMemo(() => payloadNumberArray(item, "messageIds"), [item]);
@@ -259,11 +262,17 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
           </DropdownMenu>
         </div>
         <CollapsibleContent>
-          <div className="pb-2 pl-0 pr-1.5">
-            <div className="max-w-none rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-xs leading-relaxed text-white">
-              {reason && <p className="my-0"><span className="font-semibold">Summary:</span> {reason}</p>}
-              {snippet && <p className="my-1"><span className="font-semibold">Preview:</span> {snippet}</p>}
-            </div>
+          <div className="space-y-2 pb-2 pl-0 pr-1.5">
+            {summary && (
+              <div className={cn(SIMPLE_TEXT_FRAME_CLASS, "!text-muted-foreground [&_*]:!text-muted-foreground")}>
+                <p>{summary}</p>
+              </div>
+            )}
+            {fullMessage && (
+              <div className={SIMPLE_TEXT_FRAME_CLASS}>
+                <p className="whitespace-pre-wrap break-words">{fullMessage}</p>
+              </div>
+            )}
           </div>
         </CollapsibleContent>
       </div>
