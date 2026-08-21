@@ -121,27 +121,27 @@ const loops = [
 ];
 
 function SectionLabel({ children }: { children: string }) {
-  return <h2 className="text-[8px] font-semibold uppercase leading-none tracking-[0.14em] text-muted-foreground sm:text-[9px]">{children}</h2>;
+  return <h2 className="text-[9px] font-semibold uppercase leading-none tracking-[0.14em] text-muted-foreground sm:text-[10px]">{children}</h2>;
 }
 
 function Timeline() {
   return (
-    <section className="border-b border-border/30 pb-2">
-      <div className="grid grid-cols-[34px_1fr] gap-x-1.5">
+    <section className="border-b border-border/30 pb-2.5">
+      <div className="grid grid-cols-[39px_1fr] gap-x-2">
         <div />
-        <div className="grid grid-cols-5 text-[7px] leading-none text-muted-foreground">
+        <div className="grid grid-cols-5 text-[8px] leading-none text-muted-foreground">
           {["0s", "5s", "10s", "15s", "20s"].map((tick) => <span key={tick}>{tick}</span>)}
         </div>
         {timelineLanes.map((lane) => (
           <div key={lane.name} className="contents">
-            <span className="self-center text-[9px] font-medium leading-none text-foreground">{lane.name}</span>
-            <div className="relative mt-1 h-[22px] border-y border-border/20 bg-muted/10">
+            <span className="self-center text-[10px] font-medium leading-none text-foreground">{lane.name}</span>
+            <div className="relative mt-1 h-[25px] border-y border-border/20 bg-muted/10">
               {[25, 50, 75].map((position) => <div key={position} className="absolute inset-y-0 border-l border-border/20" style={{ left: `${position}%` }} />)}
               {lane.clips.map((clip, index) => (
                 <div
                   key={`${lane.name}-${index}`}
                   className={cn(
-                    "absolute inset-y-[2px] flex min-w-0 items-center overflow-hidden border-l px-1 text-[7px] leading-none",
+                    "absolute inset-y-[2px] flex min-w-0 items-center overflow-hidden border-l px-1.5 text-[8px] leading-none",
                     clip.ownership
                       ? [ownershipText[clip.ownership], ownershipBorder[clip.ownership], "bg-active/15"]
                       : "border-muted-foreground/50 bg-muted/40 text-foreground",
@@ -156,7 +156,7 @@ function Timeline() {
           </div>
         ))}
         <div />
-        <div className="relative mt-1 h-3 border-r border-active text-right text-[7px] font-medium leading-none text-active">Ray has the floor&nbsp;</div>
+        <div className="relative mt-1 h-3.5 border-r border-active text-right text-[8px] font-medium leading-none text-active">Ray has the floor&nbsp;</div>
       </div>
     </section>
   );
@@ -164,11 +164,11 @@ function Timeline() {
 
 function CurrentAct() {
   return (
-    <section className="grid grid-cols-[72px_1fr] items-center border-b border-border/30 py-2">
+    <section className="grid grid-cols-[83px_1fr] items-center border-b border-border/30 py-2.5">
       <SectionLabel>Current Act</SectionLabel>
-      <div className="flex items-baseline gap-2 text-active">
-        <span className="text-[11px] font-semibold leading-none">Silence</span>
-        <span className="text-[8px] leading-none">Mantra is listening to Ray</span>
+      <div className="flex items-baseline gap-2.5 text-active">
+        <span className="text-[13px] font-semibold leading-none">Silence</span>
+        <span className="text-[9px] leading-none">Mantra is listening to Ray</span>
       </div>
     </section>
   );
@@ -181,11 +181,11 @@ function PersonaLayers() {
     ["Investigator", "separate evidence from inference"],
   ];
   return (
-    <section className="grid grid-cols-[72px_1fr] border-b border-border/30 py-2">
+    <section className="grid grid-cols-[83px_1fr] border-b border-border/30 py-2.5">
       <SectionLabel>Persona Layers</SectionLabel>
-      <div className="space-y-0.5">
+      <div className="space-y-1">
         {layers.map(([name, intention], index) => (
-          <div key={name} className="grid grid-cols-[12px_62px_1fr] gap-1 text-[8px] leading-[10px]">
+          <div key={name} className="grid grid-cols-[14px_71px_1fr] gap-1 text-[9px] leading-[12px]">
             <span className="text-muted-foreground">{index + 1}</span>
             <span className="font-medium text-foreground">{name}</span>
             <span className="truncate text-chart-3">{intention}</span>
@@ -198,12 +198,12 @@ function PersonaLayers() {
 
 function Person({ person }: { person: PersonState }) {
   return (
-    <div className="grid grid-cols-[92px_1fr] gap-2 border-b border-border/25 py-1.5 last:border-b-0">
+    <div className="grid grid-cols-[106px_1fr] gap-2.5 border-b border-border/25 py-2 last:border-b-0">
       <div className="min-w-0">
-        <h3 className="mb-1 text-[9px] font-semibold uppercase leading-none tracking-wide text-foreground">{person.name}</h3>
-        <div className="space-y-1">
+        <h3 className="mb-1.5 text-[10px] font-semibold uppercase leading-none tracking-wide text-foreground">{person.name}</h3>
+        <div className="space-y-1.5">
           {person.relationships.map((relationship) => (
-            <div key={relationship.person} className="relative border-l border-warning/50 pl-2 text-[7px] leading-[8px] text-warning before:absolute before:left-0 before:top-1 before:w-1.5 before:border-t before:border-warning/50">
+            <div key={relationship.person} className="relative border-l border-warning/50 pl-2.5 text-[8px] leading-[9px] text-warning before:absolute before:left-0 before:top-1 before:w-2 before:border-t before:border-warning/50">
               <div className="truncate font-medium">{relationship.person} <span className="font-normal opacity-75">· {relationship.type}</span></div>
               <div className="truncate opacity-75">{relationship.intention}</div>
             </div>
@@ -212,9 +212,9 @@ function Person({ person }: { person: PersonState }) {
       </div>
       <div className="min-w-0">
         {person.fields.map((field) => (
-          <div key={field.label} className="grid h-[13px] grid-cols-[52px_1fr] items-center text-[7px] leading-none">
-            <div className={cn("border-l pl-1.5 font-medium", ownershipText[field.ownership], ownershipBorder[field.ownership])}>{field.label}</div>
-            <div className={cn("truncate pl-1.5", ownershipText[field.ownership])}>{field.value}</div>
+          <div key={field.label} className="grid h-[15px] grid-cols-[60px_1fr] items-center text-[8px] leading-none">
+            <div className={cn("border-l pl-2 font-medium", ownershipText[field.ownership], ownershipBorder[field.ownership])}>{field.label}</div>
+            <div className={cn("truncate pl-2", ownershipText[field.ownership])}>{field.value}</div>
           </div>
         ))}
       </div>
@@ -224,23 +224,23 @@ function Person({ person }: { person: PersonState }) {
 
 function People() {
   return (
-    <section className="border-b border-border/30 py-2">
+    <section className="border-b border-border/30 py-2.5">
       <SectionLabel>People</SectionLabel>
-      <div className="mt-1">{people.map((person) => <Person key={person.name} person={person} />)}</div>
+      <div className="mt-1.5">{people.map((person) => <Person key={person.name} person={person} />)}</div>
     </section>
   );
 }
 
 function BrainLoops() {
   return (
-    <section className="py-2">
+    <section className="py-2.5">
       <SectionLabel>Brain Loops</SectionLabel>
-      <div className="mt-1 grid gap-0.5">
+      <div className="mt-1.5 grid gap-0.5">
         {loops.map((loop) => {
           const Icon = loop.icon;
           return (
-            <div key={loop.name} className="grid h-[16px] grid-cols-[14px_76px_1fr] items-center border-b border-border/20 text-[8px] last:border-b-0">
-              <Icon className={cn("h-2.5 w-2.5", ownershipText[loop.ownership], loop.ownership === "fast" && "animate-pulse")} />
+            <div key={loop.name} className="grid h-[18px] grid-cols-[16px_87px_1fr] items-center border-b border-border/20 text-[9px] last:border-b-0">
+              <Icon className={cn("h-3 w-3", ownershipText[loop.ownership], loop.ownership === "fast" && "animate-pulse")} />
               <div className={cn("font-medium uppercase", ownershipText[loop.ownership])}>{loop.name} <span className="font-normal normal-case opacity-70">· {loop.interval}</span></div>
               <div className={cn("truncate", ownershipText[loop.ownership])}>{loop.status}</div>
             </div>
@@ -256,7 +256,7 @@ export default function SosPage() {
 
   return (
     <div className="h-full min-w-0 overflow-hidden bg-background">
-      <div className="w-full px-2 py-1 sm:px-4">
+      <div className="w-full px-2.5 py-1.5 sm:px-4">
         <Timeline />
         <CurrentAct />
         <PersonaLayers />
