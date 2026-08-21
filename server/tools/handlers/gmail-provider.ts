@@ -151,6 +151,17 @@ export function createGmailProviderHandlers(dependencies: GmailProviderDependenc
   }
 }
 
+function getProviderStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const candidate = error as {
+    code?: unknown;
+    status?: unknown;
+    response?: { status?: unknown };
+  };
+  const status = candidate.status ?? candidate.code ?? candidate.response?.status;
+  return typeof status === "number" ? status : undefined;
+}
+
 function filterExcluded(stubs: MessageStub[], excludeSet: Set<string>): MessageStub[] {
   const filtered = stubs.filter((stub) => !excludeSet.has(stub.id));
   const excludedCount = stubs.length - filtered.length;
@@ -178,7 +189,12 @@ async function fetchFullMessages(
       const headerLines = headers.map((header) => `- **${header.name}:** ${header.value}`).join("\n");
       results.push(`### [${stub.acctLabel}] ${subject}\n- **Message ID:** ${stub.id}\n- **Account:** ${stub.acctId}\n\n**Headers:**\n${headerLines}\n\n**Body:**\n${body}`);
     } catch (error) {
-      toolExec.error(`batch_read getMessage failed id=${stub.id} acct=${stub.acctId}`, error);
+      const status = getProviderStatus(error);
+      if (status === 404) {
+        toolExec.warn(`batch_read message unavailable id=${stub.id} acct=${stub.acctId} status=404`);
+      } else {
+        toolExec.error(`batch_read getMessage failed id=${stub.id} acct=${stub.acctId}`, error);
+      }
       results.push(`### Message ${stub.id} — ERROR: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
