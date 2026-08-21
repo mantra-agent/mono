@@ -1215,7 +1215,7 @@ export const TOOLS: Record<string, ToolMeta> = {
       properties: {
         action: { type: "string", description: "Action" },
         query: { type: "string", description: "Search query (search, batch_read)" },
-        id: { type: "string", description: "Message ID (read)" },
+        id: { type: "string", description: "Gmail provider message ID or persisted email draft UUID (read)" },
         draft_id: { type: "string", description: "Persisted email draft ID (required for update_draft)" },
         ids: { type: "array", items: { type: "string" }, description: "Array of message IDs (batch_read)" },
         excludeMessageIds: { type: "array", items: { type: "string" }, description: "Message IDs to skip (batch_read)" },

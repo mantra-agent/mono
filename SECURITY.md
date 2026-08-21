@@ -2915,6 +2915,18 @@ Git clone crosses B03/B08 and F11 over A08/S0-S2: it invokes a credentialed exte
 
 **Evidence:** `server/vault-permanent-delete.ts`, `server/routes/vault-routes.ts`, `server/migrations/ensure-vault-erase-receipts.ts`, `client/src/pages/user-details.tsx`, this finding. **Residual risk:** Object storage and PostgreSQL are not one transaction; prefix deletes are best-effort after the vault row is gone. Provider and Brain copies remain until their owners grow a wipe.
 
+## 11.38 Agent-readable Gmail draft bodies, August 21, 2026
+
+**Status:** Closed in source; production build required before release. **Severity:** High without controls; Low residual. **Owner:** Communications / Gmail tools. **SLA:** Immediate.
+
+**Assets/data:** A02/S2 private email draft envelope and body, A01 authenticated principal/account scope, A07 draft-read tool evidence. **Flow:** model-originated `gmail.read` with a persisted draft UUID → `EmailDraftStorage.getById` → bounded draft projection returned to the active Agent turn. **Boundaries:** B01 authentication/authorization, B03 principal-scoped persistence, B06 observability, B08 model/tool authority.
+
+**Threat:** Treating an inline draft UUID as a Gmail provider message ID makes the Agent unable to review human edits and creates destructive overwrite or copy/paste pressure. A naive fallback to raw `email_drafts` lookup could disclose another user's private draft, or requiring Gmail read scope could incorrectly make locally persisted drafts unreadable after connector degradation (STRIDE information disclosure/tampering/availability; DATA-01/AGENT-04/OBS-01).
+
+**Deterministic controls:** The code-owned `email_draft` UUID grammar selects the local-draft branch before provider authorization. The branch delegates only to `EmailDraftStorage.getById`, which composes the current Principal's visible scope and returns null for invalid, missing, or invisible drafts. Provider-message reads retain their existing connected-account and Gmail-read permission boundary. The result is bounded to the persisted draft aggregate plus a SHA-256 body hash for guarded `rangePatch`; no OAuth credential, provider token, capability token, owner identity, or unrelated draft is exposed. Draft mutation remains exclusively in `EmailDraftStorage.update` / `mutateBody`; read adds no write path.
+
+**Evidence:** Charles Reply session `mt2yvx90j463tv`, failure `gmail.read(id=0d916925-aa05-4296-b0cb-ddeb7dbeedf0) → Invalid id value`; `server/tools/handlers/gmail-read.ts`; `server/email-draft-storage.ts#getById`; `server/tool-registry.ts`. **Residual risk:** The Agent can read only the latest body persisted by the widget; unsaved browser-local keystrokes remain unavailable by design. The draft body necessarily enters the active model context when Ray asks for review, under existing inference privacy controls.
+
 ## 11.37 Monday.com Work Bridge eyes (OAuth + read), August 20, 2026
 
 **Status:** Closed in source; production build required before release. **Severity:** High without controls; Low residual with named residual. **Owner:** Core Work / Integrations. **SLA:** Immediate (Feature Develop Slice 1).
