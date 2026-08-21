@@ -439,14 +439,15 @@ hierarchy-tree:
 
 TreeView is one interaction language with two compositions. Cards are not a third.
 
-**Object index** — Session Menu, Features, Scenarios, Issues, Audiences, Timers, Internal Prompts, Decisions. Search first. Blue `+ New Thing` next when the catalog can grow from the page. Collapsible section labels. Compact nested rows. Hover or keyboard `…` menu. Inline expand. No split-view. Do not badge a row with the section it already lives in.
+**Object index** — Session Menu, Features, Scenarios, Issues, Audiences, Timers, Internal Prompts, Decisions. Session Menu is the exact row baseline, not a loose visual reference: every collapsed object row uses `HIERARCHY_SESSION_ROW_CLASS` and therefore inherits `text-sm`, `px-2 py-1.5`, `gap-2`, `h-3.5 w-3.5` icons, `h-5 w-5` disclosure, and `h-6 w-6` hover/focus overflow controls. Search first. Blue `+ New Thing` next when the catalog can grow from the page. Collapsible section labels. Hover or keyboard `…` menu. Inline expand. No split-view. Do not use `ProfileTreeRow` for collapsed object-index rows; it is field/detail geometry with a smaller value type. Do not badge a row with the section it already lives in.
 
 **Field / detail** — Person profile, Secrets, Environment SOURCE, Slack, Claude CLI, OpenAI Subscription, OpenAI API, Anthropic API, Model tab, ElevenLabs, Twitter, Expo. `ProfileDetailSection` or `IntegrationTreeSection` as the group. One `ProfileTreeRow` per field: label and optional icon on the left, value or inline input on the right. Fields and dates edit in place; rotate, clear, and destructive actions live in `menuContent`. Children nest with `HierarchyTreeRow`. Person profile is the archetype: it is the origin of `ProfileDetailSection`/`ProfileTreeRow` and the reference implementation for in-place editable rows.
 
 Required primitives:
 
-- Stack / CTA / section: `HIERARCHY_TREE_STACK_CLASS`, `HIERARCHY_PRIMARY_ACTION_CLASS`, `HIERARCHY_SECTION_HEADER_CLASS`
-- Rows: `ProfileTreeRow`, `HierarchyTreeRow`, `ProfileDetailSection`
+- Shared stack / CTA / section: `HIERARCHY_TREE_STACK_CLASS`, `HIERARCHY_PRIMARY_ACTION_CLASS`, `HIERARCHY_SECTION_HEADER_CLASS`
+- Object-index rows: `HIERARCHY_SESSION_ROW_CLASS` for every collapsed object; `HierarchyTreeRow` only adds nesting rails/indentation around that same row geometry
+- Field/detail rows only: `ProfileTreeRow`, grouped by `ProfileDetailSection` or the owning integration section
 
 Do not invent a page-local list, card grid, dashboard panel, or Input+Button settings form. A leftover `Card` on a route is migration debt. Cards belong only on modal decision surfaces (`MODAL_GLASS_SURFACE_CLASS`).
 

@@ -119,6 +119,7 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
+import { HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -4391,7 +4392,8 @@ export function DesignTab() {
                           role="button"
                           tabIndex={0}
                           className={cn(
-                            "group relative flex w-full cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 pr-16 text-left text-sm transition-colors",
+                            HIERARCHY_SESSION_ROW_CLASS,
+                            "pr-16",
                             hierarchySelected === "parent" ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70 hover:text-foreground",
                           )}
                           onClick={() => setHierarchySelected("parent")}
@@ -4467,7 +4469,8 @@ export function DesignTab() {
                               role="button"
                               tabIndex={0}
                               className={cn(
-                                "group relative flex w-full cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 pr-16 text-left text-sm transition-colors",
+                                HIERARCHY_SESSION_ROW_CLASS,
+                                "pr-16",
                                 selected ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70 hover:text-foreground",
                               )}
                               onClick={() => setHierarchySelected(item.id)}
@@ -4610,8 +4613,12 @@ export function DesignTab() {
               </p>
               <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
                 Two compositions, one language. Object indexes use search, the blue
-                + New Thing row, collapsible sections, and compact nested rows
-                (Session Menu, Features, Issues). Field and detail screens use{" "}
+                + New Thing row, collapsible sections, and rows built directly from{" "}
+                <span className="font-mono text-foreground">HIERARCHY_SESSION_ROW_CLASS</span>
+                —the exact Session Menu baseline for text size, padding, pitch, icons,
+                disclosure, and overflow controls. Collapsed object rows never use{" "}
+                <span className="font-mono text-foreground">ProfileTreeRow</span>, whose
+                smaller value typography belongs to fields and metadata. Field and detail screens use{" "}
                 <span className="font-mono text-foreground">ProfileDetailSection</span>{" "}
                 or an integration section with one{" "}
                 <span className="font-mono text-foreground">ProfileTreeRow</span> per
