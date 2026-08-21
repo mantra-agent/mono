@@ -1616,7 +1616,7 @@ export async function stampPlatformOwnerOnProductMetrics(): Promise<number> {
           adapter_kind = 'internal',
           status = 'active',
           adapter_config = COALESCE(adapter_config, '{}'::jsonb) || ${JSON.stringify(producerPlan)}::jsonb,
-          description = COALESCE(${description}, description),
+          description = COALESCE(${description}::text, description),
           updated_at = NOW()
       WHERE slug = ${slug}
         AND (
@@ -1627,8 +1627,8 @@ export async function stampPlatformOwnerOnProductMetrics(): Promise<number> {
           OR COALESCE(adapter_config->>'equation', '') IS DISTINCT FROM ${slug}
           OR adapter_config->'plan' IS NULL
           OR (
-            ${description} IS NOT NULL
-            AND description IS DISTINCT FROM ${description}
+            ${description}::text IS NOT NULL
+            AND description IS DISTINCT FROM ${description}::text
           )
         )
     `);
