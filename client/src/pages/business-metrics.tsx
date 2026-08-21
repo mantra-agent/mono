@@ -26,7 +26,7 @@ import {
   type MetricProducerFamily,
 } from "@shared/metric-producers";
 import { METRIC_SAMPLE_SPAN_OPTIONS, type MetricSampleSpanId } from "@shared/kpi-sample";
-import { HOME_EMBEDDED_PAGE_BODY_TEXT_CLASS } from "@/components/home/simple-text-frame";
+import { SIMPLE_TEXT_FRAME_CLASS } from "@/components/home/simple-text-frame";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -509,7 +509,7 @@ function MetricDefinitionEditor({ metric }: { metric: Metric }) {
         }}
         onBlur={queueSave}
         data-testid={`metric-description-${metric.slug}`}
-        className={cn("min-h-[2.5rem] resize-none border-0 bg-transparent px-0 py-0 shadow-none focus-visible:ring-0", HOME_EMBEDDED_PAGE_BODY_TEXT_CLASS)}
+        className={cn(SIMPLE_TEXT_FRAME_CLASS, "min-h-[2.5rem] resize-none shadow-none focus-visible:ring-0")}
       />
       <MetricEquationEditor
         equation={equation}
