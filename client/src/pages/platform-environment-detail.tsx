@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useLocation, useParams } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, ChevronRight, ExternalLink, History, Cable, Link2, User, FolderGit2, GitBranch, GitMerge, Zap, Code2, Server, Hash, Layers, Cpu } from "lucide-react";
+import { Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, ChevronRight, ExternalLink, History, Cable, Link2, User, FolderGit2, GitBranch, GitMerge, Zap, Code2, Server, Hash, Layers, Cpu, CheckCircle2, AlertTriangle, Circle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
@@ -190,6 +190,19 @@ interface BuildLifecycleStatus {
   checkedAt: string;
 }
 
+
+type EnvironmentHealthState = "healthy" | "unhealthy" | "unknown";
+
+interface EnvironmentHealth {
+  state: EnvironmentHealthState;
+  residual: string | null;
+  signals: Array<{
+    key: "deploy" | "reachability" | "bindings" | "issues" | "jobs";
+    state: EnvironmentHealthState;
+    residual: string | null;
+    href: string | null;
+  }>;
+}
 
 interface DevStatusOk {
   configured: true;
@@ -1081,16 +1094,61 @@ function VersionDocumentSection({ environmentId }: { environmentId: number }) {
   );
 }
 
+const HEALTH_LABELS: Record<EnvironmentHealth["signals"][number]["key"], string> = {
+  deploy: "Deploy",
+  reachability: "Reachability",
+  bindings: "Bindings",
+  issues: "Issues",
+  jobs: "Jobs",
+};
+
+function healthIcon(state: EnvironmentHealthState) {
+  if (state === "healthy") return <CheckCircle2 className="h-3.5 w-3.5 text-success" />;
+  if (state === "unhealthy") return <AlertTriangle className="h-3.5 w-3.5 text-error" />;
+  return <Circle className="h-3.5 w-3.5 text-muted-foreground" />;
+}
+
+function EnvironmentHealthSection({ environmentId, health }: { environmentId: number; health: EnvironmentHealth }) {
+  const [, setLocation] = useLocation();
+  const valueClass = health.state === "healthy" ? "text-success" : health.state === "unhealthy" ? "text-error" : "text-muted-foreground";
+  return (
+    <EnvironmentSection label="Health" defaultOpen storageKey={`platform-environment:${environmentId}:section:health`}>
+      <ProfileTreeRow label={health.state === "healthy" ? "Healthy" : health.residual || "Health unknown"} icon={healthIcon(health.state)} hasValue showEmpty defaultOpen={health.state !== "healthy"} expandedContent={(
+        <div className="border-l border-border/30 pl-3">
+          {health.signals.map((item) => (
+            <ProfileTreeRow
+              key={item.key}
+              label={HEALTH_LABELS[item.key]}
+              icon={healthIcon(item.state)}
+              hasValue
+              showEmpty
+              defaultOpen={item.state !== "healthy"}
+              actionContent={item.href ? <Button variant="ghost" size="sm" onClick={() => item.href?.startsWith("#") ? document.getElementById(item.href.slice(1))?.scrollIntoView({ behavior: "smooth" }) : setLocation(item.href)}>Open</Button> : undefined}
+              expandedContent={item.residual ? <p className="border-l border-border/30 pl-3 text-sm text-muted-foreground">{item.residual}</p> : undefined}
+            >
+              <span className={item.state === "healthy" ? "text-success" : item.state === "unhealthy" ? "text-error" : "text-muted-foreground"}>
+                {item.state === "healthy" ? "Healthy" : item.residual}
+              </span>
+            </ProfileTreeRow>
+          ))}
+        </div>
+      )}>
+        <span className={valueClass}>{health.state === "healthy" ? "Healthy" : health.residual}</span>
+      </ProfileTreeRow>
+    </EnvironmentSection>
+  );
+}
+
 function EnvironmentDetailsConfigureCard({ details, environmentId }: { details: EnvironmentDetails; environmentId: number }) {
   return (
     <div className="space-y-1">
       <VersionDocumentSection environmentId={environmentId} />
-      <EnvironmentSection label="Source" defaultOpen={false} storageKey={`platform-environment:${environmentId}:section:source`}>
+      <div id="source"><EnvironmentSection label="Source" defaultOpen={false} storageKey={`platform-environment:${environmentId}:section:source`}>
         <SourceBindingCard binding={details.source} environmentId={environmentId} />
-      </EnvironmentSection>
-      <EnvironmentSection label="Hosting" defaultOpen={false} storageKey={`platform-environment:${environmentId}:section:hosting`}>
+      </EnvironmentSection></div>
+      <div id="hosting"><EnvironmentSection label="Hosting" defaultOpen={false} storageKey={`platform-environment:${environmentId}:section:hosting`}>
         <HostingBindingCard binding={details.hosting} environmentId={environmentId} />
-      </EnvironmentSection>
+      </EnvironmentSection></div>
     </div>
   );
 }
@@ -1111,6 +1169,12 @@ export default function PlatformEnvironmentDetailPage() {
     queryKey: ["/api/platforms/environments", environmentId, "build-status"],
     enabled: Number.isFinite(environmentId),
     refetchInterval: (query) => query.state.data?.activity.state === "building" ? 8000 : false,
+    staleTime: 30_000,
+  });
+
+  const { data: health } = useQuery<EnvironmentHealth>({
+    queryKey: ["/api/platforms/environments", environmentId, "health"],
+    enabled: Number.isFinite(environmentId),
     staleTime: 30_000,
   });
 
@@ -1168,7 +1232,8 @@ export default function PlatformEnvironmentDetailPage() {
   return (
     <div className="space-y-4 p-4">
       <div className="grid gap-4">
-        <EnvironmentPipelineCard details={data} environmentId={environmentId} sourceEnvironmentId={sourceEnvironmentId} />
+        {health ? <EnvironmentHealthSection environmentId={environmentId} health={health} /> : null}
+        <div id="build"><EnvironmentPipelineCard details={data} environmentId={environmentId} sourceEnvironmentId={sourceEnvironmentId} /></div>
         {data.hosting.provider === "cloudflare" ? <CloudflarePagesCard environmentId={environmentId} /> : null}
         <EnvironmentDetailsConfigureCard details={data} environmentId={environmentId} />
       </div>

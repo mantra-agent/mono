@@ -255,7 +255,7 @@ function adminOwnerPrincipal(
 }
 
 export class FileIssueStorage {
-  async getIssues(options?: { status?: string; excludeStatus?: string; lightweight?: boolean }): Promise<Issue[] | Partial<Issue>[]> {
+  async getIssues(options?: { status?: string; excludeStatus?: string; lightweight?: boolean; platformEnvironmentId?: number }): Promise<Issue[] | Partial<Issue>[]> {
     const filters: Record<string, unknown> = {};
     if (options?.status) {
       filters.status = options.status;
@@ -268,6 +268,7 @@ export class FileIssueStorage {
       try {
         const issue = docToIssue({ content: doc.content, metadata: (doc.metadata || {}) as Record<string, unknown> });
         if (options?.excludeStatus && issue.status === options.excludeStatus) continue;
+        if (options?.platformEnvironmentId && issue.platformEnvironmentId !== options.platformEnvironmentId) continue;
         allIssues.push(issue);
       } catch (err) {
         log.error(`getIssues parse error docId=${doc.docId}`, err);
@@ -313,7 +314,7 @@ export class FileIssueStorage {
   /** Admin queue projection: own Issues plus every explicitly reported Issue. */
   async getIssuesForAdmin(
     principal: Principal,
-    options?: { status?: string; excludeStatus?: string; lightweight?: boolean },
+    options?: { status?: string; excludeStatus?: string; lightweight?: boolean; platformEnvironmentId?: number },
   ): Promise<Issue[] | Partial<Issue>[]> {
     requireAdminIssuePermission(principal, "system:read");
     const conditions = [
@@ -335,6 +336,7 @@ export class FileIssueStorage {
       try {
         const issue = docToIssue({ content: doc.content, metadata: (doc.metadata || {}) as Record<string, unknown> });
         if (options?.excludeStatus && issue.status === options.excludeStatus) continue;
+        if (options?.platformEnvironmentId && issue.platformEnvironmentId !== options.platformEnvironmentId) continue;
         byId.set(issue.id, issue);
       } catch (error) {
         log.error("admin reported Issue projection parse failed", {

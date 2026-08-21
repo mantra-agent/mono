@@ -109,7 +109,7 @@ export interface IStorage {
   getTotalApiCallCount(): Promise<number>;
 
   getIssues(options?: { status?: string; excludeStatus?: string; lightweight?: boolean }): Promise<Issue[] | Partial<Issue>[]>;
-  getIssuesForAdmin(principal: Principal, options?: { status?: string; excludeStatus?: string; lightweight?: boolean }): Promise<Issue[] | Partial<Issue>[]>;
+  getIssuesForAdmin(principal: Principal, options?: { status?: string; excludeStatus?: string; lightweight?: boolean; platformEnvironmentId?: number }): Promise<Issue[] | Partial<Issue>[]>;
   getIssue(id: number): Promise<Issue | undefined>;
   getIssueForAdmin(principal: Principal, id: number): Promise<Issue | undefined>;
   createIssue(issue: InsertIssue): Promise<Issue>;
@@ -403,7 +403,7 @@ export class HybridStorage implements IStorage {
     return fileIssueStorage.getIssues(options);
   }
 
-  async getIssuesForAdmin(principal: Principal, options?: { status?: string; excludeStatus?: string; lightweight?: boolean }): Promise<Issue[] | Partial<Issue>[]> {
+  async getIssuesForAdmin(principal: Principal, options?: { status?: string; excludeStatus?: string; lightweight?: boolean; platformEnvironmentId?: number }): Promise<Issue[] | Partial<Issue>[]> {
     return fileIssueStorage.getIssuesForAdmin(principal, options);
   }
 

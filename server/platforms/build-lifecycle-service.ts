@@ -229,7 +229,18 @@ async function getBindingContext(environmentId: number) {
   return { source, hosting, sourceConnection: connectionFor(source?.connectionId), hostingConnection: connectionFor(hosting?.connectionId) };
 }
 
-async function composeRailwayStatus(hosting: typeof environmentHostingBindings.$inferSelect | undefined, connection: typeof providerConnections.$inferSelect | null | undefined) {
+function healthUrlFor(hosting: typeof environmentHostingBindings.$inferSelect, healthCheckPath?: string | null): string | null {
+  if (!hosting.publicUrl) return null;
+  const base = hosting.publicUrl.startsWith("http") ? hosting.publicUrl : `https://${hosting.publicUrl}`;
+  if (!healthCheckPath) return base;
+  try {
+    return new URL(healthCheckPath, base.endsWith("/") ? base : `${base}/`).toString();
+  } catch {
+    return base;
+  }
+}
+
+async function composeRailwayStatus(hosting: typeof environmentHostingBindings.$inferSelect | undefined, connection: typeof providerConnections.$inferSelect | null | undefined, healthCheckPath?: string | null) {
   const base = {
     available: false,
     degraded: false,
@@ -246,9 +257,9 @@ async function composeRailwayStatus(hosting: typeof environmentHostingBindings.$
   if (!token) return { ...base, reason: "Could not decrypt Railway credential" };
 
   let urlReachable: boolean | null = null;
-  if (hosting.publicUrl) {
+  const healthUrl = healthUrlFor(hosting, healthCheckPath);
+  if (healthUrl) {
     try {
-      const healthUrl = hosting.publicUrl.startsWith("http") ? hosting.publicUrl : `https://${hosting.publicUrl}`;
       const response = await fetch(healthUrl, { method: "HEAD", signal: AbortSignal.timeout(5000) });
       urlReachable = response.ok;
     } catch {
@@ -298,7 +309,7 @@ async function composeEasStatus() {
   }
 }
 
-async function composeCloudflarePageStatus(hosting: typeof environmentHostingBindings.$inferSelect | undefined, connection: typeof providerConnections.$inferSelect | null | undefined) {
+async function composeCloudflarePageStatus(hosting: typeof environmentHostingBindings.$inferSelect | undefined, connection: typeof providerConnections.$inferSelect | null | undefined, healthCheckPath?: string | null) {
   const base = {
     available: false,
     degraded: false,
@@ -318,9 +329,9 @@ async function composeCloudflarePageStatus(hosting: typeof environmentHostingBin
   if (!token) return { ...base, reason: "Could not decrypt Cloudflare credential" };
 
   let urlReachable: boolean | null = null;
-  if (hosting.publicUrl) {
+  const healthUrl = healthUrlFor(hosting, healthCheckPath);
+  if (healthUrl) {
     try {
-      const healthUrl = hosting.publicUrl.startsWith("http") ? hosting.publicUrl : `https://${hosting.publicUrl}`;
       const response = await fetch(healthUrl, { method: "HEAD", signal: AbortSignal.timeout(5000) });
       urlReachable = response.ok;
     } catch {
@@ -395,10 +406,14 @@ export async function getEnvironmentBuildStatus(environmentId: number): Promise<
   if (!lifecycle) return null;
   const { source, hosting, sourceConnection, hostingConnection } = await getBindingContext(environmentId);
   const providerKind = lifecycle.config?.providerKind || "railway";
+  const acceptanceTarget = lifecycle.config?.acceptanceTarget && typeof lifecycle.config.acceptanceTarget === "object"
+    ? lifecycle.config.acceptanceTarget as Record<string, unknown>
+    : {};
+  const healthCheckPath = typeof acceptanceTarget.healthCheckPath === "string" ? acceptanceTarget.healthCheckPath : null;
   const [railway, eas, cloudflarePages, recentWorkflows, activity] = await Promise.all([
-    providerKind === "railway" || !providerKind ? composeRailwayStatus(hosting, hostingConnection) : Promise.resolve(null),
+    providerKind === "railway" || !providerKind ? composeRailwayStatus(hosting, hostingConnection, healthCheckPath) : Promise.resolve(null),
     composeEasStatus(),
-    (providerKind === "cloudflare" || providerKind === "cloudflare_pages") ? composeCloudflarePageStatus(hosting, hostingConnection) : Promise.resolve(null),
+    (providerKind === "cloudflare" || providerKind === "cloudflare_pages") ? composeCloudflarePageStatus(hosting, hostingConnection, healthCheckPath) : Promise.resolve(null),
     listWorkflowRuns({ environmentId, templateId: lifecycle.config?.workflowTemplateId || undefined, limit: 5 }),
     getEnvironmentBuildActivity(environmentId, lifecycle.config?.workflowTemplateId),
   ]);

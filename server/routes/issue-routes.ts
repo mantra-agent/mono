@@ -276,7 +276,11 @@ export function registerIssueRoutes(app: Express) {
       const status = req.query.status as string | undefined;
       const excludeStatus = req.query.exclude_status as string | undefined;
       const lightweight = req.query.lightweight === "true";
-      const allIssues = await storage.getIssuesForAdmin(req.principal!, { status, excludeStatus, lightweight });
+      const platformEnvironmentId = req.query.platformEnvironmentId ? Number(req.query.platformEnvironmentId) : undefined;
+      if (platformEnvironmentId !== undefined && (!Number.isInteger(platformEnvironmentId) || platformEnvironmentId <= 0)) {
+        return res.status(400).json({ error: "platformEnvironmentId must be a positive integer" });
+      }
+      const allIssues = await storage.getIssuesForAdmin(req.principal!, { status, excludeStatus, lightweight, platformEnvironmentId });
       res.json({ issues: allIssues });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

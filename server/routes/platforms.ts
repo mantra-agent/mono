@@ -416,6 +416,19 @@ export function registerPlatformRoutes(app: Express): void {
     }
   });
 
+  app.get("/api/platforms/environments/:environmentId/health", requirePermission("build:read"), async (req, res) => {
+    try {
+      const environmentId = platformIdParam(req.params.environmentId);
+      const { getEnvironmentHealth } = await import("../platforms/environment-health-service");
+      const health = await getEnvironmentHealth(environmentId);
+      if (!health) return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "get_environment_health" });
+      res.json(health);
+    } catch (error: unknown) {
+      const err = routeError(error, "get_environment_health");
+      res.status(500).json({ error: err.message, operation: err.operation });
+    }
+  });
+
   app.get("/api/platforms/environments/:environmentId/build-workflows", async (req, res) => {
     try {
       const environmentId = platformIdParam(req.params.environmentId);
