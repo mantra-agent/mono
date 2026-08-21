@@ -145,6 +145,44 @@ async function ensureVnextSourceLinksSchema(pool: { query: (sql: string, params?
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_source_links_owner ON memory_vnext_source_links(scope, owner_user_id)`);
 }
 
+function wellnessTemplateRevision(payload: Record<string, unknown>): string {
+  return require("node:crypto").createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+}
+
+async function ensureWellnessDefaultLatticeSchema(pool: { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> }): Promise<void> {
+  await pool.query(`CREATE TABLE IF NOT EXISTS wellness_activity_templates (
+    id SERIAL PRIMARY KEY, stable_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+    revision TEXT NOT NULL, payload JSONB NOT NULL, retired_at TIMESTAMPTZ,
+    published_by_user_id TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  for (const [name, type] of [
+    ["default_template_id", "INTEGER"], ["applied_template_revision", "TEXT"], ["default_update_state", "TEXT"],
+  ] as const) await pool.query(`ALTER TABLE wellness_activities ADD COLUMN IF NOT EXISTS ${quoteIdent(name)} ${type}`);
+  await pool.query(`ALTER TABLE wellness_activities DROP CONSTRAINT IF EXISTS wellness_activities_name_unique`);
+  await pool.query(`DROP INDEX IF EXISTS wellness_activities_name_unique`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS wellness_activities_owner_name_unique ON wellness_activities(owner_user_id, principal_account_id, lower(name)) WHERE archived_at IS NULL`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS wellness_activities_owner_template_unique ON wellness_activities(owner_user_id, principal_account_id, default_template_id) WHERE default_template_id IS NOT NULL`);
+  await pool.query(`ALTER TABLE wellness_activities DROP CONSTRAINT IF EXISTS wellness_activities_default_update_state_check`);
+  await pool.query(`ALTER TABLE wellness_activities ADD CONSTRAINT wellness_activities_default_update_state_check CHECK (default_update_state IS NULL OR default_update_state IN ('following','customized','update_available'))`);
+  for (const definition of DEFAULT_WELLNESS_ACTIVITIES) {
+    const payload = {
+      name: definition.name, benefit: definition.benefit, intervalDays: definition.interval_days,
+      category: definition.category, linkedMetricType: "linked_metric_type" in definition ? definition.linked_metric_type : null,
+      greatThreshold: "great_threshold" in definition ? definition.great_threshold : null,
+      goodThreshold: "good_threshold" in definition ? definition.good_threshold : null,
+      windowStart: null, windowEnd: null,
+      launchKind: "launch_kind" in definition ? definition.launch_kind : null,
+      launchTarget: "launch_target" in definition ? definition.launch_target : null,
+      completionSource: "completion_source" in definition ? definition.completion_source : null,
+    };
+    const revision = wellnessTemplateRevision(payload);
+    await pool.query(`INSERT INTO wellness_activity_templates (stable_key, name, revision, payload)
+      VALUES ($1,$2,$3,$4::jsonb) ON CONFLICT (stable_key) DO UPDATE SET name=EXCLUDED.name, revision=EXCLUDED.revision, payload=EXCLUDED.payload, updated_at=CURRENT_TIMESTAMP`,
+      [definition.stable_key, definition.name, revision, JSON.stringify(payload)]);
+  }
+}
+
 async function ensureWorkflowAttemptLeaseSchema(pool: { query: (sql: string, params?: unknown[]) => Promise<unknown> }): Promise<void> {
   for (const [name, type] of [
     ["execution_lease_id", "TEXT"],
@@ -802,6 +840,7 @@ export async function runSchemaBootstrap(
   await ensurePrincipleRevisionSchema(pool);
   await ensureWorkflowAttemptLeaseSchema(pool);
   await ensureBrowserPerformanceTelemetrySchema(pool);
+  await ensureWellnessDefaultLatticeSchema(pool);
   const { ensureHistoricalContinuitySchema } = await import("./historical-continuity");
   await ensureHistoricalContinuitySchema();
 
@@ -5061,37 +5100,6 @@ export async function runSchemaBootstrap(
         completed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
-  });
-
-  await heal("seed default wellness activities (one-time)", async () => {
-    const existing = await pool.query(
-      "SELECT COUNT(*)::int AS cnt FROM wellness_activities",
-    );
-    if (existing.rows[0].cnt > 0) return;
-    for (const a of DEFAULT_WELLNESS_ACTIVITIES) {
-      await pool.query(
-        `INSERT INTO wellness_activities (name, benefit, interval_days, category, is_default)
-         VALUES ($1, $2, $3, $4, true)
-         ON CONFLICT (name) DO NOTHING`,
-        [a.name, a.benefit, a.interval_days, a.category],
-      );
-    }
-  });
-
-  await heal("wellness activity launch backfill (null-only)", async () => {
-    const { WELLNESS_LAUNCH_BACKFILL } = await import("../shared/wellness-activity-launch");
-    for (const stamp of WELLNESS_LAUNCH_BACKFILL) {
-      await pool.query(
-        `UPDATE wellness_activities
-         SET launch_kind = COALESCE(launch_kind, $1),
-             launch_target = COALESCE(launch_target, $2),
-             completion_source = COALESCE(completion_source, $3),
-             updated_at = CURRENT_TIMESTAMP
-         WHERE name = ANY($4::text[])
-           AND (launch_kind IS NULL OR launch_target IS NULL OR completion_source IS NULL)`,
-        [stamp.launchKind, stamp.launchTarget, stamp.completionSource, stamp.names],
-      );
-    }
   });
 
   await heal("drop zombie gateway_logs table", async () => {

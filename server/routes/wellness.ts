@@ -1,7 +1,15 @@
 import type { Express } from "express";
 import { db } from "../db";
 import { pool } from "../db";
-import { healthMetrics, wellnessActivities, wellnessLogs, gratitudeEntries, learningEntries, reflectionEntries, DEFAULT_WELLNESS_ACTIVITIES } from "@shared/models/health";
+import { healthMetrics, wellnessActivities, wellnessLogs, gratitudeEntries, learningEntries, reflectionEntries } from "@shared/models/health";
+import {
+  listWellnessActivities,
+  createWellnessActivityLocal,
+  updateWellnessActivityLocal,
+  archiveWellnessActivityLocal,
+  publishActivityAsDefault,
+  retireActivityDefault,
+} from "../wellness-activity-service";
 import type { HealthMetric, InsertHealthMetric, WellnessActivity, WellnessLog, ActivityTrends, GratitudeEntry, LearningEntry, ReflectionEntry } from "@shared/models/health";
 import {
   WELLNESS_LAUNCH_BACKFILL,
@@ -312,11 +320,7 @@ export function computeBucketRollup(
 }
 
 export async function queryWellnessActivities(): Promise<WellnessActivity[]> {
-  return db
-    .select()
-    .from(wellnessActivities)
-    .where(visibleActivity(isNull(wellnessActivities.archivedAt)))
-    .orderBy(wellnessActivities.category, wellnessActivities.intervalDays, wellnessActivities.name);
+  return listWellnessActivities();
 }
 
 function goalTimestampInBounds(
@@ -473,25 +477,7 @@ export async function createWellnessActivity(data: {
   windowStart?: number | null;
   windowEnd?: number | null;
 }): Promise<WellnessActivity> {
-  if (!data.intervalDays || data.intervalDays < 1) throw new Error("intervalDays must be >= 1");
-  const category = data.category || categoryFromInterval(data.intervalDays);
-  if (!VALID_CATEGORIES.includes(category)) throw new Error(`category must be one of: ${VALID_CATEGORIES.join(", ")}`);
-  const windowValidation = validateWindow(category, data.windowStart ?? null, data.windowEnd ?? null);
-  if (!windowValidation.valid) throw new Error(windowValidation.error!);
-  const [activity] = await db.insert(wellnessActivities).values({
-    name: data.name,
-    ...sensitiveOwnershipValues(requireCurrentPrincipal()),
-    benefit: data.benefit ?? null,
-    intervalDays: data.intervalDays,
-    category,
-    isDefault: false,
-    linkedMetricType: data.linkedMetricType ?? null,
-    greatThreshold: data.greatThreshold ?? null,
-    goodThreshold: data.goodThreshold ?? null,
-    windowStart: data.windowStart ?? null,
-    windowEnd: data.windowEnd ?? null,
-  }).returning();
-  return activity;
+  return createWellnessActivityLocal(data);
 }
 
 export async function updateWellnessActivity(id: number, data: Partial<{
@@ -505,52 +491,11 @@ export async function updateWellnessActivity(id: number, data: Partial<{
   windowStart: number | null;
   windowEnd: number | null;
 }>): Promise<{ activity: WellnessActivity; warning?: string } | null> {
-  if (data.intervalDays !== undefined && data.intervalDays < 1) throw new Error("intervalDays must be >= 1");
-  if (data.category !== undefined && !VALID_CATEGORIES.includes(data.category)) throw new Error(`category must be one of: ${VALID_CATEGORIES.join(", ")}`);
-
-  let warning: string | undefined;
-  // risk is a leftover column — never accept it as a writable habit field
-  const { risk: _ignoredRisk, ...safeData } = data as typeof data & { risk?: unknown };
-  void _ignoredRisk;
-  const updates: Record<string, any> = { ...safeData };
-
-  // If category is changing, null out window (semantics differ per category)
-  if (data.category !== undefined) {
-    const [current] = await db.select().from(wellnessActivities).where(visibleActivity(eq(wellnessActivities.id, id)));
-    if (current && (current.windowStart != null || current.windowEnd != null) && data.windowStart === undefined && data.windowEnd === undefined) {
-      updates.windowStart = null;
-      updates.windowEnd = null;
-      warning = "Window cleared because category changed. Reconfigure window for the new category.";
-    }
-  }
-
-  // Validate window if being set
-  if (updates.windowStart !== undefined || updates.windowEnd !== undefined) {
-    const effectiveCategory = updates.category ?? (await db.select({ category: wellnessActivities.category }).from(wellnessActivities).where(visibleActivity(eq(wellnessActivities.id, id))).then(r => r[0]?.category));
-    if (effectiveCategory) {
-      const wStart = updates.windowStart !== undefined ? updates.windowStart : null;
-      const wEnd = updates.windowEnd !== undefined ? updates.windowEnd : null;
-      const v = validateWindow(effectiveCategory, wStart, wEnd);
-      if (!v.valid) throw new Error(v.error!);
-    }
-  }
-
-  const [activity] = await db
-    .update(wellnessActivities)
-    .set({ ...updates, updatedAt: new Date() })
-    .where(writableActivity(eq(wellnessActivities.id, id)))
-    .returning();
-  if (!activity) return null;
-  return { activity, warning };
+  return updateWellnessActivityLocal(id, data);
 }
 
 export async function archiveWellnessActivity(id: number): Promise<WellnessActivity | null> {
-  const [activity] = await db
-    .update(wellnessActivities)
-    .set({ archivedAt: new Date(), updatedAt: new Date() })
-    .where(writableActivity(eq(wellnessActivities.id, id)))
-    .returning();
-  return activity ?? null;
+  return archiveWellnessActivityLocal(id);
 }
 
 // Personal "Journaling" habit is off-app writing — log/unlog from Habits like any practice.
@@ -834,40 +779,6 @@ export async function upsertHealthMetricsAndProcessCompletions(
   }
 
   return { inserted, bridge, affectedPairs };
-}
-
-async function seedDefaultWellnessActivities(): Promise<number> {
-  let inserted = 0;
-  for (const a of DEFAULT_WELLNESS_ACTIVITIES) {
-    const result = await pool.query(
-      `INSERT INTO wellness_activities (name, benefit, interval_days, category, is_default)
-       VALUES ($1, $2, $3, $4, true)
-       ON CONFLICT (name) DO NOTHING`,
-      [a.name, a.benefit, a.interval_days, a.category],
-    );
-    if (result.rowCount && result.rowCount > 0) inserted++;
-    // Locked benefit copy for catalog rows that already exist (name match only).
-    await pool.query(
-      `UPDATE wellness_activities
-       SET benefit = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE name = $2 AND benefit IS DISTINCT FROM $1`,
-      [a.benefit, a.name],
-    );
-  }
-
-  for (const stamp of WELLNESS_LAUNCH_BACKFILL) {
-    await pool.query(
-      `UPDATE wellness_activities
-       SET launch_kind = COALESCE(launch_kind, $1),
-           launch_target = COALESCE(launch_target, $2),
-           completion_source = COALESCE(completion_source, $3),
-           updated_at = CURRENT_TIMESTAMP
-       WHERE name = ANY($4::text[])
-         AND (launch_kind IS NULL OR launch_target IS NULL OR completion_source IS NULL)`,
-      [stamp.launchKind, stamp.launchTarget, stamp.completionSource, stamp.names],
-    );
-  }
-  return inserted;
 }
 
 export async function seedMetricLinks(): Promise<void> {
@@ -1280,7 +1191,6 @@ export async function registerWellnessRoutes(app: Express) {
 
   // Auto-seed any missing default wellness activities on boot
   try {
-    await seedDefaultWellnessActivities();
   } catch (err: any) {
     log.error(`[HealthBridge] Failed to seed default activities on startup: ${err.message}`);
   }
@@ -1558,6 +1468,19 @@ export async function registerWellnessRoutes(app: Express) {
       }
       log.error("update activity error:", error.message);
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/wellness/activities/:id/default", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id), 10);
+      const enabled = req.body?.enabled;
+      if (typeof enabled !== "boolean") return res.status(400).json({ error: "enabled must be boolean" });
+      const activity = enabled ? await publishActivityAsDefault(id) : await retireActivityDefault(id);
+      res.json(activity);
+    } catch (error: any) {
+      log.error("default activity mutation error:", error.message);
+      res.status(error.status ?? 500).json({ error: error.message });
     }
   });
 
