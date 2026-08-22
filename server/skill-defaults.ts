@@ -175,7 +175,7 @@ import { composeFeaturePipelineSkillProcess } from "@shared/feature-pipeline";
     recommendedPersona: "Engineer",
     description:
       "Continuously monitors Mantra Web stage and production for crashes, failed builds or deployments, unhealthy runtime state, recurring error and warning signatures, material performance degradation, and failed or degraded autonomous skill runs. Deduplicates incidents, always files a durable Issue before elevating to Ray, escalates any broken environment classification, and prepares a bounded repair handoff for reproducible software defects while production remains observe-only and human-promoted.",
-    version: "1.14",
+    version: "1.15",
     addToMemory: false,
     pinnedToContext: false,
     sessionType: "autonomous",
@@ -268,6 +268,7 @@ File or reuse one Issue for every incident that is elevated to Ray, and for ever
 - Healthy run: do not message Ray and do not create artifacts beyond the canonical report update.
 - Watch: record compactly in the skill outcome and the canonical report only. Do not message Ray unless it worsens or persists for 2 runs.
 - Any \`broken\` classification: **file or reuse the Issue first**, then elevate once with Issue id.
+- After the Issue exists and the best-effort report update has been attempted, call \`session.set_status\` with \`runStatus: "failed"\` and a bounded \`summary\` containing the affected environment, \`broken\` classification, diagnostic summary, and canonical \`@issue:<id>\` reference. This is the canonical escalation. Do not fabricate a failed Sentry tool call. Report-write failure must not suppress this failed terminal settlement.
 - Never create a duplicate issue, task, plan, workflow, or conversation for the same unresolved signature.
 
 ## Repair handoff authority
@@ -277,7 +278,9 @@ The timer run is an observer and triage owner. It does not have trusted engineer
 A sensor failure must not erase other evidence. Continue with remaining sources and label proof as degraded. Tool contract errors are evidence about the diagnostic surface, not evidence that stage or production is unhealthy. Do not retry the same malformed call repeatedly. Bound every query and tool call.
 
 ## End state
-End each run with a compact structured outcome containing overall classification; stage and production classification; new or worsening incident signatures; Issue ids filed or reused; dedupe target if any; repair handoff status; coverage gaps; elevation performed (yes/no) and whether Issue-before-elevate held; and the next automatic check. Update the canonical report page as specified above. Healthy outcomes should be terse.`,
+End each run with a compact structured outcome containing overall classification; stage and production classification; new or worsening incident signatures; Issue ids filed or reused; dedupe target if any; repair handoff status; coverage gaps; elevation performed (yes/no) and whether Issue-before-elevate held; and the next automatic check. Update the canonical report page as specified above. Healthy outcomes should be terse.
+
+For any final Stage or Production \`broken\` classification, the last mutation after Issue persistence and the best-effort report attempt is \`session.set_status(runStatus: "failed", summary: "<environment> · broken · <bounded diagnostic> · @issue:<id>")\`. Every broken run makes this call even when it reuses the same open Issue.`,
   },
   {
     name: "guard",

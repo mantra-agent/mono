@@ -1110,7 +1110,6 @@ export async function executeAutonomousSkillRun(
         });
       } else {
         logger.log(`[SkillChat] [${sessionId}] status → deferred session.end applied after tools (${result.status})`);
-        agentExecutor.clearAppliedSessionEnd(sessionId);
       }
       await chatFileStorage.setHasUnreadResult(sessionId, true).catch((e: unknown) => {
         logger.error(`[SkillChat] [${sessionId}] Failed to set hasUnreadResult: ${e instanceof Error ? e.message : String(e)}`);
@@ -1138,8 +1137,12 @@ export async function executeAutonomousSkillRun(
       const { updateSpawnStatus } = await import("./sessions/tree");
       await updateSpawnStatus(sessionId, "failed");
     }
+    const appliedSessionEnd = agentExecutor.peekAppliedSessionEnd(sessionId);
+    if (appliedSessionEnd?.status === "failed") {
+      runStatus = "failed";
+    }
     const terminalFailureReason = runStatus === "failed"
-      ? result.error
+      ? appliedSessionEnd?.summary || result.error || "deferred_session_end_failed"
       : runStatus === "degraded"
         ? result.status === "degraded"
           ? result.error || "executor_degraded"
@@ -1154,6 +1157,7 @@ export async function executeAutonomousSkillRun(
         throw new Error(`SkillRun terminal persistence failed for session ${sessionId}`);
       }
     }
+    agentExecutor.clearAppliedSessionEnd(sessionId);
     if (runStatus === "degraded") {
       if (await conversationExists(sessionId)) {
         await chatFileStorage.setEndReason(sessionId, terminalFailureReason || "structural_requirements_failed").catch((e: unknown) => {

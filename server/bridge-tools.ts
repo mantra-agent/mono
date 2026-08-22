@@ -1316,7 +1316,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         if (status === "failed") {
           await chatFileStorage.setErrorSeverity(sessionId, "error").catch(() => {});
         }
-        agentExecutor.markPendingSessionEnd(sessionId, status as "saved" | "failed");
+        agentExecutor.markPendingSessionEnd(
+          sessionId,
+          status as "saved" | "failed",
+          typeof args.summary === "string" ? args.summary : undefined,
+        );
         return {
           result: `Session status "${status === "saved" ? "complete" : status}" deferred until tool persistence completes`,
           // Successful terminal status is intentional completion — stop the loop
