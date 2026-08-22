@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SimpleFeedItem } from "@shared/models/simple";
 import type { LibraryPage } from "@/pages/library/types";
 import { createReferenceRef } from "@shared/references";
+import { simpleItemReferenceRefs } from "@shared/simple-references";
 import { ChevronRight, Loader2, MessageSquare, MessageSquarePlus, MoreHorizontal, X } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -71,11 +72,11 @@ export function SurfacedPersonRow({ item, onSurfaceChange, dateLabel }: Surfaced
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const personId = personIdFromItem(item);
-  const firstSourceRef = item.sourceRefs[0];
-  const reference = item.references?.[0] ?? (firstSourceRef ? createReferenceRef({
+  const personSourceRef = item.sourceRefs.find(ref => ref.type === "person");
+  const reference = simpleItemReferenceRefs(item).find(ref => ref.type === "person") ?? (personSourceRef ? createReferenceRef({
     type: "person",
-    id: firstSourceRef.id,
-    metadata: { label: item.title, href: firstSourceRef.href },
+    id: personSourceRef.id,
+    metadata: { label: item.title, href: personSourceRef.href },
   }) : null);
   const surfaceTier = personPayloadString(item, "surfaceTier");
   const reason = personPayloadString(item, "followUpReason") ?? personPayloadString(item, "reason");
@@ -143,7 +144,7 @@ export function SurfacedPersonRow({ item, onSurfaceChange, dateLabel }: Surfaced
               onClick={dismiss}
             />
           </span>
-          <div className="relative min-w-0 flex-1 pl-2">
+          <div className="relative min-w-0 flex-1 pl-0.5">
             <span className="inline-flex max-w-full items-center gap-0.5 text-sm" onClick={(e) => e.stopPropagation()}>
               <span className="shrink-0 text-muted-foreground">{rowVerb} with</span>
               {reference ? <ReferenceRenderer refValue={reference} surface="simple-row" className="mx-0" /> : <span className="truncate font-medium">{item.title}</span>}
