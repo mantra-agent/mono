@@ -159,10 +159,30 @@ async function ensureWellnessDefaultLatticeSchema(pool: { query: (sql: string, p
   for (const [name, type] of [
     ["default_template_id", "INTEGER"], ["applied_template_revision", "TEXT"], ["default_update_state", "TEXT"],
   ] as const) await pool.query(`ALTER TABLE wellness_activities ADD COLUMN IF NOT EXISTS ${quoteIdent(name)} ${type}`);
-  await pool.query(`ALTER TABLE wellness_activities DROP CONSTRAINT IF EXISTS wellness_activities_name_key`);
-  await pool.query(`ALTER TABLE wellness_activities DROP CONSTRAINT IF EXISTS wellness_activities_name_unique`);
-  await pool.query(`DROP INDEX IF EXISTS wellness_activities_name_key`);
-  await pool.query(`DROP INDEX IF EXISTS wellness_activities_name_unique`);
+  const legacyGlobalNames = await pool.query(`
+    SELECT con.conname AS object_name, 'constraint' AS object_kind
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+    WHERE ns.nspname = current_schema()
+      AND rel.relname = 'wellness_activities'
+      AND con.contype = 'u'
+      AND cardinality(con.conkey) = 1
+      AND pg_get_constraintdef(con.oid) ~* 'UNIQUE[[:space:]]*\\([[:space:]]*name[[:space:]]*\\)'
+    UNION ALL
+    SELECT indexname AS object_name, 'index' AS object_kind
+    FROM pg_indexes
+    WHERE schemaname = current_schema()
+      AND tablename = 'wellness_activities'
+      AND indexdef ~* 'CREATE UNIQUE INDEX .*\\([[:space:]]*(lower\\()?name\\)?[[:space:]]*\\)'
+      AND indexdef !~* 'owner_user_id|principal_account_id'
+  `);
+  for (const legacy of legacyGlobalNames.rows) {
+    const objectName = quoteIdent(String(legacy.object_name));
+    await pool.query(legacy.object_kind === "constraint"
+      ? `ALTER TABLE wellness_activities DROP CONSTRAINT IF EXISTS ${objectName}`
+      : `DROP INDEX IF EXISTS ${objectName}`);
+  }
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS wellness_activities_owner_name_unique ON wellness_activities(owner_user_id, principal_account_id, lower(name)) WHERE archived_at IS NULL`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS wellness_activities_owner_template_unique ON wellness_activities(owner_user_id, principal_account_id, default_template_id) WHERE default_template_id IS NOT NULL`);
   await pool.query(`ALTER TABLE wellness_activities DROP CONSTRAINT IF EXISTS wellness_activities_default_update_state_check`);
