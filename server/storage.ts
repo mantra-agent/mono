@@ -22,7 +22,7 @@ import {
   type EmailEnrichment, type InsertEmailEnrichment,
   type EmailDismissal, type InsertEmailDismissal,
 } from "@shared/schema";
-import { eq, ne, desc, gte, count, sql, inArray, or, lte, and, isNotNull, type SQL } from "drizzle-orm";
+import { eq, ne, desc, gte, count, sql, inArray, or, lte, and, isNotNull, isNull, type SQL } from "drizzle-orm";
 import { fileIssueStorage, fileApiCallStorage } from "./file-storage";
 import { peopleStorage } from "./people-storage";
 import {
@@ -234,6 +234,9 @@ export interface IStorage {
   ): Promise<"abandoned" | "already_terminal" | "not_owned">;
   updateVoiceSessionInflight(sessionId: string, inflightTurn: number, bootId: string): Promise<void>;
   clearVoiceSessionInflight(sessionId: string, bootId: string): Promise<void>;
+  recordVoiceBrowserHeard(sessionId: string, chatSessionId: string, principal: Principal): Promise<VoiceSessionActive | undefined>;
+  recordVoiceProviderCallback(sessionId: string, bootId: string): Promise<VoiceSessionActive | undefined>;
+  claimVoiceRecoveryNotice(sessionId: string, bootId: string, heardAt: Date): Promise<VoiceSessionActive | undefined>;
   abandonExpiredVoiceSessions(staleBefore: Date): Promise<VoiceSessionActive[]>;
   getActiveVoiceSessions(bootId: string): Promise<VoiceSessionActive[]>;
   pruneVoiceSessions(retentionDays: number): Promise<{ deleted: number; remaining: number }>;
@@ -2196,6 +2199,31 @@ export class HybridStorage implements IStorage {
         eq(voiceSessionActive.bootId, bootId),
         eq(voiceSessionActive.status, "active"),
       ));
+  }
+
+  async recordVoiceBrowserHeard(sessionId: string, chatSessionId: string, principal: Principal): Promise<VoiceSessionActive | undefined> {
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) return undefined;
+    const [row] = await db.update(voiceSessionActive)
+      .set({ browserHeardAt: new Date(), recoveryNotifiedAt: null, lastHeartbeat: new Date() })
+      .where(and(eq(voiceSessionActive.sessionId, sessionId), eq(voiceSessionActive.chatSessionId, chatSessionId), eq(voiceSessionActive.status, "active"), eq(voiceSessionActive.scope, "user"), eq(voiceSessionActive.ownerUserId, principal.userId), eq(voiceSessionActive.accountId, principal.accountId)))
+      .returning();
+    return row;
+  }
+
+  async recordVoiceProviderCallback(sessionId: string, bootId: string): Promise<VoiceSessionActive | undefined> {
+    const [row] = await db.update(voiceSessionActive)
+      .set({ providerCallbackAt: new Date(), lastHeartbeat: new Date() })
+      .where(and(eq(voiceSessionActive.sessionId, sessionId), eq(voiceSessionActive.bootId, bootId), eq(voiceSessionActive.status, "active")))
+      .returning();
+    return row;
+  }
+
+  async claimVoiceRecoveryNotice(sessionId: string, bootId: string, heardAt: Date): Promise<VoiceSessionActive | undefined> {
+    const [row] = await db.update(voiceSessionActive)
+      .set({ recoveryNotifiedAt: new Date() })
+      .where(and(eq(voiceSessionActive.sessionId, sessionId), eq(voiceSessionActive.bootId, bootId), eq(voiceSessionActive.status, "active"), eq(voiceSessionActive.browserHeardAt, heardAt), or(isNull(voiceSessionActive.providerCallbackAt), lte(voiceSessionActive.providerCallbackAt, heardAt)), sql`${voiceSessionActive.recoveryNotifiedAt} IS NULL`))
+      .returning();
+    return row;
   }
 
   async abandonExpiredVoiceSessions(staleBefore: Date): Promise<VoiceSessionActive[]> {

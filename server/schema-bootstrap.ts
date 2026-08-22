@@ -54,6 +54,7 @@ const REQUIRED_VOICE_SESSION_ACTIVE_COLUMNS = [
   "id", "session_id", "conversation_id", "started_at", "status", "ended_at",
   "boot_id", "scope", "owner_user_id", "account_id", "start_request_id",
   "start_response", "start_ready_at", "inflight_turn", "last_heartbeat",
+  "browser_heard_at", "provider_callback_at", "recovery_notified_at",
 ] as const;
 
 async function ensureVoiceSessionActiveSchema(pool: {
@@ -74,6 +75,9 @@ async function ensureVoiceSessionActiveSchema(pool: {
       start_request_id TEXT,
       start_response JSONB,
       start_ready_at TIMESTAMPTZ,
+      browser_heard_at TIMESTAMPTZ,
+      provider_callback_at TIMESTAMPTZ,
+      recovery_notified_at TIMESTAMPTZ,
       inflight_turn INTEGER DEFAULT 0,
       last_heartbeat TIMESTAMPTZ
     )
@@ -83,6 +87,8 @@ async function ensureVoiceSessionActiveSchema(pool: {
     ["scope", "TEXT NOT NULL DEFAULT 'system'"], ["owner_user_id", "TEXT"],
     ["account_id", "TEXT"], ["start_request_id", "TEXT"],
     ["start_response", "JSONB"], ["start_ready_at", "TIMESTAMPTZ"],
+    ["browser_heard_at", "TIMESTAMPTZ"], ["provider_callback_at", "TIMESTAMPTZ"],
+    ["recovery_notified_at", "TIMESTAMPTZ"],
   ] as const;
   for (const [name, type] of additiveColumns) {
     await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS ${quoteIdent(name)} ${type}`);

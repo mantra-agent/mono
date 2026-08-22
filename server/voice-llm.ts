@@ -158,6 +158,13 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
     return;
   }
 
+  const callbackLease = await (await import("./storage")).storage.recordVoiceProviderCallback(session.id, eventBus.bootId);
+  if (!callbackLease) {
+    log.error(`LLM callback lease admission rejected session=${session.id}`);
+    sendOrphanResponse(res, session.id);
+    return;
+  }
+
   writeVoiceJournal(session, "tool_use_pause", {
     content: `voice_callback_received: path=${req.path} voiceSessionId=${session.id} turn=${session.turnCount + 1} mapSize=${getSessionMap().size}`,
   });

@@ -1571,6 +1571,13 @@ export function VoiceSessionProvider({
           inputActivityDetectorRef.current.corroborate();
           inputActiveRef.current = true;
           setUserSpeaking(true);
+          if (voiceSessionIdRef.current && chatConversationIdRef.current) {
+            phoneDiag("browser_transcript_heard", {
+              voiceSessionId: voiceSessionIdRef.current,
+              chatSessionId: chatConversationIdRef.current,
+              transcriptLength: transcriptText.length,
+            }, { critical: true });
+          }
           // Canonical committed history remains server-owned via voice_user_transcript.
           setUserComposition("");
           if (!firstUserSpeechFiredRef.current) {
@@ -1877,6 +1884,20 @@ export function VoiceSessionProvider({
                 });
               }
             }
+          }
+
+          if (event?.event === "voice_turn_recovery") {
+            const p = event.payload;
+            setUserComposition("");
+            setUserSpeaking(false);
+            setVoiceThinking(false);
+            setTranscript(prev => [...prev, {
+              source: "ai" as const,
+              message: typeof p.detail === "string" ? p.detail : "I heard you, but the turn did not start. Please try again.",
+              timestamp: new Date().toISOString(),
+              status: "committed" as const,
+            }]);
+            log.warn("VOICE:TURN_RECOVERY", { reason: p.reason || "unknown" });
           }
 
           if (event?.event === "voice_v3_tool_call") {
