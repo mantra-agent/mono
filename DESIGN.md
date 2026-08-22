@@ -406,6 +406,7 @@ hierarchy-tree:
     label: "truncate"
     meta: "right aligned when useful"
     actions: "row-local, horizontal ellipsis, revealed on hover or keyboard focus"
+    geometry: "one canonical column contract per section: time, status or completion, content, actions"
   behavior:
     selection: "single selected row when context needs it"
     expansion: "chevron rotation"
@@ -429,6 +430,7 @@ hierarchy-tree:
 - Creation sits directly under search when creation is a primary action. Use the blue `+ New Thing` row as the persistent primary CTA.
 - Use collapsible sections to reduce scanning cost.
 - Preserve semantic status through icons, checks, and muted metadata.
+- **Shared Row Geometry.** Rows mixed within one section must use one canonical column contract for time, status or completion, content, and actions. Specialized renderers may populate or omit a slot, but must not add local offsets, change column widths, or choose identity by position. Review every specialized row against its peer rows; same section means same skeleton, and variants own content rather than geometry.
 - Edit short fields in place. Use `InlineDatePicker` for dates.
 - Render canonical references with the shared reference renderer. When a reference has useful Simple-view context, expand that context directly beneath its row rather than opening a detached card.
 - Prefer one compact tree over separate cards, lists, and detail fragments.
@@ -597,6 +599,7 @@ Supported reference examples:
 - Persist canonical `@type:id` references.
 - Render references as compact typed links.
 - Use the shared parser and renderer. Do not hard-code a narrow subset.
+- Resolve a durable object's reference by its canonical type, never by array position such as `references[0]` or `sourceRefs[0]`.
 - Legacy forms may be accepted for migration, but new surfaces should emit canonical references.
 
 ### Scrollbars
