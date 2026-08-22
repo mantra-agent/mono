@@ -263,10 +263,12 @@ function FeatureFastForwardWalker({
 function FeatureAutoReviewWalker({
   feature,
   products,
+  productsResolved,
   sessionsById,
 }: {
   feature: FeatureFastForwardRow;
   products: ProductContext[];
+  productsResolved: boolean;
   sessionsById: Map<string, ChatSession>;
 }) {
   const launchedSessionId = fastForwardLaunchedSessionByFeature.get(feature.id) ?? null;
@@ -293,6 +295,8 @@ function FeatureAutoReviewWalker({
 
   useEffect(() => {
     if (feature.status !== "needs_review") return;
+    // Query loading/failure is not evidence that Product context is empty.
+    if (!productsResolved) return;
     // Fast Forward walker owns the walk when mode is on.
     if (readFeatureFastForward(feature.id)) return;
     // Already claimed this room (auto, FF, or row) — never double-launch.
@@ -316,6 +320,7 @@ function FeatureAutoReviewWalker({
     feature.id,
     feature.stage,
     feature.status,
+    productsResolved,
     isSessionInProgress,
     launch.isPending,
     launchedSessionId,
@@ -429,6 +434,7 @@ export function FeatureFastForwardHost() {
             key={`ar-${id}`}
             feature={feature}
             products={productList}
+            productsResolved={products.isSuccess}
             sessionsById={sessionsById}
           />
         );
