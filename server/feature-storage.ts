@@ -104,11 +104,8 @@ async function projectFeatureAttention<T extends Record<string, unknown>>(
   });
 }
 
-async function projectFeatureListRows<T extends Record<string, unknown>>(
-  rows: T[],
-  options: { verifyAncestry?: boolean } = {},
-) {
-  const withAvailability = await projectFeatureAvailability(rows, options);
+async function projectFeatureListRows<T extends Record<string, unknown>>(rows: T[]) {
+  const withAvailability = await projectFeatureAvailability(rows);
   return projectFeatureAttention(withAvailability);
 }
 
@@ -313,10 +310,11 @@ export const featureStorage = {
       }
     }
 
-    const [projected] = await projectFeatureListRows(
+    const [withAvailability] = await projectFeatureAvailability(
       [current as Record<string, unknown>],
-      { verifyAncestry: true },
+      { refreshAncestry: true },
     );
+    const [projected] = await projectFeatureAttention(withAvailability ? [withAvailability] : []);
     if (projected) publishFeaturesChanged("updated", id);
     return projected ?? current;
   },
