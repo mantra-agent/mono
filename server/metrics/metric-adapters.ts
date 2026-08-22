@@ -1243,8 +1243,9 @@ export async function ensureProductCatalogDefinitions(): Promise<void> {
 
 /**
  * Company scorecard KPI wrappers — one Metric each, no standingObjectiveKey.
- * Retunes existing fixed-id KPIs and mints missing wrappers by metric slug.
- * Under / Over bands are monotonic for both directions (bear under bull).
+ * Repairs catalog-owned wrapper configuration and mints missing wrappers by metric slug.
+ * Authored target copy and band thresholds are initialized only on insert; existing
+ * KPI rows remain the source of truth for those fields.
  * Dark Metrics stay unmeasured KPIs (no fabricated samples).
  */
 type ScorecardKpiSpec = {
