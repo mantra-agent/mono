@@ -1243,8 +1243,9 @@ export async function ensureProductCatalogDefinitions(): Promise<void> {
 
 /**
  * Company scorecard KPI wrappers — one Metric each, no standingObjectiveKey.
- * Retunes existing fixed-id KPIs and mints missing wrappers by metric slug.
- * Under / Over bands are monotonic for both directions (bear under bull).
+ * Repairs catalog-owned wrapper configuration and mints missing wrappers by metric slug.
+ * Authored target copy and band thresholds are initialized only on insert; existing
+ * KPI rows remain the source of truth for those fields.
  * Dark Metrics stay unmeasured KPIs (no fabricated samples).
  */
 type ScorecardKpiSpec = {
@@ -1470,16 +1471,12 @@ export async function ensureScorecardKpiWrappers(): Promise<number> {
           SET metric_id = ${metricRow.id},
               slug = ${spec.slug},
               description = ${spec.description},
-              target_label = ${spec.targetLabel},
               cadence = ${spec.cadence},
               period = ${spec.period},
               samples = 1,
               style = 'line',
               owner_label = ${spec.ownerLabel},
               direction = ${spec.direction},
-              bull_threshold = ${spec.bullThreshold},
-              on_track_threshold = NULL,
-              bear_threshold = ${spec.bearThreshold},
               stale_after_hours = ${spec.staleAfterHours},
               standing_objective_key = NULL,
               status = ${spec.status},
@@ -1489,16 +1486,12 @@ export async function ensureScorecardKpiWrappers(): Promise<number> {
               metric_id IS DISTINCT FROM ${metricRow.id}
               OR slug IS DISTINCT FROM ${spec.slug}
               OR description IS DISTINCT FROM ${spec.description}
-              OR target_label IS DISTINCT FROM ${spec.targetLabel}
               OR cadence IS DISTINCT FROM ${spec.cadence}
               OR period IS DISTINCT FROM ${spec.period}
               OR samples IS DISTINCT FROM 1
               OR style IS DISTINCT FROM 'line'
               OR owner_label IS DISTINCT FROM ${spec.ownerLabel}
               OR direction IS DISTINCT FROM ${spec.direction}
-              OR bull_threshold IS DISTINCT FROM ${spec.bullThreshold}
-              OR bear_threshold IS DISTINCT FROM ${spec.bearThreshold}
-              OR on_track_threshold IS NOT NULL
               OR stale_after_hours IS DISTINCT FROM ${spec.staleAfterHours}
               OR standing_objective_key IS NOT NULL
               OR status IS DISTINCT FROM ${spec.status}
