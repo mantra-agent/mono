@@ -1313,9 +1313,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       // steps before extractSuccessfulToolInvocations can see durable tools.
       const { agentExecutor } = await import("./agent-executor");
       if (agentExecutor.isSessionBusy(sessionId)) {
-        if (status === "failed") {
-          await chatFileStorage.setErrorSeverity(sessionId, "error").catch(() => {});
-        }
         agentExecutor.markPendingSessionEnd(
           sessionId,
           status as "saved" | "failed",
