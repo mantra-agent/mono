@@ -30,6 +30,8 @@ export interface IdentityGraphAccount {
   periodTokens?: number;
   emittedOverageTokens?: number;
   usageStatus?: "ok" | "bar" | "warn" | "pause" | null;
+  usageProjectionState?: "fresh" | "stale";
+  usageProjectedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   lastActiveAt: string | null;

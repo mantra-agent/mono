@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Building2, ChevronRight, Clock, CreditCard, Gauge, Gift, Loader2, MoreHorizontal, Pause, Route } from "lucide-react";
+import { AlertTriangle, Building2, ChevronRight, Clock, CreditCard, Gauge, Gift, Loader2, MoreHorizontal, Pause, Route } from "lucide-react";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
 import { EditableSessionTitle } from "@/components/editable-session-title";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
@@ -471,6 +471,20 @@ function AccountRow({
               <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
                 <ProfileTreeRow label="Emitted" icon={<Gauge className="h-3.5 w-3.5" />} hasValue={(account.emittedOverageTokens ?? 0) > 0} showEmpty>
                   <span className="text-foreground">{formatTokenCount(account.emittedOverageTokens ?? 0)}</span>
+                </ProfileTreeRow>
+              </HierarchyTreeRow>
+              <HierarchyTreeRow continues indent="icon" connectorAnchor="first-row-center">
+                <ProfileTreeRow
+                  label="Projection"
+                  icon={account.usageProjectionState === "stale" ? <AlertTriangle className="h-3.5 w-3.5 text-destructive" /> : <Clock className="h-3.5 w-3.5" />}
+                  hasValue={account.usageProjectionState === "fresh"}
+                  showEmpty
+                >
+                  <span className={account.usageProjectionState === "stale" ? "text-destructive" : "text-muted-foreground"}>
+                    {account.usageProjectionState === "fresh" && account.usageProjectedAt
+                      ? formatDateTimeInTimezone(account.usageProjectedAt, timezone)
+                      : "Stale"}
+                  </span>
                 </ProfileTreeRow>
               </HierarchyTreeRow>
             </>

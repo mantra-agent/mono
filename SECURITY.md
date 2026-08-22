@@ -36,6 +36,13 @@ Assets/data: principal-owned wellness activity rows and platform-wide Wellness d
 - Residual/rollback: global skill names remain shared catalog. Revert the GET, `listBindingsForTemplate`, expand chips, and this finding together.
 -->
 
+<!-- 2026-08-21 Account usage projection settlement repair:
+- Assets/data: Account envelope fields and `api_calls` token totals (S1 operational spend). No prompt/response content, Stripe secret, Customer pointer, or new authority.
+- Flow/threat: settled inference -> Account-ledger SUM -> derived envelope/watermark. A split/nested transaction could leave cached usage/status looking current after settlement failed (STRIDE tampering/repudiation; DATA-01/OBS-01), allowing stale pause or overage decisions.
+- Deterministic controls/owner: `account-usage-envelope.ts` owns one outer advisory-locked transaction; the ledger SUM inherits that transaction through the canonical Drizzle boundary. `usage_projection_state` is a closed `fresh|stale` discriminant and only the successful rebuild transaction writes `fresh`; failure marks `stale` outside the failed transaction. Existing Principal/account gates and collector idempotency remain unchanged. Owner: Core Account usage envelope. Severity: high integrity. SLA: same PR.
+- Residual/rollback: collector failure still leaves the overage watermark unchanged for replay, while projection freshness can remain fresh because ledger/status settlement succeeded. Revert transaction ownership, freshness columns/surface, schema convergence, and this finding together.
+-->
+
 <!-- 2026-08-18 Stripe Billing Integration collector:
 - Assets/data: A01 Account identity; A03 `account_billing` pointers and term stamps (S1); A03 Stripe secrets (S3); A07 webhook receipts / meter deliveries (S1); A02 `api_calls` token totals (S1 operational, not prompt bodies). No entitlement column.
 - Flow/threat: operator attach → Checkout → Stripe; sibling emit → receive seam → delivery row → Meter Event; Stripe → signed webhook. Credible abuse: unsigned webhook flipping `collection_status`; treating `cus_` as login/entitlement; leaking `sk_` / `whsec_` in logs or tool results; replaying meter identifiers after Stripe's 24h window; attaching a consulting Price; accepting a meter event for an Account with no billing row; cross-Account Customer reuse (STRIDE spoofing/tampering/disclosure; IAM-01, DATA-01, INT-01, OBS-01).

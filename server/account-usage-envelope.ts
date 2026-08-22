@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { accounts } from "@shared/schema";
-import { db } from "./db";
+import { db, runOutsideDatabaseTransaction, runWithDatabaseTransaction } from "./db";
 import { fileApiCallStorage } from "./file-storage/api-calls";
 import { emitOverageMeterEvent } from "./billing-meter-port";
 import { createLogger } from "./log";
@@ -27,6 +27,8 @@ export interface AccountUsageEnvelope {
   periodTokens: number;
   emittedOverageTokens: number;
   usageStatus: UsageStatus | null;
+  usageProjectionState: "fresh" | "stale";
+  usageProjectedAt: Date | null;
 }
 
 const BAR_FRACTION = 0.8;
@@ -79,6 +81,8 @@ function mapEnvelope(row: {
   periodTokens: unknown;
   emittedOverageTokens: unknown;
   usageStatus: string | null;
+  usageProjectionState: string;
+  usageProjectedAt: Date | null;
 }): AccountUsageEnvelope {
   const status = USAGE_STATUSES.includes(row.usageStatus as UsageStatus)
     ? (row.usageStatus as UsageStatus)
@@ -92,6 +96,8 @@ function mapEnvelope(row: {
     periodTokens: asNumber(row.periodTokens),
     emittedOverageTokens: asNumber(row.emittedOverageTokens),
     usageStatus: status,
+    usageProjectionState: row.usageProjectionState === "fresh" ? "fresh" : "stale",
+    usageProjectedAt: row.usageProjectedAt ?? null,
   };
 }
 
@@ -104,6 +110,8 @@ const envelopeColumns = {
   periodTokens: accounts.periodTokens,
   emittedOverageTokens: accounts.emittedOverageTokens,
   usageStatus: accounts.usageStatus,
+  usageProjectionState: accounts.usageProjectionState,
+  usageProjectedAt: accounts.usageProjectedAt,
 };
 
 async function loadEnvelope(accountId: string): Promise<AccountUsageEnvelope | null> {
@@ -148,7 +156,7 @@ export async function getAccountUsageEnvelope(accountId: string): Promise<Accoun
 }
 
 export async function recomputeAccountUsageEnvelope(accountId: string): Promise<AccountUsageEnvelope | null> {
-  const projected = await db.transaction(async (tx) => {
+  const projected = await runOutsideDatabaseTransaction(() => db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`account-usage:${accountId}`}))`);
     const [row] = await tx
       .select(envelopeColumns)
@@ -175,6 +183,8 @@ export async function recomputeAccountUsageEnvelope(accountId: string): Promise<
         periodTokens,
         emittedOverageTokens,
         usageStatus,
+        usageProjectionState: "fresh",
+        usageProjectedAt: sql`CURRENT_TIMESTAMP`,
         updatedAt: sql`CURRENT_TIMESTAMP`,
       })
       .where(eq(accounts.id, accountId));
@@ -186,8 +196,10 @@ export async function recomputeAccountUsageEnvelope(accountId: string): Promise<
       periodTokens,
       emittedOverageTokens,
       usageStatus,
+      usageProjectionState: "fresh" as const,
+      usageProjectedAt: new Date(),
     };
-  });
+  })));
 
   if (!projected || projected.includedTokens == null) return projected;
 
@@ -212,6 +224,11 @@ export async function settleAccountUsageEnvelope(accountId: string): Promise<voi
     await recomputeAccountUsageEnvelope(accountId);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    await runOutsideDatabaseTransaction(() => db
+      .update(accounts)
+      .set({ usageProjectionState: "stale", updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(accounts.id, accountId)))
+      .catch(() => undefined);
     log.warn(`envelope settle failed account=${accountId}: ${message}`);
   }
 }
