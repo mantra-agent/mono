@@ -159,7 +159,9 @@ async function ensureWellnessDefaultLatticeSchema(pool: { query: (sql: string, p
   for (const [name, type] of [
     ["default_template_id", "INTEGER"], ["applied_template_revision", "TEXT"], ["default_update_state", "TEXT"],
   ] as const) await pool.query(`ALTER TABLE wellness_activities ADD COLUMN IF NOT EXISTS ${quoteIdent(name)} ${type}`);
+  await pool.query(`ALTER TABLE wellness_activities DROP CONSTRAINT IF EXISTS wellness_activities_name_key`);
   await pool.query(`ALTER TABLE wellness_activities DROP CONSTRAINT IF EXISTS wellness_activities_name_unique`);
+  await pool.query(`DROP INDEX IF EXISTS wellness_activities_name_key`);
   await pool.query(`DROP INDEX IF EXISTS wellness_activities_name_unique`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS wellness_activities_owner_name_unique ON wellness_activities(owner_user_id, principal_account_id, lower(name)) WHERE archived_at IS NULL`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS wellness_activities_owner_template_unique ON wellness_activities(owner_user_id, principal_account_id, default_template_id) WHERE default_template_id IS NOT NULL`);
@@ -5057,7 +5059,7 @@ export async function runSchemaBootstrap(
     await pool.query(`
       CREATE TABLE IF NOT EXISTS wellness_activities (
         id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
         benefit TEXT,
         risk TEXT,
         estimated_minutes INTEGER,
