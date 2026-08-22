@@ -204,6 +204,17 @@ interface EnvironmentHealth {
   }>;
 }
 
+const UNAVAILABLE_ENVIRONMENT_HEALTH: EnvironmentHealth = {
+  state: "unknown",
+  residual: "Health unavailable",
+  signals: ["deploy", "reachability", "bindings", "issues", "jobs"].map((key) => ({
+    key: key as EnvironmentHealth["signals"][number]["key"],
+    state: "unknown",
+    residual: "Health unavailable",
+    href: null,
+  })),
+};
+
 interface DevStatusOk {
   configured: true;
   devUrl: string | null;
@@ -1172,7 +1183,7 @@ export default function PlatformEnvironmentDetailPage() {
     staleTime: 30_000,
   });
 
-  const { data: health } = useQuery<EnvironmentHealth>({
+  const { data: health, isError: healthUnavailable } = useQuery<EnvironmentHealth>({
     queryKey: ["/api/platforms/environments", environmentId, "health"],
     enabled: Number.isFinite(environmentId),
     staleTime: 30_000,
@@ -1232,7 +1243,10 @@ export default function PlatformEnvironmentDetailPage() {
   return (
     <div className="space-y-4 p-4">
       <div className="grid gap-4">
-        {health ? <EnvironmentHealthSection environmentId={environmentId} health={health} /> : null}
+        <EnvironmentHealthSection
+          environmentId={environmentId}
+          health={healthUnavailable ? UNAVAILABLE_ENVIRONMENT_HEALTH : health ?? UNAVAILABLE_ENVIRONMENT_HEALTH}
+        />
         <div id="build"><EnvironmentPipelineCard details={data} environmentId={environmentId} sourceEnvironmentId={sourceEnvironmentId} /></div>
         {data.hosting.provider === "cloudflare" ? <CloudflarePagesCard environmentId={environmentId} /> : null}
         <EnvironmentDetailsConfigureCard details={data} environmentId={environmentId} />
