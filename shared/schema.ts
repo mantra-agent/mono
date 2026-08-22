@@ -1728,6 +1728,9 @@ export const voiceSessionActive = pgTable("voice_session_active", {
   startRequestId: text("start_request_id"),
   startResponse: jsonb("start_response"),
   startReadyAt: timestamp("start_ready_at", { withTimezone: true }),
+  browserHeardAt: timestamp("browser_heard_at", { withTimezone: true }),
+  providerCallbackAt: timestamp("provider_callback_at", { withTimezone: true }),
+  recoveryNotifiedAt: timestamp("recovery_notified_at", { withTimezone: true }),
   inflightTurn: integer("inflight_turn").default(0),
   lastHeartbeat: timestamp("last_heartbeat", { withTimezone: true }),
 }, (table) => [

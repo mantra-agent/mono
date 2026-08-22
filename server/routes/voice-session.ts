@@ -253,9 +253,28 @@ export async function registerVoiceSessionRoutes(app: Express) {
 
   // Greetings removed — user speaks first, connection chime signals readiness.
 
-  app.post("/api/voice/diagnostic", async (req, res) => {
+  app.post("/api/voice/diagnostic", requireAuth, async (req, res) => {
     const { event, details } = req.body || {};
-    if (event === "disconnected") {
+    if (event === "browser_transcript_heard") {
+      const sessionId = typeof details?.voiceSessionId === "string" ? details.voiceSessionId : "";
+      const chatSessionId = typeof details?.chatSessionId === "string" ? details.chatSessionId : "";
+      if (!sessionId || !chatSessionId || !req.principal) return res.status(400).json({ error: "voiceSessionId and chatSessionId are required" });
+      const lease = await storage.recordVoiceBrowserHeard(sessionId, chatSessionId, req.principal);
+      if (!lease?.browserHeardAt) return res.status(404).json({ error: "Active voice session not found" });
+      voiceLog.log(`[VoiceSession] BROWSER_TRANSCRIPT_HEARD sessionId=${sessionId} chatSessionId=${chatSessionId}`);
+      const heardAt = lease.browserHeardAt;
+      setTimeout(() => {
+        void (async () => {
+          const claimed = await storage.claimVoiceRecoveryNotice(sessionId, eventBus.bootId, heardAt);
+          if (!claimed) return;
+          const { getVoiceSession } = await import("../voice-llm");
+          const voiceSession = getVoiceSession(sessionId);
+          if (!voiceSession || voiceSession.chatSessionId !== chatSessionId) return;
+          eventBus.publish({ category: "voice", event: "voice_turn_recovery", payload: { sessionId, chatSessionId, reason: "provider_callback_missing", detail: "I heard you, but the voice provider did not start the turn. Please try that once more.", timestamp: Date.now() }, sessionKey: voiceSession.chatSessionKey || `voice:${sessionId}` });
+          voiceLog.warn(`[VoiceSession] TURN_RECOVERY provider_callback_missing sessionId=${sessionId} chatSessionId=${chatSessionId}`);
+        })().catch((error: unknown) => voiceLog.warn(`[VoiceSession] TURN_RECOVERY check failed sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`));
+      }, 8_000);
+    } else if (event === "disconnected") {
       const reason = details?.reason ?? "";
       const closeCode = details?.closeCode ?? details?.code ?? "";
       const closeReason = details?.closeReason ?? "";
@@ -931,6 +950,11 @@ export async function registerVoiceSessionRoutes(app: Express) {
         timings: { ...timings, total: totalElapsed },
         ...(sessionPersona ? { persona: sessionPersona } : {}),
         recognitionKeyterms: recognitionHints.keyterms,
+        capabilities: {
+          browserTranscriptEvidence: true,
+          callbackAdmissionEvidence: true,
+          turnRecovery: true,
+        },
         ...(serverTranscript ? { serverTranscript } : {}),
         ...(firstMessage ? { firstMessage } : {}),
       };

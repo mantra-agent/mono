@@ -21,6 +21,11 @@ export interface VoiceStartResponse {
   persona?: { id: number; name: string; icon: string };
   firstMessage?: string;
   recognitionKeyterms?: string[];
+  capabilities?: {
+    browserTranscriptEvidence: boolean;
+    callbackAdmissionEvidence: boolean;
+    turnRecovery: boolean;
+  };
 }
 
 export interface VoiceStartPhaseEvent {
