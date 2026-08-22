@@ -1,6 +1,5 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
-import { BILLING_PRICE_KEYS } from "@shared/billing";
 import { requireAuth, requireAdmin } from "../auth";
 import { requirePermission } from "../permissions";
 import {
@@ -22,8 +21,7 @@ import { createLogger } from "../log";
 const log = createLogger("billing-routes");
 
 const attachSchema = z.object({
-  packageKey: z.enum(["max", "max_plus", "factory_plus", "custom"]),
-  includeTokens: z.number().int().min(0).optional(),
+  packageKey: z.enum(["max", "max_plus", "factory_plus"]),
 }).strict();
 
 const receiveSchema = z.object({
@@ -34,12 +32,10 @@ const receiveSchema = z.object({
 }).strict();
 
 const priceMapUpsertSchema = z.object({
-  key: z.enum(BILLING_PRICE_KEYS),
-  label: z.string().min(1),
-  stripePriceId: z.string().min(1),
-  stripeProductId: z.string().nullable().optional(),
-  amountCents: z.number().int().min(0).nullable().optional(),
-  currency: z.string().min(3).max(3),
+  pricingRevisionId: z.string().min(1),
+  key: z.string().min(1),
+  stripePriceId: z.string().nullable(),
+  stripeProductId: z.string().nullable(),
 }).strict();
 
 function sendCollectorError(res: Response, error: unknown): void {
@@ -107,7 +103,6 @@ export function registerBillingRoutes(app: Express): void {
         const result = await attachAccountBilling({
           accountId: String(req.params.id),
           packageKey: parsed.data.packageKey,
-          includeTokens: parsed.data.includeTokens,
         });
         res.json(result);
       } catch (error) {
