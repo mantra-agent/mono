@@ -1219,7 +1219,7 @@ export const kpiStorage = {
         ownerLabel: parsed.ownerLabel ?? "",
         direction: parsed.direction ?? metric.direction ?? "higher_is_better",
         bullThreshold: parsed.bullThreshold ?? null,
-        onTrackThreshold: null,
+        onTrackThreshold: parsed.onTrackThreshold ?? null,
         bearThreshold: parsed.bearThreshold ?? null,
         staleAfterHours: parsed.staleAfterHours ?? 168,
         standingObjectiveKey: parsed.standingObjectiveKey ?? null,
@@ -1243,7 +1243,6 @@ export const kpiStorage = {
       : existing.samples;
     const nextStyle = rest.style ? normalizeKpiStyle(rest.style) : existing.style;
     const patch: Record<string, unknown> = { ...rest, updatedAt: new Date() };
-    delete patch.onTrackThreshold;
     if (rest.period || rest.samples != null || rest.cadence !== undefined) {
       patch.period = nextPeriod;
       patch.samples = nextSamples;
