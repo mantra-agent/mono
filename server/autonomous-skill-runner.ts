@@ -226,7 +226,7 @@ function describeExecutorFailure(result: ExecutorRunResult): string {
 async function applyPendingSessionEndAfterTools(sessionId: string): Promise<boolean> {
   const alreadyApplied = agentExecutor.hasDeferredOrAppliedSessionEnd(sessionId) &&
     !agentExecutor.peekPendingSessionEnd(sessionId);
-  const pending = agentExecutor.takePendingSessionEnd(sessionId);
+  const pending = agentExecutor.peekPendingSessionEnd(sessionId);
   agentExecutor.endSessionSettling(sessionId);
   if (!pending) {
     return alreadyApplied || agentExecutor.hasDeferredOrAppliedSessionEnd(sessionId);
@@ -250,16 +250,11 @@ async function applyPendingSessionEndAfterTools(sessionId: string): Promise<bool
       actionHint: "Open the session, review the transcript, and retry or continue if needed.",
       skillId: skillIdFromKey,
       terminationReason: "deferred_session_end_failed",
-    }).catch(() => undefined);
-  }
-  await chatFileStorage
-    .updateSessionStatus(sessionId, pending.status, pending.summary)
-    .catch((e: unknown) => {
-      logger.error(
-        `[SkillChat] [${sessionId}] Failed to apply deferred session status ${pending.status}: ${e instanceof Error ? e.message : String(e)}`,
-      );
     });
+  }
+  await chatFileStorage.updateSessionStatus(sessionId, pending.status, pending.summary);
   await chatFileStorage.setSessionPinned(sessionId, false).catch(() => undefined);
+  agentExecutor.takePendingSessionEnd(sessionId);
   agentExecutor.markAppliedSessionEnd(sessionId, pending);
   return true;
 }
