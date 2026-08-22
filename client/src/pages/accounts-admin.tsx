@@ -93,10 +93,7 @@ function AccountRow({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [modsOpen, setModsOpen] = useState(false);
-  const [attachPackage, setAttachPackage] = useState<"max" | "max_plus" | "factory_plus" | "custom">("custom");
-  const [includeTokens, setIncludeTokens] = useState(
-    account.includedTokens == null ? "0" : String(account.includedTokens),
-  );
+  const [attachPackage, setAttachPackage] = useState<"max" | "max_plus" | "factory_plus">("max");
   const [includeDraft, setIncludeDraft] = useState(
     account.includedTokens == null ? "" : String(account.includedTokens),
   );
@@ -120,12 +117,7 @@ function AccountRow({
   const billingMutation = useMutation({
     mutationFn: async (input: { action: "attach" | "cancel-notice" }) => {
       if (input.action === "attach") {
-        const body: { packageKey: typeof attachPackage; includeTokens?: number } = { packageKey: attachPackage };
-        if (attachPackage === "custom") {
-          const parsed = Number(includeTokens);
-          if (!Number.isInteger(parsed) || parsed < 0) throw new Error("custom requires include tokens");
-          body.includeTokens = parsed;
-        }
+        const body: { packageKey: typeof attachPackage } = { packageKey: attachPackage };
         return (await apiRequest("POST", `/api/admin/accounts/${account.id}/billing/attach`, body)).json() as Promise<{ checkoutUrl?: string }>;
       }
       return (await apiRequest("POST", `/api/admin/accounts/${account.id}/billing/cancel-notice`)).json();
@@ -321,20 +313,10 @@ function AccountRow({
                       value={attachPackage}
                       onChange={(event) => setAttachPackage(event.target.value as typeof attachPackage)}
                     >
-                      <option value="custom">custom</option>
                       <option value="max">max</option>
                       <option value="max_plus">max_plus</option>
                       <option value="factory_plus">factory_plus</option>
                     </select>
-                    {attachPackage === "custom" ? (
-                      <Input
-                        className="mb-2 h-8"
-                        inputMode="numeric"
-                        placeholder="include tokens"
-                        value={includeTokens}
-                        onChange={(event) => setIncludeTokens(event.target.value)}
-                      />
-                    ) : null}
                     <DropdownMenuItem
                       disabled={billingMutation.isPending}
                       onClick={() => billingMutation.mutate({ action: "attach" })}

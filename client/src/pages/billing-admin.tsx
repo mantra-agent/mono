@@ -17,7 +17,7 @@ interface BillingPricesResponse {
   complete: boolean;
 }
 
-type EditablePriceField = "label" | "stripePriceId" | "stripeProductId" | "amountCents" | "currency";
+type EditablePriceField = "stripePriceId" | "stripeProductId";
 
 function PriceField({
   row,
@@ -34,15 +34,10 @@ function PriceField({
   const value = row[field];
   const mutation = useMutation({
     mutationFn: async (next: string) => {
-      const amountCents = field === "amountCents"
-        ? (next.trim() === "" ? null : Number(next))
-        : row.amountCents;
       const body = {
-        label: field === "label" ? next.trim() : row.label,
-        stripePriceId: field === "stripePriceId" ? next.trim() : row.stripePriceId,
+        pricingRevisionId: row.pricingRevisionId,
+        stripePriceId: field === "stripePriceId" ? next.trim() || null : row.stripePriceId,
         stripeProductId: field === "stripeProductId" ? next.trim() || null : row.stripeProductId,
-        amountCents,
-        currency: field === "currency" ? next.trim().toLowerCase() : row.currency,
       };
       return (await apiRequest("PUT", `/api/admin/billing/prices/${row.key}`, body)).json();
     },
@@ -60,7 +55,6 @@ function PriceField({
             defaultValue={displayValue}
             placeholder="Not set"
             className="w-52 font-mono text-xs"
-            inputMode={field === "amountCents" ? "numeric" : undefined}
             onBlur={(event) => {
               const next = event.currentTarget.value;
               if (next !== displayValue) mutation.mutate(next);
@@ -94,11 +88,12 @@ function PriceRow({ row, canWrite }: { row: BillingPriceMapRow; canWrite: boolea
       testId={`billing-price-${row.key}`}
     >
       <div className="space-y-1 py-1">
-        <PriceField row={row} field="label" label="Name" canWrite={canWrite} />
+        <ProfileTreeRow label="Amount" hasValue mobileLayout="inline">
+          <span className="text-xs text-foreground">{new Intl.NumberFormat("en-US", { style: "currency", currency: row.currency }).format(row.amountCents / 100)} · {row.cadence}</span>
+        </ProfileTreeRow>
+        {row.includedUsage ? <ProfileTreeRow label="Included usage" hasValue mobileLayout="inline"><span className="text-xs text-foreground">{row.includedUsage}</span></ProfileTreeRow> : null}
         <PriceField row={row} field="stripeProductId" label="Product ID" canWrite={canWrite} />
         <PriceField row={row} field="stripePriceId" label="Price ID" canWrite={canWrite} />
-        <PriceField row={row} field="amountCents" label="Amount (cents)" canWrite={canWrite} />
-        <PriceField row={row} field="currency" label="Currency" canWrite={canWrite} />
       </div>
     </ProfileTreeRow>
   );

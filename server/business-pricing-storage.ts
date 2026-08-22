@@ -30,6 +30,16 @@ function newId(): string {
   return `pricing_${randomBytes(8).toString("hex")}`;
 }
 
+async function snapshotRevision(row: typeof businessPricing.$inferSelect): Promise<string> {
+  const id = `pricing_rev_${row.id}_${row.updatedAt.getTime()}`;
+  await db.execute(sql`
+    INSERT INTO business_pricing_revisions (id, business_id, pricing_id, snapshot, created_at)
+    VALUES (${id}, ${row.businessId}, ${row.id}, ${JSON.stringify({ packages: row.packages, extras: row.extras })}::jsonb, ${row.updatedAt})
+    ON CONFLICT (id) DO NOTHING
+  `);
+  return id;
+}
+
 function mapCatalog(row: typeof businessPricing.$inferSelect): BusinessPricing {
   const packages = normalizePricingPackages(row.packages).map(projectPackage);
   const extras = normalizePricingExtras(row.extras);
@@ -62,7 +72,10 @@ export class BusinessPricingStorage {
   async getOrCreate(businessId: string): Promise<BusinessPricing> {
     const principal = requireCurrentUserPrincipal();
     const existing = await findVisible(businessId);
-    if (existing) return mapCatalog(existing);
+    if (existing) {
+      await snapshotRevision(existing);
+      return mapCatalog(existing);
+    }
 
     const [business] = await db.select({ id: businesses.id }).from(businesses)
       .where(writableBusinessPredicate(principal, eq(businesses.id, businessId))).limit(1);
@@ -117,6 +130,7 @@ export class BusinessPricingStorage {
         )))
         .returning();
       if (!updated) throw Object.assign(new Error("Business pricing not found"), { status: 404 });
+      await snapshotRevision(updated);
       log.info("pricing catalog updated", { businessId, action: parsed.action });
       return mapCatalog(updated);
     }));

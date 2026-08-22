@@ -312,6 +312,9 @@ export const accountBilling = pgTable("account_billing", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   accountId: varchar("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
   packageKey: text("package_key").notNull(),
+  pricingRevisionId: text("pricing_revision_id"),
+  licensedStripePriceId: text("licensed_stripe_price_id"),
+  overageStripePriceId: text("overage_stripe_price_id"),
   includeTokens: integer("include_tokens").notNull(),
   stripeCustomerId: text("stripe_customer_id"),
   stripeSubscriptionId: text("stripe_subscription_id"),
@@ -332,7 +335,7 @@ export const accountBilling = pgTable("account_billing", {
   subscriptionIdx: index("idx_account_billing_subscription").on(table.stripeSubscriptionId),
   packageCheck: check(
     "account_billing_package_key_check",
-    sql`${table.packageKey} IN ('max', 'max_plus', 'factory_plus', 'custom')`,
+    sql`${table.packageKey} IN ('max', 'max_plus', 'factory_plus')`,
   ),
   statusCheck: check(
     "account_billing_collection_status_check",
@@ -361,18 +364,18 @@ export const accountBilling = pgTable("account_billing", {
   ),
 }));
 
-export const billingPrices = pgTable("billing_prices", {
-  key: text("key").primaryKey(),
-  label: text("label").notNull(),
-  stripePriceId: text("stripe_price_id").notNull(),
+export const billingPrices = pgTable("billing_price_bindings", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  pricingRevisionId: text("pricing_revision_id").notNull(),
+  entryKey: text("entry_key").notNull(),
+  stripePriceId: text("stripe_price_id"),
   stripeProductId: text("stripe_product_id"),
-  amountCents: integer("amount_cents"),
-  currency: text("currency").notNull().default("usd"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => ({
+  revisionEntryUnique: uniqueIndex("uq_billing_price_bindings_revision_entry").on(table.pricingRevisionId, table.entryKey),
   pricePrefixCheck: check(
-    "billing_prices_price_prefix_check",
-    sql`${table.stripePriceId} ~ '^price_'`,
+    "billing_price_bindings_price_prefix_check",
+    sql`${table.stripePriceId} IS NULL OR ${table.stripePriceId} ~ '^price_'`,
   ),
 }));
 

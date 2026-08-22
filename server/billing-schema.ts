@@ -23,6 +23,9 @@ export async function ensureBillingSchema(pool: Pool): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  await pool.query(`ALTER TABLE account_billing ADD COLUMN IF NOT EXISTS pricing_revision_id TEXT`);
+  await pool.query(`ALTER TABLE account_billing ADD COLUMN IF NOT EXISTS licensed_stripe_price_id TEXT`);
+  await pool.query(`ALTER TABLE account_billing ADD COLUMN IF NOT EXISTS overage_stripe_price_id TEXT`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_account_billing_account ON account_billing(account_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_account_billing_customer ON account_billing(stripe_customer_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_account_billing_subscription ON account_billing(stripe_subscription_id)`);
@@ -76,30 +79,54 @@ export async function ensureBillingSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS billing_prices (
-      key TEXT PRIMARY KEY,
-      label TEXT NOT NULL,
-      stripe_price_id TEXT NOT NULL,
+    CREATE TABLE IF NOT EXISTS billing_price_bindings (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      pricing_revision_id TEXT NOT NULL REFERENCES business_pricing_revisions(id) ON DELETE RESTRICT,
+      entry_key TEXT NOT NULL,
+      stripe_price_id TEXT,
       stripe_product_id TEXT,
-      amount_cents INTEGER,
-      currency TEXT NOT NULL DEFAULT 'usd',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT billing_prices_price_prefix_check CHECK (stripe_price_id ~ '^price_')
+      CONSTRAINT billing_price_bindings_price_prefix_check CHECK (stripe_price_id IS NULL OR stripe_price_id ~ '^price_'),
+      CONSTRAINT billing_price_bindings_product_prefix_check CHECK (stripe_product_id IS NULL OR stripe_product_id ~ '^prod_'),
+      CONSTRAINT uq_billing_price_bindings_revision_entry UNIQUE (pricing_revision_id, entry_key)
     )
   `);
-  await pool.query(`ALTER TABLE billing_prices ADD COLUMN IF NOT EXISTS label TEXT`);
-  await pool.query(`ALTER TABLE billing_prices DROP CONSTRAINT IF EXISTS billing_prices_key_check`);
   await pool.query(`
-    DELETE FROM billing_prices
-    WHERE key NOT IN ('max', 'max_plus', 'factory_plus', 'extra_principal', 'extra_agent', 'extra_participant', 'token_overage', 'custom')
-      AND EXISTS (SELECT 1 FROM billing_prices WHERE key = 'custom')
+    INSERT INTO business_pricing_revisions (id, business_id, pricing_id, snapshot, created_at)
+    SELECT 'pricing_rev_' || bp.id || '_' || floor(extract(epoch FROM bp.updated_at) * 1000)::bigint,
+      bp.business_id, bp.id, jsonb_build_object('packages', bp.packages, 'extras', bp.extras), bp.updated_at
+    FROM business_pricing bp
+    ON CONFLICT (id) DO NOTHING
   `);
   await pool.query(`
-    UPDATE billing_prices SET key = 'custom'
-    WHERE key NOT IN ('max', 'max_plus', 'factory_plus', 'extra_principal', 'extra_agent', 'extra_participant', 'token_overage', 'custom')
+    DO $
+    DECLARE platform_revision_id TEXT;
+    BEGIN
+      IF to_regclass('public.billing_prices') IS NULL THEN RETURN; END IF;
+      SELECT r.id INTO platform_revision_id
+      FROM business_pricing_revisions r
+      JOIN businesses b ON b.id = r.business_id
+      WHERE b.is_platform_instrument = true
+      ORDER BY r.created_at DESC, r.id DESC LIMIT 1;
+      IF platform_revision_id IS NULL THEN RETURN; END IF;
+      EXECUTE format(
+        'INSERT INTO billing_price_bindings (pricing_revision_id, entry_key, stripe_price_id, stripe_product_id, updated_at)
+         SELECT %L, key, stripe_price_id, stripe_product_id, updated_at FROM billing_prices WHERE key <> ''custom''
+         ON CONFLICT (pricing_revision_id, entry_key) DO UPDATE SET stripe_price_id = EXCLUDED.stripe_price_id, stripe_product_id = EXCLUDED.stripe_product_id, updated_at = EXCLUDED.updated_at',
+        platform_revision_id
+      );
+      EXECUTE format(
+        'UPDATE account_billing ab SET pricing_revision_id = COALESCE(ab.pricing_revision_id, %L),
+           licensed_stripe_price_id = COALESCE(ab.licensed_stripe_price_id, licensed.stripe_price_id),
+           overage_stripe_price_id = COALESCE(ab.overage_stripe_price_id, overage.stripe_price_id)
+         FROM billing_prices licensed, billing_prices overage
+         WHERE licensed.key = ab.package_key AND overage.key = ''token_overage''
+           AND (ab.pricing_revision_id IS NULL OR ab.licensed_stripe_price_id IS NULL OR ab.overage_stripe_price_id IS NULL)',
+        platform_revision_id
+      );
+      DROP TABLE billing_prices;
+    END $
   `);
-  await pool.query(`UPDATE billing_prices SET label = initcap(replace(key, '_', ' ')) WHERE label IS NULL OR btrim(label) = ''`);
-  await pool.query(`ALTER TABLE billing_prices ALTER COLUMN label SET NOT NULL`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS billing_meter_deliveries (

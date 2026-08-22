@@ -1,20 +1,16 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   BILLING_METER_EVENT_NAME,
-  BILLING_PRICE_KEYS,
-  LADDER_INCLUDE_TOKENS,
-  PACKAGE_LICENSED_PRICE,
   type AccountBillingSummary,
   type AccountMeterEventInput,
   type BillingCollectionStatus,
   type BillingPackageKey,
   type BillingPaymentMethodKind,
-  type BillingPriceKey,
   type BillingPriceMapRow,
   isBillingPackageKey,
-  isBillingPriceKey,
 } from "@shared/billing";
-import { accountBilling, accounts, billingMeterDeliveries, billingPrices, billingWebhookEvents, users } from "@shared/schema";
+import { accountBilling, accounts, billingMeterDeliveries, billingPrices, billingWebhookEvents, businessPricing, businesses, users } from "@shared/schema";
+import { normalizePricingExtras, normalizePricingPackages, projectPackage, type PricingPackageView } from "@shared/models/business-pricing";
 import { registerOverageMeterEmitter, type MeterEmitResult, type OverageMeterEvent } from "./billing-meter-port";
 import { db } from "./db";
 import {
@@ -75,103 +71,78 @@ export async function listAccountBillingSummaries(
   return summaries;
 }
 
-async function requirePriceMap(): Promise<Map<BillingPriceKey, string>> {
-  const rows = await db.select().from(billingPrices);
-  const map = new Map<BillingPriceKey, string>();
-  for (const row of rows) map.set(row.key as BillingPriceKey, row.stripePriceId);
-  return map;
+interface CurrentPricingRevision {
+  businessId: string;
+  revisionId: string;
+  packages: PricingPackageView[];
+  extras: ReturnType<typeof normalizePricingExtras>;
+}
+
+async function loadCurrentPricingRevision(): Promise<CurrentPricingRevision> {
+  const [row] = await db.select({ pricing: businessPricing, businessId: businesses.id })
+    .from(businessPricing)
+    .innerJoin(businesses, eq(businesses.id, businessPricing.businessId))
+    .where(eq(businesses.isPlatformInstrument, true))
+    .orderBy(sql`${businessPricing.updatedAt} DESC`)
+    .limit(1);
+  if (!row) throw new StripeCollectorError("Platform Business Pricing is missing", "billing_pricing_missing", 503);
+  const revisionId = `pricing_rev_${row.pricing.id}_${row.pricing.updatedAt.getTime()}`;
+  await db.execute(sql`
+    INSERT INTO business_pricing_revisions (id, business_id, pricing_id, snapshot, created_at)
+    VALUES (${revisionId}, ${row.businessId}, ${row.pricing.id}, ${JSON.stringify({ packages: row.pricing.packages, extras: row.pricing.extras })}::jsonb, ${row.pricing.updatedAt})
+    ON CONFLICT (id) DO NOTHING
+  `);
+  return {
+    businessId: row.businessId,
+    revisionId,
+    packages: normalizePricingPackages(row.pricing.packages).map(projectPackage),
+    extras: normalizePricingExtras(row.pricing.extras),
+  };
+}
+
+function projectEntries(pricing: CurrentPricingRevision): Omit<BillingPriceMapRow, "stripePriceId" | "stripeProductId" | "mapped" | "updatedAt">[] {
+  const rows: Omit<BillingPriceMapRow, "stripePriceId" | "stripeProductId" | "mapped" | "updatedAt">[] = [];
+  for (const pkg of pricing.packages) {
+    rows.push({ businessId: pricing.businessId, pricingRevisionId: pricing.revisionId, key: pkg.key, label: pkg.name, amountCents: Math.round(pkg.listMonthly * 100), currency: "usd", cadence: "monthly", includedUsage: `${pkg.includedTokensMillions}M tokens` });
+  }
+  const extras = pricing.packages.find((pkg) => pkg.key === "factory_plus") ?? pricing.packages[0];
+  if (extras?.extraPrincipalMonthly != null) rows.push({ businessId: pricing.businessId, pricingRevisionId: pricing.revisionId, key: "extra_principal", label: "Extra Principal", amountCents: Math.round(extras.extraPrincipalMonthly * 100), currency: "usd", cadence: "monthly", includedUsage: null });
+  if (extras?.extraAgentMonthly != null) rows.push({ businessId: pricing.businessId, pricingRevisionId: pricing.revisionId, key: "extra_agent", label: "Extra Agent", amountCents: Math.round(extras.extraAgentMonthly * 100), currency: "usd", cadence: "monthly", includedUsage: null });
+  const participant = pricing.packages.find((pkg) => pkg.extraParticipantMonthly != null)?.extraParticipantMonthly;
+  if (participant != null) rows.push({ businessId: pricing.businessId, pricingRevisionId: pricing.revisionId, key: "extra_participant", label: "Extra Participant", amountCents: Math.round(participant * 100), currency: "usd", cadence: "monthly", includedUsage: null });
+  rows.push({ businessId: pricing.businessId, pricingRevisionId: pricing.revisionId, key: "token_overage", label: "Token Overage", amountCents: Math.round(pricing.extras.extraUsagePerMillion * 100), currency: "usd", cadence: "metered", includedUsage: "1M tokens" });
+  return rows;
 }
 
 export async function listBillingPriceMap(): Promise<BillingPriceMapRow[]> {
-  const rows = await db.select().from(billingPrices);
-  return rows.map((row) => ({
-    key: row.key as BillingPriceKey,
-    label: row.label,
-    stripePriceId: row.stripePriceId,
-    stripeProductId: row.stripeProductId,
-    amountCents: row.amountCents,
-    currency: row.currency,
-    mapped: Boolean(row.stripePriceId),
-    updatedAt: row.updatedAt.toISOString(),
-  }));
+  const pricing = await loadCurrentPricingRevision();
+  const entries = projectEntries(pricing);
+  const bindings = await db.select().from(billingPrices).where(eq(billingPrices.pricingRevisionId, pricing.revisionId));
+  const byKey = new Map(bindings.map((row) => [row.entryKey, row]));
+  return entries.map((entry) => {
+    const binding = byKey.get(entry.key);
+    return { ...entry, stripePriceId: binding?.stripePriceId ?? null, stripeProductId: binding?.stripeProductId ?? null, mapped: Boolean(binding?.stripePriceId), updatedAt: binding?.updatedAt.toISOString() ?? null };
+  });
 }
 
-export async function upsertBillingPriceMapEntry(input: {
-  key: string;
-  label: string;
-  stripePriceId: string;
-  stripeProductId?: string | null;
-  amountCents?: number | null;
-  currency: string;
-}): Promise<BillingPriceMapRow> {
-  if (!isBillingPriceKey(input.key)) {
-    throw new StripeCollectorError("Unknown billing price key", "billing_price_key_unknown");
-  }
-  const stripePriceId = input.stripePriceId.trim();
-  if (!/^price_[A-Za-z0-9]+$/.test(stripePriceId)) {
-    throw new StripeCollectorError("stripePriceId must look like price_…", "billing_price_id_invalid");
-  }
-  const label = input.label.trim();
-  if (!label) {
-    throw new StripeCollectorError("label is required", "billing_price_label_invalid");
-  }
-  const amountCents = input.amountCents ?? null;
-  if (amountCents != null && (!Number.isInteger(amountCents) || amountCents < 0)) {
-    throw new StripeCollectorError("amountCents must be a non-negative integer or null", "billing_price_amount_invalid");
-  }
-  const currency = input.currency.trim().toLowerCase();
-  if (!/^[a-z]{3}$/.test(currency)) {
-    throw new StripeCollectorError("currency must be a three-letter code", "billing_price_currency_invalid");
-  }
-  const stripeProductId =
-    input.stripeProductId === undefined || input.stripeProductId === null || input.stripeProductId.trim() === ""
-      ? null
-      : input.stripeProductId.trim();
-  if (stripeProductId && !/^prod_[A-Za-z0-9]+$/.test(stripeProductId)) {
-    throw new StripeCollectorError("stripeProductId must look like prod_…", "billing_product_id_invalid");
-  }
-
-  const values = {
-    key: input.key,
-    label,
-    stripePriceId,
-    stripeProductId,
-    amountCents,
-    currency,
-    updatedAt: new Date(),
-  };
-  await db
-    .insert(billingPrices)
-    .values(values)
-    .onConflictDoUpdate({
-      target: billingPrices.key,
-      set: {
-        label: values.label,
-        stripePriceId: values.stripePriceId,
-        stripeProductId: values.stripeProductId,
-        amountCents: values.amountCents,
-        currency: values.currency,
-        updatedAt: values.updatedAt,
-      },
-    });
-
-  const map = await listBillingPriceMap();
-  const row = map.find((entry) => entry.key === input.key);
-  if (!row) {
-    throw new StripeCollectorError("Price map row missing after upsert", "billing_price_map_missing", 500);
-  }
-  log.info("billing price map upserted", { key: input.key, stripePriceId });
-  return row;
+export async function upsertBillingPriceMapEntry(input: { pricingRevisionId: string; key: string; stripePriceId: string | null; stripeProductId: string | null }): Promise<BillingPriceMapRow> {
+  const current = await listBillingPriceMap();
+  const entry = current.find((row) => row.pricingRevisionId === input.pricingRevisionId && row.key === input.key);
+  if (!entry) throw new StripeCollectorError("Pricing entry is not current", "billing_pricing_entry_stale", 409);
+  const stripePriceId = input.stripePriceId?.trim() || null;
+  const stripeProductId = input.stripeProductId?.trim() || null;
+  if (stripePriceId && !/^price_[A-Za-z0-9]+$/.test(stripePriceId)) throw new StripeCollectorError("stripePriceId must look like price_…", "billing_price_id_invalid");
+  if (stripeProductId && !/^prod_[A-Za-z0-9]+$/.test(stripeProductId)) throw new StripeCollectorError("stripeProductId must look like prod_…", "billing_product_id_invalid");
+  await db.insert(billingPrices).values({ pricingRevisionId: input.pricingRevisionId, entryKey: input.key, stripePriceId, stripeProductId, updatedAt: new Date() }).onConflictDoUpdate({ target: [billingPrices.pricingRevisionId, billingPrices.entryKey], set: { stripePriceId, stripeProductId, updatedAt: new Date() } });
+  const updated = (await listBillingPriceMap()).find((row) => row.key === input.key);
+  if (!updated) throw new StripeCollectorError("Price binding missing after upsert", "billing_price_map_missing", 500);
+  log.info("billing price binding upserted", { pricingRevisionId: input.pricingRevisionId, key: input.key });
+  return updated;
 }
 
-function assertKnownPriceIds(priceIds: Array<string | undefined>, map: Map<BillingPriceKey, string>): void {
-  const allowed = new Set(map.values());
-  for (const priceId of priceIds) {
-    if (!priceId) continue;
-    if (!allowed.has(priceId)) {
-      throw new StripeCollectorError("Subscription item is outside the Price map", "billing_price_not_allowed");
-    }
-  }
+function assertKnownPriceIds(priceIds: Array<string | undefined>, row: AccountBillingRow): void {
+  const allowed = new Set([row.licensedStripePriceId, row.overageStripePriceId].filter(Boolean));
+  for (const priceId of priceIds) if (priceId && !allowed.has(priceId)) throw new StripeCollectorError("Subscription item differs from the accepted Account billing snapshot", "billing_price_not_allowed");
 }
 
 async function ownerEmailForAccount(accountId: string): Promise<string | null> {
@@ -224,16 +195,13 @@ export async function attachAccountBilling(input: {
     .limit(1);
   if (!account) throw new StripeCollectorError("Account not found", "billing_account_missing", 404);
 
-  const includeTokens = input.packageKey === "custom"
-    ? (input.includeTokens ?? account.includedTokens ?? undefined)
-    : LADDER_INCLUDE_TOKENS[input.packageKey];
-  if (typeof includeTokens !== "number" || !Number.isInteger(includeTokens) || includeTokens < 0) {
-    throw new StripeCollectorError("custom requires include_tokens", "billing_include_required");
-  }
-
-  const priceMap = await requirePriceMap();
-  const licensedPriceId = priceMap.get(PACKAGE_LICENSED_PRICE[input.packageKey]);
-  const overagePriceId = priceMap.get("token_overage");
+  const pricing = await loadCurrentPricingRevision();
+  const pkg = pricing.packages.find((candidate) => candidate.key === input.packageKey);
+  if (!pkg) throw new StripeCollectorError("Pricing package is missing", "billing_package_missing", 503);
+  const includeTokens = Math.round(pkg.includedTokensMillions * 1_000_000);
+  const bindings = await db.select().from(billingPrices).where(eq(billingPrices.pricingRevisionId, pricing.revisionId));
+  const licensedPriceId = bindings.find((binding) => binding.entryKey === input.packageKey)?.stripePriceId;
+  const overagePriceId = bindings.find((binding) => binding.entryKey === "token_overage")?.stripePriceId;
   if (!licensedPriceId || !overagePriceId) {
     throw new StripeCollectorError("Required collector Prices are missing", "billing_price_map_incomplete", 503);
   }
@@ -264,6 +232,9 @@ export async function attachAccountBilling(input: {
   const values = {
     accountId: input.accountId,
     packageKey: input.packageKey,
+    pricingRevisionId: pricing.revisionId,
+    licensedStripePriceId: licensedPriceId,
+    overageStripePriceId: overagePriceId,
     includeTokens,
     stripeCustomerId: customerId,
     stripeMeterId: meterId,
@@ -359,7 +330,7 @@ export async function processStripeEvent(event: StripeEvent): Promise<"ignored" 
     ?? (object.lines as { data?: Array<{ price?: { id?: string } }> } | undefined)?.data
     ?? []
   ).map((item) => item.price?.id);
-  if (priceIds.some(Boolean)) assertKnownPriceIds(priceIds, await requirePriceMap());
+  if (priceIds.some(Boolean)) assertKnownPriceIds(priceIds, row);
 
   const patch: Partial<AccountBillingRow> = { updatedAt: new Date() };
   if (event.type === "checkout.session.completed") {
