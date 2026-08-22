@@ -85,11 +85,18 @@ export async function reconcileWellnessActivityDefaults(): Promise<void> {
           updatedAt: new Date(),
         }).where(writable(eq(wellnessActivities.id, sameName.id)));
       } else {
-        await db.insert(wellnessActivities).values({
+        const [inserted] = await db.insert(wellnessActivities).values({
           ...sensitiveOwnershipValues(principal), ...payloadColumns(payload), isDefault: true,
           defaultTemplateId: template.id, appliedTemplateRevision: template.revision,
           defaultUpdateState: "following",
-        }).onConflictDoNothing();
+        }).onConflictDoNothing().returning({ id: wellnessActivities.id });
+        if (!inserted) {
+          const [materialized] = await db.select({ id: wellnessActivities.id }).from(wellnessActivities)
+            .where(visible(eq(wellnessActivities.defaultTemplateId, template.id))).limit(1);
+          if (!materialized) {
+            throw new Error(`Failed to materialize wellness default ${template.stableKey} for the current account`);
+          }
+        }
       }
       continue;
     }
