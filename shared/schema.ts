@@ -706,6 +706,9 @@ export const inferencePayloadCaptures = pgTable("inference_payload_captures", {
   source: text("source"),
 }, (table) => [
   index("idx_inference_payload_owner_captured").on(table.ownerUserId, table.accountId, table.capturedAt),
+  index("idx_inference_payload_inline_linked_owner_captured")
+    .on(table.ownerUserId, table.accountId, table.capturedAt, table.id)
+    .where(sql`${table.scope} = 'user' AND ${table.apiCallId} IS NOT NULL AND ${table.request}->>'encoding' IS DISTINCT FROM 'private-object-json-utf8-v1'`),
   index("idx_inference_payload_session").on(table.sessionId, table.capturedAt),
   uniqueIndex("uq_inference_payload_api_call").on(table.apiCallId).where(sql`${table.apiCallId} IS NOT NULL`),
 ]);

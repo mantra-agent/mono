@@ -6993,6 +6993,7 @@ export async function runSchemaBootstrap(
     `);
     await pool.query(`ALTER TABLE inference_payload_captures ADD COLUMN IF NOT EXISTS api_call_id INTEGER`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_inference_payload_owner_captured ON inference_payload_captures(owner_user_id, account_id, captured_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_inference_payload_inline_linked_owner_captured ON inference_payload_captures(owner_user_id, account_id, captured_at DESC, id DESC) WHERE scope = 'user' AND api_call_id IS NOT NULL AND request->>'encoding' IS DISTINCT FROM 'private-object-json-utf8-v1'`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_inference_payload_session ON inference_payload_captures(session_id, captured_at DESC)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_inference_payload_api_call ON inference_payload_captures(api_call_id) WHERE api_call_id IS NOT NULL`);
     await pool.query(`
