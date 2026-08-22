@@ -337,6 +337,7 @@ function buildSkillApplyAll(skill: SkillWithReferences, templateId: string): Pen
       };
       await apiRequest("POST", `/api/skills/platform/${templateId}/publish`, {
         changes: publishChanges,
+        sourceSkillId: skill.id,
         changeSummary: `Apply ${skillLabel(skill)} to default`,
         confirmed: true,
       });

@@ -472,6 +472,7 @@ export function registerSkillRoutes(app: Express): void {
         parsed.data as any,
         String(req.body?.changeSummary || ""),
         req.body?.confirmed === true,
+        typeof req.body?.sourceSkillId === "string" ? req.body.sourceSkillId : undefined,
       );
       if (!result) return res.status(404).json({ error: "Platform Skill not found" });
       res.json(result);
