@@ -1598,6 +1598,10 @@ export class AgentExecutor extends EventEmitter {
     return this.pendingSessionEnds.get(sessionId);
   }
 
+  peekAppliedSessionEnd(sessionId: string): PendingSessionEnd | undefined {
+    return this.appliedSessionEnds.get(sessionId);
+  }
+
   markAppliedSessionEnd(sessionId: string, end: PendingSessionEnd): void {
     this.appliedSessionEnds.set(sessionId, end);
   }
