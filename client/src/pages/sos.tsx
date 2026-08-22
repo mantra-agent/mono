@@ -49,7 +49,26 @@ const ownershipBorder: Record<Ownership, string> = {
   strategic: "border-chart-3",
 };
 
-const timelineLanes: Array<{ name: string; clips: TimelineClip[] }> = [
+const inputTimelineLanes: Array<{ name: string; clips: TimelineClip[] }> = [
+  {
+    name: "Room mic",
+    clips: [
+      { start: 1, width: 26, text: "speech" },
+      { start: 30, width: 29, text: "speech" },
+      { start: 61, width: 22, text: "speech" },
+      { start: 85, width: 15, text: "live", ownership: "fast", processing: true },
+    ],
+  },
+  {
+    name: "Voice out",
+    clips: [
+      { start: 24, width: 6, text: "mm" },
+      { start: 43, width: 30, text: "speech" },
+    ],
+  },
+];
+
+const assignedVoiceLanes: Array<{ name: string; clips: TimelineClip[] }> = [
   {
     name: "Ray",
     clips: [
@@ -141,24 +160,35 @@ function DiagnosticSection({ label, children }: { label: string; children: React
   );
 }
 
-function Timeline() {
+function TimelineHalf({
+  label,
+  lanes,
+}: {
+  label: string;
+  lanes: Array<{ name: string; clips: TimelineClip[] }>;
+}) {
   return (
-    <section className="border-b border-border/30 pb-2.5">
-      <div className="grid grid-cols-[39px_1fr] gap-x-2">
+    <div className="min-w-0">
+      <div className="mb-1 text-[9px] font-semibold uppercase leading-none tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div className="grid grid-cols-[38px_1fr] gap-x-1.5">
         <div />
-        <div className="grid grid-cols-5 text-[8px] leading-none text-muted-foreground">
-          {["0s", "5s", "10s", "15s", "20s"].map((tick) => <span key={tick}>{tick}</span>)}
+        <div className="grid grid-cols-3 text-[7px] leading-none text-muted-foreground">
+          {["0s", "10s", "20s"].map((tick, index) => (
+            <span key={tick} className={cn(index === 1 && "text-center", index === 2 && "text-right")}>{tick}</span>
+          ))}
         </div>
-        {timelineLanes.map((lane) => (
+        {lanes.map((lane) => (
           <div key={lane.name} className="contents">
-            <span className="self-center text-[10px] font-medium leading-none text-foreground">{lane.name}</span>
-            <div className="relative mt-1 h-[25px] border-y border-border/20 bg-muted/10">
-              {[25, 50, 75].map((position) => <div key={position} className="absolute inset-y-0 border-l border-border/20" style={{ left: `${position}%` }} />)}
+            <span className="self-center truncate text-[8px] font-medium leading-none text-foreground">{lane.name}</span>
+            <div className="relative mt-1 h-[22px] border-y border-border/20 bg-muted/10">
+              <div className="absolute inset-y-0 left-1/2 border-l border-border/20" />
               {lane.clips.map((clip, index) => (
                 <div
                   key={`${lane.name}-${index}`}
                   className={cn(
-                    "absolute inset-y-[2px] flex min-w-0 items-center overflow-hidden border-l px-1.5 text-[8px] leading-none",
+                    "absolute inset-y-[2px] flex min-w-0 items-center overflow-hidden border-l px-1 text-[7px] leading-none",
                     clip.ownership
                       ? [ownershipText[clip.ownership], ownershipBorder[clip.ownership], "bg-active/15"]
                       : "border-muted-foreground/50 bg-muted/40 text-foreground",
@@ -172,9 +202,21 @@ function Timeline() {
             </div>
           </div>
         ))}
-        <div />
-        <div className="relative mt-1 h-3.5 border-r border-active text-right text-[8px] font-medium leading-none text-active">Ray has the floor&nbsp;</div>
       </div>
+    </div>
+  );
+}
+
+function Timeline() {
+  return (
+    <section className="border-b border-border/30 pb-2.5">
+      <div className="grid grid-cols-2 gap-2">
+        <TimelineHalf label="Input streams" lanes={inputTimelineLanes} />
+        <div className="min-w-0 border-l border-border/40 pl-2">
+          <TimelineHalf label="Assigned voices" lanes={assignedVoiceLanes} />
+        </div>
+      </div>
+      <div className="mt-1 h-3.5 border-r border-active text-right text-[8px] font-medium leading-none text-active">Ray has the floor&nbsp;</div>
     </section>
   );
 }
