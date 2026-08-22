@@ -4389,6 +4389,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   app.locals.recallMeetingAudioUpgrade = registerMeetingSTTAudioTransport({ ingestMeetingEvent });
   const { registerNativeMeetingAudioTransport } = await import("../../meeting/native-audio");
   app.locals.nativeMeetingAudioUpgrade = registerNativeMeetingAudioTransport({ ingestMeetingEvent });
+  const { registerSosLiveAudioTransport } = await import("../../sos-live-audio");
+  app.locals.sosLiveAudioUpgrade = registerSosLiveAudioTransport();
 
   // M0 dev loopback transport — POST attributed transcript text into a
   // meeting session through the canonical ingest path.

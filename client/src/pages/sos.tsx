@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
-import { Activity, ChevronRight, Clock3, Pause } from "lucide-react";
+import { Activity, ChevronRight, Clock3, MoreHorizontal, Pause } from "lucide-react";
+import { useSosLiveListening, type SosLiveUtterance } from "@/hooks/use-sos-live-listening";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import {
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -207,16 +208,44 @@ function TimelineHalf({
   );
 }
 
-function Timeline() {
+function liveLanes(utterances: SosLiveUtterance[]) {
+  const visible = utterances.slice(-8);
+  const clips = visible.map((utterance, index) => ({
+    start: Math.min(88, index * 12),
+    width: Math.max(12, Math.min(34, utterance.text.length * 1.1)),
+    text: utterance.text,
+    ownership: "fast" as const,
+    processing: !utterance.isFinal,
+  }));
+  const speakers = new Map<string, TimelineClip[]>();
+  visible.forEach((utterance, index) => {
+    const lane = speakers.get(utterance.speakerId) || [];
+    lane.push({
+      start: Math.min(88, index * 12),
+      width: Math.max(12, Math.min(34, utterance.text.length * 1.1)),
+      text: utterance.text,
+      ownership: "fast",
+      processing: !utterance.isFinal,
+    });
+    speakers.set(utterance.speakerId, lane);
+  });
+  return {
+    inputs: [{ name: "Room mic", clips }],
+    voices: Array.from(speakers, ([speakerId, speakerClips]) => ({ name: `Voice ${speakerId}`, clips: speakerClips })),
+  };
+}
+
+function Timeline({ utterances, live }: { utterances: SosLiveUtterance[]; live: boolean }) {
+  const lanes = live ? liveLanes(utterances) : null;
   return (
     <section className="border-b border-border/30 pb-2.5">
       <div className="grid grid-cols-2 gap-2">
-        <TimelineHalf label="Input streams" lanes={inputTimelineLanes} />
+        <TimelineHalf label="Input streams" lanes={lanes?.inputs || inputTimelineLanes} />
         <div className="min-w-0 border-l border-border/40 pl-2">
-          <TimelineHalf label="Assigned voices" lanes={assignedVoiceLanes} />
+          <TimelineHalf label="Assigned voices" lanes={lanes?.voices.length ? lanes.voices : assignedVoiceLanes} />
         </div>
       </div>
-      <div className="mt-1 h-3.5 border-r border-active text-right text-[8px] font-medium leading-none text-active">Ray has the floor&nbsp;</div>
+      <div className="mt-1 h-3.5 border-r border-active text-right text-[8px] font-medium leading-none text-active">{live ? "Hearing is live" : "Ray has the floor"}&nbsp;</div>
     </section>
   );
 }
@@ -310,11 +339,28 @@ function Loops() {
 
 export default function SosPage() {
   usePageHeader({ title: "SOS" });
+  const listening = useSosLiveListening();
+  const live = listening.status === "starting" || listening.status === "listening";
 
   return (
     <div className="h-full min-w-0 overflow-hidden bg-background">
       <div className="w-full px-2.5 py-1.5 sm:px-4">
-        <Timeline />
+        <div className={cn(HIERARCHY_SECTION_HEADER_CLASS, "border-b border-border/30")}>
+          <ChevronRight className="h-3 w-3 rotate-90" />
+          <span>ROOM</span>
+          <button
+            type="button"
+            className="ml-auto inline-flex h-6 items-center gap-1.5 rounded-sm px-1.5 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+            onClick={live ? listening.stop : () => void listening.start()}
+            disabled={listening.status === "starting"}
+            aria-label={live ? "Stop listening" : "Listen to room"}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+            {listening.status === "starting" ? "Starting" : live ? "Stop" : "Listen"}
+          </button>
+        </div>
+        {listening.error ? <div className="border-b border-destructive/30 px-2 py-1 text-[9px] text-destructive">{listening.error}</div> : null}
+        <Timeline utterances={listening.utterances} live={live} />
         <Action />
         <Personas />
         <People />

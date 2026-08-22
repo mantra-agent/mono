@@ -2180,6 +2180,13 @@ These sources calibrate the baseline. Their official control identifiers should 
 | [OWASP Agentic AI Threats and Mitigations](https://genai.owasp.org/resource/agentic-ai-threats-and-mitigations/) | Threat-model-based treatment of goal hijacking, tool misuse, identity/privilege abuse, memory/context poisoning, cascading behavior, and control of autonomous action. |
 | [OWASP SAMM 2.0.3](https://owasp.org/www-project-samm/) and [SAMM model](https://owaspsamm.org/model/) | Program maturity across Governance, Design, Implementation, Verification, and Operations. Used to measure whether the doctrine becomes repeatable practice. |
 
+### SOS live-listening prototype boundary (2026-08-21)
+
+- Assets/data: S2 live microphone audio and transient transcript text; browser → authenticated WebSocket → SpeechRecognition coordinator → configured Deepgram binding.
+- Abuse case/threat: an unauthenticated or cross-origin caller opens the microphone transport, consumes provider capacity, or receives another principal's transcript (STRIDE spoofing/information disclosure/denial of service).
+- Deterministic controls: `/ws/sos-live-audio` requires a resolved user principal with account identity and `system:read`, enforces same-origin host matching, scopes one coordinator stream to one socket/account, bounds binary frames to 64 KiB, sends output only to the originating socket, and aborts recognition on close/error. The client acquires the microphone only from the explicit Listen gesture and tears down tracks, worklet, socket, and AudioContext on stop, navigation, microphone loss, or provider failure.
+- Finding: low residual prototype risk. Owner: Realtime/Hearing. Status: controls implemented pending build/merge. No meeting, transcript, or raw-audio persistence; no response, Floor, or speaker-assignment authority. Residual risk is bounded provider usage while an authorized operator leaves Listen active; stop/unmount and socket loss close the stream. Rollback: remove the sibling transport registration and SOS hook while leaving the locked mock intact.
+
 ## 9. Finding contract and lifecycle
 
 Every finding uses this minimum schema:

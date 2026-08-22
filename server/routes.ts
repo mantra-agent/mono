@@ -154,6 +154,37 @@ export async function registerRoutes(
           socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
           socket.destroy();
         });
+    } else if (pathname === "/ws/sos-live-audio") {
+      resolveUserPrincipalForSessionRequest(request)
+        .then((principal) => {
+          if (!principal || principal.actorType !== "user" || !principal.userId || !principal.accountId || !principalHasPermission(principal, "system:read")) {
+            socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+            socket.destroy();
+            return;
+          }
+          const origin = request.headers.origin;
+          const host = request.headers["x-forwarded-host"]?.toString().split(",")[0]?.trim() || request.headers.host;
+          if (origin && host && new URL(origin).host !== host) {
+            socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+            socket.destroy();
+            return;
+          }
+          const handler = app.locals.sosLiveAudioUpgrade as ((request: IncomingMessage & { sosPrincipal?: Principal }, socket: typeof socket, head: Buffer) => void) | undefined;
+          if (!handler) {
+            wsLog.warn("SOS live audio upgrade handler unavailable");
+            socket.destroy();
+            return;
+          }
+          (request as IncomingMessage & { sosPrincipal?: Principal }).sosPrincipal = principal;
+          handler(request, socket, head);
+        })
+        .catch((error) => {
+          wsLog.error("SOS live audio upgrade authentication failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+        });
     } else if (pathname === "/ws/meeting-visualizer") {
       const handler = app.locals.meetingVisualizerUpgrade as ((request: IncomingMessage, socket: typeof socket, head: Buffer) => void) | undefined;
       if (!handler) { wsLog.warn("Meeting visualizer upgrade handler unavailable"); socket.destroy(); }
