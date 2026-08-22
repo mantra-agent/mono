@@ -77,11 +77,7 @@ async function loadFeature(featureId: string): Promise<FeatureFastForwardRow | n
 }
 
 async function loadProducts(): Promise<ProductContext[]> {
-  try {
-    return await fetchJson<ProductContext[]>("/api/products");
-  } catch {
-    return [];
-  }
+  return fetchJson<ProductContext[]>("/api/products");
 }
 
 async function loadLinkedSessions(featureId: string): Promise<FeatureSessionLink[]> {
@@ -222,11 +218,22 @@ export function FeaturePipelineControlHost() {
         return { ...base, outcome: "unavailable", reason: "feature_not_found" };
       }
 
-      const [products, linkedSessions, sessionsById] = await Promise.all([
-        loadProducts(),
-        loadLinkedSessions(featureId),
-        loadSessionsById(),
-      ]);
+      let products: ProductContext[];
+      let linkedSessions: FeatureSessionLink[];
+      let sessionsById: Map<string, ChatSession>;
+      try {
+        [products, linkedSessions, sessionsById] = await Promise.all([
+          loadProducts(),
+          loadLinkedSessions(featureId),
+          loadSessionsById(),
+        ]);
+      } catch (error) {
+        log.warn("feature control context unavailable", {
+          featureId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return { ...base, outcome: "unavailable", reason: "launch_failed" };
+      }
       const activeSession = resolveOwnedActiveSession({
         featureId,
         linkedSessions,

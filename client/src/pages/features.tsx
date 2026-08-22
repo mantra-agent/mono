@@ -882,6 +882,8 @@ const FeatureRow = memo(function FeatureRow({
 
   const runPipelineLaunch = (job: "produce" | "review") => {
     if (launch.isPending) return;
+    // A pending/failed Product read is not an empty Product context set.
+    if (job === "review" && !products.isSuccess) return;
     // Same room claim the shell auto-review host uses — row/FF launch must
     // fence auto-review from starting a second Review for this needs_review.
     if (job === "review") {
