@@ -99,7 +99,7 @@ export async function ensureBillingSchema(pool: Pool): Promise<void> {
     ON CONFLICT (id) DO NOTHING
   `);
   await pool.query(`
-    DO $
+    DO $billing_price_migration$
     DECLARE platform_revision_id TEXT;
     BEGIN
       IF to_regclass('public.billing_prices') IS NULL THEN RETURN; END IF;
@@ -125,7 +125,7 @@ export async function ensureBillingSchema(pool: Pool): Promise<void> {
         platform_revision_id
       );
       DROP TABLE billing_prices;
-    END $
+    END $billing_price_migration$
   `);
 
   await pool.query(`
