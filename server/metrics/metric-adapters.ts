@@ -1114,8 +1114,8 @@ async function ensureHoursUsedPerUserMetric(): Promise<void> {
 }
 
 /**
- * Converge legacy scorecard display names without changing stable slugs or ids.
- * Idempotent; keeps metric id so KPI bindings stay intact.
+ * Converge legacy Metric display names and scorecard identifiers without changing stable ids.
+ * KPI names are independently authored state and are never derived from linked Metrics or specs.
  */
 export async function configureScorecardDisplayNames(): Promise<number> {
   const meetingsUpdated = await db.execute(sql`
@@ -1153,13 +1153,11 @@ export async function configureScorecardDisplayNames(): Promise<number> {
   `);
   const kpiUpdated = await db.execute(sql`
     UPDATE kpis
-    SET name = ${PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.name},
-        slug = ${"monthly-account-churn-kpi"},
+    SET slug = ${"monthly-account-churn-kpi"},
         description = ${"Lagging KPI for Multiply User Leverage: paying-account loss (included_tokens IS NOT NULL at window start that cancel or become non-paying). Not customer-headcount churn."},
         updated_at = NOW()
     WHERE id = 'kpi_cdfea8c022b9da620323e04b'
        OR slug = 'monthly-customer-churn-kpi'
-       OR (slug = 'monthly-account-churn-kpi' AND name IS DISTINCT FROM ${PLATFORM_MONTHLY_ACCOUNT_CHURN_DEFINITION.name})
   `);
   const meetingsN =
     typeof (meetingsUpdated as { rowCount?: number }).rowCount === "number"
@@ -1470,7 +1468,6 @@ export async function ensureScorecardKpiWrappers(): Promise<number> {
         const updated = await db.execute(sql`
           UPDATE kpis
           SET metric_id = ${metricRow.id},
-              name = ${spec.name},
               slug = ${spec.slug},
               description = ${spec.description},
               target_label = ${spec.targetLabel},
@@ -1490,7 +1487,6 @@ export async function ensureScorecardKpiWrappers(): Promise<number> {
           WHERE id = ${existing.id}
             AND (
               metric_id IS DISTINCT FROM ${metricRow.id}
-              OR name IS DISTINCT FROM ${spec.name}
               OR slug IS DISTINCT FROM ${spec.slug}
               OR description IS DISTINCT FROM ${spec.description}
               OR target_label IS DISTINCT FROM ${spec.targetLabel}
