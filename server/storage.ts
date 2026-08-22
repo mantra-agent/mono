@@ -167,6 +167,7 @@ export interface IStorage {
     input: Partial<SkillRevisionPayload>,
     changeSummary: string,
     confirmed: boolean,
+    sourceSkillId?: string,
   ): Promise<SkillWithReferences | undefined>;
   healLeftoverSkillFollowers(): Promise<{ healed: number; abstained: number }>;
   syncSkillCatalogToLattice(): Promise<{
@@ -1325,6 +1326,7 @@ export class HybridStorage implements IStorage {
     input: Partial<SkillRevisionPayload>,
     changeSummary: string,
     confirmed: boolean,
+    sourceSkillId?: string,
   ): Promise<SkillWithReferences | undefined> {
     if (!confirmed || !changeSummary.trim()) {
       throw new Error("Publication confirmation and change summary are required");
@@ -1371,6 +1373,26 @@ export class HybridStorage implements IStorage {
           eq(skills.templateSkillId, id),
           sql`${skills.updateState} <> 'following'`,
         ));
+      if (sourceSkillId) {
+        const [source] = await tx.select().from(skills).where(
+          combineWithWritableScope(
+            principal,
+            skillScopeColumns,
+            and(
+              eq(skills.id, sourceSkillId),
+              eq(skills.templateSkillId, id),
+            ),
+          ),
+        ).limit(1);
+        if (!source) {
+          throw new Error("Publishing Skill copy is not writable by the current principal");
+        }
+        await this.applySkillPayloadTx(tx, source.id, payload, {
+          baseRevisionId: revisionId,
+          currentRevisionId: revisionId,
+          updateState: "following",
+        });
+      }
       await this.adoptMatchingSkillCopies(tx, id, payload, revisionId);
       log.info("Platform Skill revision published", {
         skillId: id,
