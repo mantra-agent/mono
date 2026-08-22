@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, real, integer, boolean, unique, index, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, real, integer, boolean, unique, uniqueIndex, index, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -50,8 +50,12 @@ export const wellnessActivities = pgTable("wellness_activities", {
 }, (table) => [
   index("idx_wellness_activities_owner").on(table.ownerUserId),
   index("idx_wellness_activities_principal_account").on(table.principalAccountId),
-  unique("wellness_activities_owner_name_unique").on(table.ownerUserId, table.principalAccountId, table.name),
-  unique("wellness_activities_owner_template_unique").on(table.ownerUserId, table.principalAccountId, table.defaultTemplateId),
+  uniqueIndex("wellness_activities_owner_name_unique")
+    .on(table.ownerUserId, table.principalAccountId, sql`lower(${table.name})`)
+    .where(sql`${table.archivedAt} IS NULL`),
+  uniqueIndex("wellness_activities_owner_template_unique")
+    .on(table.ownerUserId, table.principalAccountId, table.defaultTemplateId)
+    .where(sql`${table.defaultTemplateId} IS NOT NULL`),
 ]);
 
 export const wellnessActivityTemplates = pgTable("wellness_activity_templates", {
