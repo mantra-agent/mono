@@ -8,7 +8,7 @@
  *
  * Spec: @page:a4072542-81c0-4311-b003-3190b78a4b42
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   FEATURE_PIPELINE,
   type FeatureAvailabilityProjection,
@@ -19,17 +19,9 @@ import {
   environmentSourceBindings,
   platformProductEnvironments,
 } from "@shared/models/platforms";
-import { mergedPullRequests } from "@shared/schema";
+import { mergedPullRequests, platformDeploymentObservations } from "@shared/schema";
 import { db } from "./db";
-import { compareRefs, getBranchHead } from "./integrations/github-pr";
-import {
-  fetchEnvironmentDeployments,
-  resolveRailwayEnvironmentControl,
-} from "./integrations/railway/environment-control";
-import {
-  composeStageLifecycleStatus,
-  deriveStageLifecycleCapabilities,
-} from "./platforms/stage-lifecycle-status";
+import { compareRefs } from "./integrations/github-pr";
 import { getEnvironmentBuildLifecycleConfig } from "./platforms/build-lifecycle-service";
 import { readStageSyncStatus } from "./stage-sync";
 import { createLogger } from "./log";
@@ -227,18 +219,24 @@ async function loadProductStageClock(productId: number): Promise<StageClockSnaps
   if (!source) return null;
 
   try {
-    const control = await resolveRailwayEnvironmentControl(source.environmentId);
-    const [lifecycleResult, deploymentsResult, targetResult, warmSyncResult] = await Promise.allSettled([
+    const [lifecycleResult, warmSyncResult, deploymentResult] = await Promise.allSettled([
       getEnvironmentBuildLifecycleConfig(source.environmentId, { includeDisabled: true }),
-      fetchEnvironmentDeployments(control, 20),
-      source.owner && source.repo && source.branch
-        ? getBranchHead({ owner: source.owner, repo: source.repo }, source.branch)
-        : Promise.resolve(null),
       readStageSyncStatus(source.environmentId),
+      db
+        .select({ commitSha: platformDeploymentObservations.commitSha })
+        .from(platformDeploymentObservations)
+        .where(and(
+          eq(platformDeploymentObservations.platformEnvironmentId, source.environmentId),
+          eq(platformDeploymentObservations.provider, "railway"),
+          eq(platformDeploymentObservations.deploymentState, "SUCCESS"),
+        ))
+        .orderBy(
+          desc(platformDeploymentObservations.deployedAt),
+          desc(platformDeploymentObservations.observedAt),
+        )
+        .limit(1),
     ]);
 
-    const deployments = deploymentsResult.status === "fulfilled" ? deploymentsResult.value : [];
-    const targetCommitSha = targetResult.status === "fulfilled" ? targetResult.value?.sha ?? null : null;
     const warmSync = warmSyncResult.status === "fulfilled" ? warmSyncResult.value : null;
     const lifecycleConfig = lifecycleResult.status === "fulfilled" ? lifecycleResult.value?.config : null;
     const deployPolicy =
@@ -247,40 +245,16 @@ async function loadProductStageClock(productId: number): Promise<StageClockSnaps
       !Array.isArray(lifecycleConfig.deployPolicy)
         ? (lifecycleConfig.deployPolicy as Record<string, unknown>)
         : {};
-
-    const lifecycle = composeStageLifecycleStatus({
-      deployments,
-      targetCommitSha,
-      warmSync: warmSync
-        ? {
-            activeCommitSha: warmSync.activeCommitSha,
-            targetCommitSha: warmSync.targetCommitSha,
-            status: warmSync.status,
-            reason: warmSync.reason,
-          }
-        : null,
-      capabilities: deriveStageLifecycleCapabilities(
-        deployPolicy,
-        lifecycleConfig?.providerKind || "railway",
-        {
-          platformName: control.environment.platformName,
-          productName: control.environment.productName,
-          environmentName: control.environment.platformEnvironmentName,
-        },
-      ),
-      providerError:
-        deploymentsResult.status === "rejected"
-          ? deploymentsResult.reason instanceof Error
-            ? deploymentsResult.reason.message
-            : "Railway deployment truth is unavailable."
-          : targetResult.status === "rejected"
-            ? "The bound source branch head could not be resolved."
-            : null,
-    });
+    const deployedCommitSha = deploymentResult.status === "fulfilled"
+      ? deploymentResult.value[0]?.commitSha ?? null
+      : null;
+    const activeCommitSha = deployPolicy.runtimeMode === "warm_workspace"
+      ? normalizeChangeSha(warmSync?.activeCommitSha) ?? normalizeChangeSha(deployedCommitSha)
+      : normalizeChangeSha(deployedCommitSha);
 
     return {
-      state: lifecycle.state ?? null,
-      activeCommitSha: normalizeChangeSha(lifecycle.activeCommitSha),
+      state: activeCommitSha ? "ready" : null,
+      activeCommitSha,
       owner: source.owner || null,
       repo: source.repo || null,
     };
@@ -365,6 +339,54 @@ async function proveAncestorOrEqual(args: {
   }
 }
 
+async function loadLocalMergeAncestry(args: {
+  owner: string;
+  repo: string;
+  changeShas: string[];
+  activeCommitSha: string;
+}): Promise<Map<string, boolean | null>> {
+  const out = new Map<string, boolean | null>();
+  const active = normalizeChangeSha(args.activeCommitSha);
+  const changes = [...new Set(
+    args.changeShas
+      .map(normalizeChangeSha)
+      .filter((sha): sha is string => Boolean(sha)),
+  )];
+  if (!active || changes.length === 0) return out;
+
+  for (const change of changes) {
+    const n = Math.min(change.length, active.length);
+    if (n >= 7 && change.slice(0, n) === active.slice(0, n)) out.set(change, true);
+  }
+
+  const unresolved = changes.filter((sha) => !out.has(sha));
+  if (unresolved.length === 0) return out;
+  const rows = await db
+    .select({
+      mergeCommitSha: mergedPullRequests.mergeCommitSha,
+      mergedAt: mergedPullRequests.mergedAt,
+    })
+    .from(mergedPullRequests)
+    .where(and(
+      eq(mergedPullRequests.owner, args.owner),
+      eq(mergedPullRequests.repo, args.repo),
+      inArray(mergedPullRequests.mergeCommitSha, [...unresolved, active]),
+    ));
+  const mergedAtBySha = new Map<string, number>();
+  for (const row of rows) {
+    const sha = normalizeChangeSha(row.mergeCommitSha);
+    if (sha) mergedAtBySha.set(sha, row.mergedAt.getTime());
+  }
+  const activeMergedAt = mergedAtBySha.get(active);
+  for (const change of unresolved) {
+    const changeMergedAt = mergedAtBySha.get(change);
+    out.set(change, activeMergedAt != null && changeMergedAt != null
+      ? changeMergedAt <= activeMergedAt
+      : null);
+  }
+  return out;
+}
+
 function deriveAvailabilityState(args: {
   changeSha: string | null;
   clock: StageClockSnapshot | null;
@@ -387,6 +409,7 @@ function deriveAvailabilityState(args: {
  */
 export async function projectFeatureAvailability<T extends Record<string, unknown>>(
   rows: T[],
+  options: { refreshAncestry?: boolean } = {},
 ): Promise<Array<T & { availability?: FeatureAvailabilityProjection }>> {
   if (rows.length === 0) return rows;
 
@@ -425,10 +448,18 @@ export async function projectFeatureAvailability<T extends Record<string, unknow
 
     // Distinct SHAs only for ancestry compares on this Product.
     const distinctShas = [...new Set([...changeShas.values()])];
-    const ancestryBySha = new Map<string, boolean | null>();
+    const ancestryBySha = clock?.activeCommitSha && clock.owner && clock.repo
+      ? await loadLocalMergeAncestry({
+          owner: clock.owner,
+          repo: clock.repo,
+          changeShas: distinctShas,
+          activeCommitSha: clock.activeCommitSha,
+        })
+      : new Map<string, boolean | null>();
     if (clock?.activeCommitSha && clock.owner && clock.repo && distinctShas.length > 0) {
-      await Promise.all(
-        distinctShas.map(async (sha) => {
+      const unproved = distinctShas.filter((sha) => ancestryBySha.get(sha) == null);
+      if (options.refreshAncestry) await Promise.all(
+        unproved.map(async (sha) => {
           const proved = await proveAncestorOrEqual({
             owner: clock.owner!,
             repo: clock.repo!,

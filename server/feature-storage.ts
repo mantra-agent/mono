@@ -310,7 +310,11 @@ export const featureStorage = {
       }
     }
 
-    const [projected] = await projectFeatureListRows([current as Record<string, unknown>]);
+    const [withAvailability] = await projectFeatureAvailability(
+      [current as Record<string, unknown>],
+      { refreshAncestry: true },
+    );
+    const [projected] = await projectFeatureAttention(withAvailability ? [withAvailability] : []);
     if (projected) publishFeaturesChanged("updated", id);
     return projected ?? current;
   },
