@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "async_hooks";
-import { pool } from "../db";
+import { db, pool } from "../db";
+import { sql } from "drizzle-orm";
 import type { ApiCall, InsertApiCall } from "@shared/schema";
 import { getCurrentPrincipal } from "../principal-context";
 import { createLogger } from "../log";
@@ -746,22 +747,20 @@ export class FileApiCallStorage {
 
   /** Account-keyed period SUM. Ledger remains api_calls; projection lives on Account. */
   async sumAccountPeriodTokens(accountId: string, start: Date, end: Date): Promise<number> {
-    const result = await pool.query<{ tokens: string | number }>(
-      `SELECT COALESCE(SUM(total_tokens), 0)::float8 AS tokens
-       FROM api_calls
-       WHERE account_id = $1
-         AND scope = 'user'
-         AND timestamp >= $2
-         AND timestamp < $3
-         AND (
-           COALESCE(metadata->>'usageSemantics', metadata->'tokenAccounting'->>'usageSemantics') = 'per_call'
-           OR (
-             COALESCE(metadata->>'usageSemantics', metadata->'tokenAccounting'->>'usageSemantics') IS NULL
-             AND provider IN ('anthropic', 'openai', 'openai-subscription', 'grok-subscription', 'local')
-           )
-         )`,
-      [accountId, start, end],
-    );
+    const result = await db.execute(sql`
+      SELECT COALESCE(SUM(total_tokens), 0)::float8 AS tokens
+      FROM api_calls
+      WHERE account_id = ${accountId}
+        AND scope = 'user'
+        AND timestamp >= ${start}
+        AND timestamp < ${end}
+        AND (
+          COALESCE(metadata->>'usageSemantics', metadata->'tokenAccounting'->>'usageSemantics') = 'per_call'
+          OR (
+            COALESCE(metadata->>'usageSemantics', metadata->'tokenAccounting'->>'usageSemantics') IS NULL
+            AND provider IN ('anthropic', 'openai', 'openai-subscription', 'grok-subscription', 'local')
+          )
+        )`);
     return Number(result.rows[0]?.tokens ?? 0) || 0;
   }
 

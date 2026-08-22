@@ -1833,12 +1833,20 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS period_tokens BIGINT NOT NULL DEFAULT 0`);
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS emitted_overage_tokens BIGINT NOT NULL DEFAULT 0`);
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS usage_status TEXT`);
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS usage_projection_state TEXT NOT NULL DEFAULT 'stale'`);
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS usage_projected_at TIMESTAMPTZ`);
     // Commercial activation seat — not onboarding REGISTERED/ACTIVATED.
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS activation_level TEXT`);
     await pool.query(
       "DO " +
         String.fromCharCode(36, 36) +
         " BEGIN ALTER TABLE accounts ADD CONSTRAINT accounts_usage_status_check CHECK (usage_status IS NULL OR usage_status IN ('ok', 'bar', 'warn', 'pause')); EXCEPTION WHEN duplicate_object THEN NULL; END " +
+        String.fromCharCode(36, 36),
+    );
+    await pool.query(
+      "DO " +
+        String.fromCharCode(36, 36) +
+        " BEGIN ALTER TABLE accounts ADD CONSTRAINT accounts_usage_projection_state_check CHECK (usage_projection_state IN ('fresh', 'stale')); EXCEPTION WHEN duplicate_object THEN NULL; END " +
         String.fromCharCode(36, 36),
     );
     await pool.query(

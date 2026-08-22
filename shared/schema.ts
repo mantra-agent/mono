@@ -202,6 +202,8 @@ export const accounts = pgTable("accounts", {
   periodTokens: bigint("period_tokens", { mode: "number" }).notNull().default(0),
   emittedOverageTokens: bigint("emitted_overage_tokens", { mode: "number" }).notNull().default(0),
   usageStatus: text("usage_status"),
+  usageProjectionState: text("usage_projection_state").notNull().default("stale"),
+  usageProjectedAt: timestamp("usage_projected_at", { withTimezone: true }),
   /**
    * Commercial activation level seat. Distinct from onboarding completed.
    * Nullable until written; never inferred from goals/sessions in producers.
@@ -219,6 +221,10 @@ export const accounts = pgTable("accounts", {
   usageStatusCheck: check(
     "accounts_usage_status_check",
     sql`${table.usageStatus} IS NULL OR ${table.usageStatus} IN ('ok', 'bar', 'warn', 'pause')`,
+  ),
+  usageProjectionStateCheck: check(
+    "accounts_usage_projection_state_check",
+    sql`${table.usageProjectionState} IN ('fresh', 'stale')`,
   ),
   activationLevelCheck: check(
     "accounts_activation_level_check",

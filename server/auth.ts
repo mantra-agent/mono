@@ -1758,6 +1758,8 @@ export function setupAuth(app: Express) {
             periodTokens: accounts.periodTokens,
             emittedOverageTokens: accounts.emittedOverageTokens,
             usageStatus: accounts.usageStatus,
+            usageProjectionState: accounts.usageProjectionState,
+            usageProjectedAt: accounts.usageProjectedAt,
             createdAt: accounts.createdAt,
             updatedAt: accounts.updatedAt,
           }).from(accounts).orderBy(asc(accounts.name), asc(accounts.id)),
